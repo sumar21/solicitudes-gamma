@@ -1,15 +1,73 @@
+
 export enum WorkflowType {
-  INTERNAL = 'INTERNAL', // Crítica -> Sala Gral
-  ITR_TO_FLOOR = 'ITR_TO_FLOOR', // Ingreso: Guardia/Sistema -> Piso
-  ROOM_CHANGE = 'ROOM_CHANGE', // Cambio de Habitación
+  INTERNAL = 'INTERNAL',
+  ITR_TO_FLOOR = 'ITR_TO_FLOOR',
+  ROOM_CHANGE = 'ROOM_CHANGE',
+}
+
+export enum SedeType {
+  IG = 'IG',
+  HPR = 'HPR',
+  SUMAR = 'SUMAR', // Superuser / Admin
 }
 
 export enum Role {
-  COORDINATOR = 'COORDINATOR', // Solicitante
-  ADMISSION = 'ADMISSION', // Gestión de Cama / Censo
-  HOUSEKEEPING = 'HOUSEKEEPING', // Azafata
-  NURSING = 'NURSING', // Enfermería / Camillero
-  ADMIN = 'ADMIN', // Gestión de Usuarios y Permisos
+  COORDINATOR = 'COORDINATOR',
+  ADMISSION = 'ADMISSION',
+  HOUSEKEEPING = 'HOUSEKEEPING',
+  NURSING = 'NURSING',
+  ADMIN = 'ADMIN',
+  HOSTESS = 'HOSTESS', // Azafata
+  READ_ONLY = 'READ_ONLY', // Mucamas, Catering, etc.
+}
+
+export enum Area {
+  PISO_4 = 'Internación general piso 4',
+  PISO_5 = 'Internación general piso 5',
+  PISO_6 = 'Internación general piso 6',
+  PISO_7 = 'Internación general piso 7',
+  PISO_8 = 'Internación general piso 8',
+  UCO = 'UCO',
+  UTI = 'UTI',
+  ITR = 'ITR',
+}
+
+export enum BedStatus {
+  AVAILABLE = 'Disponible',
+  DISABLED = 'Inhabilitada',
+  OCCUPIED = 'Ocupada',
+  PREPARATION = 'En preparación',
+  ASSIGNED = 'Asignada', // Internal app state only
+}
+
+export interface Bed {
+  id: string;
+  label: string;
+  area: Area;
+  status: BedStatus;
+  patientName?: string; // If occupied
+}
+
+export enum ChannelType {
+  ROLE = 'ROLE',
+  STATUS = 'STATUS',
+  PUBLIC = 'PUBLIC'
+}
+
+export interface Channel {
+  id: string;
+  name: string;
+  type: ChannelType;
+  description: string;
+}
+
+export type ViewMode = 'HOME' | 'REQUESTS' | 'USERS' | 'HISTORY' | 'BEDS';
+export type SortKey = 'status' | 'patientName' | 'origin' | 'createdAt';
+export type SortDirection = 'asc' | 'desc';
+
+export interface SortConfig {
+  key: SortKey;
+  direction: SortDirection;
 }
 
 export interface User {
@@ -17,16 +75,20 @@ export interface User {
   name: string;
   email: string;
   role: Role;
+  sede: SedeType;
   avatar: string;
   lastLogin: string;
+  assignedAreas?: Area[]; // For Hostesses
 }
 
 export interface ChatMessage {
   id: string;
   sender: string;
   role: Role;
+  sede: SedeType;
   text: string;
   timestamp: string;
+  channelId: string;
   isSystem?: boolean;
 }
 
@@ -45,33 +107,34 @@ export interface Notification {
   timestamp: string;
   isRead: boolean;
   ticketId?: string;
+  sede: SedeType;
+}
+
+export enum TicketStatus {
+  WAITING_ROOM = 'WAITING_ROOM', // Dest is In Preparation, waiting for Dest Hostess to mark Room Ready
+  IN_TRANSIT = 'IN_TRANSIT', // Room is ready or was available, waiting for Dest Hostess to mark Reception OK
+  WAITING_CONSOLIDATION = 'WAITING_CONSOLIDATION', // Reception OK done, waiting for Admission to consolidate
+  COMPLETED = 'COMPLETED', // Consolidated
+  REJECTED = 'REJECTED',
 }
 
 export interface Ticket {
   id: string;
+  sede: SedeType;
   patientName: string;
-  origin: string;
-  destination: string | null; // Asignado por admisión
+  origin: string; // Bed ID
+  destination: string | null; // Bed ID
   workflow: WorkflowType;
   status: TicketStatus;
   createdAt: string;
-  bedAssignedAt?: string; // Timestamp for wait time calculation
-  
-  // Workflow specific fields
-  itrSource?: 'GUARDIA' | 'SISTEMA' | 'ADMISION' | 'RECEPCION';
-  changeReason?: 'FAMILIAR' | 'AISLAMIENTO' | 'MANTENIMIENTO';
-  
-  // Flags
+  date?: string;
+  bedAssignedAt?: string;
+  cleaningDoneAt?: string;
+  completedAt?: string;
+  itrSource?: string;
+  changeReason?: string;
+  rejectionReason?: string;
   isBedClean: boolean;
-  isReasonValidated: boolean; // Para flujo 3
-}
-
-export enum TicketStatus {
-  REQUESTED = 'REQUESTED',
-  VALIDATED = 'VALIDATED', // Solo para Cambio de Habitación
-  BED_ASSIGNED = 'BED_ASSIGNED',
-  CLEANING_REQUIRED = 'CLEANING_REQUIRED',
-  CLEANING_DONE = 'CLEANING_DONE',
-  IN_TRANSIT = 'IN_TRANSIT',
-  COMPLETED = 'COMPLETED',
+  isReasonValidated: boolean;
+  targetBedOriginalStatus?: BedStatus; // To track if it was Available or Prep
 }

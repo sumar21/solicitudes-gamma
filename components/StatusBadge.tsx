@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { TicketStatus } from '../types';
 import { Badge } from './ui/badge';
@@ -7,13 +8,11 @@ interface Props {
 }
 
 const statusConfig: Record<TicketStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "info" | "purple" }> = {
-  [TicketStatus.REQUESTED]: { label: 'Solicitado', variant: 'secondary' },
-  [TicketStatus.VALIDATED]: { label: 'Validado', variant: 'info' },
-  [TicketStatus.BED_ASSIGNED]: { label: 'Cama Asignada', variant: 'purple' }, // Changed from default (black) to purple/blue
-  [TicketStatus.CLEANING_REQUIRED]: { label: 'Limpieza Req.', variant: 'destructive' }, // Red/Orange for attention
-  [TicketStatus.CLEANING_DONE]: { label: 'Lista / Limpia', variant: 'success' },
-  [TicketStatus.IN_TRANSIT]: { label: 'En Traslado', variant: 'warning' },
-  [TicketStatus.COMPLETED]: { label: 'Finalizado', variant: 'outline' },
+  [TicketStatus.WAITING_ROOM]: { label: 'Esperando Habitación', variant: 'warning' },
+  [TicketStatus.IN_TRANSIT]: { label: 'En Tránsito', variant: 'info' },
+  [TicketStatus.WAITING_CONSOLIDATION]: { label: 'Por Consolidar', variant: 'purple' },
+  [TicketStatus.COMPLETED]: { label: 'Finalizado', variant: 'success' },
+  [TicketStatus.REJECTED]: { label: 'Rechazado', variant: 'destructive' },
 };
 
 export const StatusBadge: React.FC<Props> = ({ status }) => {

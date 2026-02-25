@@ -1,3 +1,4 @@
+
 import * as React from "react"
 import { Check, ChevronDown } from "lucide-react"
 import { cn } from "../../lib/utils"
@@ -85,7 +86,7 @@ const SelectTrigger = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttrib
 )
 SelectTrigger.displayName = "SelectTrigger"
 
-const SelectContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
+const SelectContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement> & { position?: string }>(
   ({ className, children, position = "popper", ...props }, ref) => {
     const context = React.useContext(SelectContext);
     if (!context || !context.open) return null;

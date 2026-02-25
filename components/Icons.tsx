@@ -1,3 +1,4 @@
+
 import { 
   Activity, 
   Bed, 
@@ -6,7 +7,7 @@ import {
   ArrowRightLeft, 
   MessageSquare, 
   Stethoscope, 
-  SprayCan, // Using SprayCan as approximation for cleaning
+  SprayCan,
   CheckCircle2,
   Clock,
   AlertCircle,
@@ -33,7 +34,18 @@ import {
   ShieldCheck,
   UserCog,
   Bell,
-  Info
+  Info,
+  History,
+  Filter,
+  Calendar,
+  Hash,
+  Lock,
+  MapPin,
+  ClipboardList,
+  TrendingUp,
+  TrendingDown,
+  Send,
+  Download
 } from 'lucide-react';
 
 export {
@@ -71,5 +83,16 @@ export {
   ShieldCheck,
   UserCog,
   Bell,
-  Info
+  Info,
+  History,
+  Filter,
+  Calendar,
+  Hash,
+  Lock,
+  MapPin,
+  ClipboardList,
+  TrendingUp,
+  TrendingDown,
+  Send,
+  Download
 };

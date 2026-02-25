@@ -1,5 +1,5 @@
 {
-  "name": "MediFlow - Hospital Transfer Orchestrator",
+  "name": "Copy of MediFlow - Hospital Transfer Orchestrator",
   "description": "A multi-workflow hospital patient transfer management system simulating interactions between Coordinators, Admission, Housekeeping, and Nursing staff.",
   "requestFramePermissions": []
 }

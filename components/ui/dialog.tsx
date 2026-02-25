@@ -1,3 +1,4 @@
+
 import * as React from "react"
 import { X } from "lucide-react"
 import { cn } from "../../lib/utils"
@@ -24,19 +25,34 @@ const Dialog = ({ children, open, onOpenChange }: { children?: React.ReactNode; 
   );
 };
 
-const DialogTrigger = React.forwardRef<HTMLButtonElement, React.HTMLAttributes<HTMLElement> & { asChild?: boolean }>(
+const DialogTrigger = React.forwardRef<HTMLElement, React.HTMLAttributes<HTMLElement> & { asChild?: boolean }>(
   ({ className, children, onClick, ...props }, ref) => {
     const { onOpenChange } = React.useContext(DialogContext);
-    const child = React.isValidElement(children) ? children : <button>{children}</button>;
     
-    return React.cloneElement(child as React.ReactElement, {
+    if (React.isValidElement(children)) {
+      const child = children as React.ReactElement<any>;
+      return React.cloneElement(child, {
         onClick: (e: React.MouseEvent) => {
-            (child as React.ReactElement).props.onClick?.(e);
+            child.props.onClick?.(e);
             onOpenChange(true);
         },
         ...props,
         ref
-    });
+      });
+    }
+
+    // Fix: Wrapped spread props in curly braces
+    return (
+      <button
+        ref={ref as any}
+        type="button"
+        onClick={() => onOpenChange(true)}
+        className={cn(className)}
+        {...props}
+      >
+        {children}
+      </button>
+    );
   }
 );
 DialogTrigger.displayName = "DialogTrigger";
@@ -48,17 +64,17 @@ const DialogContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTML
     if (!open) return null;
 
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
         {/* Overlay */}
         <div 
             className="fixed inset-0 bg-black/40 backdrop-blur-[2px] transition-opacity animate-in fade-in" 
             onClick={() => onOpenChange(false)}
         />
-        {/* Content */}
+        {/* Content - w-[92vw] para mobile y max-w-lg para desktop */}
         <div
           ref={ref}
           className={cn(
-            "relative z-50 grid w-full max-w-lg gap-4 border border-slate-100 bg-white p-6 shadow-xl duration-200 animate-in zoom-in-95 sm:rounded-lg md:w-full",
+            "relative z-50 grid w-[94vw] max-w-lg gap-4 border border-slate-100 bg-white p-6 shadow-xl duration-200 animate-in zoom-in-95 rounded-2xl md:w-full",
             className
           )}
           {...props}
@@ -83,6 +99,7 @@ const DialogHeader = ({
   className,
   ...props
 }: React.HTMLAttributes<HTMLDivElement>) => (
+  // Fix: Wrapped spread props in curly braces
   <div
     className={cn(
       "flex flex-col space-y-1.5 text-center sm:text-left",
@@ -97,6 +114,7 @@ const DialogFooter = ({
   className,
   ...props
 }: React.HTMLAttributes<HTMLDivElement>) => (
+  // Fix: Wrapped spread props in curly braces
   <div
     className={cn(
       "flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2",
@@ -111,6 +129,7 @@ const DialogTitle = React.forwardRef<
   HTMLHeadingElement,
   React.HTMLAttributes<HTMLHeadingElement>
 >(({ className, ...props }, ref) => (
+  // Fix: Wrapped spread props in curly braces
   <h3
     ref={ref}
     className={cn(
@@ -126,6 +145,7 @@ const DialogDescription = React.forwardRef<
   HTMLParagraphElement,
   React.HTMLAttributes<HTMLParagraphElement>
 >(({ className, ...props }, ref) => (
+  // Fix: Wrapped spread props in curly braces
   <p
     ref={ref}
     className={cn("text-sm text-slate-500", className)}
