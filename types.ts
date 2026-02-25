@@ -111,10 +111,11 @@ export interface Notification {
 }
 
 export enum TicketStatus {
-  WAITING_ROOM = 'WAITING_ROOM', // Dest is In Preparation, waiting for Dest Hostess to mark Room Ready
-  IN_TRANSIT = 'IN_TRANSIT', // Room is ready or was available, waiting for Dest Hostess to mark Reception OK
-  WAITING_CONSOLIDATION = 'WAITING_CONSOLIDATION', // Reception OK done, waiting for Admission to consolidate
-  COMPLETED = 'COMPLETED', // Consolidated
+  WAITING_ROOM = 'WAITING_ROOM',         // Dest en preparación, esperando que Azafata destino marque "Habitación Lista"
+  IN_TRANSIT = 'IN_TRANSIT',             // Habitación lista / disponible, esperando que Azafata origen inicie traslado
+  IN_TRANSPORT = 'IN_TRANSPORT',         // Traslado iniciado por Azafata origen, esperando confirmación de recepción
+  WAITING_CONSOLIDATION = 'WAITING_CONSOLIDATION', // Recepción OK, esperando que Admisión consolide en PROGAL
+  COMPLETED = 'COMPLETED',               // Consolidado
   REJECTED = 'REJECTED',
 }
 

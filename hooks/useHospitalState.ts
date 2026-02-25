@@ -2,8 +2,8 @@
 // Add React import to fix namespace error
 import React, { useState, useMemo } from 'react';
 import { GoogleGenAI } from "@google/genai";
-import { 
-  WorkflowType, Role, SedeType, Ticket, TicketStatus, ChatMessage, User, 
+import {
+  WorkflowType, Role, SedeType, Ticket, TicketStatus, ChatMessage, User, Area,
   Notification, ViewMode, SortConfig, Bed, BedStatus
 } from '../types';
 import { CHANNELS, INITIAL_USERS, MOCK_TICKETS, MOCK_BEDS } from '../lib/constants';
@@ -15,7 +15,7 @@ export const useHospitalState = () => {
   });
 
   const [currentView, setCurrentView] = useState<ViewMode>('HOME');
-  const [activeRole, setActiveRole] = useState<Role>(Role.COORDINATOR);
+  const [activeRole, setActiveRole] = useState<Role>(Role.ADMISSION);
   const [activeChannelId, setActiveChannelId] = useState<string>('CH-GEN');
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'createdAt', direction: 'desc' });
   const [requestsSearchTerm, setRequestsSearchTerm] = useState('');
@@ -56,8 +56,8 @@ export const useHospitalState = () => {
     // Filter by Search
     if (requestsSearchTerm) {
       const term = requestsSearchTerm.toLowerCase();
-      result = result.filter(t => 
-        t.patientName.toLowerCase().includes(term) || 
+      result = result.filter(t =>
+        t.patientName.toLowerCase().includes(term) ||
         t.origin.toLowerCase().includes(term) ||
         t.destination?.toLowerCase().includes(term)
       );
@@ -82,13 +82,13 @@ export const useHospitalState = () => {
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     const user = INITIAL_USERS.find(u => u.email === loginEmail);
-    if (user && loginPass === '0000') {
+    if (user && loginPass === '1234') {
       setCurrentUser(user);
       setActiveRole(user.role);
       sessionStorage.setItem('mediflow_user', JSON.stringify(user));
       setLoginError('');
     } else {
-      setLoginError('Credenciales incorrectas (Pass: 0000)');
+      setLoginError('Credenciales incorrectas (Pass: 1234)');
     }
   };
 
@@ -115,7 +115,7 @@ export const useHospitalState = () => {
 
   const handleSendMessage = async (text: string) => {
     if (!currentUser) return;
-    
+
     const userMessage: ChatMessage = {
       id: Date.now().toString(),
       sender: currentUser.name,
@@ -132,7 +132,7 @@ export const useHospitalState = () => {
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const activeChannel = CHANNELS.find(c => c.id === activeChannelId);
-      
+
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: text,
@@ -146,7 +146,7 @@ export const useHospitalState = () => {
       });
 
       const aiText = response.text || "Lo siento, no he podido procesar tu solicitud.";
-      
+
       const aiMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
         sender: 'MediFlow AI',
@@ -216,51 +216,45 @@ export const useHospitalState = () => {
   };
 
   const handleRoomReady = (ticketId: string) => {
-    if (activeRole !== Role.HOSTESS && activeRole !== Role.ADMIN) {
-      alert("Solo Azafatas pueden confirmar habitación lista.");
-      return;
-    }
-
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket || !ticket.destination) return;
 
     const targetBed = beds.find(b => b.label === ticket.destination);
     if (!targetBed) return;
 
-    // Update Ticket
+    // Ticket: WAITING_ROOM → IN_TRANSIT (habitación lista, esperando que azafata origen inicie traslado)
     setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status: TicketStatus.IN_TRANSIT } : t));
 
-    // Update Bed to ASSIGNED
+    // Cama destino → ASSIGNED
     setBeds(prev => prev.map(b => b.id === targetBed.id ? { ...b, status: BedStatus.ASSIGNED } : b));
 
-    sendSystemLog(`Habitación Lista: ${ticket.destination} para ${ticket.patientName}`);
+    sendSystemLog(`✅ HABITACIÓN LISTA: ${ticket.destination} preparada para ${ticket.patientName}. Azafata de origen: iniciar traslado.`);
   };
 
   const handleConfirmReception = (ticketId: string) => {
-    if (activeRole !== Role.HOSTESS && activeRole !== Role.ADMIN) {
-      alert("Solo Azafatas pueden confirmar recepción.");
-      return;
-    }
-
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket || !ticket.destination) return;
 
+    // Solo se puede confirmar recepción si el traslado está en curso
+    // IN_TRANSIT → dest estaba disponible (camino directo)
+    // IN_TRANSPORT → dest estaba en preparación (camino largo, azafata origen ya inició)
+    if (ticket.status !== TicketStatus.IN_TRANSPORT && ticket.status !== TicketStatus.IN_TRANSIT) return;
+
     const sourceBed = beds.find(b => b.label === ticket.origin);
     const targetBed = beds.find(b => b.label === ticket.destination);
-
     if (!sourceBed || !targetBed) return;
 
-    // Update Ticket
+    // Ticket: IN_TRANSPORT → WAITING_CONSOLIDATION
     setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status: TicketStatus.WAITING_CONSOLIDATION } : t));
 
-    // Update Beds
+    // Cama destino → OCCUPIED (con paciente), cama origen → PREPARATION
     setBeds(prev => prev.map(b => {
       if (b.id === targetBed.id) return { ...b, status: BedStatus.OCCUPIED, patientName: ticket.patientName };
       if (b.id === sourceBed.id) return { ...b, status: BedStatus.PREPARATION, patientName: undefined };
       return b;
     }));
 
-    sendSystemLog(`✅ RECEPCIÓN OK: ${ticket.patientName} en ${ticket.destination}. Esperando consolidación de Admisión.`);
+    sendSystemLog(`✅ RECEPCIÓN OK: ${ticket.patientName} internado en ${ticket.destination}. Cama ${ticket.origin} pasa a limpieza. Admisión: consolidar en PROGAL.`);
   };
 
   const handleConsolidate = (ticketId: string) => {
@@ -273,8 +267,8 @@ export const useHospitalState = () => {
     if (!ticket) return;
 
     // Update Ticket
-    setTickets(prev => prev.map(t => t.id === ticketId ? { 
-      ...t, 
+    setTickets(prev => prev.map(t => t.id === ticketId ? {
+      ...t,
       status: TicketStatus.COMPLETED,
       completedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     } : t));
@@ -283,41 +277,52 @@ export const useHospitalState = () => {
   };
 
   const handleRejectAction = (id: string, reason: string) => {
-     if (activeRole !== Role.HOSTESS && activeRole !== Role.ADMIN) {
-       alert("Solo Azafatas pueden rechazar solicitudes.");
-       return;
-     }
+    if (activeRole !== Role.HOSTESS && activeRole !== Role.ADMIN) {
+      alert("Solo Azafatas pueden rechazar solicitudes.");
+      return;
+    }
 
-     if (!reason) return;
-     const ticket = tickets.find(t => t.id === id);
-     
-     if (ticket && ticket.destination) {
-        // Revert target bed status if it was assigned
-        const targetBed = beds.find(b => b.label === ticket.destination);
-        if (targetBed) {
-           setBeds(prev => prev.map(b => {
-             if (b.id === targetBed.id) {
-               // Revert to original status if tracked, otherwise guess based on logic
-               return { ...b, status: ticket.targetBedOriginalStatus || BedStatus.AVAILABLE };
-             }
-             return b;
-           }));
+    if (!reason) return;
+    const ticket = tickets.find(t => t.id === id);
+
+    if (ticket && ticket.destination) {
+      // Revert target bed status if it was assigned
+      const targetBed = beds.find(b => b.label === ticket.destination);
+      if (targetBed) {
+        setBeds(prev => prev.map(b => {
+          if (b.id === targetBed.id) {
+            // Revert to original status if tracked, otherwise guess based on logic
+            return { ...b, status: ticket.targetBedOriginalStatus || BedStatus.AVAILABLE };
+          }
+          return b;
+        }));
+      }
+    }
+
+    setTickets(prev => prev.map(t =>
+      t.id === id
+        ? {
+          ...t,
+          status: TicketStatus.REJECTED,
+          completedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          rejectionReason: reason
         }
-     }
+        : t
+    ));
+    if (ticket) {
+      sendSystemLog(`❌ SOLICITUD RECHAZADA: Ticket ${ticket.id} anulado. Motivo: ${reason}`);
+    }
+  };
 
-     setTickets(prev => prev.map(t => 
-       t.id === id 
-         ? { 
-             ...t, 
-             status: TicketStatus.REJECTED, 
-             completedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-             rejectionReason: reason
-           } 
-         : t
-     ));
-     if (ticket) {
-       sendSystemLog(`❌ SOLICITUD RECHAZADA: Ticket ${ticket.id} anulado. Motivo: ${reason}`);
-     }
+  const handleStartTransport = (ticketId: string) => {
+    const ticket = tickets.find(t => t.id === ticketId);
+    if (!ticket) return;
+
+    // Ticket: IN_TRANSIT → IN_TRANSPORT (traslado físicamente iniciado)
+    // La cama origen sigue OCUPADA hasta que la azafata destino confirme recepción
+    setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status: TicketStatus.IN_TRANSPORT } : t));
+
+    sendSystemLog(`🚑 TRASLADO INICIADO: ${ticket.patientName} en camino de ${ticket.origin} → ${ticket.destination}. Azafata destino: confirmar recepción.`);
   };
 
   const handleUpdateUserAreas = (areas: Area[]) => {
@@ -366,11 +371,11 @@ export const useHospitalState = () => {
       handleRejectAction,
       handleUpdateUserAreas,
       // Placeholders for compatibility if needed
-      handleValidateTicket: (id: string) => {},
-      handleAssignBedAction: (id: string, bed: string) => {},
-      handleHousekeepingAction: (id: string) => {},
-      handleStartTransport: (id: string) => {},
-      handleCompleteTransport: (id: string) => {},
+      handleValidateTicket: (id: string) => { },
+      handleAssignBedAction: (id: string, bed: string) => { },
+      handleHousekeepingAction: (id: string) => { },
+      handleStartTransport,
+      handleCompleteTransport: (id: string) => { },
     }
   };
 };

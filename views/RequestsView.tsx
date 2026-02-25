@@ -1,9 +1,9 @@
 
 import React, { useMemo } from 'react';
-import { Ticket, Role, TicketStatus, SortConfig, SortKey, WorkflowType, User, Bed } from '../types';
-import { 
-  Search, Plus, Timer, Clock, ArrowRightLeft, 
-  ChevronUp, ChevronDown, CheckCircle2, BedDouble, Users, ClipboardCheck, AlertCircle, X, XCircle, Info, MapPin 
+import { Ticket, Role, TicketStatus, SortConfig, SortKey, WorkflowType, User, Bed, BedStatus } from '../types';
+import {
+  Search, Plus, Timer, Clock, ArrowRightLeft,
+  ChevronUp, ChevronDown, CheckCircle2, BedDouble, Users, ClipboardCheck, AlertCircle, X, XCircle, Info, MapPin
 } from '../components/Icons';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -38,14 +38,10 @@ interface RequestsViewProps {
   beds: Bed[];
 }
 
-const ROLE_LABELS: Record<Role, string> = {
+const ROLE_LABELS: Partial<Record<Role, string>> = {
   [Role.ADMIN]: 'Admin',
-  [Role.COORDINATOR]: 'Coord.',
   [Role.ADMISSION]: 'Adm.',
-  [Role.HOUSEKEEPING]: 'Hig.',
-  [Role.NURSING]: 'Enf.',
   [Role.HOSTESS]: 'Azafata',
-  [Role.READ_ONLY]: 'Lectura',
 };
 
 const WORKFLOW_SHORT: Record<WorkflowType, string> = {
@@ -64,26 +60,28 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
 
   const sortedTickets = useMemo(() => {
     let filtered = tickets.filter(t => t.status !== TicketStatus.COMPLETED);
-    
+
     if (activeRole !== Role.ADMIN && activeRole !== Role.COORDINATOR) {
       filtered = filtered.filter(t => t.status !== TicketStatus.REJECTED);
     }
 
     if (searchTerm) {
       const searchLower = searchTerm.toLowerCase();
-      filtered = filtered.filter(t => 
-        t.id.toLowerCase().includes(searchLower) || 
+      filtered = filtered.filter(t =>
+        t.id.toLowerCase().includes(searchLower) ||
         t.patientName.toLowerCase().includes(searchLower)
       );
     } else {
       filtered = filtered.filter(t => {
         if (activeRole === Role.COORDINATOR || activeRole === Role.ADMIN) return true;
         if (activeRole === Role.ADMISSION) {
-          return t.status === TicketStatus.WAITING_CONSOLIDATION;
+          // Admisión ve todos los tickets activos durante todo el ciclo de vida
+          return true;
         }
         if (activeRole === Role.HOSTESS) {
-          return t.status === TicketStatus.WAITING_ROOM || 
-                 t.status === TicketStatus.IN_TRANSIT;
+          return t.status === TicketStatus.WAITING_ROOM ||
+            t.status === TicketStatus.IN_TRANSIT ||
+            t.status === TicketStatus.IN_TRANSPORT;
         }
         return false;
       });
@@ -104,54 +102,85 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     const size = isMobile ? "default" : "sm";
     const btnClass = isMobile ? "w-full h-11 text-xs font-black uppercase tracking-widest rounded-xl" : "h-8 text-[10px] uppercase font-bold tracking-tight";
 
+    // ── AZAFATA ──────────────────────────────────────────────────────────────
     if (activeRole === Role.HOSTESS) {
-       if (!currentUser?.assignedAreas) return null;
-       
-       const originBed = beds.find(b => b.label === ticket.origin);
-       const destBed = ticket.destination ? beds.find(b => b.label === ticket.destination) : null;
-       
-       const isOriginHostess = originBed && currentUser.assignedAreas.includes(originBed.area);
-       const isDestHostess = destBed && currentUser.assignedAreas.includes(destBed.area);
+      if (!currentUser?.assignedAreas) return null;
 
-       // Case: Target Prep -> WAITING_ROOM (Waiting for Room)
-       if (ticket.status === TicketStatus.WAITING_ROOM) {
-         if (isDestHostess) {
-           return (
-             <Button size={size} className={cn(btnClass, "bg-blue-600 hover:bg-blue-700 text-white")} onClick={() => onRoomReady(ticket.id)}>
-               <ClipboardCheck className="w-3.5 h-3.5 mr-2" /> Habitación Lista
-             </Button>
-           );
-         }
-         if (isOriginHostess) {
-            return <Badge variant="outline" className="text-yellow-600 border-yellow-200 bg-yellow-50">Esperando Destino</Badge>;
-         }
-       }
+      const originBed = beds.find(b => b.label === ticket.origin);
+      const destBed = ticket.destination ? beds.find(b => b.label === ticket.destination) : null;
 
-       // Case: Room Ready / Available -> IN_TRANSIT
-       if (ticket.status === TicketStatus.IN_TRANSIT) {
-          if (isOriginHostess) {
-             return <Badge variant="outline" className="text-emerald-600 border-emerald-200 bg-emerald-50">Destino Listo</Badge>;
-          }
-          if (isDestHostess) {
-             return (
-                <Button size={size} className={cn(btnClass, "bg-emerald-600 hover:bg-emerald-700 text-white")} onClick={() => onConfirmReception(ticket.id)}>
-                  <CheckCircle2 className="w-3.5 h-3.5 mr-2" /> Recepción OK
-                </Button>
-             );
-          }
-       }
-       return null;
+      const isOriginHostess = !!(originBed && currentUser.assignedAreas.includes(originBed.area));
+      const isDestHostess = !!(destBed && currentUser.assignedAreas.includes(destBed.area));
+
+      // Si no es de ninguna de las dos áreas, no muestra nada
+      if (!isOriginHostess && !isDestHostess) return null;
+
+      // Estado 1: WAITING_ROOM — La azafata DESTINO debe confirmar habitación lista
+      if (ticket.status === TicketStatus.WAITING_ROOM) {
+        if (isDestHostess)
+          return (
+            <Button size={size} className={cn(btnClass, "bg-blue-600 hover:bg-blue-700 text-white")} onClick={() => onRoomReady(ticket.id)}>
+              <ClipboardCheck className="w-3.5 h-3.5 mr-2" /> Habitación Lista
+            </Button>
+          );
+        if (isOriginHostess)
+          return <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50">Esperando preparación destino</Badge>;
+      }
+
+      // Estado 2: IN_TRANSIT
+      //   - Si dest era DISPONIBLE → azafata destino confirma Recepción OK directamente
+      //   - Si dest era EN PREPARACIÓN → azafata origen debe iniciar traslado primero
+      if (ticket.status === TicketStatus.IN_TRANSIT) {
+        const wasPrep = ticket.targetBedOriginalStatus === BedStatus.PREPARATION;
+
+        if (wasPrep) {
+          // Camino largo: dest estaba en preparación
+          if (isOriginHostess)
+            return (
+              <Button size={size} className={cn(btnClass, "bg-emerald-600 hover:bg-emerald-700 text-white")} onClick={() => onStartTransport(ticket.id)}>
+                <ArrowRightLeft className="w-3.5 h-3.5 mr-2" /> Iniciar Traslado
+              </Button>
+            );
+          if (isDestHostess)
+            return <Badge variant="outline" className="text-blue-600 border-blue-200 bg-blue-50">Esperando inicio de traslado</Badge>;
+        } else {
+          // Camino corto: dest estaba disponible → recepción OK directa
+          if (isDestHostess)
+            return (
+              <Button size={size} className={cn(btnClass, "bg-emerald-600 hover:bg-emerald-700 text-white")} onClick={() => onConfirmReception(ticket.id)}>
+                <CheckCircle2 className="w-3.5 h-3.5 mr-2" /> Recepción OK
+              </Button>
+            );
+          if (isOriginHostess)
+            return <Badge variant="outline" className="text-slate-500 border-slate-200 bg-slate-50">Traslado en curso...</Badge>;
+        }
+      }
+
+      // Estado 3: IN_TRANSPORT — La azafata DESTINO debe confirmar recepción
+      if (ticket.status === TicketStatus.IN_TRANSPORT) {
+        if (isDestHostess)
+          return (
+            <Button size={size} className={cn(btnClass, "bg-emerald-600 hover:bg-emerald-700 text-white")} onClick={() => onConfirmReception(ticket.id)}>
+              <CheckCircle2 className="w-3.5 h-3.5 mr-2" /> Recepción OK
+            </Button>
+          );
+        if (isOriginHostess)
+          return <Badge variant="outline" className="text-slate-500 border-slate-200 bg-slate-50">Traslado en curso...</Badge>;
+      }
+
+      return null;
     }
 
+    // ── ADMISIÓN / ADMIN ─────────────────────────────────────────────────────
     if (activeRole === Role.ADMISSION || activeRole === Role.ADMIN) {
-      if (ticket.status === TicketStatus.WAITING_CONSOLIDATION) {
+      if (ticket.status === TicketStatus.WAITING_CONSOLIDATION)
         return (
-          <Button size={size} className={cn(btnClass, "bg-purple-600 hover:bg-purple-700")} onClick={() => onConsolidate(ticket.id)}>
+          <Button size={size} className={cn(btnClass, "bg-purple-600 hover:bg-purple-700 text-white")} onClick={() => onConsolidate(ticket.id)}>
             <BedDouble className="w-3.5 h-3.5 mr-2" /> Consolidar PROGAL
           </Button>
         );
-      }
     }
+
     return null;
   };
 
@@ -265,10 +294,10 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
               </div>
 
               {ticket.rejectionReason && (
-                 <div className="p-2.5 bg-red-100/50 border border-red-200 rounded-xl flex items-start gap-2">
-                   <AlertCircle className="w-3.5 h-3.5 text-red-600 mt-0.5" />
-                   <p className="text-[10px] font-bold text-red-900 italic leading-tight">"{ticket.rejectionReason}"</p>
-                 </div>
+                <div className="p-2.5 bg-red-100/50 border border-red-200 rounded-xl flex items-start gap-2">
+                  <AlertCircle className="w-3.5 h-3.5 text-red-600 mt-0.5" />
+                  <p className="text-[10px] font-bold text-red-900 italic leading-tight">"{ticket.rejectionReason}"</p>
+                </div>
               )}
 
               {renderActionButtons(ticket, true)}
