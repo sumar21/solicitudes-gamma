@@ -193,6 +193,7 @@ export const useHospitalState = () => {
       workflow: WorkflowType.INTERNAL,
       status: targetBed.status === BedStatus.AVAILABLE ? TicketStatus.IN_TRANSIT : TicketStatus.WAITING_ROOM,
       createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      bedAssignedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       date: new Date().toISOString().split('T')[0],
       isBedClean: false,
       isReasonValidated: true,
@@ -223,7 +224,11 @@ export const useHospitalState = () => {
     if (!targetBed) return;
 
     // Ticket: WAITING_ROOM → IN_TRANSIT (habitación lista, esperando que azafata origen inicie traslado)
-    setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status: TicketStatus.IN_TRANSIT } : t));
+    setTickets(prev => prev.map(t => t.id === ticketId ? { 
+      ...t, 
+      status: TicketStatus.IN_TRANSIT,
+      cleaningDoneAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    } : t));
 
     // Cama destino → ASSIGNED
     setBeds(prev => prev.map(b => b.id === targetBed.id ? { ...b, status: BedStatus.ASSIGNED } : b));
@@ -245,7 +250,11 @@ export const useHospitalState = () => {
     if (!sourceBed || !targetBed) return;
 
     // Ticket: IN_TRANSPORT → WAITING_CONSOLIDATION
-    setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status: TicketStatus.WAITING_CONSOLIDATION } : t));
+    setTickets(prev => prev.map(t => t.id === ticketId ? { 
+      ...t, 
+      status: TicketStatus.WAITING_CONSOLIDATION,
+      receptionConfirmedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    } : t));
 
     // Cama destino → OCCUPIED (con paciente), cama origen → PREPARATION
     setBeds(prev => prev.map(b => {
@@ -320,7 +329,11 @@ export const useHospitalState = () => {
 
     // Ticket: IN_TRANSIT → IN_TRANSPORT (traslado físicamente iniciado)
     // La cama origen sigue OCUPADA hasta que la azafata destino confirme recepción
-    setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status: TicketStatus.IN_TRANSPORT } : t));
+    setTickets(prev => prev.map(t => t.id === ticketId ? { 
+      ...t, 
+      status: TicketStatus.IN_TRANSPORT,
+      transportStartedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    } : t));
 
     sendSystemLog(`🚑 TRASLADO INICIADO: ${ticket.patientName} en camino de ${ticket.origin} → ${ticket.destination}. Azafata destino: confirmar recepción.`);
   };

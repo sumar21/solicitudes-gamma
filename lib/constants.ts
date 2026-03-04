@@ -1,5 +1,5 @@
 
-import { MOCK_API_RESPONSE, transformApiDataToBeds } from "./mock-api-data";
+import { MOCK_API_RESPONSE, transformApiDataToBeds, generateMockTickets } from "./mock-api-data";
 import { Area, Bed, BedStatus, Channel, ChannelType, Role, SedeType, Ticket, TicketStatus, User, WorkflowType } from "../types";
 
 export const CHANNELS: Channel[] = [
@@ -43,4 +43,4 @@ export const INITIAL_USERS: User[] = [
   { id: 'USR-ENF', name: 'Enfermería', email: 'enfermeria@hpr.com', role: Role.NURSING, sede: SedeType.HPR, avatar: 'EN', lastLogin: 'Hace 3 min' },
 ];
 
-export const MOCK_TICKETS: Ticket[] = [];
+export const MOCK_TICKETS: Ticket[] = generateMockTickets();

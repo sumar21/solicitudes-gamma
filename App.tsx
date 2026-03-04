@@ -162,7 +162,7 @@ export default function App() {
             </h1>
           </div>
           <div className="flex items-center gap-2 md:gap-4">
-            {hasOperationalAccess && (
+            {/* hasOperationalAccess && (
               <Button
                 variant={state.isChatOpen ? "secondary" : "outline"}
                 size="sm"
@@ -172,7 +172,7 @@ export default function App() {
                 <MessageSquare className="w-4 h-4" />
                 <span className="hidden sm:inline">Mensajes</span>
               </Button>
-            )}
+            ) */}
             <div className="flex items-center gap-3 pl-2 md:pl-4 border-l border-slate-100">
               {state.currentUser?.role === Role.HOSTESS && (
                 <Button

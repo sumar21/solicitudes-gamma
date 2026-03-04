@@ -71,18 +71,30 @@ export function getMinutesBetween(start: string | undefined, end: string | undef
  */
 export function calculateTicketMetrics(ticket: Ticket) {
   const totalCycleTime = getMinutesBetween(ticket.createdAt, ticket.completedAt);
-  const waitAdmission = getMinutesBetween(ticket.createdAt, ticket.bedAssignedAt || ticket.completedAt);
   
-  // Lógica inteligente para determinar el hito de "Habitación Lista"
-  // Si cleaningDoneAt existe, úsalo. Si no, y la cama estaba limpia (isBedClean=true), usa el momento de asignación.
-  const effectiveCleaningDoneAt = ticket.cleaningDoneAt || (ticket.isBedClean ? ticket.bedAssignedAt : null);
-
-  const cleaningTime = ticket.bedAssignedAt 
-    ? getMinutesBetween(ticket.bedAssignedAt, effectiveCleaningDoneAt || ticket.bedAssignedAt) 
+  // En este flujo, la asignación es inmediata al crear el ticket, por lo que suele ser 0.
+  const waitAdmission = getMinutesBetween(ticket.createdAt, ticket.bedAssignedAt || ticket.createdAt);
+  
+  // Tiempo de Higiene: Desde asignación hasta que está limpia. Si ya estaba limpia, es 0.
+  const cleaningTime = ticket.cleaningDoneAt 
+    ? getMinutesBetween(ticket.bedAssignedAt, ticket.cleaningDoneAt) 
     : 0;
-    
-  const transportTime = effectiveCleaningDoneAt 
-    ? getMinutesBetween(effectiveCleaningDoneAt, ticket.completedAt) 
+
+  // Tiempo de Traslado:
+  // Escenario Sucia: Desde inicio de transporte hasta confirmación de recepción.
+  // Escenario Limpia: Desde asignación (o creación) hasta recepción (ya que no hay paso intermedio explícito de "inicio transporte").
+  let transportTime = 0;
+  if (ticket.transportStartedAt && ticket.receptionConfirmedAt) {
+     transportTime = getMinutesBetween(ticket.transportStartedAt, ticket.receptionConfirmedAt);
+  } else if (ticket.receptionConfirmedAt) {
+     // Fallback para cama limpia donde no hubo "inicio transporte" explícito
+     const start = ticket.cleaningDoneAt || ticket.bedAssignedAt || ticket.createdAt;
+     transportTime = getMinutesBetween(start, ticket.receptionConfirmedAt);
+  }
+
+  // Tiempo Administrativo: Desde recepción hasta consolidación
+  const adminTime = ticket.receptionConfirmedAt 
+    ? getMinutesBetween(ticket.receptionConfirmedAt, ticket.completedAt)
     : 0;
 
   return {
@@ -90,6 +102,6 @@ export function calculateTicketMetrics(ticket: Ticket) {
     waitAdmission,
     cleaningTime,
     transportTime,
-    effectiveCleaningDoneAt
+    adminTime
   };
 }

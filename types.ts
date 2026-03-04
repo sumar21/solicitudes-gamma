@@ -131,6 +131,8 @@ export interface Ticket {
   date?: string;
   bedAssignedAt?: string;
   cleaningDoneAt?: string;
+  transportStartedAt?: string;
+  receptionConfirmedAt?: string;
   completedAt?: string;
   itrSource?: string;
   changeReason?: string;
