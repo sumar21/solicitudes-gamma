@@ -53,21 +53,10 @@ export interface Bed {
   eventOrigin?: string;
   eventNumber?: number;
   patientCode?: string;
-  institution?: string;
+  institution?: string;  // Financiador / obra social
   attendingPhysician?: string;
-}
-
-export enum ChannelType {
-  ROLE = 'ROLE',
-  STATUS = 'STATUS',
-  PUBLIC = 'PUBLIC'
-}
-
-export interface Channel {
-  id: string;
-  name: string;
-  type: ChannelType;
-  description: string;
+  dni?: string;
+  age?: number;
 }
 
 export type ViewMode = 'HOME' | 'REQUESTS' | 'USERS' | 'HISTORY' | 'BEDS';
@@ -88,17 +77,6 @@ export interface User {
   avatar: string;
   lastLogin: string;
   assignedAreas?: Area[]; // For Hostesses
-}
-
-export interface ChatMessage {
-  id: string;
-  sender: string;
-  role: Role;
-  sede: SedeType;
-  text: string;
-  timestamp: string;
-  channelId: string;
-  isSystem?: boolean;
 }
 
 export enum NotificationType {

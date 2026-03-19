@@ -1,15 +1,6 @@
 
 import { MOCK_API_RESPONSE, transformApiDataToBeds, generateMockTickets } from "./mock-api-data";
-import { Area, Bed, BedStatus, Channel, ChannelType, Role, SedeType, Ticket, TicketStatus, User, WorkflowType } from "../types";
-
-export const CHANNELS: Channel[] = [
-  { id: 'CH-GEN', name: 'Canal Central', type: ChannelType.PUBLIC, description: 'Comunicaciones generales' },
-  { id: 'CH-COORD', name: 'Coordinación', type: ChannelType.ROLE, description: 'Log de solicitudes y validaciones' },
-  { id: 'CH-ADM', name: 'Admisión', type: ChannelType.ROLE, description: 'Gestión de camas y censo' },
-  { id: 'CH-HIG', name: 'Higiene', type: ChannelType.ROLE, description: 'Checklist de limpieza' },
-  { id: 'CH-ENF', name: 'Enfermería', type: ChannelType.ROLE, description: 'Traslados y altas operativas' },
-  { id: 'CH-AZA', name: 'Azafatas', type: ChannelType.ROLE, description: 'Gestión de hotelería' },
-];
+import { Area, Bed, BedStatus, Role, SedeType, Ticket, TicketStatus, User, WorkflowType } from "../types";
 
 export const AREAS = [
   Area.PISO_4, Area.PISO_5, Area.PISO_6, Area.PISO_7, Area.PISO_8, Area.HIT, Area.HSS, Area.HUC, Area.HUQ, Area.HUT

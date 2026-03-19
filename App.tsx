@@ -1,9 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-  Activity, LayoutDashboard, Home as HomeIcon, LogOut, MessageSquare, History, Menu, X, Info
+  Activity, LayoutDashboard, Home as HomeIcon, LogOut, History, Menu, Info
 } from './components/Icons';
-import { ChatSidebar } from './components/ChatSidebar';
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
@@ -17,8 +16,7 @@ import { BedsView } from './views/BedsView';
 
 // Hooks & Constants
 import { useHospitalState } from './hooks/useHospitalState';
-import { CHANNELS } from './lib/constants';
-import { Role } from './types'; // Import Role
+import { Role } from './types';
 
 import { NotificationsDropdown } from './components/NotificationsDropdown';
 import { Popover, PopoverTrigger, PopoverContent } from './components/ui/popover';
@@ -288,20 +286,6 @@ export default function App() {
           {(state.currentView === 'BEDS' || (!hasFullAccess && !hasAzafataAccess)) && <BedsView beds={state.beds} currentUser={state.currentUser} />}
         </main>
       </div>
-
-      {/* Chat responsivo */}
-      {state.isChatOpen && (
-        <div className="fixed inset-0 z-[100] md:relative md:inset-auto md:z-30 h-full">
-          <ChatSidebar
-            channels={CHANNELS}
-            activeChannelId={state.activeChannelId}
-            onChannelSelect={actions.setActiveChannelId}
-            messages={state.filteredChatMessages}
-            onSendMessage={actions.handleSendMessage}
-            onClose={() => actions.setChatOpen(false)}
-          />
-        </div>
-      )}
 
       {/* Modals */}
       <NewRequestModal
