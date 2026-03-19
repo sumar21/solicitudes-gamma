@@ -18,6 +18,8 @@ const ROLE_LABELS: Record<Role, string> = {
   [Role.ADMISSION]: 'Admisión',
   [Role.HOUSEKEEPING]: 'Higiene',
   [Role.NURSING]: 'Enfermería',
+  [Role.HOSTESS]: 'Azafata',
+  [Role.READ_ONLY]: 'Solo Lectura',
 };
 
 export const UserManagementView: React.FC<UserManagementViewProps> = ({ users, onUpdateUserRole }) => {

@@ -20,6 +20,8 @@ const RoleColors: Record<Role, string> = {
   [Role.HOUSEKEEPING]: 'text-orange-600',
   [Role.NURSING]: 'text-emerald-600',
   [Role.ADMIN]: 'text-slate-900',
+  [Role.HOSTESS]: 'text-indigo-600',
+  [Role.READ_ONLY]: 'text-slate-500',
 };
 
 export const ChatSidebar: React.FC<ChatSidebarProps> = ({ 

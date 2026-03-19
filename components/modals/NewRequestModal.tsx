@@ -5,13 +5,14 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
+import { SearchableSelect } from '../ui/searchable-select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { ITR_SOURCES, ROOM_CHANGE_REASONS } from '../../lib/constants';
 
 interface NewRequestModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreate: (data: { patientName: string; origin: string; destination: string; workflow: WorkflowType; reason?: string; itrSource?: string }) => void;
+  onCreate: (data: { patientName: string; origin: string; destination: string; workflow: WorkflowType; reason?: string; itrSource?: string; observations?: string }) => void;
   beds: Bed[];
 }
 
@@ -22,6 +23,19 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
   const [destination, setDestination] = useState('');
   const [reason, setReason] = useState('');
   const [itrSource, setItrSource] = useState('');
+  const [observations, setObservations] = useState('');
+
+  React.useEffect(() => {
+    if (!open) {
+      setWorkflow(WorkflowType.INTERNAL);
+      setPatientName('');
+      setOrigin('');
+      setDestination('');
+      setReason('');
+      setItrSource('');
+      setObservations('');
+    }
+  }, [open]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,7 +51,8 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
       destination,
       workflow,
       reason: workflow === WorkflowType.ROOM_CHANGE ? reason : undefined,
-      itrSource: workflow === WorkflowType.ITR_TO_FLOOR ? itrSource : undefined
+      itrSource: workflow === WorkflowType.ITR_TO_FLOOR ? itrSource : undefined,
+      observations: observations.trim() !== '' ? observations : undefined
     });
     
     // Reset form
@@ -46,6 +61,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
     setDestination('');
     setReason('');
     setItrSource('');
+    setObservations('');
     onOpenChange(false);
   };
 
@@ -54,37 +70,40 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px] rounded-3xl">
-        <DialogHeader><DialogTitle className="text-2xl">Nueva Solicitud de Traslado</DialogTitle></DialogHeader>
+      <DialogContent className="sm:max-w-[500px] rounded-3xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader><DialogTitle className="text-2xl pr-6">Nueva Solicitud de Traslado</DialogTitle></DialogHeader>
         <form id="create-ticket-form" onSubmit={handleSubmit} className="grid gap-6 py-4">
           <div className="grid gap-2">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Tipo de Escenario</Label>
-            <Select value={workflow} onValueChange={(val) => setWorkflow(val as WorkflowType)}>
-              <SelectTrigger className="h-12 rounded-xl"><SelectValue placeholder="Seleccione flujo" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value={WorkflowType.INTERNAL}>Traslado Interno</SelectItem>
-                <SelectItem value={WorkflowType.ITR_TO_FLOOR}>Ingreso ITR</SelectItem>
-                <SelectItem value={WorkflowType.ROOM_CHANGE}>Cambio de Habitación</SelectItem>
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={workflow}
+              onValueChange={(val) => setWorkflow(val as WorkflowType)}
+              options={[
+                { label: "Traslado Interno", value: WorkflowType.INTERNAL },
+                { label: "Ingreso ITR", value: WorkflowType.ITR_TO_FLOOR },
+                { label: "Cambio de Habitación", value: WorkflowType.ROOM_CHANGE }
+              ]}
+              placeholder="Seleccione flujo"
+              showSearch={false}
+            />
           </div>
           
           <div className="grid gap-2">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Origen (Cama Ocupada)</Label>
-            <Select value={origin} onValueChange={(val) => {
-              setOrigin(val);
-              const bed = beds.find(b => b.label === val);
-              if (bed?.patientName) setPatientName(bed.patientName);
-            }}>
-              <SelectTrigger className="h-12 rounded-xl"><SelectValue placeholder="Seleccionar Origen" /></SelectTrigger>
-              <SelectContent>
-                {availableOrigins.map(bed => (
-                  <SelectItem key={bed.id} value={bed.label}>
-                    {bed.label} ({bed.patientName || 'Sin Nombre'})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={origin}
+              onValueChange={(val) => {
+                setOrigin(val);
+                const bed = beds.find(b => b.label === val);
+                if (bed?.patientName) setPatientName(bed.patientName);
+              }}
+              options={availableOrigins.map(bed => ({
+                label: `${bed.label} (${bed.patientName || 'Sin Nombre'})`,
+                value: bed.label
+              }))}
+              placeholder="Seleccionar Origen"
+              searchPlaceholder="Buscar cama de origen..."
+            />
           </div>
 
           <div className="grid gap-2">
@@ -94,41 +113,48 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
 
           <div className="grid gap-2">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Destino (Disponible/Prep)</Label>
-            <Select value={destination} onValueChange={setDestination}>
-              <SelectTrigger className="h-12 rounded-xl"><SelectValue placeholder="Seleccionar Destino" /></SelectTrigger>
-              <SelectContent>
-                {availableDestinations.map(bed => (
-                  <SelectItem key={bed.id} value={bed.label}>
-                    {bed.label} ({bed.status})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={destination}
+              onValueChange={setDestination}
+              options={availableDestinations.map(bed => ({
+                label: `${bed.label} (${bed.status})`,
+                value: bed.label
+              }))}
+              placeholder="Seleccionar Destino"
+              searchPlaceholder="Buscar cama de destino..."
+            />
           </div>
 
           {workflow === WorkflowType.ROOM_CHANGE && (
             <div className="grid gap-2">
               <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Motivo del Cambio</Label>
-              <Select value={reason} onValueChange={setReason}>
-                <SelectTrigger className="h-12 rounded-xl"><SelectValue placeholder="Seleccione Motivo" /></SelectTrigger>
-                <SelectContent>
-                  {ROOM_CHANGE_REASONS.map(r => (<SelectItem key={r} value={r}>{r}</SelectItem>))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={reason}
+                onValueChange={setReason}
+                options={ROOM_CHANGE_REASONS.map(r => ({ label: r, value: r }))}
+                placeholder="Seleccione Motivo"
+                showSearch={false}
+              />
             </div>
           )}
 
           {workflow === WorkflowType.ITR_TO_FLOOR && (
             <div className="grid gap-2">
               <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Origen ITR / Financiador</Label>
-              <Select value={itrSource} onValueChange={setItrSource}>
-                <SelectTrigger className="h-12 rounded-xl"><SelectValue placeholder="Seleccione Financiador" /></SelectTrigger>
-                <SelectContent>
-                  {ITR_SOURCES.map(source => (<SelectItem key={source} value={source}>{source}</SelectItem>))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={itrSource}
+                onValueChange={setItrSource}
+                options={ITR_SOURCES.map(source => ({ label: source, value: source }))}
+                placeholder="Seleccione Financiador"
+                showSearch={false}
+              />
             </div>
           )}
+
+          <div className="grid gap-2">
+            <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Observaciones (Opcional)</Label>
+            <Input placeholder="Notas para la azafata o equipo..." value={observations} onChange={e => setObservations(e.target.value)} className="h-12 rounded-xl" />
+          </div>
         </form>
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} className="rounded-xl h-12 px-6">Cancelar</Button>

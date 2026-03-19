@@ -8,7 +8,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { StatCard } from '../components/dashboard/StatCard';
 import { VolumeBarChart } from '../components/dashboard/VolumeBarChart';
 import { StatusDonutChart } from '../components/dashboard/StatusDonutChart';
-import { getMinutesBetween } from '../lib/utils';
+import { getMinutesBetween, formatBedName } from '../lib/utils';
 
 interface DashboardViewProps {
   tickets: Ticket[];
@@ -142,7 +142,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ tickets }) => {
                       </div>
                       <h4 className="font-bold text-slate-900 text-sm tracking-tight">{t.patientName}</h4>
                       <p className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1.5">
-                        <ArrowRightLeft className="w-3 h-3" /> {t.origin}
+                        <ArrowRightLeft className="w-3 h-3" /> {formatBedName(t.origin)}
                       </p>
                     </div>
                     <div className="flex flex-col items-end gap-2">
@@ -182,9 +182,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ tickets }) => {
                       </div>
                       <h4 className="font-bold text-slate-900 text-sm tracking-tight">{t.patientName}</h4>
                       <div className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase">
-                        <span>{t.origin}</span>
+                        <span>{formatBedName(t.origin)}</span>
                         <ArrowRightLeft className="w-2.5 h-2.5 text-slate-300" />
-                        <span className="text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">{t.destination}</span>
+                        <span className="text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">{t.destination ? formatBedName(t.destination) : 'Pendiente'}</span>
                       </div>
                     </div>
                     <div className="flex flex-col items-end gap-2">

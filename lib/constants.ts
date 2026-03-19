@@ -12,7 +12,7 @@ export const CHANNELS: Channel[] = [
 ];
 
 export const AREAS = [
-  Area.PISO_4, Area.PISO_5, Area.PISO_6, Area.PISO_7, Area.PISO_8, Area.UCO, Area.UTI, Area.ITR
+  Area.PISO_4, Area.PISO_5, Area.PISO_6, Area.PISO_7, Area.PISO_8, Area.HIT, Area.HSS, Area.HUC, Area.HUQ, Area.HUT
 ];
 
 // Mock Beds (Progal Map) - Transformed from API Mock

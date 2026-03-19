@@ -15,7 +15,7 @@ import { Calendar } from '../components/ui/calendar';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table';
 import { Badge } from '../components/ui/badge';
 import { AuditModal } from '../components/AuditModal';
-import { cn, formatDateReadable, calculateTicketMetrics } from '../lib/utils';
+import { cn, formatDateReadable, calculateTicketMetrics, formatBedName } from '../lib/utils';
 
 interface HistoryViewProps {
   tickets: Ticket[];
@@ -213,10 +213,10 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
                 <div className="text-slate-400">ID: {t.id}</div>
               </div>
 
-              <div className="flex items-center gap-3">
-                <span className="text-[10px] font-black text-slate-800 uppercase bg-slate-100 px-2 py-0.5 rounded-lg truncate max-w-[120px]">{t.origin}</span>
+              <div className="flex items-center justify-between gap-2">
+                <span className="flex-1 min-w-0 text-[10px] font-black text-slate-800 uppercase bg-slate-100 px-2 py-1 rounded-lg truncate text-center">{formatBedName(t.origin)}</span>
                 <ArrowRightLeft className="w-3 h-3 text-slate-300 shrink-0" />
-                <span className="text-[10px] font-black text-blue-700 uppercase bg-blue-50 px-2 py-0.5 rounded-lg truncate max-w-[120px]">{t.destination || 'ANULADO'}</span>
+                <span className="flex-1 min-w-0 text-[10px] font-black text-blue-700 uppercase bg-blue-50 px-2 py-1 rounded-lg truncate text-center">{t.destination ? formatBedName(t.destination) : 'ANULADO'}</span>
               </div>
             </Card>
           ))
@@ -254,8 +254,8 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
                       {formatDateReadable(t.date)}
                     </TableCell>
                     <TableCell className="py-5">
-                      <div className="font-bold text-slate-900 text-sm uppercase tracking-tight">{t.patientName}</div>
-                      <div className="text-[9px] text-slate-400 font-mono mt-0.5 font-bold uppercase">{t.id}</div>
+                      <div className="font-black text-slate-950 text-base uppercase tracking-tight">{t.patientName}</div>
+                      <div className="text-[11px] text-slate-400 font-mono mt-0.5 font-bold uppercase">{t.id}</div>
                     </TableCell>
                     <TableCell className="py-5">
                       <Badge variant="outline" className="text-[8px] font-black uppercase tracking-wider bg-slate-50 text-slate-500 border-slate-200 rounded-lg px-2 py-0.5">
@@ -263,10 +263,10 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
                       </Badge>
                     </TableCell>
                     <TableCell className="py-5">
-                      <div className="flex flex-col gap-0.5">
-                        <span className="text-[9px] text-slate-400 font-bold uppercase truncate max-w-[120px]">{t.origin}</span>
-                        <span className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
-                          <ArrowRightLeft className="w-3 h-3 text-slate-300"/> {t.destination || 'N/A'}
+                      <div className="flex flex-col gap-1">
+                        <span className="text-xs text-slate-500 font-bold uppercase truncate max-w-[150px]">{formatBedName(t.origin)}</span>
+                        <span className="flex items-center gap-1.5 text-sm font-black text-slate-900 tracking-tight">
+                          <ArrowRightLeft className="w-3.5 h-3.5 text-slate-300"/> {t.destination ? formatBedName(t.destination) : 'N/A'}
                         </span>
                       </div>
                     </TableCell>

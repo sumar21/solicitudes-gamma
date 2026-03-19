@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { Button } from '../ui/button';
 import { Label } from '../ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
+import { SearchableSelect } from '../ui/searchable-select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { HOSPITAL_LOCATIONS } from '../../lib/constants';
 
@@ -14,6 +14,12 @@ interface AssignBedModalProps {
 
 export const AssignBedModal: React.FC<AssignBedModalProps> = ({ open, onOpenChange, onConfirm }) => {
   const [bedInput, setBedInput] = useState('');
+
+  React.useEffect(() => {
+    if (!open) {
+      setBedInput('');
+    }
+  }, [open]);
 
   const handleConfirm = () => {
     if (bedInput) {
@@ -31,12 +37,16 @@ export const AssignBedModal: React.FC<AssignBedModalProps> = ({ open, onOpenChan
           <p className="text-sm text-slate-500">Seleccione la cama de destino para el paciente.</p>
           <div className="grid gap-2">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Cama / Habitación</Label>
-            <Select value={bedInput} onValueChange={setBedInput}>
-              <SelectTrigger className="h-12 rounded-xl"><SelectValue placeholder="Seleccionar Cama" /></SelectTrigger>
-              <SelectContent>
-                {HOSPITAL_LOCATIONS.filter(l => l.includes('Habitación')).map(loc => (<SelectItem key={loc} value={loc}>{loc}</SelectItem>))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={bedInput}
+              onValueChange={setBedInput}
+              options={HOSPITAL_LOCATIONS.filter(l => l.includes('Habitación')).map(loc => ({
+                label: loc,
+                value: loc
+              }))}
+              placeholder="Seleccionar Cama"
+              searchPlaceholder="Buscar cama..."
+            />
           </div>
         </div>
         <DialogFooter>

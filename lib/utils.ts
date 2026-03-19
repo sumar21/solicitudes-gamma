@@ -105,3 +105,16 @@ export function calculateTicketMetrics(ticket: Ticket) {
     adminTime
   };
 }
+
+/**
+ * Formatea el nombre de la cama para que sea más corto en la vista desktop
+ * Ejemplo: "Habitación 409 HPR - Cama 02" -> "409 - 02"
+ */
+export function formatBedName(bedName: string | undefined): string {
+  if (!bedName) return '';
+  const match = bedName.match(/Habitaci[oó]n\s+([A-Za-z0-9]+)(?:\s+HPR)?\s*-\s*Cama\s+([A-Za-z0-9]+)/i);
+  if (match) {
+    return `${match[1]} - ${match[2]}`;
+  }
+  return bedName;
+}

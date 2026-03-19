@@ -22,14 +22,16 @@ export enum Role {
 }
 
 export enum Area {
-  PISO_4 = 'Internación general piso 4',
-  PISO_5 = 'Internación general piso 5',
-  PISO_6 = 'Internación general piso 6',
-  PISO_7 = 'Internación general piso 7',
-  PISO_8 = 'Internación general piso 8',
-  UCO = 'UCO',
-  UTI = 'UTI',
-  ITR = 'ITR',
+  PISO_4 = 'Internacion 4° Piso HPR',
+  PISO_5 = 'Internacion 5° Piso HPR',
+  PISO_6 = 'Internacion 6° Piso HPR',
+  PISO_7 = 'Internacion 7° Piso HPR',
+  PISO_8 = 'Internacion 8° Piso HPR',
+  HIT = 'Internación Transitoria HPR',
+  HSS = 'Servicio de Neurofisiologia (Sueño) HPR',
+  HUC = 'Unidad Coronaria HPR',
+  HUQ = 'Unidad Recuperaciòn Postquirùrgica',
+  HUT = 'Unidad de Terapia Intensiva HPR',
 }
 
 export enum BedStatus {
@@ -46,6 +48,13 @@ export interface Bed {
   area: Area;
   status: BedStatus;
   patientName?: string; // If occupied
+  roomCode?: string;
+  bedCode?: string;
+  eventOrigin?: string;
+  eventNumber?: number;
+  patientCode?: string;
+  institution?: string;
+  attendingPhysician?: string;
 }
 
 export enum ChannelType {
@@ -108,6 +117,8 @@ export interface Notification {
   isRead: boolean;
   ticketId?: string;
   sede: SedeType;
+  originArea?: Area;
+  destinationArea?: Area;
 }
 
 export enum TicketStatus {
@@ -140,4 +151,5 @@ export interface Ticket {
   isBedClean: boolean;
   isReasonValidated: boolean;
   targetBedOriginalStatus?: BedStatus; // To track if it was Available or Prep
+  observations?: string;
 }

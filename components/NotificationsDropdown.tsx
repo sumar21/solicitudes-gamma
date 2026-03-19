@@ -47,52 +47,52 @@ export const NotificationsDropdown: React.FC<NotificationsDropdownProps> = ({
   };
 
   return (
-    <Card className="absolute right-0 mt-3 w-80 sm:w-[400px] shadow-2xl border-slate-200 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200 rounded-2xl">
+    <Card className="flex flex-col overflow-hidden rounded-2xl border border-slate-200/50 shadow-none relative">
       {/* Header aligned with Sidebar Zinc theme */}
-      <div className="px-5 py-4 bg-zinc-950 text-white flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
+      <div className="px-4 py-4 bg-zinc-950 text-white flex items-center justify-between shrink-0 relative z-10">
+        <div className="flex items-center gap-3">
           <div className="relative">
-            <Bell className="w-4 h-4 text-white/70" />
-            {unreadCount > 0 && <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full border border-zinc-950" />}
+            <Bell className="w-5 h-5 text-white" />
+            {unreadCount > 0 && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-zinc-950" />}
           </div>
-          <div className="flex items-center gap-2">
-            <h3 className="font-bold text-xs tracking-tight uppercase">Notificaciones</h3>
+          <div className="flex flex-col">
+            <h3 className="font-black text-[11px] tracking-[0.15em] uppercase leading-none">Notificaciones</h3>
             {unreadCount > 0 && (
-              <span className="bg-red-500 text-[10px] px-1.5 py-0.5 rounded-full font-black leading-none min-w-[18px] text-center">
-                {unreadCount}
+              <span className="text-[9px] font-bold text-zinc-500 mt-1 uppercase tracking-wider">
+                {unreadCount} pendientes
               </span>
             )}
           </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
           {unreadCount > 0 && (
             <Button 
               variant="ghost" 
               size="sm" 
-              className="text-[9px] h-7 font-black uppercase tracking-widest text-white/40 hover:text-white hover:bg-white/10 px-2"
+              className="text-[10px] h-8 font-black uppercase tracking-widest text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 px-3 rounded-lg"
               onClick={onMarkAllAsRead}
             >
-              Marcar todo leído
+              Limpiar
             </Button>
           )}
           <Button 
             variant="ghost" 
             size="icon" 
-            className="h-7 w-7 text-white/40 hover:text-white rounded-full"
+            className="h-8 w-8 text-white/40 hover:text-white hover:bg-white/10 rounded-full"
             onClick={onClose}
           >
-            <X className="w-3.5 h-3.5" />
+            <X className="w-4 h-4" />
           </Button>
         </div>
       </div>
 
-      <div className="max-h-[440px] overflow-y-auto bg-white">
+      <div className="max-h-[60vh] sm:max-h-[440px] overflow-y-auto bg-white overscroll-contain">
         {notifications.length === 0 ? (
           <div className="p-12 text-center">
-            <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-slate-100">
-              <Bell className="w-5 h-5 text-slate-200" />
+            <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-slate-100">
+              <Bell className="w-6 h-6 text-slate-200" />
             </div>
-            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300">Bandeja de entrada vacía</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300">Sin novedades</p>
           </div>
         ) : (
           <div className="divide-y divide-slate-100">
@@ -102,40 +102,40 @@ export const NotificationsDropdown: React.FC<NotificationsDropdownProps> = ({
                 <div 
                   key={n.id} 
                   className={cn(
-                    "p-5 hover:bg-slate-50/80 transition-all cursor-pointer relative flex gap-4 group border-l-2 border-transparent",
-                    !n.isRead ? "bg-blue-50/20 border-l-blue-500" : "hover:border-l-slate-200"
+                    "p-4 sm:p-5 hover:bg-slate-50/80 transition-all cursor-pointer relative flex gap-4 group border-l-4 border-transparent",
+                    !n.isRead ? "bg-blue-50/30 border-l-blue-500" : "hover:border-l-slate-200"
                   )}
                   onClick={() => onNotificationClick(n)}
                 >
                   <div className={cn(
-                    "mt-0.5 shrink-0 w-8 h-8 rounded-xl flex items-center justify-center border shadow-sm transition-transform group-hover:scale-105",
+                    "mt-0.5 shrink-0 w-10 h-10 rounded-2xl flex items-center justify-center border shadow-sm transition-transform group-hover:scale-105",
                     style.bg
                   )}>
                     {style.icon}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between mb-0.5">
+                    <div className="flex items-start justify-between mb-1">
                       <p className={cn(
-                        "text-xs font-bold leading-none tracking-tight transition-colors", 
+                        "text-sm font-black leading-tight tracking-tight transition-colors", 
                         !n.isRead ? "text-slate-900" : "text-slate-500"
                       )}>
                         {n.title}
                       </p>
                       {!n.isRead && (
-                        <div className="w-1.5 h-1.5 bg-blue-500 rounded-full mt-0.5 ring-4 ring-blue-500/10" />
+                        <div className="w-2 h-2 bg-blue-500 rounded-full mt-1 shrink-0 ring-4 ring-blue-500/10" />
                       )}
                     </div>
-                    <p className="text-[11px] text-slate-500 leading-normal font-medium mt-1 pr-2">
+                    <p className="text-xs text-slate-600 leading-relaxed font-medium mt-1 pr-1">
                       {n.message}
                     </p>
-                    <div className="flex items-center justify-between mt-2.5">
-                      <div className="flex items-center gap-1.5 text-[9px] text-slate-400 font-bold tabular-nums uppercase tracking-wider">
-                        <Clock className="w-3 h-3 opacity-50" />
+                    <div className="flex items-center justify-between mt-3">
+                      <div className="flex items-center gap-2 text-[10px] text-slate-400 font-bold tabular-nums uppercase tracking-wider">
+                        <Clock className="w-3.5 h-3.5 opacity-50" />
                         {n.timestamp}
                       </div>
                       {n.ticketId && (
-                        <span className="text-[8px] font-black font-mono text-blue-600 bg-blue-100/50 px-1.5 py-0.5 rounded uppercase tracking-tighter opacity-0 group-hover:opacity-100 transition-opacity">
-                          Detalle {n.ticketId}
+                        <span className="text-[9px] font-black font-mono text-blue-600 bg-blue-100/50 px-2 py-1 rounded-lg uppercase tracking-tighter opacity-0 group-hover:opacity-100 transition-opacity">
+                          #{n.ticketId.split('-')[1]}
                         </span>
                       )}
                     </div>
@@ -147,9 +147,9 @@ export const NotificationsDropdown: React.FC<NotificationsDropdownProps> = ({
         )}
       </div>
       
-      <div className="p-3 bg-slate-50/50 border-t border-slate-100">
-        <Button variant="ghost" className="w-full text-[9px] h-9 text-slate-400 hover:text-slate-900 font-black uppercase tracking-[0.2em] transition-all hover:bg-white border border-transparent hover:border-slate-200 rounded-xl">
-          Centro de Actividad
+      <div className="p-4 bg-slate-50/50 border-t border-slate-100 shrink-0">
+        <Button variant="ghost" className="w-full text-[10px] h-10 text-slate-500 hover:text-slate-900 font-black uppercase tracking-[0.2em] transition-all hover:bg-white border border-slate-200 rounded-xl shadow-sm">
+          Ver Actividad Completa
         </Button>
       </div>
     </Card>

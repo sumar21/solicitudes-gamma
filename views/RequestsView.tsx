@@ -13,7 +13,7 @@ import { Badge } from '../components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table';
 import { StatusBadge } from '../components/StatusBadge';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
-import { cn } from '../lib/utils';
+import { cn, formatBedName } from '../lib/utils';
 
 interface RequestsViewProps {
   tickets: Ticket[];
@@ -26,7 +26,6 @@ interface RequestsViewProps {
   onSort: (key: SortKey) => void;
   onNewRequest: () => void;
   onValidateReason: (id: string) => void;
-  onRejectTicket: (id: string) => void;
   onAssignBed: (id: string) => void;
   onHousekeepingAction: (id: string, action: 'mark_dirty' | 'mark_clean') => void;
   onStartTransport: (id: string) => void;
@@ -40,7 +39,7 @@ interface RequestsViewProps {
 
 const ROLE_LABELS: Partial<Record<Role, string>> = {
   [Role.ADMIN]: 'Admin',
-  [Role.ADMISSION]: 'Adm.',
+  [Role.ADMISSION]: 'Admisión',
   [Role.HOSTESS]: 'Azafata',
 };
 
@@ -53,7 +52,7 @@ const WORKFLOW_SHORT: Record<WorkflowType, string> = {
 export const RequestsView: React.FC<RequestsViewProps> = ({
   tickets, activeRole, setActiveRole, averageWaitTime,
   searchTerm, setSearchTerm, sortConfig, onSort,
-  onNewRequest, onValidateReason, onRejectTicket, onAssignBed,
+  onNewRequest, onValidateReason, onAssignBed,
   onHousekeepingAction, onStartTransport, onCompleteTransport,
   onRoomReady, onConfirmReception, onConsolidate, currentUser, beds
 }) => {
@@ -61,7 +60,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   const sortedTickets = useMemo(() => {
     let filtered = tickets.filter(t => t.status !== TicketStatus.COMPLETED);
 
-    if (activeRole !== Role.ADMIN && activeRole !== Role.COORDINATOR) {
+    if (activeRole !== Role.ADMIN && activeRole !== Role.COORDINATOR && activeRole !== Role.ADMISSION) {
       filtered = filtered.filter(t => t.status !== TicketStatus.REJECTED);
     }
 
@@ -203,20 +202,22 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     <div className="p-4 md:p-8 animate-in slide-in-from-right-4 duration-300 max-w-full space-y-4 md:space-y-6">
       <div className="flex flex-col lg:flex-row items-center justify-between gap-4">
         <div className="flex flex-col sm:flex-row items-center gap-3 w-full lg:w-auto">
-          <div className="flex items-center gap-2 w-full sm:w-auto bg-white p-1 rounded-xl border border-slate-200 shadow-sm overflow-x-auto no-scrollbar">
-            {Object.entries(ROLE_LABELS).map(([k, v]) => (
-              <button
-                key={k}
-                onClick={() => setActiveRole(k as Role)}
-                className={cn(
-                  "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-tight whitespace-nowrap transition-all",
-                  activeRole === k ? "bg-zinc-950 text-white shadow-md scale-105" : "text-slate-400 hover:bg-slate-100"
-                )}
-              >
-                {v}
-              </button>
-            ))}
-          </div>
+          {(currentUser?.role === Role.ADMIN || currentUser?.role === Role.ADMISSION) && (
+            <div className="flex items-center gap-2 w-full sm:w-auto bg-white p-1 rounded-xl border border-slate-200 shadow-sm overflow-x-auto no-scrollbar">
+              {Object.entries(ROLE_LABELS).map(([k, v]) => (
+                <button
+                  key={k}
+                  onClick={() => setActiveRole(k as Role)}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-tight whitespace-nowrap transition-all",
+                    activeRole === k ? "bg-zinc-950 text-white shadow-md scale-105" : "text-slate-400 hover:bg-slate-100"
+                  )}
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="flex items-center gap-3 px-4 py-2 bg-emerald-50 border border-emerald-100 rounded-xl shadow-sm whitespace-nowrap w-full sm:w-auto">
             <div className="p-1.5 bg-emerald-100 rounded-full text-emerald-600">
               <Timer className="w-3.5 h-3.5" />
@@ -233,7 +234,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
             <Input placeholder="Paciente o ID..." className="pl-10 h-10 rounded-xl text-xs" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
             {searchTerm && <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="w-3.5 h-3.5" /></button>}
           </div>
-          {(activeRole === Role.COORDINATOR || activeRole === Role.ADMISSION || activeRole === Role.ADMIN) && (
+          {(currentUser?.role === Role.ADMIN || currentUser?.role === Role.ADMISSION) && (
             <Button onClick={onNewRequest} className="h-10 bg-zinc-950 hover:bg-black rounded-xl shadow-lg px-4 flex items-center gap-2 shrink-0">
               <Plus className="w-4 h-4 text-white" />
               <span className="hidden sm:inline text-xs font-bold">Solicitud</span>
@@ -270,27 +271,52 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                 </div>
               </div>
 
-              <div className="flex flex-col gap-2 p-3 bg-slate-50/50 rounded-xl border border-slate-100">
-                <div className="flex items-center gap-3">
-                  <div className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center shrink-0">
-                    <MapPin className="w-3 h-3 text-slate-600" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[8px] font-black uppercase text-slate-400 leading-none mb-0.5">Origen</p>
-                    <p className="text-xs font-bold text-slate-700 truncate">{ticket.origin}</p>
+              <div className="flex items-center justify-between p-3 bg-slate-50/50 rounded-xl border border-slate-100">
+                <div className="flex flex-col min-w-0 flex-1">
+                  <p className="text-[8px] font-black uppercase text-slate-400 leading-none mb-1">Origen</p>
+                  <div className="flex items-center gap-1.5 w-full">
+                    <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <p className="text-xs font-bold text-slate-700 truncate">{formatBedName(ticket.origin)}</p>
                   </div>
                 </div>
-                {ticket.destination && (
-                  <div className="flex items-center gap-3">
-                    <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
-                      <ArrowRightLeft className="w-3 h-3 text-blue-600" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[8px] font-black uppercase text-blue-400 leading-none mb-0.5">Destino Final</p>
-                      <p className="text-xs font-black text-blue-900 truncate">{ticket.destination}</p>
-                    </div>
+                
+                <div className="flex flex-col items-center justify-center px-2 shrink-0">
+                  <ArrowRightLeft className="w-3.5 h-3.5 text-slate-300" />
+                </div>
+
+                <div className="flex flex-col min-w-0 flex-1 items-end text-right">
+                  <p className="text-[8px] font-black uppercase text-blue-400 leading-none mb-1">Destino</p>
+                  <div className="flex items-center gap-1.5 justify-end w-full">
+                    <p className="text-xs font-black text-blue-900 truncate">{ticket.destination ? formatBedName(ticket.destination) : 'Pendiente'}</p>
+                    <BedDouble className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                   </div>
-                )}
+                  {ticket.targetBedOriginalStatus && (
+                    <p className="text-[9px] font-bold text-slate-500 mt-1 uppercase">
+                      Est: {ticket.targetBedOriginalStatus}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {ticket.observations && (
+                <div className="p-2.5 bg-amber-50 border border-amber-100 rounded-xl flex items-start gap-2">
+                  <Info className="w-3.5 h-3.5 text-amber-600 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-[9px] font-black uppercase text-amber-800 mb-0.5">Observaciones</p>
+                    <p className="text-xs font-medium text-amber-900 leading-tight">{ticket.observations}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Status Context Helper */}
+              <div className="text-[10px] font-medium text-slate-500 bg-slate-50 px-3 py-2 rounded-lg border border-slate-100 flex items-center gap-2">
+                <Info className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                <span>
+                  {ticket.status === TicketStatus.WAITING_ROOM && "Esperando que la habitación de destino esté lista."}
+                  {ticket.status === TicketStatus.IN_TRANSIT && "Habitación lista. Esperando inicio de traslado."}
+                  {ticket.status === TicketStatus.IN_TRANSPORT && "Traslado en curso. Esperando confirmación de recepción."}
+                  {ticket.status === TicketStatus.WAITING_CONSOLIDATION && "Paciente recibido. Pendiente consolidar en sistema."}
+                </span>
               </div>
 
               {ticket.rejectionReason && (
@@ -313,17 +339,19 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
             <TableHeader className="bg-slate-50/50 border-b border-slate-200">
               <TableRow>
                 <SortHeader label="Estado" sortKey="status" />
+                <TableHead>Tarea</TableHead>
                 <SortHeader label="Paciente" sortKey="patientName" />
                 <SortHeader label="Origen" sortKey="origin" />
-                <SortHeader label="Hora" sortKey="createdAt" />
-                <TableHead className="min-w-[180px]">Detalles / Motivos</TableHead>
+                <TableHead>Destino</TableHead>
+                <TableHead>Estado Destino</TableHead>
+                <TableHead className="min-w-[180px]">Observaciones</TableHead>
                 <TableHead className="text-right whitespace-nowrap">Acciones</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {sortedTickets.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="h-48 text-center text-slate-500 bg-white">
+                  <TableCell colSpan={8} className="h-48 text-center text-slate-500 bg-white">
                     <div className="flex flex-col items-center justify-center gap-3 opacity-20">
                       <Search className="w-10 h-10" />
                       <p className="text-sm font-black uppercase tracking-widest">Sin resultados</p>
@@ -333,19 +361,56 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
               ) : (
                 sortedTickets.map((ticket) => (
                   <TableRow key={ticket.id} className={cn("group hover:bg-slate-50/60 transition-colors", ticket.status === TicketStatus.REJECTED && "bg-red-50/40")}>
-                    <TableCell><StatusBadge status={ticket.status} /></TableCell>
                     <TableCell>
-                      <div className="font-bold text-slate-900 text-sm uppercase tracking-tight">{ticket.patientName}</div>
-                      <div className="text-[10px] text-slate-400 font-mono mt-0.5 uppercase">{ticket.id}</div>
+                      <StatusBadge status={ticket.status} />
+                      <div className="flex items-center gap-1.5 text-slate-400 text-[10px] font-bold tabular-nums mt-2">
+                        <Clock className="w-3 h-3 opacity-50" /> {ticket.createdAt}
+                      </div>
                     </TableCell>
                     <TableCell>
-                      <div className="text-slate-600 text-xs font-bold uppercase">{ticket.origin}</div>
-                      {ticket.destination && <div className="flex items-center gap-1.5 mt-1"><ArrowRightLeft className="w-2.5 h-2.5 text-slate-300" /><span className="text-[10px] font-black text-blue-600 bg-blue-50 px-1 rounded">{ticket.destination}</span></div>}
+                      <div className="flex flex-col gap-1.5 items-start">
+                        <Badge variant="outline" className="text-[9px] bg-white text-slate-400 border-slate-200 font-black uppercase tracking-tight">
+                          {ticket.workflow === WorkflowType.INTERNAL ? 'Interno' : ticket.workflow === WorkflowType.ITR_TO_FLOOR ? 'Ingreso ITR' : 'Cambio Hab.'}
+                        </Badge>
+                        <div className="text-[10px] text-slate-500 mt-1">
+                          {ticket.status === TicketStatus.WAITING_ROOM && "Esperando habitación lista."}
+                          {ticket.status === TicketStatus.IN_TRANSIT && "Esperando inicio de traslado."}
+                          {ticket.status === TicketStatus.IN_TRANSPORT && "Esperando confirmación de recepción."}
+                          {ticket.status === TicketStatus.WAITING_CONSOLIDATION && "Pendiente consolidar en PROGAL."}
+                        </div>
+                        {ticket.changeReason && (
+                          <div className="flex items-center gap-1.5 text-[9px] font-black text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200/50 uppercase mt-1">
+                            <Info className="w-3 h-3" /> {ticket.changeReason}
+                          </div>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="font-black text-slate-950 text-base uppercase tracking-tight">{ticket.patientName}</div>
+                      <div className="text-[11px] text-slate-400 font-mono mt-0.5 uppercase">{ticket.id}</div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="text-slate-800 text-sm font-black uppercase tracking-tight">{formatBedName(ticket.origin)}</div>
+                    </TableCell>
+                    <TableCell>
+                      {ticket.destination ? (
+                        <div className="text-slate-800 text-sm font-black uppercase tracking-tight">{formatBedName(ticket.destination)}</div>
+                      ) : (
+                        <span className="text-xs text-slate-400 italic">-</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-col gap-1">
-                        <div className="flex items-center gap-1.5 text-slate-400 text-[10px] font-bold tabular-nums"><Clock className="w-3 h-3 opacity-50" /> {ticket.createdAt}</div>
-                        {ticket.bedAssignedAt && <Badge variant="outline" className="text-[8px] py-0 px-1 border-emerald-100 bg-emerald-50 text-emerald-600 font-black uppercase">Cama: {ticket.bedAssignedAt}</Badge>}
+                        {ticket.targetBedOriginalStatus ? (
+                          <span className="text-[10px] font-bold text-slate-500 uppercase">
+                            {ticket.targetBedOriginalStatus}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold text-slate-400 uppercase">
+                            -
+                          </span>
+                        )}
+                        {ticket.bedAssignedAt && <Badge variant="outline" className="text-[8px] py-0 px-1 border-emerald-100 bg-emerald-50 text-emerald-600 font-black uppercase w-fit">Cama: {ticket.bedAssignedAt}</Badge>}
                       </div>
                     </TableCell>
                     <TableCell>
@@ -359,13 +424,13 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                           </div>
                         ) : (
                           <>
-                            <Badge variant="outline" className="text-[9px] bg-white text-slate-400 border-slate-200 font-black uppercase tracking-tight">
-                              {ticket.workflow === WorkflowType.INTERNAL ? 'Interno' : ticket.workflow === WorkflowType.ITR_TO_FLOOR ? 'Ingreso ITR' : 'Cambio Hab.'}
-                            </Badge>
-                            {ticket.changeReason && (
-                              <div className="flex items-center gap-1.5 text-[9px] font-black text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200/50 uppercase">
-                                <Info className="w-3 h-3" /> {ticket.changeReason}
+                            {ticket.observations ? (
+                              <div className="flex items-start gap-1.5 text-[10px] font-medium text-amber-800 bg-amber-50 p-2 rounded border border-amber-200/50 max-w-[250px]">
+                                <Info className="w-3 h-3 shrink-0 mt-0.5 text-amber-600" /> 
+                                <span className="leading-tight break-words">{ticket.observations}</span>
                               </div>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 italic">-</span>
                             )}
                           </>
                         )}

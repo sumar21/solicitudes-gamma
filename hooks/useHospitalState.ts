@@ -4,7 +4,7 @@ import React, { useState, useMemo } from 'react';
 import { GoogleGenAI } from "@google/genai";
 import {
   WorkflowType, Role, SedeType, Ticket, TicketStatus, ChatMessage, User, Area,
-  Notification, ViewMode, SortConfig, Bed, BedStatus
+  Notification, NotificationType, ViewMode, SortConfig, Bed, BedStatus
 } from '../types';
 import { CHANNELS, INITIAL_USERS, MOCK_TICKETS, MOCK_BEDS } from '../lib/constants';
 
@@ -14,8 +14,22 @@ export const useHospitalState = () => {
     return saved ? JSON.parse(saved) : null;
   });
 
-  const [currentView, setCurrentView] = useState<ViewMode>('HOME');
-  const [activeRole, setActiveRole] = useState<Role>(Role.ADMISSION);
+  const [currentView, setCurrentView] = useState<ViewMode>(() => {
+    const saved = sessionStorage.getItem('mediflow_user');
+    if (saved) {
+      const user = JSON.parse(saved);
+      if (user.role === Role.HOSTESS) return 'REQUESTS';
+    }
+    return 'HOME';
+  });
+  const [activeRole, setActiveRole] = useState<Role>(() => {
+    const saved = sessionStorage.getItem('mediflow_user');
+    if (saved) {
+      const user = JSON.parse(saved);
+      return user.role;
+    }
+    return Role.ADMISSION;
+  });
   const [activeChannelId, setActiveChannelId] = useState<string>('CH-GEN');
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'createdAt', direction: 'desc' });
   const [requestsSearchTerm, setRequestsSearchTerm] = useState('');
@@ -27,6 +41,17 @@ export const useHospitalState = () => {
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPass, setLoginPass] = useState('');
   const [loginError, setLoginError] = useState('');
+
+  const filteredNotifications = useMemo(() => {
+    if (!currentUser) return [];
+    if (currentUser.role !== Role.HOSTESS) return notifications;
+    
+    return notifications.filter(n => {
+      const isOrigin = n.originArea && currentUser.assignedAreas?.includes(n.originArea);
+      const isDest = n.destinationArea && currentUser.assignedAreas?.includes(n.destinationArea);
+      return isOrigin || isDest;
+    });
+  }, [notifications, currentUser]);
 
   // ... existing code ...
 
@@ -85,6 +110,11 @@ export const useHospitalState = () => {
     if (user && loginPass === '1234') {
       setCurrentUser(user);
       setActiveRole(user.role);
+      if (user.role === Role.HOSTESS) {
+        setCurrentView('REQUESTS');
+      } else {
+        setCurrentView('HOME');
+      }
       sessionStorage.setItem('mediflow_user', JSON.stringify(user));
       setLoginError('');
     } else {
@@ -165,8 +195,8 @@ export const useHospitalState = () => {
   };
 
   const handleCreateTicket = (data: Partial<Ticket>) => {
-    if (activeRole !== Role.ADMISSION && activeRole !== Role.ADMIN) {
-      alert("Solo Admisión puede crear solicitudes.");
+    if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) {
+      alert("Solo Admisión o Admin pueden crear solicitudes.");
       return;
     }
 
@@ -199,7 +229,8 @@ export const useHospitalState = () => {
       isReasonValidated: true,
       targetBedOriginalStatus: targetBed.status,
       itrSource: data.itrSource,
-      changeReason: data.changeReason
+      changeReason: data.changeReason,
+      observations: data.observations
     };
 
     setTickets(prev => [newTicket, ...prev]);
@@ -213,6 +244,27 @@ export const useHospitalState = () => {
     }));
 
     sendSystemLog(`🆕 NUEVA SOLICITUD: ${newTicket.patientName} de ${newTicket.origin} a ${newTicket.destination}`);
+
+    // Add notification logic based on bed status
+    const isPrep = targetBed.status === BedStatus.PREPARATION;
+    
+    const newNotification: Notification = {
+      id: `NOTIF-${Date.now()}`,
+      type: NotificationType.NEW_TICKET,
+      title: isPrep ? 'Traslado en Preparación' : 'Solicitud de Traslado',
+      message: isPrep 
+        ? `${newTicket.patientName}: Origen ${newTicket.origin} -> Destino ${newTicket.destination} (En Preparación)`
+        : `Confirmar disponibilidad de ${newTicket.destination} para ${newTicket.patientName}`,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      isRead: false,
+      ticketId: newTicket.id,
+      sede: newTicket.sede,
+      originArea: sourceBed.area,
+      destinationArea: targetBed.area
+    };
+    
+    setNotifications(prev => [newNotification, ...prev]);
+
     setCurrentView('REQUESTS');
   };
 
@@ -232,6 +284,22 @@ export const useHospitalState = () => {
 
     // Cama destino → ASSIGNED
     setBeds(prev => prev.map(b => b.id === targetBed.id ? { ...b, status: BedStatus.ASSIGNED } : b));
+
+    // Add notification for Origin Hostess and Admission
+    const sourceBed = beds.find(b => b.label === ticket.origin);
+    const newNotification: Notification = {
+      id: `NOTIF-${Date.now()}`,
+      type: NotificationType.STATUS_UPDATE,
+      title: 'Habitación Lista',
+      message: `La habitación ${ticket.destination} está lista. ${ticket.patientName} puede ser trasladado desde ${ticket.origin}.`,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      isRead: false,
+      ticketId: ticket.id,
+      sede: ticket.sede,
+      originArea: sourceBed?.area,
+      destinationArea: targetBed.area
+    };
+    setNotifications(prev => [newNotification, ...prev]);
 
     sendSystemLog(`✅ HABITACIÓN LISTA: ${ticket.destination} preparada para ${ticket.patientName}. Azafata de origen: iniciar traslado.`);
   };
@@ -263,12 +331,27 @@ export const useHospitalState = () => {
       return b;
     }));
 
+    // Add notification for Admission
+    const newNotification: Notification = {
+      id: `NOTIF-${Date.now()}`,
+      type: NotificationType.STATUS_UPDATE,
+      title: 'Recepción Confirmada',
+      message: `El paciente ${ticket.patientName} ha sido recibido en ${ticket.destination}. Pendiente consolidar en PROGAL.`,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      isRead: false,
+      ticketId: ticket.id,
+      sede: ticket.sede,
+      originArea: sourceBed.area,
+      destinationArea: targetBed.area
+    };
+    setNotifications(prev => [newNotification, ...prev]);
+
     sendSystemLog(`✅ RECEPCIÓN OK: ${ticket.patientName} internado en ${ticket.destination}. Cama ${ticket.origin} pasa a limpieza. Admisión: consolidar en PROGAL.`);
   };
 
   const handleConsolidate = (ticketId: string) => {
-    if (activeRole !== Role.ADMISSION && activeRole !== Role.ADMIN) {
-      alert("Solo Admisión puede consolidar en PROGAL.");
+    if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) {
+      alert("Solo Admisión o Admin pueden consolidar en PROGAL.");
       return;
     }
 
@@ -282,45 +365,27 @@ export const useHospitalState = () => {
       completedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     } : t));
 
-    sendSystemLog(`🏥 CONSOLIDADO EN PROGAL: Traslado de ${ticket.patientName} finalizado.`);
-  };
+    // Add notification for all relevant users
+    const sourceBed = beds.find(b => b.label === ticket.origin);
+    const targetBed = beds.find(b => b.label === ticket.destination);
+    const newNotification: Notification = {
+      id: `NOTIF-${Date.now()}`,
+      type: NotificationType.STATUS_UPDATE,
+      title: 'Traslado Finalizado',
+      message: `El traslado de ${ticket.patientName} ha sido consolidado en PROGAL.`,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      isRead: false,
+      ticketId: ticket.id,
+      sede: ticket.sede,
+      originArea: sourceBed?.area,
+      destinationArea: targetBed?.area
+    };
+    setNotifications(prev => [newNotification, ...prev]);
 
-  const handleRejectAction = (id: string, reason: string) => {
-    if (activeRole !== Role.HOSTESS && activeRole !== Role.ADMIN) {
-      alert("Solo Azafatas pueden rechazar solicitudes.");
-      return;
-    }
-
-    if (!reason) return;
-    const ticket = tickets.find(t => t.id === id);
-
-    if (ticket && ticket.destination) {
-      // Revert target bed status if it was assigned
-      const targetBed = beds.find(b => b.label === ticket.destination);
-      if (targetBed) {
-        setBeds(prev => prev.map(b => {
-          if (b.id === targetBed.id) {
-            // Revert to original status if tracked, otherwise guess based on logic
-            return { ...b, status: ticket.targetBedOriginalStatus || BedStatus.AVAILABLE };
-          }
-          return b;
-        }));
-      }
-    }
-
-    setTickets(prev => prev.map(t =>
-      t.id === id
-        ? {
-          ...t,
-          status: TicketStatus.REJECTED,
-          completedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          rejectionReason: reason
-        }
-        : t
-    ));
-    if (ticket) {
-      sendSystemLog(`❌ SOLICITUD RECHAZADA: Ticket ${ticket.id} anulado. Motivo: ${reason}`);
-    }
+    sendSystemLog(`🔄 Sincronizando mapa de camas con PROGAL...`);
+    setTimeout(() => {
+      sendSystemLog(`🏥 CONSOLIDADO EN PROGAL: Traslado de ${ticket.patientName} finalizado. Mapa de camas actualizado.`);
+    }, 1000);
   };
 
   const handleStartTransport = (ticketId: string) => {
@@ -335,6 +400,23 @@ export const useHospitalState = () => {
       transportStartedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     } : t));
 
+    // Add notification for Destination Hostess and Admission
+    const sourceBed = beds.find(b => b.label === ticket.origin);
+    const targetBed = beds.find(b => b.label === ticket.destination);
+    const newNotification: Notification = {
+      id: `NOTIF-${Date.now()}`,
+      type: NotificationType.STATUS_UPDATE,
+      title: 'Traslado en Curso',
+      message: `${ticket.patientName} está en camino hacia ${ticket.destination}.`,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      isRead: false,
+      ticketId: ticket.id,
+      sede: ticket.sede,
+      originArea: sourceBed?.area,
+      destinationArea: targetBed?.area
+    };
+    setNotifications(prev => [newNotification, ...prev]);
+
     sendSystemLog(`🚑 TRASLADO INICIADO: ${ticket.patientName} en camino de ${ticket.origin} → ${ticket.destination}. Azafata destino: confirmar recepción.`);
   };
 
@@ -343,6 +425,14 @@ export const useHospitalState = () => {
     const updatedUser = { ...currentUser, assignedAreas: areas };
     setCurrentUser(updatedUser);
     sessionStorage.setItem('mediflow_user', JSON.stringify(updatedUser));
+  };
+
+  const handleMarkNotificationRead = (id: string) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+  };
+
+  const handleMarkAllNotificationsRead = () => {
+    setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
   };
 
   return {
@@ -355,6 +445,7 @@ export const useHospitalState = () => {
       requestsSearchTerm,
       isChatOpen,
       notifications,
+      filteredNotifications,
       tickets,
       filteredTickets,
       chatMessages,
@@ -381,8 +472,9 @@ export const useHospitalState = () => {
       handleRoomReady,
       handleConfirmReception,
       handleConsolidate,
-      handleRejectAction,
       handleUpdateUserAreas,
+      handleMarkNotificationRead,
+      handleMarkAllNotificationsRead,
       // Placeholders for compatibility if needed
       handleValidateTicket: (id: string) => { },
       handleAssignBedAction: (id: string, bed: string) => { },
