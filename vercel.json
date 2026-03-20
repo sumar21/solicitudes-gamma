@@ -1,7 +1,12 @@
 {
   "installCommand": "npm install",
   "buildCommand": "npm run build",
-"rewrites": [
+  "functions": {
+    "api/**/*.ts": {
+      "runtime": "@vercel/node@3"
+    }
+  },
+  "rewrites": [
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }
