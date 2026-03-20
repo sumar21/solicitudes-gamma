@@ -8,7 +8,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { StatCard } from '../components/dashboard/StatCard';
 import { VolumeBarChart } from '../components/dashboard/VolumeBarChart';
 import { StatusDonutChart } from '../components/dashboard/StatusDonutChart';
-import { getMinutesBetween, formatBedName } from '../lib/utils';
+import { calculateTicketMetrics, formatBedName } from '../lib/utils';
 
 interface DashboardViewProps {
   tickets: Ticket[];
@@ -26,16 +26,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ tickets }) => {
       t.status === TicketStatus.IN_TRANSIT
     );
 
-    // Calcular Espera Media Real (de tickets completados)
-    const completedWithTime = completed.filter(t => t.createdAt && (t.bedAssignedAt || t.completedAt));
-    const totalWaitTime = completedWithTime.reduce((acc, t) => {
-      // Usamos bedAssignedAt como hito de "fin de espera" para el ingreso
-      return acc + getMinutesBetween(t.createdAt, t.bedAssignedAt || t.completedAt);
+    // Espera Media: usa calculateTicketMetrics (misma lógica que la auditoría)
+    const completedWithTime = completed.filter(t => t.createdAt && t.completedAt);
+    const totalCycleTime = completedWithTime.reduce((acc, t) => {
+      return acc + calculateTicketMetrics(t).totalCycleTime;
     }, 0);
-    
-    const avgWait = completedWithTime.length > 0 
-      ? Math.round(totalWaitTime / completedWithTime.length) 
-      : 0;
+
+    const avgWait = completedWithTime.length > 0
+      ? Math.round(totalCycleTime / completedWithTime.length)
+      : null;
 
     return { active, completed, pending, inProcess, avgWait };
   }, [tickets]);
@@ -48,7 +47,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ tickets }) => {
     const isActiveHigh = metrics.active.length > 8;
 
     // Umbral de Espera: 40 min es el target hospitalario
-    const waitDiff = 40 - metrics.avgWait;
+    const waitDiff = 40 - (metrics.avgWait ?? 0);
     const isWaitPositive = waitDiff >= 0;
 
     return {
@@ -95,7 +94,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ tickets }) => {
         />
         <StatCard 
           title="Espera Media"
-          value={metrics.avgWait || "--"}
+          value={metrics.avgWait !== null ? metrics.avgWait : "--"}
           description="Minutos promedio solicitud-cama"
           trend={trends.wait}
           icon={<Clock />}

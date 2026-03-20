@@ -53,7 +53,7 @@ function createRes(nodeRes: ServerResponse) {
         ...res._headers,
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, PATCH, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       });
       nodeRes.end(body);
@@ -65,7 +65,7 @@ function createRes(nodeRes: ServerResponse) {
       nodeRes.writeHead(res.statusCode, {
         ...res._headers,
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, PATCH, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       });
       nodeRes.end();
@@ -82,6 +82,7 @@ const routes: Record<string, () => Promise<any>> = {
   '/api/tickets':       () => import('./api/tickets'),
   '/api/ticket-events': () => import('./api/ticket-events'),
   '/api/test':          () => import('./api/test'),
+  '/api/users':         () => import('./api/users'),
 };
 
 const server = createServer(async (req, res) => {
@@ -92,7 +93,7 @@ const server = createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(200, {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, PATCH, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     });
     res.end();

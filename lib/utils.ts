@@ -85,20 +85,28 @@ export function parseTimeToMinutes(timeStr: string | undefined): number {
 }
 
 /**
- * Calcula la diferencia en minutos entre dos strings de hora
+ * Calcula la diferencia en minutos entre dos strings de fecha/hora.
+ * Soporta ISO strings (2026-03-20T15:53:00Z) y strings de hora (03:53 p. m.)
  */
 export function getMinutesBetween(start: string | undefined, end: string | undefined): number {
   if (!start || !end) return 0;
-  
+
+  // Try ISO / parseable date strings first
+  const d1 = new Date(start).getTime();
+  const d2 = new Date(end).getTime();
+  if (!isNaN(d1) && !isNaN(d2)) {
+    return Math.max(0, Math.round((d2 - d1) / 60000));
+  }
+
+  // Fallback: parse as time-only strings (HH:mm AM/PM)
   const t1 = parseTimeToMinutes(start);
   const t2 = parseTimeToMinutes(end);
-  
+
   if (t1 === 0 && t2 === 0) return 0;
-  
+
   let diff = t2 - t1;
-  // Manejo de cruce de medianoche (ej: 23:50 a 00:10)
   if (diff < 0) diff += 1440;
-  
+
   return diff;
 }
 

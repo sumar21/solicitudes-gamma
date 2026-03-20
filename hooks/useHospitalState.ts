@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   WorkflowType, Role, SedeType, Ticket, TicketStatus, User, Area,
-  Notification, NotificationType, ViewMode, SortConfig, Bed, BedStatus
+  Notification, NotificationType, ViewMode, SortConfig, Bed, BedStatus,
 } from '../types';
 import { MOCK_TICKETS, MOCK_BEDS } from '../lib/constants';
 
@@ -166,7 +166,14 @@ export const useHospitalState = () => {
       const etag = r.headers.get('etag');
       if (etag) ticketsEtagRef.current = etag;
       const data: { tickets: Ticket[] } = await r.json();
-      if (Array.isArray(data.tickets) && !writingRef.current) setTickets(data.tickets);
+      if (Array.isArray(data.tickets) && !writingRef.current) {
+        // On first API load, seed the snapshot so we don't fire notifications for existing tickets
+        if (!initialLoadDoneRef.current) {
+          prevTicketSnapshotRef.current = new Map(data.tickets.map(t => [t.id, t.status]));
+          initialLoadDoneRef.current = true;
+        }
+        setTickets(data.tickets);
+      }
     } catch { /* keep mock/current data */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authFetch]);
@@ -213,6 +220,9 @@ export const useHospitalState = () => {
 
       // Skip tickets the current user created (they already got a local notification)
       if (t.createdById && String(t.createdById) === String(currentUser.id)) continue;
+
+      // Skip tickets that are already closed — no need to notify about old/finished tickets
+      if (t.status === TicketStatus.COMPLETED || t.status === TicketStatus.REJECTED) continue;
 
       const originArea = areaOf(t.origin);
       const destArea   = areaOf(t.destination);
@@ -326,6 +336,17 @@ export const useHospitalState = () => {
       if (!res.ok) { setLoginError(data.error ?? 'Credenciales incorrectas'); return; }
 
       const user: User = data.user;
+
+      // If azafata, parse assignedFloors (semicolon-separated) into assignedAreas
+      if (user.role === Role.HOSTESS && (data.user as any).assignedFloors) {
+        const floorsStr = String((data.user as any).assignedFloors);
+        const areaValues = Object.values(Area) as string[];
+        user.assignedAreas = floorsStr
+          .split(';')
+          .map(s => s.trim())
+          .filter(s => areaValues.includes(s)) as Area[];
+      }
+
       sessionStorage.setItem(TOKEN_KEY, data.token);
       sessionStorage.setItem(USER_KEY,  JSON.stringify(user));
       setToken(data.token);

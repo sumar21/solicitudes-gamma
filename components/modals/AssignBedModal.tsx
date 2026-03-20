@@ -51,7 +51,7 @@ export const AssignBedModal: React.FC<AssignBedModalProps> = ({ open, onOpenChan
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} className="rounded-xl h-12">Cancelar</Button>
-          <Button onClick={handleConfirm} className="bg-zinc-950 text-white rounded-xl h-12 px-8">Confirmar Cama</Button>
+          <Button onClick={handleConfirm} className="bg-emerald-950 text-white rounded-xl h-12 px-8">Confirmar Cama</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

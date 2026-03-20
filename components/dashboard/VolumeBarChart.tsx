@@ -28,7 +28,7 @@ export const VolumeBarChart: React.FC<VolumeBarChartProps> = ({ data }) => {
             </div>
             <div className="h-2 w-full bg-slate-50 rounded-full overflow-hidden border border-slate-100">
               <div 
-                className="h-full bg-zinc-950 rounded-full transition-all duration-1000 ease-out"
+                className="h-full bg-emerald-950 rounded-full transition-all duration-1000 ease-out"
                 style={{ width: `${(item.value / maxValue) * 100}%` }}
               />
             </div>

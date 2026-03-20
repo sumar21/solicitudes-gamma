@@ -13,7 +13,7 @@ function Badge({ className, variant = "default", ...props }: BadgeProps) {
       className={cn(
         "inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
         {
-          "border-transparent bg-slate-900 text-slate-50 hover:bg-slate-900/80": variant === "default",
+          "border-transparent bg-emerald-950 text-slate-50 hover:bg-emerald-950/80": variant === "default",
           "border-transparent bg-slate-100 text-slate-600 hover:bg-slate-200": variant === "secondary",
           "border-transparent bg-red-50 text-red-700 border-red-200 hover:bg-red-100": variant === "destructive",
           "text-slate-600 border-slate-200": variant === "outline",

@@ -1,8 +1,10 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-  Activity, LayoutDashboard, Home as HomeIcon, LogOut, History, Menu, Info
+  LayoutDashboard, Home as HomeIcon, LogOut, History, Menu, Info,
+  Mail, Lock, Eye, EyeOff, User, Settings, ChevronDown, ChevronUp, Users
 } from './components/Icons';
+import { GammaLogo } from './components/GammaLogo';
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
@@ -13,10 +15,11 @@ import { DashboardView } from './views/DashboardView';
 import { RequestsView } from './views/RequestsView';
 import { HistoryView } from './views/HistoryView';
 import { BedsView } from './views/BedsView';
+import { UserManagementView } from './views/UserManagementView';
 
 // Hooks & Constants
 import { useHospitalState } from './hooks/useHospitalState';
-import { Role } from './types';
+import { Role, TicketStatus } from './types';
 
 import { NotificationsDropdown } from './components/NotificationsDropdown';
 import { Popover, PopoverTrigger, PopoverContent } from './components/ui/popover';
@@ -27,11 +30,19 @@ import { Bell } from './components/Icons';
 import { NewRequestModal } from './components/modals/NewRequestModal';
 import { AssignBedModal } from './components/modals/AssignBedModal';
 import { AreaSelectionModal } from './components/modals/AreaSelectionModal'; // Import
-import { cn } from './lib/utils';
+import { cn, calculateTicketMetrics } from './lib/utils';
 import { NotificationToasts } from './components/NotificationToast';
 
 export default function App() {
   const { state, actions } = useHospitalState();
+
+  // Espera media real: promedio de tiempo total de tickets consolidados
+  const avgWaitTime = React.useMemo(() => {
+    const completed = state.tickets.filter(t => t.status === TicketStatus.COMPLETED && t.createdAt && t.completedAt);
+    if (completed.length === 0) return '--';
+    const total = completed.reduce((acc, t) => acc + calculateTicketMetrics(t).totalCycleTime, 0);
+    return Math.round(total / completed.length);
+  }, [state.tickets]);
 
   // UI State local (para control de modales)
   const [isNewRequestOpen, setIsNewRequestOpen] = useState(false);
@@ -41,6 +52,8 @@ export default function App() {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isLegendModalOpen, setIsLegendModalOpen] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [isConfigOpen, setIsConfigOpen] = useState(state.currentView === 'USERS');
 
   // Open Area Selection on login if Hostess has no areas assigned
   useEffect(() => {
@@ -70,6 +83,9 @@ export default function App() {
   const hasFullAccess = state.currentUser?.role === Role.ADMIN ||
     state.currentUser?.role === Role.ADMISSION;
 
+  // Solo Admin: Configuración / Usuarios
+  const isAdmin = state.currentUser?.role === Role.ADMIN;
+
   // Azafata: Operativa + Mapa de Camas
   const hasAzafataAccess = state.currentUser?.role === Role.HOSTESS;
 
@@ -81,30 +97,77 @@ export default function App() {
 
   if (!state.currentUser) {
     return (
-      <div className="h-screen w-full flex items-center justify-center bg-slate-100 p-4 md:p-6">
-        <Card className="w-full max-w-md p-6 md:p-10 shadow-xl rounded-3xl border-none bg-white">
-          {/* ... header ... */}
-          <div className="flex flex-col items-center mb-8 md:mb-10">
-            <div className="w-14 h-14 md:w-16 md:h-16 bg-zinc-950 rounded-2xl flex items-center justify-center text-white mb-6 shadow-lg">
-              <Activity className="w-7 h-7 md:w-8 md:h-8" />
+      <div className="h-screen w-full flex flex-col items-center bg-slate-50 overflow-auto">
+        {/* Green gradient header */}
+        <div className="w-full flex flex-col items-center pt-12 pb-28 md:pt-16 md:pb-32 px-4" style={{ background: 'linear-gradient(180deg, #022C22 0%, #034334 60%, #04604b 100%)' }}>
+          <GammaLogo size={64} className="text-white mb-5" />
+          <h1 className="text-3xl md:text-4xl font-black text-white tracking-tight">Bienvenido</h1>
+          <p className="text-emerald-300/80 text-sm font-medium mt-1">Gestión de Traslados</p>
+        </div>
+
+        {/* Login card overlapping the header */}
+        <Card className="w-full max-w-md -mt-20 mx-4 p-6 md:p-10 shadow-xl rounded-3xl border-none bg-white relative z-10">
+          <div className="flex flex-col items-center mb-8">
+            <div className="w-14 h-14 rounded-full bg-emerald-50 border-2 border-emerald-100 flex items-center justify-center -mt-12 md:-mt-14 mb-4 shadow-sm">
+              <User className="w-6 h-6 text-emerald-700" />
             </div>
-            <h1 className="text-xl md:text-2xl font-bold tracking-tight text-slate-900">MediFlow Orchestrator</h1>
-            <p className="text-slate-400 text-xs md:sm font-medium mt-2 text-center">Login de Sede Hospitalaria</p>
+            <h2 className="text-lg font-bold text-slate-900 tracking-tight">Iniciar Sesión</h2>
           </div>
-          <form onSubmit={actions.handleLogin} className="space-y-4 md:space-y-6">
-            <div className="space-y-2">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest ml-1">Usuario</Label>
-              <Input type="text" autoComplete="username" value={state.loginEmail} onChange={e => actions.setLoginEmail(e.target.value)} className="h-11 md:h-12 rounded-xl" />
+
+          <form onSubmit={actions.handleLogin} className="space-y-5">
+            <div className="space-y-1.5">
+              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest ml-1">Correo Electrónico</Label>
+              <div className="relative">
+                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Input
+                  type="text"
+                  autoComplete="username"
+                  placeholder="nombre@grupogamma.com"
+                  value={state.loginEmail}
+                  onChange={e => actions.setLoginEmail(e.target.value)}
+                  className="h-12 pl-11 rounded-xl border-emerald-200 focus:border-emerald-500 focus:ring-emerald-500/20"
+                />
+              </div>
             </div>
-            <div className="space-y-2">
+
+            <div className="space-y-1.5">
               <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest ml-1">Contraseña</Label>
-              <Input type="password" autoComplete="current-password" value={state.loginPass} onChange={e => actions.setLoginPass(e.target.value)} className="h-11 md:h-12 rounded-xl" />
+              <div className="relative">
+                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Input
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  placeholder="••••••••"
+                  value={state.loginPass}
+                  onChange={e => actions.setLoginPass(e.target.value)}
+                  className="h-12 pl-11 pr-11 rounded-xl border-emerald-200 focus:border-emerald-500 focus:ring-emerald-500/20"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(v => !v)}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
+
             {state.loginError && <p className="text-red-500 text-xs font-bold text-center">{state.loginError}</p>}
-            <Button type="submit" disabled={state.loginLoading} className="w-full h-11 md:h-12 bg-zinc-950 hover:bg-black rounded-xl text-white font-semibold disabled:opacity-60">
-              {state.loginLoading ? 'Verificando...' : 'Entrar al Sistema'}
+
+            <Button
+              type="submit"
+              disabled={state.loginLoading}
+              className="w-full h-12 rounded-xl text-white font-bold text-sm disabled:opacity-60 hover:opacity-90 shadow-lg"
+              style={{ backgroundColor: '#022C22' }}
+            >
+              {state.loginLoading ? 'Verificando...' : 'Ingresar'}
             </Button>
           </form>
+
+          <div className="mt-8 pt-5 border-t border-slate-100 text-center">
+            <p className="text-xs text-slate-400 font-medium">Grupo Gamma &bull; Red de Salud</p>
+            <p className="text-[10px] text-slate-300 mt-0.5">MediFlow v1.0</p>
+          </div>
         </Card>
       </div>
     );
@@ -125,34 +188,58 @@ export default function App() {
       {state.ticketActionLoading && (
         <div className="fixed inset-0 z-[100] bg-black/30 backdrop-blur-sm flex items-center justify-center">
           <div className="bg-white rounded-2xl shadow-2xl px-8 py-6 flex flex-col items-center gap-3">
-            <div className="w-10 h-10 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
+            <div className="w-10 h-10 border-4 border-slate-200 border-t-emerald-500 rounded-full animate-spin" />
             <span className="text-sm font-medium text-slate-600">Guardando en sistema...</span>
           </div>
         </div>
       )}
       {/* Sidebar Desktop */}
-      <aside className="hidden md:flex w-48 bg-zinc-950 text-zinc-300 flex-col shrink-0 border-r border-zinc-900 z-30">
-        <div className="h-20 flex items-center px-4 border-b border-zinc-900 shrink-0">
-          <Activity className="w-5 h-5 text-white mr-3" />
+      <aside className="hidden md:flex w-48 text-white flex-col shrink-0 z-30" style={{ background: 'linear-gradient(180deg, #022C22 0%, #034334 100%)' }}>
+        <div className="h-20 flex items-center px-4 border-b border-white/10 shrink-0">
+          <GammaLogo size={22} className="text-emerald-400 mr-3" />
           <div className="flex flex-col">
-            <span className="font-bold text-white tracking-tight leading-none text-lg">MediFlow</span>
-            <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-1">Sede {state.currentUser.sede}</span>
+            <span className="font-bold text-white tracking-tight leading-none text-lg">Gamma</span>
+            <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest mt-1">Sede {state.currentUser.sede}</span>
           </div>
         </div>
-        <nav className="flex-1 p-3 space-y-1">
-          {hasFullAccess && (
-            <>
-              <Button variant={state.currentView === 'HOME' ? 'secondary' : 'ghost'} className="w-full justify-start gap-3 h-11" onClick={() => actions.setCurrentView('HOME')}><HomeIcon className="w-4 h-4" />Monitor</Button>
-              <Button variant={state.currentView === 'REQUESTS' ? 'secondary' : 'ghost'} className="w-full justify-start gap-3 h-11" onClick={() => actions.setCurrentView('REQUESTS')}><LayoutDashboard className="w-4 h-4" />Operativa</Button>
-              <Button variant={state.currentView === 'HISTORY' ? 'secondary' : 'ghost'} className="w-full justify-start gap-3 h-11" onClick={() => actions.setCurrentView('HISTORY')}><History className="w-4 h-4" />Historial</Button>
-            </>
+        <nav className="flex-1 p-3 flex flex-col">
+          <div className="space-y-1">
+            <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-white/30 px-3 mb-1 block">Menú Principal</span>
+            {hasFullAccess && (
+              <>
+                <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'HOME' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('HOME')}><HomeIcon className="w-4 h-4" />Monitor</Button>
+                <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'REQUESTS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('REQUESTS')}><LayoutDashboard className="w-4 h-4" />Operativa</Button>
+              </>
+            )}
+            {hasAzafataAccess && (
+              <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'REQUESTS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('REQUESTS')}><LayoutDashboard className="w-4 h-4" />Operativa</Button>
+            )}
+            <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'HISTORY' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('HISTORY')}><History className="w-4 h-4" />Historial</Button>
+            <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'BEDS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('BEDS')}><Menu className="w-4 h-4" />Mapa de Camas</Button>
+          </div>
+
+          {/* Configuración — collapsible, solo admin */}
+          {isAdmin && (
+            <div className="mt-auto pt-3 border-t border-white/10">
+              <button
+                onClick={() => setIsConfigOpen(v => !v)}
+                className={cn(
+                  "w-full flex items-center justify-between gap-3 h-10 px-3 rounded-lg text-sm transition-colors",
+                  isConfigOpen || state.currentView === 'USERS' ? 'text-white font-bold' : 'text-white/50 hover:text-white/80 hover:bg-white/5'
+                )}
+              >
+                <span className="flex items-center gap-3"><Settings className="w-4 h-4" />Configuración</span>
+                {isConfigOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+              {isConfigOpen && (
+                <div className="ml-4 mt-1 space-y-0.5 border-l border-white/10 pl-3">
+                  <Button variant="ghost" className={cn("w-full justify-start gap-3 h-9 rounded-lg text-sm", state.currentView === 'USERS' ? 'bg-white/15 text-white font-bold' : 'text-white/60 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('USERS')}><Users className="w-3.5 h-3.5" />Usuarios</Button>
+                </div>
+              )}
+            </div>
           )}
-          {hasAzafataAccess && (
-            <Button variant={state.currentView === 'REQUESTS' ? 'secondary' : 'ghost'} className="w-full justify-start gap-3 h-11" onClick={() => actions.setCurrentView('REQUESTS')}><LayoutDashboard className="w-4 h-4" />Operativa</Button>
-          )}
-          <Button variant={state.currentView === 'BEDS' ? 'secondary' : 'ghost'} className="w-full justify-start gap-3 h-11" onClick={() => actions.setCurrentView('BEDS')}><Menu className="w-4 h-4" />Mapa de Camas</Button>
         </nav>
-        <div className="p-3 border-t border-zinc-900">
+        <div className="p-3 border-t border-white/10">
           <Button variant="ghost" className="w-full justify-start gap-3 text-red-400 hover:text-red-300 hover:bg-red-950/20" onClick={actions.handleLogout}><LogOut className="w-4 h-4" /> Salir</Button>
         </div>
       </aside>
@@ -162,13 +249,14 @@ export default function App() {
         <header className="h-16 md:h-14 bg-white border-b border-slate-200 flex items-center justify-between px-2 md:px-8 shrink-0 z-20 shadow-sm relative">
           <div className="flex items-center gap-1.5">
             <button 
-              className="md:hidden p-2 bg-zinc-950 rounded-xl text-white hover:bg-zinc-800 transition-colors shadow-lg active:scale-95"
+              className="md:hidden p-2 rounded-xl text-white hover:opacity-90 transition-colors shadow-lg active:scale-95"
+              style={{ backgroundColor: '#022C22' }}
               onClick={() => setIsMobileMenuOpen(true)}
             >
-              <Activity className="w-5 h-5" />
+              <GammaLogo size={20} />
             </button>
             <h1 className="text-lg md:text-xl font-black text-slate-900 tracking-tight truncate max-w-[100px] xs:max-w-[180px] sm:max-w-none">
-              {state.currentView === 'HOME' ? 'Monitor' : state.currentView === 'REQUESTS' ? 'Operativa' : state.currentView === 'BEDS' ? 'Camas' : 'Historial'}
+              {state.currentView === 'HOME' ? 'Monitor' : state.currentView === 'REQUESTS' ? 'Operativa' : state.currentView === 'BEDS' ? 'Mapa de Camas' : state.currentView === 'USERS' ? 'Usuarios' : 'Historial'}
             </h1>
           </div>
           
@@ -182,15 +270,15 @@ export default function App() {
 
           {/* Mobile Sidebar */}
           <div className={cn(
-            "fixed inset-y-0 left-0 w-64 bg-zinc-950 text-zinc-300 flex flex-col z-50 md:hidden transition-transform duration-300 ease-in-out shadow-2xl",
+            "fixed inset-y-0 left-0 w-64 text-white flex flex-col z-50 md:hidden transition-transform duration-300 ease-in-out shadow-2xl",
             isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
-          )}>
-            <div className="h-14 flex items-center justify-between px-4 border-b border-zinc-900 shrink-0">
+          )} style={{ background: 'linear-gradient(180deg, #022C22 0%, #034334 100%)' }}>
+            <div className="h-14 flex items-center justify-between px-4 border-b border-white/10 shrink-0">
               <div className="flex items-center">
-                <Activity className="w-5 h-5 text-white mr-3" />
+                <GammaLogo size={22} className="text-emerald-400 mr-3" />
                 <div className="flex flex-col">
-                  <span className="font-bold text-white tracking-tight leading-none text-lg">MediFlow</span>
-                  <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-1">Sede {state.currentUser.sede}</span>
+                  <span className="font-bold text-white tracking-tight leading-none text-lg">Gamma</span>
+                  <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest mt-1">Sede {state.currentUser.sede}</span>
                 </div>
               </div>
               <button 
@@ -200,20 +288,43 @@ export default function App() {
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
               </button>
             </div>
-            <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-              {hasFullAccess && (
-                <>
-                  <Button variant={state.currentView === 'HOME' ? 'secondary' : 'ghost'} className="w-full justify-start gap-3 h-11" onClick={() => { actions.setCurrentView('HOME'); setIsMobileMenuOpen(false); }}><HomeIcon className="w-4 h-4" />Monitor</Button>
-                  <Button variant={state.currentView === 'REQUESTS' ? 'secondary' : 'ghost'} className="w-full justify-start gap-3 h-11" onClick={() => { actions.setCurrentView('REQUESTS'); setIsMobileMenuOpen(false); }}><LayoutDashboard className="w-4 h-4" />Operativa</Button>
-                  <Button variant={state.currentView === 'HISTORY' ? 'secondary' : 'ghost'} className="w-full justify-start gap-3 h-11" onClick={() => { actions.setCurrentView('HISTORY'); setIsMobileMenuOpen(false); }}><History className="w-4 h-4" />Historial</Button>
-                </>
+            <nav className="flex-1 p-3 flex flex-col overflow-y-auto">
+              <div className="space-y-1">
+                <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-white/30 px-3 mb-1 block">Menú Principal</span>
+                {hasFullAccess && (
+                  <>
+                    <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'HOME' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('HOME'); setIsMobileMenuOpen(false); }}><HomeIcon className="w-4 h-4" />Monitor</Button>
+                    <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'REQUESTS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('REQUESTS'); setIsMobileMenuOpen(false); }}><LayoutDashboard className="w-4 h-4" />Operativa</Button>
+                  </>
+                )}
+                {hasAzafataAccess && (
+                  <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'REQUESTS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('REQUESTS'); setIsMobileMenuOpen(false); }}><LayoutDashboard className="w-4 h-4" />Operativa</Button>
+                )}
+                <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'HISTORY' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('HISTORY'); setIsMobileMenuOpen(false); }}><History className="w-4 h-4" />Historial</Button>
+                <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'BEDS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('BEDS'); setIsMobileMenuOpen(false); }}><Menu className="w-4 h-4" />Mapa de Camas</Button>
+              </div>
+
+              {isAdmin && (
+                <div className="mt-auto pt-3 border-t border-white/10">
+                  <button
+                    onClick={() => setIsConfigOpen(v => !v)}
+                    className={cn(
+                      "w-full flex items-center justify-between gap-3 h-10 px-3 rounded-lg text-sm transition-colors",
+                      isConfigOpen || state.currentView === 'USERS' ? 'text-white font-bold' : 'text-white/50 hover:text-white/80 hover:bg-white/5'
+                    )}
+                  >
+                    <span className="flex items-center gap-3"><Settings className="w-4 h-4" />Configuración</span>
+                    {isConfigOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
+                  {isConfigOpen && (
+                    <div className="ml-4 mt-1 space-y-0.5 border-l border-white/10 pl-3">
+                      <Button variant="ghost" className={cn("w-full justify-start gap-3 h-9 rounded-lg text-sm", state.currentView === 'USERS' ? 'bg-white/15 text-white font-bold' : 'text-white/60 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('USERS'); setIsMobileMenuOpen(false); }}><Users className="w-3.5 h-3.5" />Usuarios</Button>
+                    </div>
+                  )}
+                </div>
               )}
-              {hasAzafataAccess && (
-                <Button variant={state.currentView === 'REQUESTS' ? 'secondary' : 'ghost'} className="w-full justify-start gap-3 h-11" onClick={() => { actions.setCurrentView('REQUESTS'); setIsMobileMenuOpen(false); }}><LayoutDashboard className="w-4 h-4" />Operativa</Button>
-              )}
-              <Button variant={state.currentView === 'BEDS' ? 'secondary' : 'ghost'} className="w-full justify-start gap-3 h-11" onClick={() => { actions.setCurrentView('BEDS'); setIsMobileMenuOpen(false); }}><Menu className="w-4 h-4" />Mapa de Camas</Button>
             </nav>
-            <div className="p-3 border-t border-zinc-900">
+            <div className="p-3 border-t border-white/10">
               <Button variant="ghost" className="w-full justify-start gap-3 text-red-400 hover:text-red-300 hover:bg-red-950/20" onClick={() => { actions.handleLogout(); setIsMobileMenuOpen(false); }}><LogOut className="w-4 h-4" /> Salir</Button>
             </div>
           </div>
@@ -266,9 +377,6 @@ export default function App() {
                 <span className="text-xs font-bold text-slate-900 leading-none">{state.currentUser.name}</span>
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1">Sede {state.currentUser.sede}</span>
               </div>
-              {state.currentUser?.role !== Role.HOSTESS && (
-                <div className="h-9 w-9 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-slate-600 shadow-sm shrink-0">{state.currentUser.avatar}</div>
-              )}
             </div>
           </div>
         </header>
@@ -297,7 +405,7 @@ export default function App() {
           {/* Operativa — Admin, Admisión y Azafata */}
           {hasOperationalAccess && state.currentView === 'REQUESTS' && (
             <RequestsView
-              tickets={state.filteredTickets} activeRole={state.activeRole} setActiveRole={actions.setActiveRole} averageWaitTime={35}
+              tickets={state.filteredTickets} activeRole={state.activeRole} setActiveRole={actions.setActiveRole} averageWaitTime={avgWaitTime}
               searchTerm={state.requestsSearchTerm} setSearchTerm={actions.setRequestsSearchTerm} sortConfig={state.sortConfig}
               onSort={(key) => actions.setSortConfig(prev => ({ key, direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc' }))}
               onNewRequest={() => setIsNewRequestOpen(true)}
@@ -313,10 +421,12 @@ export default function App() {
               beds={state.beds}
             />
           )}
-          {/* Historial — solo Admin y Admisión */}
-          {hasFullAccess && state.currentView === 'HISTORY' && <HistoryView tickets={state.filteredTickets} />}
+          {/* Historial — todos los roles */}
+          {state.currentView === 'HISTORY' && <HistoryView tickets={state.filteredTickets} />}
+          {/* Usuarios — solo Admin */}
+          {isAdmin && state.currentView === 'USERS' && <UserManagementView currentUser={state.currentUser} />}
           {/* Mapa de Camas — todos los roles, o fallback si el rol no tiene otra vista */}
-          {(state.currentView === 'BEDS' || (!hasFullAccess && !hasAzafataAccess)) && <BedsView beds={state.beds} currentUser={state.currentUser} />}
+          {(state.currentView === 'BEDS' || (!hasFullAccess && !hasAzafataAccess)) && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} />}
         </main>
       </div>
 
@@ -356,6 +466,10 @@ export default function App() {
             <div className="flex items-center gap-3">
               <div className="w-4 h-4 rounded-full bg-blue-500" />
               <span className="text-sm font-bold text-slate-700">ASIGNADA (TRÁNSITO)</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="w-4 h-4 rounded-full bg-slate-400" />
+              <span className="text-sm font-bold text-slate-700">INHABILITADA</span>
             </div>
           </div>
         </DialogContent>

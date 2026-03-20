@@ -153,7 +153,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
         </form>
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} className="rounded-xl h-12 px-6">Cancelar</Button>
-          <Button type="submit" form="create-ticket-form" className="bg-zinc-950 text-white rounded-xl h-12 px-8">Generar Ticket</Button>
+          <Button type="submit" form="create-ticket-form" className="bg-emerald-950 text-white rounded-xl h-12 px-8">Generar Ticket</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

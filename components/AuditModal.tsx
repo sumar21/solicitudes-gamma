@@ -144,7 +144,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
               <div>
                 <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest block mb-3">Tiempo Total en Sistema</span>
                 <div className="flex items-baseline gap-2">
-                  <span className={cn("text-5xl font-light tracking-tighter tabular-nums leading-none", isRejected ? "text-red-600" : "text-slate-950")}>
+                  <span className={cn("text-5xl font-light tracking-tighter tabular-nums leading-none", isRejected ? "text-red-600" : "text-emerald-950")}>
                     {loading ? '...' : totalCycleTime}
                   </span>
                 </div>
@@ -231,7 +231,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                  )}
               </div>
 
-              <h4 className="text-[10px] uppercase font-bold text-slate-950 tracking-[0.2em] mb-10 flex items-center gap-2">
+              <h4 className="text-[10px] uppercase font-bold text-emerald-950 tracking-[0.2em] mb-10 flex items-center gap-2">
                 <TrendingUp className="w-4 h-4 opacity-30" /> Trazabilidad de Hitos
               </h4>
 
@@ -253,17 +253,17 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                       <div key={evt.id} className="relative">
                         <div className={cn(
                           "absolute -top-0.5 flex items-center justify-center z-10",
-                          isFinal ? "-left-[36px] w-8 h-8 rounded-full bg-slate-900 shadow-lg" : "-left-[32px] w-6 h-6 rounded-full bg-white border border-slate-200"
+                          isFinal ? "-left-[36px] w-8 h-8 rounded-full bg-emerald-950 shadow-lg" : "-left-[32px] w-6 h-6 rounded-full bg-white border border-slate-200"
                         )}>
                           <Icon className={cn("w-3.5 h-3.5", isFinal ? "text-white" : "text-slate-400")} />
                         </div>
                         <div className="flex justify-between items-start">
                           <div>
-                            <p className={cn("text-sm font-semibold", isFinal ? "text-slate-950" : "text-slate-900")}>{config.label}</p>
+                            <p className={cn("text-sm font-semibold", isFinal ? "text-emerald-950" : "text-slate-900")}>{config.label}</p>
                             <p className="text-xs text-slate-400 font-medium">{evt.usuario || config.sublabel}</p>
                           </div>
                           {isFinal ? (
-                            <Badge className="bg-slate-900 text-white font-mono font-medium px-2 py-0.5 rounded-md tabular-nums border-none text-[11px]">
+                            <Badge className="bg-emerald-950 text-white font-mono font-medium px-2 py-0.5 rounded-md tabular-nums border-none text-[11px]">
                               {formatTime(evt.fecha)}
                             </Badge>
                           ) : (

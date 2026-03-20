@@ -72,7 +72,7 @@ export const Calendar = ({ selected, onSelect, className }: CalendarProps) => {
         onClick={(e) => handleDateClick(d, e)}
         className={cn(
           "h-9 w-9 rounded-md text-sm transition-all hover:bg-slate-100 flex items-center justify-center relative",
-          isSelected && "bg-slate-900 text-slate-50 hover:bg-slate-900 font-bold",
+          isSelected && "bg-emerald-950 text-slate-50 hover:bg-emerald-950 font-bold",
           isToday && !isSelected && "text-blue-600 font-bold after:content-[''] after:absolute after:bottom-1.5 after:w-1 after:h-1 after:bg-blue-600 after:rounded-full"
         )}
       >

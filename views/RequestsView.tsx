@@ -193,7 +193,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                   onClick={() => setActiveRole(k as Role)}
                   className={cn(
                     "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-tight whitespace-nowrap transition-all",
-                    activeRole === k ? "bg-zinc-950 text-white shadow-md scale-105" : "text-slate-400 hover:bg-slate-100"
+                    activeRole === k ? "bg-emerald-950 text-white shadow-md scale-105" : "text-slate-400 hover:bg-slate-100"
                   )}
                 >
                   {v}
@@ -218,7 +218,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
             {searchTerm && <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="w-3.5 h-3.5" /></button>}
           </div>
           {(currentUser?.role === Role.ADMIN || currentUser?.role === Role.ADMISSION) && (
-            <Button onClick={onNewRequest} className="h-10 bg-zinc-950 hover:bg-black rounded-xl shadow-lg px-4 flex items-center gap-2 shrink-0">
+            <Button onClick={onNewRequest} className="h-10 bg-emerald-950 hover:bg-emerald-900 rounded-xl shadow-lg px-4 flex items-center gap-2 shrink-0">
               <Plus className="w-4 h-4 text-white" />
               <span className="hidden sm:inline text-xs font-bold">Solicitud</span>
             </Button>

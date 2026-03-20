@@ -1,40 +1,233 @@
-import React, { useState, useMemo } from 'react';
-import { Bed, BedStatus, User, Role, Area } from '../types';
+import React, { useState, useMemo, useCallback } from 'react';
+import { Bed, BedStatus, Ticket, TicketStatus, User, Role, Area } from '../types';
 import { Input } from '../components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { cn } from '../lib/utils';
-import { BedDouble, User as UserIcon, Info, Search, Filter, X, ChevronDown } from 'lucide-react';
+import { BedDouble, User as UserIcon, Info, Search, X, Download } from 'lucide-react';
 import { Dialog, DialogContent } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
-import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
-import { Badge } from '../components/ui/badge';
+import jsPDF from 'jspdf';
 
 interface BedsViewProps {
   beds: Bed[];
+  tickets: Ticket[];
   currentUser: User | null;
 }
 
-export const BedsView: React.FC<BedsViewProps> = ({ beds, currentUser }) => {
+export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
-  
+
+  // Map beds to their assigned ticket (for "Asignada" beds)
+  const bedTicketMap = useMemo(() => {
+    const map = new Map<string, Ticket>();
+    for (const t of tickets) {
+      if (t.destination && [TicketStatus.WAITING_ROOM, TicketStatus.IN_TRANSIT, TicketStatus.IN_TRANSPORT].includes(t.status)) {
+        map.set(t.destination, t);
+      }
+    }
+    return map;
+  }, [tickets]);
+
+  const exportPDF = useCallback(async () => {
+    // Convert SVG logo to PNG via canvas
+    const svgToLogoPng = (): Promise<string | null> => {
+      return new Promise((resolve) => {
+        try {
+          const svgMarkup = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 299 300" fill="none">
+            <path d="M177.763 209.923C175.477 205.948 171.246 203.498 166.673 203.498H132.327C127.75 203.498 123.523 205.948 121.236 209.923L104.063 239.768C101.776 243.743 101.776 248.643 104.063 252.618L121.236 282.462C123.523 286.437 127.753 288.887 132.327 288.887H166.676C171.252 288.887 175.479 286.437 177.766 282.462L194.939 252.618C197.226 248.643 197.226 243.743 194.939 239.768L177.763 209.923Z" fill="#022C22"/>
+            <path d="M121.236 90.078C123.523 94.053 127.753 96.503 132.327 96.503H166.676C171.252 96.503 175.479 94.053 177.766 90.078L194.939 60.2336C197.226 56.2586 197.226 51.3586 194.939 47.3836L177.763 17.5363C175.477 13.5613 171.249 11.1113 166.673 11.1113H132.327C127.75 11.1113 123.523 13.5613 121.236 17.5363L104.063 47.3808C101.776 51.3558 101.776 56.2558 104.063 60.2308L121.236 90.078Z" fill="#022C22"/>
+            <path d="M277.967 191.673L260.794 161.825C258.507 157.85 254.276 155.4 249.703 155.4H215.354C210.778 155.4 206.55 157.85 204.263 161.825L187.09 191.67C184.803 195.645 184.803 200.545 187.09 204.52L204.263 234.364C206.55 238.339 210.78 240.789 215.354 240.789H249.703C254.279 240.789 258.507 238.339 260.794 234.364L277.967 204.52C280.254 200.548 280.254 195.648 277.967 191.673Z" fill="#022C22"/>
+            <path d="M38.2046 138.175C40.4914 142.15 44.7217 144.6 49.2953 144.6H83.6443C88.2207 144.6 92.4482 142.15 94.735 138.175L111.908 108.33C114.195 104.355 114.195 99.4554 111.908 95.4804L94.735 65.6359C92.4482 61.6609 88.2179 59.2109 83.6443 59.2109H49.2981C44.7217 59.2109 40.4942 61.6609 38.2074 65.6359L21.0315 95.4776C18.7447 99.4526 18.7447 104.353 21.0315 108.328L38.2046 138.175Z" fill="#022C22"/>
+            <path d="M111.911 191.672L94.7378 161.827C92.451 157.852 88.2207 155.402 83.6471 155.402H49.2981C44.7217 155.402 40.4942 157.852 38.2074 161.827L21.0315 191.672C18.7447 195.647 18.7447 200.547 21.0315 204.522L38.2046 234.366C40.4914 238.341 44.7217 240.791 49.2953 240.791H83.6443C88.2207 240.791 92.4482 238.341 94.735 234.366L111.908 204.522C114.198 200.547 114.198 195.647 111.911 191.672Z" fill="#022C22"/>
+            <path d="M187.087 108.328L202.187 134.567H183.43C179.142 127.098 173.821 117.831 173.821 117.831C171.863 114.428 168.242 112.331 164.327 112.331H134.926C131.008 112.331 127.39 114.428 125.433 117.831L110.732 143.379C108.774 146.781 108.774 150.976 110.732 154.379L125.433 179.926C127.39 183.329 131.008 185.426 134.926 185.426H164.327C168.245 185.426 171.863 183.329 173.821 179.926L184.305 161.704H148.89V143.829H177.536H188.737H211.054C212.417 144.317 213.859 144.601 215.348 144.601H249.697C254.274 144.601 258.501 142.151 260.788 138.176L277.961 108.331C280.248 104.356 280.248 99.4563 277.961 95.4813L260.794 65.634C258.507 61.659 254.277 59.209 249.703 59.209H215.354C210.778 59.209 206.55 61.659 204.263 65.634L187.09 95.4785C184.801 99.4535 184.801 104.353 187.087 108.328Z" fill="#022C22"/>
+          </svg>`;
+          const blob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' });
+          const url = URL.createObjectURL(blob);
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 200;
+            canvas.height = 200;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img, 0, 0, 200, 200);
+              resolve(canvas.toDataURL('image/png'));
+            } else {
+              resolve(null);
+            }
+            URL.revokeObjectURL(url);
+          };
+          img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+          img.src = url;
+        } catch { resolve(null); }
+      });
+    };
+
+    const logoPng = await svgToLogoPng();
+
+    const doc = new jsPDF({ orientation: 'landscape' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const now = new Date().toLocaleString('es-AR');
+    const margin = 10;
+
+    type RGB = [number, number, number];
+    const statusColors: Record<string, { bg: RGB; text: RGB; dot: RGB }> = {
+      [BedStatus.AVAILABLE]:   { bg: [209, 250, 229], text: [4, 120, 87],    dot: [16, 185, 129] },
+      [BedStatus.OCCUPIED]:    { bg: [254, 226, 226], text: [153, 27, 27],   dot: [220, 38, 38] },
+      [BedStatus.PREPARATION]: { bg: [254, 243, 199], text: [146, 64, 14],   dot: [245, 158, 11] },
+      [BedStatus.ASSIGNED]:    { bg: [224, 231, 255], text: [55, 48, 163],   dot: [99, 102, 241] },
+      [BedStatus.DISABLED]:    { bg: [241, 245, 249], text: [100, 116, 139], dot: [148, 163, 184] },
+    };
+
+    const drawHeader = (logoPng: string | null) => {
+      const logoSize = 12;
+      const textX = logoPng ? margin + logoSize + 4 : margin;
+
+      // Logo
+      if (logoPng) {
+        try { doc.addImage(logoPng, 'PNG', margin, 4, logoSize, logoSize); } catch { /* no logo */ }
+      }
+
+      // Grupo Gamma
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(2, 44, 34); // #022C22
+      doc.text('Grupo Gamma', textX, 10);
+
+      // MediFlow subtitle
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(100, 116, 139);
+      doc.text('MediFlow', textX, 15);
+
+      // Right side: sede + date
+      doc.setFontSize(7);
+      doc.setTextColor(148, 163, 184);
+      doc.text(`Sede ${currentUser?.sede || 'HPR'}  ·  ${now}`, pageW - margin, 10, { align: 'right' });
+
+      // Thin green line separator
+      doc.setDrawColor(7, 146, 113);
+      doc.setLineWidth(0.5);
+      doc.line(margin, 19, pageW - margin, 19);
+    };
+
+    // Group beds by area
+    const grouped: Record<string, typeof beds> = {};
+    beds.forEach(b => {
+      if (!grouped[b.area]) grouped[b.area] = [];
+      grouped[b.area].push(b);
+    });
+
+    // Card dimensions
+    const cardW = 32;
+    const cardHSmall = 18;   // non-occupied
+    const cardHBig = 30;     // occupied (more info)
+    const cardGap = 2.5;
+    const cols = Math.floor((pageW - margin * 2 + cardGap) / (cardW + cardGap));
+
+    let curY = 26;
+    let pageStarted = false;
+
+    const ensurePage = (needed: number) => {
+      if (curY + needed > pageH - margin) {
+        doc.addPage();
+        drawHeader(logoPng);
+        curY = 26;
+      }
+    };
+
+    drawHeader(logoPng);
+
+    for (const [areaName, areaBeds] of Object.entries(grouped)) {
+      // Area label
+      ensurePage(cardHBig + 10);
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(51, 65, 85);
+      doc.text(areaName, margin, curY + 4);
+      doc.setDrawColor(226, 232, 240);
+      doc.line(margin + doc.getTextWidth(areaName) + 3, curY + 2, pageW - margin, curY + 2);
+      curY += 8;
+
+      let col = 0;
+      for (const bed of areaBeds) {
+        const ticket = bedTicketMap.get(bed.label);
+        const isOccupied = bed.status === BedStatus.OCCUPIED;
+        const isAssigned = bed.status === BedStatus.ASSIGNED && !!ticket;
+        const cardH = (isOccupied || isAssigned) ? cardHBig : cardHSmall;
+
+        if (col >= cols) { col = 0; curY += cardH + cardGap; }
+        ensurePage(cardH + cardGap);
+
+        const x = margin + col * (cardW + cardGap);
+        const y = curY;
+        const colors = statusColors[bed.status] || statusColors[BedStatus.DISABLED];
+
+        // Card background
+        doc.setFillColor(...colors.bg);
+        doc.roundedRect(x, y, cardW, cardH, 2, 2, 'F');
+
+        // Status dot
+        doc.setFillColor(...colors.dot);
+        doc.circle(x + cardW - 3, y + 3, 1.2, 'F');
+
+        // Room-Bed code
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(...colors.text);
+        doc.text(`${bed.roomCode}-${bed.bedCode}`, x + cardW / 2, y + 7, { align: 'center' });
+
+        // Status label
+        doc.setFontSize(5);
+        doc.setFont('helvetica', 'normal');
+        doc.text(bed.status, x + cardW / 2, y + 11, { align: 'center' });
+
+        // Extra info for occupied beds
+        if (isOccupied) {
+          doc.setFontSize(5.5);
+          doc.setFont('helvetica', 'bold');
+          doc.setTextColor(30, 41, 59);
+          const name = (bed.patientName || '').substring(0, 20);
+          doc.text(name, x + 2, y + 16);
+
+          doc.setFontSize(4.5);
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(100, 116, 139);
+          if (bed.institution) doc.text(bed.institution.substring(0, 22), x + 2, y + 20);
+          if (bed.dni) doc.text(`DNI: ${bed.dni}`, x + 2, y + 23.5);
+          if (bed.attendingPhysician) doc.text(`Dr: ${bed.attendingPhysician.substring(0, 18)}`, x + 2, y + 27);
+        }
+
+        // Extra info for assigned beds (from ticket)
+        if (isAssigned && ticket) {
+          doc.setFontSize(5.5);
+          doc.setFont('helvetica', 'bold');
+          doc.setTextColor(30, 41, 59);
+          doc.text((ticket.patientName || '').substring(0, 20), x + 2, y + 16);
+
+          doc.setFontSize(4.5);
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(100, 116, 139);
+          doc.text(`Desde: ${ticket.origin?.replace(/Habitación /g, '').substring(0, 18) || ''}`, x + 2, y + 20);
+          if (ticket.financier) doc.text(ticket.financier.substring(0, 22), x + 2, y + 23.5);
+          doc.text(ticket.status, x + 2, y + 27);
+        }
+
+        col++;
+      }
+      curY += ((areaBeds.some(b => b.status === BedStatus.OCCUPIED || (b.status === BedStatus.ASSIGNED && bedTicketMap.has(b.label)))) ? cardHBig : cardHSmall) + cardGap + 3;
+    }
+
+    doc.save(`mapa-camas-${new Date().toISOString().slice(0, 10)}.pdf`);
+  }, [beds, bedTicketMap, currentUser]);
+
   // Filters state
-  const [patientFilter, setPatientFilter] = useState('');
-  const [eventFilter, setEventFilter] = useState('');
-  const [institutionFilter, setInstitutionFilter] = useState('');
+  const [searchFilter, setSearchFilter] = useState('');
   const [areaFilter, setAreaFilter] = useState<string>('ALL');
-  const [physicianFilter, setPhysicianFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
 
   const isAdmission = currentUser?.role === Role.ADMISSION || currentUser?.role === Role.ADMIN;
-
-  const activeFiltersCount = [
-    patientFilter,
-    eventFilter,
-    institutionFilter,
-    areaFilter !== 'ALL',
-    physicianFilter,
-    statusFilter !== 'ALL'
-  ].filter(Boolean).length;
 
   // Filter beds based on user role, assigned areas and search filters
   const filteredBeds = useMemo(() => {
@@ -45,39 +238,27 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, currentUser }) => {
       result = result.filter(bed => currentUser.assignedAreas?.includes(bed.area));
     }
 
-    // Admission filters
-    if (isAdmission) {
-      if (patientFilter) {
-        result = result.filter(bed => bed.patientName?.toLowerCase().includes(patientFilter.toLowerCase()));
-      }
-      if (eventFilter) {
-        result = result.filter(bed => bed.eventNumber?.toString().includes(eventFilter));
-      }
-      if (institutionFilter) {
-        result = result.filter(bed => bed.institution?.toLowerCase().includes(institutionFilter.toLowerCase()));
-      }
-      if (areaFilter !== 'ALL') {
-        result = result.filter(bed => bed.area === areaFilter);
-      }
-      if (physicianFilter) {
-        result = result.filter(bed => bed.attendingPhysician?.toLowerCase().includes(physicianFilter.toLowerCase()));
-      }
-      if (statusFilter !== 'ALL') {
-        result = result.filter(bed => bed.status === statusFilter);
-      }
+    // Universal text search (patient, event, institution, physician)
+    if (searchFilter) {
+      const q = searchFilter.toLowerCase();
+      result = result.filter(bed =>
+        bed.patientName?.toLowerCase().includes(q) ||
+        bed.eventNumber?.toString().includes(q) ||
+        bed.institution?.toLowerCase().includes(q) ||
+        bed.attendingPhysician?.toLowerCase().includes(q) ||
+        bed.roomCode?.includes(q) ||
+        bed.bedCode?.includes(q)
+      );
+    }
+    if (areaFilter !== 'ALL') {
+      result = result.filter(bed => bed.area === areaFilter);
+    }
+    if (statusFilter !== 'ALL') {
+      result = result.filter(bed => bed.status === statusFilter);
     }
 
     return result;
-  }, [beds, currentUser, isAdmission, patientFilter, eventFilter, institutionFilter, areaFilter, physicianFilter, statusFilter]);
-
-  const resetFilters = () => {
-    setPatientFilter('');
-    setEventFilter('');
-    setInstitutionFilter('');
-    setAreaFilter('ALL');
-    setPhysicianFilter('');
-    setStatusFilter('ALL');
-  };
+  }, [beds, currentUser, searchFilter, areaFilter, statusFilter]);
 
   // Group beds by Area
   const bedsByArea: Record<string, Bed[]> = {};
@@ -110,138 +291,72 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, currentUser }) => {
 
   return (
     <div className="p-2 md:p-3 space-y-2 md:space-y-4 max-w-[1600px] mx-auto w-full relative">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-slate-100 pb-2">
-        <div className="flex items-center gap-3">
-          <h2 className="text-lg md:text-xl font-black tracking-tight text-slate-900 whitespace-nowrap">Mapa de Camas</h2>
-          
-          <div className="h-4 w-px bg-slate-200 hidden sm:block" />
+      {/* Filters bar */}
+      <div className="flex flex-col gap-2 border-b border-slate-100 pb-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Search input */}
+          <div className="relative flex-1 min-w-[180px] max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+            <Input
+              placeholder="Paciente, evento, financiador, médico, habitación..."
+              value={searchFilter}
+              onChange={(e) => setSearchFilter(e.target.value)}
+              className="pl-9 h-9 text-xs rounded-xl border-slate-200"
+            />
+            {searchFilter && (
+              <button onClick={() => setSearchFilter('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
 
-          {isAdmission && (
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  className={cn(
-                    "h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 transition-all",
-                    activeFiltersCount > 0 ? "bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100" : "hover:bg-slate-50"
-                  )}
-                >
-                  <Filter className="h-3 w-3" />
-                  <span>Filtros</span>
-                  {activeFiltersCount > 0 && (
-                    <Badge variant="secondary" className="ml-0.5 h-4 min-w-4 flex items-center justify-center p-0 text-[9px] bg-indigo-600 text-white border-none">
-                      {activeFiltersCount}
-                    </Badge>
-                  )}
-                  <ChevronDown className="h-2.5 w-2.5 opacity-50" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-[320px] md:w-[450px] p-4 rounded-2xl shadow-2xl border-slate-200" align="start">
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between border-b border-slate-50 pb-2">
-                    <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
-                      <Filter className="h-4 w-4 text-indigo-500" />
-                      Filtros de Búsqueda
-                    </h3>
-                    {activeFiltersCount > 0 && (
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        onClick={resetFilters}
-                        className="h-7 px-2 text-[10px] text-destructive hover:text-destructive hover:bg-destructive/10"
-                      >
-                        <X className="h-3 w-3 mr-1" />
-                        Limpiar
-                      </Button>
-                    )}
-                  </div>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase font-black text-slate-400 tracking-widest ml-1">Paciente</label>
-                      <div className="relative">
-                        <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
-                        <Input 
-                          placeholder="Nombre..." 
-                          value={patientFilter}
-                          onChange={(e) => setPatientFilter(e.target.value)}
-                          className="pl-8 h-9 text-xs rounded-xl border-slate-200 focus:ring-indigo-500"
-                        />
-                      </div>
-                    </div>
+          {/* Area dropdown */}
+          <Select value={areaFilter} onValueChange={setAreaFilter}>
+            <SelectTrigger className="h-9 w-auto min-w-[140px] text-xs rounded-xl border-slate-200">
+              <SelectValue placeholder="Todos los pisos" />
+            </SelectTrigger>
+            <SelectContent className="rounded-xl border-slate-200">
+              <SelectItem value="ALL">Todos los pisos</SelectItem>
+              {Object.values(Area).map((area) => (
+                <SelectItem key={area} value={area}>{area}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase font-black text-slate-400 tracking-widest ml-1">Evento</label>
-                      <Input 
-                        placeholder="N° Evento..." 
-                        value={eventFilter}
-                        onChange={(e) => setEventFilter(e.target.value)}
-                        className="h-9 text-xs rounded-xl border-slate-200 focus:ring-indigo-500"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase font-black text-slate-400 tracking-widest ml-1">Institución</label>
-                      <Input 
-                        placeholder="Financiador..." 
-                        value={institutionFilter}
-                        onChange={(e) => setInstitutionFilter(e.target.value)}
-                        className="h-9 text-xs rounded-xl border-slate-200 focus:ring-indigo-500"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase font-black text-slate-400 tracking-widest ml-1">Piso</label>
-                      <Select value={areaFilter} onValueChange={setAreaFilter}>
-                        <SelectTrigger className="h-9 text-xs rounded-xl border-slate-200 focus:ring-indigo-500">
-                          <SelectValue placeholder="Todos" />
-                        </SelectTrigger>
-                        <SelectContent className="rounded-xl border-slate-200">
-                          <SelectItem value="ALL">Todos los pisos</SelectItem>
-                          {Object.values(Area).map((area) => (
-                            <SelectItem key={area} value={area}>{area}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase font-black text-slate-400 tracking-widest ml-1">Médico</label>
-                      <Input 
-                        placeholder="Profesional..." 
-                        value={physicianFilter}
-                        onChange={(e) => setPhysicianFilter(e.target.value)}
-                        className="h-9 text-xs rounded-xl border-slate-200 focus:ring-indigo-500"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase font-black text-slate-400 tracking-widest ml-1">Estado</label>
-                      <Select value={statusFilter} onValueChange={setStatusFilter}>
-                        <SelectTrigger className="h-9 text-xs rounded-xl border-slate-200 focus:ring-indigo-500">
-                          <SelectValue placeholder="Todos" />
-                        </SelectTrigger>
-                        <SelectContent className="rounded-xl border-slate-200">
-                          <SelectItem value="ALL">Todos los estados</SelectItem>
-                          {Object.values(BedStatus).map((status) => (
-                            <SelectItem key={status} value={status}>{status}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                </div>
-              </PopoverContent>
-            </Popover>
-          )}
+          {/* Bed count + PDF */}
+          <div className="flex items-center gap-1.5 ml-auto">
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-50 border border-slate-100 text-[10px] md:text-xs font-black text-slate-500 uppercase tracking-wider">
+              <BedDouble className="h-3 w-3 text-slate-400" />
+              <span>{filteredBeds.length} camas</span>
+            </div>
+            <Button variant="outline" size="sm" onClick={exportPDF} className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50">
+              <Download className="h-3 w-3" />
+              <span className="hidden sm:inline">PDF</span>
+            </Button>
+          </div>
         </div>
 
-        <div className="flex items-center gap-1.5 ml-auto sm:ml-0">
-          <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-50 border border-slate-100 text-[10px] md:text-xs font-black text-slate-500 uppercase tracking-wider">
-            <BedDouble className="h-3 w-3 text-slate-400" />
-            <span>{filteredBeds.length} camas</span>
-          </div>
+        {/* Status buttons */}
+        <div className="flex flex-wrap gap-1.5">
+          {[{ value: 'ALL', label: 'Todas', dot: 'bg-slate-400' }, ...Object.values(BedStatus).map(s => ({
+            value: s,
+            label: s,
+            dot: s === BedStatus.AVAILABLE ? 'bg-emerald-500' : s === BedStatus.OCCUPIED ? 'bg-red-500' : s === BedStatus.PREPARATION ? 'bg-amber-500' : s === BedStatus.ASSIGNED ? 'bg-indigo-500' : 'bg-slate-400',
+          }))].map(({ value, label, dot }) => (
+            <button
+              key={value}
+              onClick={() => setStatusFilter(value)}
+              className={cn(
+                "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
+                statusFilter === value
+                  ? "bg-slate-900 text-white border-slate-900 shadow-sm"
+                  : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+              )}
+            >
+              <span className={cn("w-2 h-2 rounded-full", dot)} />
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -249,9 +364,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, currentUser }) => {
         {Object.entries(bedsByArea).map(([areaName, areaBeds]) => (
           <div key={areaName} className="space-y-3">
             <div className="flex items-center gap-2">
-              <Badge variant="outline" className="rounded-lg bg-slate-100/50 border-slate-200 text-slate-600 font-bold px-2 py-0.5">
+              <span className="inline-flex items-center rounded-lg bg-slate-100/50 border border-slate-200 text-slate-600 font-bold px-2 py-0.5 text-xs">
                 {areaName}
-              </Badge>
+              </span>
               <div className="h-px flex-1 bg-slate-100" />
             </div>
             <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-12 lg:grid-cols-16 xl:grid-cols-20 gap-1 md:gap-1.5">
@@ -278,6 +393,11 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, currentUser }) => {
                       {bed.status === BedStatus.OCCUPIED && (
                         <span className="text-[7px] md:text-[8px] font-bold truncate w-full text-center leading-none">
                           {bed.patientName}
+                        </span>
+                      )}
+                      {bed.status === BedStatus.ASSIGNED && bedTicketMap.get(bed.label) && (
+                        <span className="text-[7px] md:text-[8px] font-bold truncate w-full text-center leading-none">
+                          {bedTicketMap.get(bed.label)!.patientName}
                         </span>
                       )}
                     </div>
@@ -384,15 +504,47 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, currentUser }) => {
                     </>
                   )}
 
-                  {isAssigned && (
-                    <div className="bg-indigo-50 rounded-2xl p-4 border border-indigo-100 flex items-start gap-3">
-                      <Info className="w-5 h-5 text-indigo-400 mt-0.5 flex-shrink-0" />
-                      <div>
-                        <p className="text-sm font-bold text-indigo-800">Cama Reservada</p>
-                        <p className="text-xs text-indigo-500 mt-0.5 leading-relaxed">Es el destino de un traslado en curso. No disponible para nuevas asignaciones.</p>
-                      </div>
-                    </div>
-                  )}
+                  {isAssigned && (() => {
+                    const assignedTicket = bedTicketMap.get(selectedBed.label);
+                    return (
+                      <>
+                        <div className="bg-indigo-50 rounded-2xl p-4 border border-indigo-100 flex items-start gap-3">
+                          <Info className="w-5 h-5 text-indigo-400 mt-0.5 flex-shrink-0" />
+                          <div>
+                            <p className="text-sm font-bold text-indigo-800">Cama Reservada</p>
+                            <p className="text-xs text-indigo-500 mt-0.5 leading-relaxed">Es el destino de un traslado en curso. No disponible para nuevas asignaciones.</p>
+                          </div>
+                        </div>
+                        {assignedTicket && (
+                          <>
+                            <div className={cn("rounded-2xl p-4 border", t.patientBg, t.patientBorder)}>
+                              <div className="flex items-center gap-1.5 mb-1.5">
+                                <UserIcon className={cn("w-3.5 h-3.5", t.label)} />
+                                <span className={cn("text-[9px] font-bold uppercase tracking-widest", t.label)}>Paciente en traslado</span>
+                              </div>
+                              <p className="text-base font-black text-slate-900 leading-snug">{assignedTicket.patientName}</p>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100">
+                                <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Origen</p>
+                                <p className="text-xs font-bold text-slate-700">{assignedTicket.origin}</p>
+                              </div>
+                              <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100">
+                                <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Estado</p>
+                                <p className="text-xs font-bold text-slate-700">{assignedTicket.status}</p>
+                              </div>
+                            </div>
+                            {assignedTicket.financier && (
+                              <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100">
+                                <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Financiador</p>
+                                <p className="text-sm font-semibold text-slate-700">{assignedTicket.financier}</p>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </>
+                    );
+                  })()}
 
                   {isAvailable && (
                     <div className="bg-emerald-50 rounded-2xl p-4 border border-emerald-100 flex items-center justify-center gap-2">

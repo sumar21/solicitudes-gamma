@@ -49,11 +49,11 @@ export const NotificationsDropdown: React.FC<NotificationsDropdownProps> = ({
   return (
     <Card className="flex flex-col overflow-hidden rounded-2xl border border-slate-200/50 shadow-none relative">
       {/* Header aligned with Sidebar Zinc theme */}
-      <div className="px-4 py-4 bg-zinc-950 text-white flex items-center justify-between shrink-0 relative z-10">
+      <div className="px-4 py-4 bg-emerald-950 text-white flex items-center justify-between shrink-0 relative z-10">
         <div className="flex items-center gap-3">
           <div className="relative">
             <Bell className="w-5 h-5 text-white" />
-            {unreadCount > 0 && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-zinc-950" />}
+            {unreadCount > 0 && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-emerald-950" />}
           </div>
           <div className="flex flex-col">
             <h3 className="font-black text-[11px] tracking-[0.15em] uppercase leading-none">Notificaciones</h3>

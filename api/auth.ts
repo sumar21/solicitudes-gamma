@@ -13,6 +13,24 @@ import { signToken }  from './jwt.js';
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = 'e623ad06-ff62-441f-b67d-666224af5805'; // 00.Usuarios
 
+// Short codes → full Area names (same map as users.ts)
+const AREA_CODES: Record<string, string> = {
+  'P4':  'Internacion 4° Piso HPR',
+  'P5':  'Internacion 5° Piso HPR',
+  'P6':  'Internacion 6° Piso HPR',
+  'P7':  'Internacion 7° Piso HPR',
+  'P8':  'Internacion 8° Piso HPR',
+  'HIT': 'Internación Transitoria HPR',
+  'HSS': 'Servicio de Neurofisiologia (Sueño) HPR',
+  'HUC': 'Unidad Coronaria HPR',
+  'HUQ': 'Unidad Recuperaciòn Postquirùrgica',
+  'HUT': 'Unidad de Terapia Intensiva HPR',
+};
+function decodeFloors(raw: string): string {
+  if (!raw) return '';
+  return raw.split(';').filter(Boolean).map(s => AREA_CODES[s.trim()] ?? s).join(';');
+}
+
 // Map SP Perfil_Usr → app Role enum
 function mapRole(perfil: string): string {
   const p = perfil.toLowerCase().trim();
@@ -77,8 +95,9 @@ export default async function handler(req: any, res: any) {
       email:     String(fields.Mail_U     ?? ''),
       role:      mapRole(String(fields.Perfil_U ?? 'ADMISSION')),
       sede:      String(fields.Sede_U     ?? 'HPR'),
-      avatar:    '',
-      lastLogin: new Date().toISOString(),
+      avatar:         '',
+      assignedFloors: decodeFloors(String(fields.PisosAzafata_u ?? '')),
+      lastLogin:      new Date().toISOString(),
     };
 
     // Firmar JWT (8h)

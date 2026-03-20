@@ -45,7 +45,13 @@ import {
   TrendingUp,
   TrendingDown,
   Send,
-  Download
+  Download,
+  Mail,
+  Eye,
+  EyeOff,
+  User,
+  Pencil,
+  Trash2
 } from 'lucide-react';
 
 export {
@@ -94,5 +100,11 @@ export {
   TrendingUp,
   TrendingDown,
   Send,
-  Download
+  Download,
+  Mail,
+  Eye,
+  EyeOff,
+  User,
+  Pencil,
+  Trash2
 };
