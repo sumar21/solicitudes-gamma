@@ -1,13 +1,22 @@
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Ticket, WorkflowType, TicketStatus, BedStatus } from '../types';
-import { 
-  X, MapPin, Plus, TrendingUp, Activity, Users, CheckCircle2, Calendar, Info, SprayCan, Hash, XCircle, ArrowRightLeft
+import {
+  X, MapPin, Plus, TrendingUp, Activity, CheckCircle2, Calendar, Info, SprayCan, Hash, XCircle, ArrowRightLeft
 } from './Icons';
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { calculateTicketMetrics, cn } from '../lib/utils';
+import { cn, formatDateTime, formatTime } from '../lib/utils';
+
+interface TicketEvent {
+  id: string;
+  ticketId: string;
+  tipo: string;
+  fecha: string;
+  usuario: string;
+  usuarioId: string;
+}
 
 interface AuditModalProps {
   ticket: Ticket | null;
@@ -16,32 +25,82 @@ interface AuditModalProps {
   workflowLabels: Record<WorkflowType, string>;
 }
 
+const EVENT_CONFIG: Record<string, { label: string; sublabel: string; icon: React.FC<any> }> = {
+  'Solicitud Creada':      { label: 'Solicitud Creada / Cama Asignada', sublabel: 'Admisión',         icon: Plus },
+  'Habitacion Preparada':  { label: 'Habitación Preparada',             sublabel: 'Azafata Destino',   icon: SprayCan },
+  'Inicio Traslado':       { label: 'Traslado Iniciado',                sublabel: 'Azafata Origen',    icon: ArrowRightLeft },
+  'Paciente Recibido':     { label: 'Paciente Recibido',                sublabel: 'Azafata Destino',   icon: MapPin },
+  'Consolidado Progal':    { label: 'Consolidado en PROGAL',            sublabel: 'Admisión',          icon: CheckCircle2 },
+};
+
+function diffMinutes(a: string, b: string): string {
+  const ta = new Date(a).getTime();
+  const tb = new Date(b).getTime();
+  if (isNaN(ta) || isNaN(tb)) return '0m';
+  const diffMs = Math.max(0, tb - ta);
+  if (diffMs === 0) return '0m';
+  const totalMinutes = diffMs / 60000;
+  if (totalMinutes < 1) return `${Math.round(diffMs / 1000)}s`;
+  const hrs = Math.floor(totalMinutes / 60);
+  const mins = Math.round(totalMinutes % 60);
+  if (hrs > 0) return `${hrs}h ${mins}m`;
+  return `${mins}m`;
+}
+
 export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose, workflowLabels }) => {
+  const [events, setEvents] = useState<TicketEvent[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen || !ticket) { setEvents([]); return; }
+    setLoading(true);
+    const token = sessionStorage.getItem('mediflow_token');
+    fetch(`/api/ticket-events?ticketId=${encodeURIComponent(ticket.id)}`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    })
+      .then(r => r.ok ? r.json() : { events: [] })
+      .then(data => setEvents(data.events ?? []))
+      .catch(() => setEvents([]))
+      .finally(() => setLoading(false));
+  }, [isOpen, ticket]);
+
   if (!ticket) return null;
 
   const isRejected = ticket.status === TicketStatus.REJECTED;
   const isDirectTransfer = ticket.targetBedOriginalStatus === BedStatus.AVAILABLE;
-  
-  const { 
-    totalCycleTime, 
-    waitAdmission, 
-    cleaningTime, 
-    transportTime,
-    adminTime
-  } = calculateTicketMetrics(ticket);
+
+  // Calculate times from events
+  const findEvent = (tipo: string) => events.find(e => e.tipo === tipo);
+  const createdEvt     = findEvent('Solicitud Creada');
+  const preparedEvt    = findEvent('Habitacion Preparada');
+  const transportEvt   = findEvent('Inicio Traslado');
+  const receivedEvt    = findEvent('Paciente Recibido');
+  const consolidatedEvt = findEvent('Consolidado Progal');
+
+  const totalCycleTime = createdEvt && consolidatedEvt ? diffMinutes(createdEvt.fecha, consolidatedEvt.fecha) : '0m';
+
+  // Tiempos por servicio
+  const waitAdmission = createdEvt && (preparedEvt || transportEvt)
+    ? diffMinutes(createdEvt.fecha, (preparedEvt || transportEvt)!.fecha) : '0m';
+  const cleaningTime = preparedEvt && (transportEvt || receivedEvt)
+    ? diffMinutes(preparedEvt.fecha, (transportEvt || receivedEvt)!.fecha) : '0m';
+  const transportTime = (transportEvt || preparedEvt) && receivedEvt
+    ? diffMinutes((transportEvt || preparedEvt)!.fecha, receivedEvt.fecha) : '0m';
+  const adminTime = receivedEvt && consolidatedEvt
+    ? diffMinutes(receivedEvt.fecha, consolidatedEvt.fecha) : '0m';
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-[1000px] w-[94vw] md:w-full p-0 overflow-hidden border border-slate-200 shadow-2xl rounded-2xl md:rounded-3xl bg-white [&>button]:hidden">
         <div className="flex flex-col h-full max-h-[90vh]">
-          
-          {/* HEADER ADAPTATIVO */}
+
+          {/* HEADER */}
           <div className="bg-white px-5 py-5 md:px-8 md:py-6 flex flex-col border-b border-slate-100 shrink-0">
             <div className="flex items-start justify-between">
               <div className="space-y-1 min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
                   <Badge variant={isRejected ? "destructive" : "outline"} className="text-[9px] font-semibold uppercase tracking-wider px-2 py-0 border-slate-200">
-                    {isRejected ? 'Ticket Rechazado' : 'Auditoría Operativa'}
+                    {isRejected ? 'Ticket Cancelado' : 'Auditoría Operativa'}
                   </Badge>
                   {!isRejected && (
                     <Badge variant={isDirectTransfer ? "secondary" : "default"} className={cn("text-[9px] font-semibold uppercase tracking-wider px-2 py-0 border-none", isDirectTransfer ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700")}>
@@ -55,7 +114,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                 </DialogTitle>
                 <div className="flex items-center gap-3 md:gap-4 text-[10px] md:text-[11px] text-slate-400 font-medium">
                   <span className="flex items-center gap-1"><Hash className="w-3 h-3" /> {ticket.id}</span>
-                  <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> {ticket.date}</span>
+                  <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> {formatDateTime(ticket.createdAt)}</span>
                   <span className="flex items-center gap-1 font-semibold text-slate-900"><Activity className="w-3 h-3" /> {workflowLabels[ticket.workflow]}</span>
                 </div>
               </div>
@@ -64,7 +123,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
               </button>
             </div>
 
-            {/* SOLO MÓVIL: TRAYECTORIA COMPACTA EN HEADER */}
+            {/* SOLO MÓVIL: TRAYECTORIA */}
             <div className="md:hidden mt-4 p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between gap-2">
                <div className="flex flex-col min-w-0">
                  <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Origen</span>
@@ -79,16 +138,15 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
           </div>
 
           <div className="flex flex-col md:flex-row overflow-hidden">
-            
-            {/* SIDEBAR ORIGINAL: SOLO VISIBLE EN DESKTOP */}
+
+            {/* SIDEBAR DESKTOP */}
             <div className="hidden md:block md:w-[320px] bg-slate-50/50 border-r border-slate-100 p-8 space-y-8 overflow-y-auto shrink-0">
               <div>
                 <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest block mb-3">Tiempo Total en Sistema</span>
                 <div className="flex items-baseline gap-2">
                   <span className={cn("text-5xl font-light tracking-tighter tabular-nums leading-none", isRejected ? "text-red-600" : "text-slate-950")}>
-                    {totalCycleTime}
+                    {loading ? '...' : totalCycleTime}
                   </span>
-                  <span className="text-xs font-medium text-slate-400 uppercase">min</span>
                 </div>
               </div>
 
@@ -104,7 +162,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                 {isRejected && ticket.rejectionReason && (
                   <div className="p-4 bg-red-50 rounded-xl border border-red-100">
                     <p className="text-[9px] uppercase font-black text-red-600 tracking-widest mb-1.5 flex items-center gap-1">
-                      <XCircle className="w-3 h-3" /> Motivo de Rechazo
+                      <XCircle className="w-3 h-3" /> Motivo de Cancelación
                     </p>
                     <p className="text-xs font-bold text-red-900 leading-relaxed italic">"{ticket.rejectionReason}"</p>
                   </div>
@@ -123,43 +181,47 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
               {!isRejected && (
                 <div className="space-y-4 pt-6 border-t border-slate-100">
                   <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Tiempos por Servicio</p>
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="text-slate-500 font-medium">Asignación (Admisión)</span>
-                      <span className="font-semibold text-slate-900 tabular-nums">{waitAdmission}m</span>
-                    </div>
-                    {!isDirectTransfer && (
+                  {loading ? (
+                    <p className="text-xs text-slate-400">Cargando...</p>
+                  ) : (
+                    <div className="space-y-3">
                       <div className="flex justify-between items-center text-xs">
-                        <span className="text-slate-500 font-medium">Preparación (Higiene)</span>
-                        <span className="font-semibold text-slate-900 tabular-nums">{cleaningTime}m</span>
+                        <span className="text-slate-500 font-medium">Asignación (Admisión)</span>
+                        <span className="font-semibold text-slate-900 tabular-nums">{waitAdmission}</span>
                       </div>
-                    )}
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="text-slate-500 font-medium">Traslado (Camillería)</span>
-                      <span className="font-semibold text-slate-900 tabular-nums">{transportTime}m</span>
+                      {!isDirectTransfer && (
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="text-slate-500 font-medium">Preparación (Higiene)</span>
+                          <span className="font-semibold text-slate-900 tabular-nums">{cleaningTime}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-slate-500 font-medium">Traslado (Camillería)</span>
+                        <span className="font-semibold text-slate-900 tabular-nums">{transportTime}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-slate-500 font-medium">Administrativo (Cierre)</span>
+                        <span className="font-semibold text-slate-900 tabular-nums">{adminTime}</span>
+                      </div>
                     </div>
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="text-slate-500 font-medium">Administrativo (Cierre)</span>
-                      <span className="font-semibold text-slate-900 tabular-nums">{adminTime}m</span>
-                    </div>
-                  </div>
+                  )}
                 </div>
               )}
             </div>
 
-            {/* CONTENIDO PRINCIPAL (TIMELINE + MÉTRICAS MÓVILES) */}
+            {/* CONTENIDO PRINCIPAL (TIMELINE) */}
             <div className="flex-1 bg-white p-5 md:p-12 overflow-y-auto">
-              
-              {/* SOLO MÓVIL: MÉTRICAS COMPACTAS ARRIBA DEL TIMELINE */}
+
+              {/* SOLO MÓVIL: MÉTRICAS */}
               <div className="md:hidden grid grid-cols-2 gap-3 mb-8">
                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
                     <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1">Tiempo Total</span>
-                    <span className={cn("text-2xl font-bold tabular-nums", isRejected ? "text-red-600" : "text-slate-900")}>{totalCycleTime} min</span>
+                    <span className={cn("text-2xl font-bold tabular-nums", isRejected ? "text-red-600" : "text-slate-900")}>{loading ? '...' : totalCycleTime}</span>
                  </div>
                  {!isRejected && (
                    <div className="bg-blue-50 p-3 rounded-xl border border-blue-100 flex flex-col justify-center">
                       <span className="text-[8px] font-black text-blue-400 uppercase tracking-widest block mb-1">Traslado</span>
-                      <span className="text-2xl font-bold text-blue-900 tabular-nums">{transportTime} min</span>
+                      <span className="text-2xl font-bold text-blue-900 tabular-nums">{loading ? '...' : transportTime}</span>
                    </div>
                  )}
                  {isRejected && ticket.rejectionReason && (
@@ -173,103 +235,46 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                 <TrendingUp className="w-4 h-4 opacity-30" /> Trazabilidad de Hitos
               </h4>
 
-              <div className="relative pl-8 space-y-12 before:content-[''] before:absolute before:left-[11px] before:top-2 before:bottom-2 before:w-[1px] before:bg-slate-100">
-                
-                <div className="relative">
-                  <div className="absolute -left-[32px] top-0 w-6 h-6 rounded-full bg-white border border-slate-200 flex items-center justify-center z-10">
-                    <Plus className="w-3 h-3 text-slate-400" />
-                  </div>
-                  <div className="flex justify-between">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900">Solicitud Creada / Cama Asignada</p>
-                      <p className="text-xs text-slate-400 font-medium">Admisión</p>
-                    </div>
-                    <span className="text-xs font-medium text-slate-400 tabular-nums">{ticket.createdAt}</span>
-                  </div>
+              {loading ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
                 </div>
+              ) : events.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-12">Sin movimientos registrados</p>
+              ) : (
+                <div className="relative pl-8 space-y-12 before:content-[''] before:absolute before:left-[11px] before:top-2 before:bottom-2 before:w-[1px] before:bg-slate-100">
+                  {events.map((evt, i) => {
+                    const config = EVENT_CONFIG[evt.tipo] ?? { label: evt.tipo, sublabel: evt.usuario, icon: Plus };
+                    const Icon = config.icon;
+                    const isLast = i === events.length - 1;
+                    const isFinal = evt.tipo === 'Consolidado Progal';
 
-                {isRejected ? (
-                  <div className="relative">
-                    <div className="absolute -left-[36px] -top-1 w-8 h-8 rounded-full bg-red-600 flex items-center justify-center z-10 shadow-lg animate-pulse">
-                      <XCircle className="w-4 h-4 text-white" />
-                    </div>
-                    <div className="flex justify-between">
-                      <div>
-                        <p className="text-sm font-semibold text-red-950">Solicitud Rechazada</p>
-                        <p className="text-xs text-red-500 font-medium">Fin del ciclo</p>
-                      </div>
-                      <Badge className="bg-red-600 text-white font-mono font-medium px-2 py-0.5 rounded-md tabular-nums border-none">{ticket.completedAt}</Badge>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    {/* Hito: Limpieza (Solo si existió) */}
-                    {ticket.cleaningDoneAt && !isDirectTransfer && (
-                      <div className="relative">
-                        <div className="absolute -left-[32px] top-0 w-6 h-6 rounded-full bg-white border border-slate-200 flex items-center justify-center z-10">
-                          <SprayCan className="w-3 h-3 text-slate-400" />
+                    return (
+                      <div key={evt.id} className="relative">
+                        <div className={cn(
+                          "absolute -top-0.5 flex items-center justify-center z-10",
+                          isFinal ? "-left-[36px] w-8 h-8 rounded-full bg-slate-900 shadow-lg" : "-left-[32px] w-6 h-6 rounded-full bg-white border border-slate-200"
+                        )}>
+                          <Icon className={cn("w-3.5 h-3.5", isFinal ? "text-white" : "text-slate-400")} />
                         </div>
-                        <div className="flex justify-between">
+                        <div className="flex justify-between items-start">
                           <div>
-                            <p className="text-sm font-semibold text-slate-900">Habitación Preparada</p>
-                            <p className="text-xs text-slate-400 font-medium">Servicio de Higiene</p>
+                            <p className={cn("text-sm font-semibold", isFinal ? "text-slate-950" : "text-slate-900")}>{config.label}</p>
+                            <p className="text-xs text-slate-400 font-medium">{evt.usuario || config.sublabel}</p>
                           </div>
-                          <span className="text-xs font-medium text-slate-400 tabular-nums">{ticket.cleaningDoneAt}</span>
+                          {isFinal ? (
+                            <Badge className="bg-slate-900 text-white font-mono font-medium px-2 py-0.5 rounded-md tabular-nums border-none text-[11px]">
+                              {formatTime(evt.fecha)}
+                            </Badge>
+                          ) : (
+                            <span className="text-xs font-medium text-slate-400 tabular-nums">{formatTime(evt.fecha)}</span>
+                          )}
                         </div>
                       </div>
-                    )}
-
-                    {/* Hito: Inicio Traslado (Solo si existió explícitamente) */}
-                    {ticket.transportStartedAt && !isDirectTransfer && (
-                      <div className="relative">
-                        <div className="absolute -left-[32px] top-0 w-6 h-6 rounded-full bg-white border border-slate-200 flex items-center justify-center z-10">
-                          <ArrowRightLeft className="w-3 h-3 text-slate-400" />
-                        </div>
-                        <div className="flex justify-between">
-                          <div>
-                            <p className="text-sm font-semibold text-slate-900">Traslado Iniciado</p>
-                            <p className="text-xs text-slate-400 font-medium">Azafata Origen</p>
-                          </div>
-                          <span className="text-xs font-medium text-slate-400 tabular-nums">{ticket.transportStartedAt}</span>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Hito: Recepción Confirmada */}
-                    {ticket.receptionConfirmedAt && (
-                      <div className="relative">
-                        <div className="absolute -left-[32px] top-0 w-6 h-6 rounded-full bg-white border border-slate-200 flex items-center justify-center z-10">
-                          <MapPin className="w-3 h-3 text-slate-400" />
-                        </div>
-                        <div className="flex justify-between">
-                          <div>
-                            <p className="text-sm font-semibold text-slate-900">Paciente Recibido</p>
-                            <p className="text-xs text-slate-400 font-medium">Azafata Destino</p>
-                          </div>
-                          <span className="text-xs font-medium text-slate-400 tabular-nums">{ticket.receptionConfirmedAt}</span>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Hito: Consolidación (Fin) */}
-                    {ticket.completedAt && (
-                      <div className="relative">
-                        <div className="absolute -left-[36px] -top-1 w-8 h-8 rounded-full bg-slate-900 flex items-center justify-center z-10 shadow-lg">
-                          <CheckCircle2 className="w-4 h-4 text-white" />
-                        </div>
-                        <div className="flex justify-between">
-                          <div>
-                            <p className="text-sm font-semibold text-slate-950">Consolidado en PROGAL</p>
-                            <p className="text-xs text-slate-500 font-medium">Admisión</p>
-                          </div>
-                          <Badge className="bg-slate-900 text-white font-mono font-medium px-2 py-0.5 rounded-md tabular-nums border-none">{ticket.completedAt}</Badge>
-                        </div>
-                      </div>
-                    )}
-                  </>
-                )}
-
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
 

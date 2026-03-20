@@ -1,5 +1,7 @@
 {
-  "rewrites": [
+  "installCommand": "npm install",
+  "buildCommand": "npm run build",
+"rewrites": [
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }

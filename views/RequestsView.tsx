@@ -126,33 +126,16 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
           return <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50">Esperando preparación destino</Badge>;
       }
 
-      // Estado 2: IN_TRANSIT
-      //   - Si dest era DISPONIBLE → azafata destino confirma Recepción OK directamente
-      //   - Si dest era EN PREPARACIÓN → azafata origen debe iniciar traslado primero
+      // Estado 2: IN_TRANSIT (Habitación Lista) — azafata ORIGEN debe iniciar traslado
       if (ticket.status === TicketStatus.IN_TRANSIT) {
-        const wasPrep = ticket.targetBedOriginalStatus === BedStatus.PREPARATION;
-
-        if (wasPrep) {
-          // Camino largo: dest estaba en preparación
-          if (isOriginHostess)
-            return (
-              <Button size={size} className={cn(btnClass, "bg-emerald-600 hover:bg-emerald-700 text-white")} onClick={() => onStartTransport(ticket.id)}>
-                <ArrowRightLeft className="w-3.5 h-3.5 mr-2" /> Iniciar Traslado
-              </Button>
-            );
-          if (isDestHostess)
-            return <Badge variant="outline" className="text-blue-600 border-blue-200 bg-blue-50">Esperando inicio de traslado</Badge>;
-        } else {
-          // Camino corto: dest estaba disponible → recepción OK directa
-          if (isDestHostess)
-            return (
-              <Button size={size} className={cn(btnClass, "bg-emerald-600 hover:bg-emerald-700 text-white")} onClick={() => onConfirmReception(ticket.id)}>
-                <CheckCircle2 className="w-3.5 h-3.5 mr-2" /> Recepción OK
-              </Button>
-            );
-          if (isOriginHostess)
-            return <Badge variant="outline" className="text-slate-500 border-slate-200 bg-slate-50">Traslado en curso...</Badge>;
-        }
+        if (isOriginHostess)
+          return (
+            <Button size={size} className={cn(btnClass, "bg-emerald-600 hover:bg-emerald-700 text-white")} onClick={() => onStartTransport(ticket.id)}>
+              <ArrowRightLeft className="w-3.5 h-3.5 mr-2" /> Iniciar Traslado
+            </Button>
+          );
+        if (isDestHostess)
+          return <Badge variant="outline" className="text-blue-600 border-blue-200 bg-blue-50">Esperando inicio de traslado</Badge>;
       }
 
       // Estado 3: IN_TRANSPORT — La azafata DESTINO debe confirmar recepción

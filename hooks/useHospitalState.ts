@@ -1,82 +1,375 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   WorkflowType, Role, SedeType, Ticket, TicketStatus, User, Area,
   Notification, NotificationType, ViewMode, SortConfig, Bed, BedStatus
 } from '../types';
-import { INITIAL_USERS, MOCK_TICKETS, MOCK_BEDS } from '../lib/constants';
+import { MOCK_TICKETS, MOCK_BEDS } from '../lib/constants';
+
+// ── JWT helpers (client-side, solo lectura — sin verificar firma) ─────────────
+function parseJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(base64));
+  } catch { return null; }
+}
+
+function getTokenMinutesLeft(token: string | null): number {
+  if (!token) return 0;
+  const payload = parseJwtPayload(token);
+  if (!payload?.exp) return 0;
+  return Math.floor(((payload.exp as number) * 1000 - Date.now()) / 60_000);
+}
+
+// ── Bed merge ─────────────────────────────────────────────────────────────────
+function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[]): Bed[] {
+  const result = gammaBeds.map(b => ({ ...b }));
+  for (const ticket of activeTickets) {
+    const origin = result.find(b => b.label === ticket.origin);
+    const dest   = ticket.destination ? result.find(b => b.label === ticket.destination) : null;
+    switch (ticket.status) {
+      case TicketStatus.WAITING_ROOM:
+        if (dest) dest.status = BedStatus.PREPARATION;
+        break;
+      case TicketStatus.IN_TRANSIT:
+      case TicketStatus.IN_TRANSPORT:
+        if (dest) dest.status = BedStatus.ASSIGNED;
+        break;
+      case TicketStatus.WAITING_CONSOLIDATION:
+        if (dest)   { dest.status = BedStatus.OCCUPIED;     dest.patientName = ticket.patientName; }
+        if (origin) { origin.status = BedStatus.PREPARATION; origin.patientName = undefined; }
+        break;
+    }
+  }
+  return result;
+}
+
+const POLL_TICKETS_MS     = 8_000;   // tickets: poll every 8s
+const POLL_BEDS_MS        = 60_000;  // beds: poll every 60s (Gamma API, changes less)
+
+/** Human-readable labels for status transitions (for poll-based notifications) */
+function statusChangeLabel(_from: string, to: string): { title: string } | null {
+  switch (to) {
+    case TicketStatus.IN_TRANSIT:             return { title: 'Habitacion Lista' };
+    case TicketStatus.IN_TRANSPORT:           return { title: 'Traslado en Curso' };
+    case TicketStatus.WAITING_CONSOLIDATION:  return { title: 'Recepcion Confirmada' };
+    case TicketStatus.COMPLETED:              return { title: 'Traslado Consolidado' };
+    case TicketStatus.REJECTED:               return { title: 'Traslado Cancelado' };
+    default: return null;
+  }
+}
+const WARNING_MINUTES     = 15;
+const TOKEN_KEY           = 'mediflow_token';
+const USER_KEY            = 'mediflow_user';
 
 export const useHospitalState = () => {
+
+  // ── Session init ─────────────────────────────────────────────────────────────
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    const saved = sessionStorage.getItem('mediflow_user');
+    const saved = sessionStorage.getItem(USER_KEY);
     return saved ? JSON.parse(saved) : null;
   });
 
   const [currentView, setCurrentView] = useState<ViewMode>(() => {
-    const saved = sessionStorage.getItem('mediflow_user');
+    const saved = sessionStorage.getItem(USER_KEY);
     if (saved) {
       const user = JSON.parse(saved);
       if (user.role === Role.HOSTESS) return 'REQUESTS';
     }
     return 'HOME';
   });
-  const [activeRole, setActiveRole] = useState<Role>(() => {
-    const saved = sessionStorage.getItem('mediflow_user');
-    if (saved) {
-      const user = JSON.parse(saved);
-      return user.role;
-    }
-    return Role.ADMISSION;
-  });
-  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'createdAt', direction: 'desc' });
-  const [requestsSearchTerm, setRequestsSearchTerm] = useState('');
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [beds, setBeds] = useState<Bed[]>(MOCK_BEDS);
-  const [tickets, setTickets] = useState<Ticket[]>(MOCK_TICKETS);
-  const [loginEmail, setLoginEmail] = useState('');
-  const [loginPass, setLoginPass] = useState('');
-  const [loginError, setLoginError] = useState('');
-  const [bedsLoading, setBedsLoading] = useState(false);
 
-  // Fetch real bed map from the Vercel API route on mount.
-  // Falls back silently to mock data if the endpoint is unavailable (e.g. local dev).
+  const [activeRole, setActiveRole] = useState<Role>(() => {
+    const saved = sessionStorage.getItem(USER_KEY);
+    return saved ? (JSON.parse(saved).role as Role) : Role.ADMISSION;
+  });
+
+  // ── Token state ───────────────────────────────────────────────────────────────
+  const [token, setToken]                 = useState<string | null>(() => sessionStorage.getItem(TOKEN_KEY));
+  const [tokenExpirySoon, setExpirySoon]  = useState(false);
+  const [tokenMinutesLeft, setMinutesLeft]= useState(() => getTokenMinutesLeft(sessionStorage.getItem(TOKEN_KEY)));
+
+  // Check token expiry every minute
   useEffect(() => {
-    setBedsLoading(true);
-    fetch('/api/beds')
-      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-      .then((data: { beds: Bed[] }) => {
-        if (Array.isArray(data.beds) && data.beds.length > 0) {
-          setBeds(data.beds);
-        }
-      })
-      .catch(() => { /* keep mock data */ })
-      .finally(() => setBedsLoading(false));
+    const check = () => {
+      const t    = sessionStorage.getItem(TOKEN_KEY);
+      const mins = getTokenMinutesLeft(t);
+      setMinutesLeft(mins);
+      setExpirySoon(mins > 0 && mins <= WARNING_MINUTES);
+      if (t && mins <= 0) handleLogout(); // auto-logout cuando expira
+    };
+    check();
+    const id = setInterval(check, 60_000);
+    return () => clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  // ── authFetch — agrega Authorization header en todos los requests ─────────────
+  const authFetch = useCallback((url: string, options?: RequestInit): Promise<Response> => {
+    const t = sessionStorage.getItem(TOKEN_KEY);
+    return fetch(url, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(t ? { Authorization: `Bearer ${t}` } : {}),
+        ...(options?.headers ?? {}),
+      },
+    });
   }, []);
 
+  // ── App state ─────────────────────────────────────────────────────────────────
+  const [sortConfig, setSortConfig]                = useState<SortConfig>({ key: 'createdAt', direction: 'desc' });
+  const [requestsSearchTerm, setRequestsSearchTerm]= useState('');
+  const [notifications, setNotifications]          = useState<Notification[]>([]);
+  const [toasts, setToasts]                        = useState<{ id: string; notification: Notification }[]>([]);
+  const [loginEmail, setLoginEmail]                = useState('');
+  const [loginPass, setLoginPass]                  = useState('');
+  const [loginError, setLoginError]                = useState('');
+  const [loginLoading, setLoginLoading]            = useState(false);
+  const [bedsLoading, setBedsLoading]              = useState(false);
+  const [ticketActionLoading, setTicketActionLoading] = useState(false);
+  const writingRef = React.useRef(false); // block polls during SP writes
+  const ticketsEtagRef = React.useRef<string | null>(null); // ETag for smart polling
+  const prevTicketSnapshotRef = React.useRef<Map<string, string>>(new Map()); // id → status for change detection
+  const initialLoadDoneRef = React.useRef(false); // skip notifications on first load
+  const [rawBeds, setRawBeds]                      = useState<Bed[]>(MOCK_BEDS);
+  const [tickets, setTickets]                      = useState<Ticket[]>(MOCK_TICKETS);
+
+  const beds = useMemo(() => {
+    const active = tickets.filter(t => t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED);
+    return mergeBeds(rawBeds, active);
+  }, [rawBeds, tickets]);
+
+  // ── Data fetchers ─────────────────────────────────────────────────────────────
+  const fetchBeds = useCallback(async () => {
+    setBedsLoading(true);
+    try {
+      const r = await authFetch('/api/beds');
+      if (r.status === 401) { handleLogout(); return; }
+      if (!r.ok) return;
+      const data: { beds: Bed[] } = await r.json();
+      if (Array.isArray(data.beds) && data.beds.length > 0) setRawBeds(data.beds);
+    } catch { /* keep current data */ }
+    finally { setBedsLoading(false); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authFetch]);
+
+  const fetchTickets = useCallback(async () => {
+    if (writingRef.current) return; // skip poll while writing to SP
+    try {
+      const headers: Record<string, string> = {};
+      if (ticketsEtagRef.current) headers['If-None-Match'] = ticketsEtagRef.current;
+      const r = await authFetch('/api/tickets?all=1', { headers });
+      if (r.status === 401) { handleLogout(); return; }
+      if (r.status === 304) return; // no changes
+      if (!r.ok) return;
+      const etag = r.headers.get('etag');
+      if (etag) ticketsEtagRef.current = etag;
+      const data: { tickets: Ticket[] } = await r.json();
+      if (Array.isArray(data.tickets) && !writingRef.current) setTickets(data.tickets);
+    } catch { /* keep mock/current data */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authFetch]);
+
+  // ── Polling ───────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!token) return;
+    fetchBeds();
+    fetchTickets();
+    const ticketPoll = setInterval(fetchTickets, POLL_TICKETS_MS);
+    const bedPoll    = setInterval(fetchBeds, POLL_BEDS_MS);
+    return () => { clearInterval(ticketPoll); clearInterval(bedPoll); };
+  }, [token, fetchBeds, fetchTickets]);
+
+  // ── Change detection — generate notifications from polling updates ───────────
+  useEffect(() => {
+    if (!currentUser || writingRef.current) return;
+
+    const prev = prevTicketSnapshotRef.current;
+    const next = new Map(tickets.map(t => [t.id, t.status]));
+
+    // Skip first load — don't spam notifications for existing tickets
+    if (!initialLoadDoneRef.current) {
+      prevTicketSnapshotRef.current = next;
+      if (tickets.length > 0) initialLoadDoneRef.current = true;
+      return;
+    }
+
+    // Helper to find bed area for a given label
+    const areaOf = (label?: string | null) => label ? rawBeds.find(b => b.label === label)?.area : undefined;
+
+    // Check if this notification is relevant for the current user's assigned areas
+    const isRelevant = (originArea?: Area, destArea?: Area) => {
+      if (currentUser.role !== Role.HOSTESS) return true; // admin/admission see all
+      if (!currentUser.assignedAreas?.length) return false;
+      return (originArea && currentUser.assignedAreas.includes(originArea)) ||
+             (destArea   && currentUser.assignedAreas.includes(destArea));
+    };
+
+    const newNotifs: Notification[] = [];
+
+    for (const t of tickets) {
+      const prevStatus = prev.get(t.id);
+
+      // Skip tickets the current user created (they already got a local notification)
+      if (t.createdById && String(t.createdById) === String(currentUser.id)) continue;
+
+      const originArea = areaOf(t.origin);
+      const destArea   = areaOf(t.destination);
+
+      if (prevStatus === undefined) {
+        // ── New ticket appeared ─────────────────────────────────────────
+        const notif: Notification = {
+          id: `NOTIF-POLL-${t.id}`, isRead: false,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          type: NotificationType.NEW_TICKET,
+          title: 'Nueva Solicitud de Traslado',
+          message: `${t.patientName}: ${t.origin} → ${t.destination ?? '?'}`,
+          ticketId: t.id, sede: t.sede,
+          originArea, destinationArea: destArea,
+        };
+        newNotifs.push(notif);
+      } else if (prevStatus !== t.status) {
+        // ── Status changed ──────────────────────────────────────────────
+        const label = statusChangeLabel(prevStatus, t.status);
+        if (label) {
+          const notif: Notification = {
+            id: `NOTIF-POLL-${t.id}-${t.status}`, isRead: false,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            type: NotificationType.STATUS_UPDATE,
+            title: label.title,
+            message: `${t.patientName}: ${t.origin} → ${t.destination ?? '?'}`,
+            ticketId: t.id, sede: t.sede,
+            originArea, destinationArea: destArea,
+          };
+          newNotifs.push(notif);
+        }
+      }
+    }
+
+    if (newNotifs.length > 0) {
+      setNotifications(n => [...newNotifs, ...n]);
+
+      // Create toasts only for relevant notifications (filtered by area)
+      const relevantToasts = newNotifs
+        .filter(n => isRelevant(n.originArea, n.destinationArea))
+        .map(n => ({ id: `TOAST-${n.id}`, notification: n }));
+      if (relevantToasts.length > 0) {
+        setToasts(prev => [...relevantToasts, ...prev].slice(0, 5)); // max 5 toasts
+      }
+    }
+
+    prevTicketSnapshotRef.current = next;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tickets]);
+
+  // ── SP write helpers ──────────────────────────────────────────────────────────
+  const spCreate = async (ticket: Ticket): Promise<string | undefined> => {
+    try {
+      const r = await authFetch('/api/tickets', { method: 'POST', body: JSON.stringify(ticket) });
+      if (!r.ok) return undefined;
+      const { spItemId } = await r.json();
+      return spItemId as string;
+    } catch { return undefined; }
+  };
+
+  const spUpdate = async (spItemId: string, updates: Partial<Ticket>): Promise<void> => {
+    try {
+      await authFetch('/api/tickets', {
+        method: 'PATCH',
+        body:   JSON.stringify({ spItemId, ...updates }),
+      });
+    } catch { /* next poll will reconcile */ }
+  };
+
+  const spLogEvent = async (ticketId: string, tipo: string): Promise<void> => {
+    try {
+      await authFetch('/api/ticket-events', {
+        method: 'POST',
+        body: JSON.stringify({
+          ticketId,
+          tipo,
+          usuario: currentUser?.name ?? '',
+          usuarioId: currentUser?.id ?? '',
+        }),
+      });
+    } catch { /* non-blocking */ }
+  };
+
+  // ── Auth ──────────────────────────────────────────────────────────────────────
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError('');
+    setLoginLoading(true);
+    try {
+      const controller = new AbortController();
+      const timeout    = setTimeout(() => controller.abort(), 10_000);
+      let res: Response;
+      try {
+        res = await fetch('/api/auth', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ username: loginEmail, password: loginPass }),
+          signal:  controller.signal,
+        });
+      } catch (fetchErr: any) {
+        if (fetchErr?.name === 'AbortError') {
+          setLoginError('Timeout: el servidor no respondió en 10 segundos. ¿Está corriendo "vercel dev --listen 3000"?');
+        } else {
+          setLoginError(`Error de red: ${fetchErr?.message ?? 'sin conexión al servidor'}`);
+        }
+        return;
+      } finally {
+        clearTimeout(timeout);
+      }
+      const data = await res.json();
+      if (!res.ok) { setLoginError(data.error ?? 'Credenciales incorrectas'); return; }
+
+      const user: User = data.user;
+      sessionStorage.setItem(TOKEN_KEY, data.token);
+      sessionStorage.setItem(USER_KEY,  JSON.stringify(user));
+      setToken(data.token);
+      setCurrentUser(user);
+      setActiveRole(user.role as Role);
+      setCurrentView(user.role === Role.HOSTESS ? 'REQUESTS' : 'HOME');
+    } catch (err: any) {
+      setLoginError(`Error inesperado: ${err?.message ?? String(err)}`);
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const handleLogout = useCallback(() => {
+    sessionStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(USER_KEY);
+    setToken(null);
+    setCurrentUser(null);
+    setExpirySoon(false);
+    setMinutesLeft(0);
+  }, []);
+
+  // ── Filtered data ─────────────────────────────────────────────────────────────
   const filteredNotifications = useMemo(() => {
     if (!currentUser) return [];
     if (currentUser.role !== Role.HOSTESS) return notifications;
-
     return notifications.filter(n => {
       const isOrigin = n.originArea && currentUser.assignedAreas?.includes(n.originArea);
-      const isDest = n.destinationArea && currentUser.assignedAreas?.includes(n.destinationArea);
+      const isDest   = n.destinationArea && currentUser.assignedAreas?.includes(n.destinationArea);
       return isOrigin || isDest;
     });
   }, [notifications, currentUser]);
 
   const filteredTickets = useMemo(() => {
     let result = tickets;
-
-    if (currentUser?.sede !== SedeType.SUMAR) {
+    if (currentUser?.sede !== SedeType.SUMAR)
       result = result.filter(t => t.sede === currentUser?.sede);
-    }
 
-    if (currentUser?.role === Role.HOSTESS && currentUser.assignedAreas && currentUser.assignedAreas.length > 0) {
+    if (currentUser?.role === Role.HOSTESS && currentUser.assignedAreas?.length) {
       result = result.filter(t => {
-        const originBed = beds.find(b => b.label === t.origin);
-        const destBed = t.destination ? beds.find(b => b.label === t.destination) : null;
+        const originBed    = beds.find(b => b.label === t.origin);
+        const destBed      = t.destination ? beds.find(b => b.label === t.destination) : null;
         const originInArea = originBed ? currentUser.assignedAreas?.includes(originBed.area) : false;
-        const destInArea = destBed ? currentUser.assignedAreas?.includes(destBed.area) : false;
+        const destInArea   = destBed   ? currentUser.assignedAreas?.includes(destBed.area)   : false;
         return originInArea || destInArea;
       });
     }
@@ -86,7 +379,7 @@ export const useHospitalState = () => {
       result = result.filter(t =>
         t.patientName.toLowerCase().includes(term) ||
         t.origin.toLowerCase().includes(term) ||
-        t.destination?.toLowerCase().includes(term)
+        t.destination?.toLowerCase().includes(term),
       );
     }
 
@@ -94,281 +387,200 @@ export const useHospitalState = () => {
       const valA = a[sortConfig.key] || '';
       const valB = b[sortConfig.key] || '';
       if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
-      if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+      if (valA > valB) return sortConfig.direction === 'asc' ?  1 : -1;
       return 0;
     });
   }, [tickets, currentUser, requestsSearchTerm, sortConfig, beds]);
 
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    const user = INITIAL_USERS.find(u => u.email === loginEmail);
-    if (user && loginPass === '1234') {
-      setCurrentUser(user);
-      setActiveRole(user.role);
-      if (user.role === Role.HOSTESS) {
-        setCurrentView('REQUESTS');
-      } else {
-        setCurrentView('HOME');
-      }
-      sessionStorage.setItem('mediflow_user', JSON.stringify(user));
-      setLoginError('');
-    } else {
-      setLoginError('Credenciales incorrectas (Pass: 1234)');
-    }
+  // ── Ticket actions ────────────────────────────────────────────────────────────
+  const addNotification = (params: {
+    type: NotificationType; title: string; message: string;
+    ticketId?: string; sede: SedeType; originArea?: Area; destinationArea?: Area;
+  }) => {
+    setNotifications(prev => [{
+      id: `NOTIF-${Date.now()}`, isRead: false,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      ...params,
+    }, ...prev]);
   };
 
-  const handleLogout = () => {
-    setCurrentUser(null);
-    sessionStorage.removeItem('mediflow_user');
-  };
-
-  const handleCreateTicket = (data: Partial<Ticket>) => {
+  const handleCreateTicket = async (data: Partial<Ticket>) => {
     if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) {
-      alert("Solo Admisión o Admin pueden crear solicitudes.");
-      return;
+      alert('Solo Admisión o Admin pueden crear solicitudes.'); return;
     }
+    setTicketActionLoading(true);
+    writingRef.current = true;
+    try { await _createTicket(data); } finally {
+      // wait a beat then unlock polling and sync
+      setTimeout(async () => {
+        writingRef.current = false;
+        ticketsEtagRef.current = null; // invalidate ETag to force fresh fetch
+        await fetchTickets();
+        setTicketActionLoading(false);
+      }, 1000);
+    }
+  };
 
+  const _createTicket = async (data: Partial<Ticket>) => {
+    if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) return;
     const sourceBed = beds.find(b => b.label === data.origin);
     const targetBed = beds.find(b => b.label === data.destination);
+    if (!sourceBed || sourceBed.status !== BedStatus.OCCUPIED) { alert('Error: La cama de origen debe estar OCUPADA.'); return; }
+    if (!targetBed || (targetBed.status !== BedStatus.AVAILABLE && targetBed.status !== BedStatus.PREPARATION)) { alert('Error: La cama de destino debe estar DISPONIBLE o EN PREPARACIÓN.'); return; }
 
-    if (!sourceBed || sourceBed.status !== BedStatus.OCCUPIED) {
-      alert("Error: La cama de origen debe estar OCUPADA.");
-      return;
-    }
+    // ID format: TSL-(UserID)-ddmmyyyyhhmmss
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const ticketId = `TSL-${currentUser?.id ?? '0'}-${pad(now.getDate())}${pad(now.getMonth() + 1)}${now.getFullYear()}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 
-    if (!targetBed || (targetBed.status !== BedStatus.AVAILABLE && targetBed.status !== BedStatus.PREPARATION)) {
-      alert("Error: La cama de destino debe estar DISPONIBLE o EN PREPARACIÓN.");
-      return;
-    }
+    // Dest available → "Habitacion Lista" + dest "Asignada"
+    // Dest preparation → "Esperando Habitacion" + dest keeps "En preparación"
+    const isDestAvailable = targetBed.status === BedStatus.AVAILABLE;
 
     const newTicket: Ticket = {
-      id: `TKT-${Date.now()}`,
-      sede: currentUser?.sede || SedeType.HPR,
-      patientName: data.patientName || sourceBed.patientName || 'Paciente',
-      origin: data.origin!,
-      destination: data.destination!,
-      workflow: WorkflowType.INTERNAL,
-      status: targetBed.status === BedStatus.AVAILABLE ? TicketStatus.IN_TRANSIT : TicketStatus.WAITING_ROOM,
-      createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      bedAssignedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      date: new Date().toISOString().split('T')[0],
-      isBedClean: false,
-      isReasonValidated: true,
+      id:                      ticketId,
+      sede:                    currentUser?.sede || SedeType.HPR,
+      patientName:             data.patientName || sourceBed.patientName || 'Paciente',
+      patientCode:             sourceBed.patientCode,
+      origin:                  data.origin!,
+      originBedCode:           sourceBed.bedCode,
+      originBedStatus:         BedStatus.OCCUPIED,
+      destination:             data.destination!,
+      destinationBedCode:      targetBed.bedCode,
+      destinationBedStatus:    isDestAvailable ? BedStatus.ASSIGNED : BedStatus.PREPARATION,
+      workflow:                data.workflow || WorkflowType.INTERNAL,
+      status:                  isDestAvailable ? TicketStatus.IN_TRANSIT : TicketStatus.WAITING_ROOM,
+      createdAt:               now.toISOString(),
+      date:                    now.toISOString().split('T')[0],
+      isBedClean:              false,
+      isReasonValidated:       true,
       targetBedOriginalStatus: targetBed.status,
-      itrSource: data.itrSource,
-      changeReason: data.changeReason,
-      observations: data.observations,
+      financier:               data.itrSource || sourceBed.institution,
+      createdBy:               currentUser?.name,
+      createdById:             currentUser?.id,
+      itrSource:               data.itrSource,
+      changeReason:            data.changeReason,
+      observations:            data.observations,
     };
 
     setTickets(prev => [newTicket, ...prev]);
-
-    setBeds(prev => prev.map(b => {
-      if (b.id === targetBed.id) {
-        return { ...b, status: targetBed.status === BedStatus.AVAILABLE ? BedStatus.ASSIGNED : BedStatus.PREPARATION };
-      }
-      return b;
-    }));
-
-    const isPrep = targetBed.status === BedStatus.PREPARATION;
-    const newNotification: Notification = {
-      id: `NOTIF-${Date.now()}`,
-      type: NotificationType.NEW_TICKET,
-      title: isPrep ? 'Traslado en Preparación' : 'Solicitud de Traslado',
-      message: isPrep
-        ? `${newTicket.patientName}: Origen ${newTicket.origin} -> Destino ${newTicket.destination} (En Preparación)`
+    addNotification({
+      type:            NotificationType.NEW_TICKET,
+      title:           targetBed.status === BedStatus.PREPARATION ? 'Traslado en Preparación' : 'Solicitud de Traslado',
+      message:         targetBed.status === BedStatus.PREPARATION
+        ? `${newTicket.patientName}: ${newTicket.origin} → ${newTicket.destination} (En Preparación)`
         : `Confirmar disponibilidad de ${newTicket.destination} para ${newTicket.patientName}`,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      isRead: false,
-      ticketId: newTicket.id,
-      sede: newTicket.sede,
-      originArea: sourceBed.area,
-      destinationArea: targetBed.area,
-    };
-    setNotifications(prev => [newNotification, ...prev]);
+      ticketId: newTicket.id, sede: newTicket.sede,
+      originArea: sourceBed.area, destinationArea: targetBed.area,
+    });
     setCurrentView('REQUESTS');
+
+    const spItemId = await spCreate(newTicket);
+    if (spItemId) setTickets(prev => prev.map(t => t.id === newTicket.id ? { ...t, spItemId } : t));
+    spLogEvent(newTicket.id, 'Solicitud Creada');
   };
 
   const handleRoomReady = (ticketId: string) => {
     const ticket = tickets.find(t => t.id === ticketId);
-    if (!ticket || !ticket.destination) return;
-
-    const targetBed = beds.find(b => b.label === ticket.destination);
-    if (!targetBed) return;
-
-    setTickets(prev => prev.map(t => t.id === ticketId ? {
-      ...t,
-      status: TicketStatus.IN_TRANSIT,
-      cleaningDoneAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    } : t));
-
-    setBeds(prev => prev.map(b => b.id === targetBed.id ? { ...b, status: BedStatus.ASSIGNED } : b));
-
-    const sourceBed = beds.find(b => b.label === ticket.origin);
-    const newNotification: Notification = {
-      id: `NOTIF-${Date.now()}`,
-      type: NotificationType.STATUS_UPDATE,
-      title: 'Habitación Lista',
-      message: `La habitación ${ticket.destination} está lista. ${ticket.patientName} puede ser trasladado desde ${ticket.origin}.`,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      isRead: false,
-      ticketId: ticket.id,
-      sede: ticket.sede,
-      originArea: sourceBed?.area,
-      destinationArea: targetBed.area,
-    };
-    setNotifications(prev => [newNotification, ...prev]);
-  };
-
-  const handleConfirmReception = (ticketId: string) => {
-    const ticket = tickets.find(t => t.id === ticketId);
-    if (!ticket || !ticket.destination) return;
-
-    if (ticket.status !== TicketStatus.IN_TRANSPORT && ticket.status !== TicketStatus.IN_TRANSIT) return;
-
-    const sourceBed = beds.find(b => b.label === ticket.origin);
-    const targetBed = beds.find(b => b.label === ticket.destination);
-    if (!sourceBed || !targetBed) return;
-
-    setTickets(prev => prev.map(t => t.id === ticketId ? {
-      ...t,
-      status: TicketStatus.WAITING_CONSOLIDATION,
-      receptionConfirmedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    } : t));
-
-    setBeds(prev => prev.map(b => {
-      if (b.id === targetBed.id) return { ...b, status: BedStatus.OCCUPIED, patientName: ticket.patientName };
-      if (b.id === sourceBed.id) return { ...b, status: BedStatus.PREPARATION, patientName: undefined };
-      return b;
-    }));
-
-    const newNotification: Notification = {
-      id: `NOTIF-${Date.now()}`,
-      type: NotificationType.STATUS_UPDATE,
-      title: 'Recepción Confirmada',
-      message: `El paciente ${ticket.patientName} ha sido recibido en ${ticket.destination}. Pendiente consolidar en PROGAL.`,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      isRead: false,
-      ticketId: ticket.id,
-      sede: ticket.sede,
-      originArea: sourceBed.area,
-      destinationArea: targetBed.area,
-    };
-    setNotifications(prev => [newNotification, ...prev]);
-  };
-
-  const handleConsolidate = (ticketId: string) => {
-    if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) {
-      alert("Solo Admisión o Admin pueden consolidar en PROGAL.");
-      return;
-    }
-
-    const ticket = tickets.find(t => t.id === ticketId);
-    if (!ticket) return;
-
-    setTickets(prev => prev.map(t => t.id === ticketId ? {
-      ...t,
-      status: TicketStatus.COMPLETED,
-      completedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    } : t));
-
-    const sourceBed = beds.find(b => b.label === ticket.origin);
-    const targetBed = beds.find(b => b.label === ticket.destination);
-    const newNotification: Notification = {
-      id: `NOTIF-${Date.now()}`,
-      type: NotificationType.STATUS_UPDATE,
-      title: 'Traslado Finalizado',
-      message: `El traslado de ${ticket.patientName} ha sido consolidado en PROGAL.`,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      isRead: false,
-      ticketId: ticket.id,
-      sede: ticket.sede,
-      originArea: sourceBed?.area,
-      destinationArea: targetBed?.area,
-    };
-    setNotifications(prev => [newNotification, ...prev]);
+    if (!ticket?.destination) return;
+    const now     = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const updates = { status: TicketStatus.IN_TRANSIT, cleaningDoneAt: now, destinationBedStatus: BedStatus.ASSIGNED } as const;
+    setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
+    addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Habitación Lista',
+      message: `La habitación ${ticket.destination} está lista. ${ticket.patientName} puede ser trasladado.`,
+      ticketId: ticket.id, sede: ticket.sede,
+      originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
+      destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
+    });
+    if (ticket.spItemId) spUpdate(ticket.spItemId, updates);
+    spLogEvent(ticket.id, 'Habitacion Preparada');
   };
 
   const handleStartTransport = (ticketId: string) => {
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket) return;
-
-    setTickets(prev => prev.map(t => t.id === ticketId ? {
-      ...t,
-      status: TicketStatus.IN_TRANSPORT,
-      transportStartedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    } : t));
-
-    const sourceBed = beds.find(b => b.label === ticket.origin);
-    const targetBed = beds.find(b => b.label === ticket.destination);
-    const newNotification: Notification = {
-      id: `NOTIF-${Date.now()}`,
-      type: NotificationType.STATUS_UPDATE,
-      title: 'Traslado en Curso',
+    const now     = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const updates = { status: TicketStatus.IN_TRANSPORT, transportStartedAt: now } as const;
+    setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
+    addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Traslado en Curso',
       message: `${ticket.patientName} está en camino hacia ${ticket.destination}.`,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      isRead: false,
-      ticketId: ticket.id,
-      sede: ticket.sede,
-      originArea: sourceBed?.area,
-      destinationArea: targetBed?.area,
-    };
-    setNotifications(prev => [newNotification, ...prev]);
+      ticketId: ticket.id, sede: ticket.sede,
+      originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
+      destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
+    });
+    if (ticket.spItemId) spUpdate(ticket.spItemId, updates);
+    spLogEvent(ticket.id, 'Inicio Traslado');
+  };
+
+  const handleConfirmReception = (ticketId: string) => {
+    const ticket = tickets.find(t => t.id === ticketId);
+    if (!ticket?.destination) return;
+    if (ticket.status !== TicketStatus.IN_TRANSPORT && ticket.status !== TicketStatus.IN_TRANSIT) return;
+    const now     = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const updates = { status: TicketStatus.WAITING_CONSOLIDATION, receptionConfirmedAt: now, destinationBedStatus: BedStatus.OCCUPIED } as const;
+    setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
+    addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Recepción Confirmada',
+      message: `${ticket.patientName} ha sido recibido en ${ticket.destination}. Pendiente consolidar en PROGAL.`,
+      ticketId: ticket.id, sede: ticket.sede,
+      originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
+      destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
+    });
+    if (ticket.spItemId) spUpdate(ticket.spItemId, updates);
+    spLogEvent(ticket.id, 'Paciente Recibido');
+  };
+
+  const handleConsolidate = async (ticketId: string) => {
+    if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) {
+      alert('Solo Admisión o Admin pueden consolidar en PROGAL.'); return;
+    }
+    const ticket = tickets.find(t => t.id === ticketId);
+    if (!ticket) return;
+    const updates = { status: TicketStatus.COMPLETED, completedAt: new Date().toISOString(), originBedStatus: BedStatus.PREPARATION } as const;
+    setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
+    addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Traslado Finalizado',
+      message: `El traslado de ${ticket.patientName} ha sido consolidado en PROGAL.`,
+      ticketId: ticket.id, sede: ticket.sede,
+      originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
+      destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
+    });
+    if (ticket.spItemId) await spUpdate(ticket.spItemId, updates);
+    spLogEvent(ticket.id, 'Consolidado Progal');
+    // Refresh beds immediately + again after a few seconds (Gamma/PROGAL may take a moment)
+    fetchBeds();
+    ticketsEtagRef.current = null;
+    fetchTickets();
+    setTimeout(() => { fetchBeds(); fetchTickets(); }, 5000);
   };
 
   const handleUpdateUserAreas = (areas: Area[]) => {
     if (!currentUser) return;
     const updatedUser = { ...currentUser, assignedAreas: areas };
     setCurrentUser(updatedUser);
-    sessionStorage.setItem('mediflow_user', JSON.stringify(updatedUser));
+    sessionStorage.setItem(USER_KEY, JSON.stringify(updatedUser));
   };
 
-  const handleMarkNotificationRead = (id: string) => {
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
-  };
-
-  const handleMarkAllNotificationsRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
-  };
+  const handleMarkNotificationRead      = (id: string) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+  const handleMarkAllNotificationsRead  = ()            => setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+  const handleDismissToast              = (id: string) => setToasts(prev => prev.filter(t => t.id !== id));
 
   return {
     state: {
-      currentUser,
-      currentView,
-      activeRole,
-      sortConfig,
-      requestsSearchTerm,
-      notifications,
-      filteredNotifications,
-      tickets,
-      filteredTickets,
-      loginEmail,
-      loginPass,
-      loginError,
-      bedsLoading,
-      beds,
+      currentUser, currentView, activeRole, sortConfig, requestsSearchTerm,
+      notifications, filteredNotifications, toasts, tickets, filteredTickets,
+      loginEmail, loginPass, loginError, loginLoading, bedsLoading, ticketActionLoading, beds,
+      tokenExpirySoon, tokenMinutesLeft,
     },
     actions: {
-      setCurrentUser,
-      setCurrentView,
-      setActiveRole,
-      setSortConfig,
-      setRequestsSearchTerm,
-      setLoginEmail,
-      setLoginPass,
-      handleLogin,
-      handleLogout,
-      handleCreateTicket,
-      handleRoomReady,
-      handleConfirmReception,
-      handleConsolidate,
-      handleUpdateUserAreas,
-      handleMarkNotificationRead,
-      handleMarkAllNotificationsRead,
-      handleValidateTicket: (_id: string) => { },
-      handleAssignBedAction: (_id: string, _bed: string) => { },
-      handleHousekeepingAction: (_id: string) => { },
+      setCurrentUser, setCurrentView, setActiveRole, setSortConfig, setRequestsSearchTerm,
+      setLoginEmail, setLoginPass,
+      handleLogin, handleLogout,
+      handleCreateTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
+      handleUpdateUserAreas, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleDismissToast,
       handleStartTransport,
-      handleCompleteTransport: (_id: string) => { },
+      handleValidateTicket:    (_id: string) => {},
+      handleAssignBedAction:   (_id: string, _bed: string) => {},
+      handleHousekeepingAction:(_id: string) => {},
+      handleCompleteTransport: (_id: string) => {},
     },
   };
 };

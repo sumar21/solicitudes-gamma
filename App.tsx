@@ -28,6 +28,7 @@ import { NewRequestModal } from './components/modals/NewRequestModal';
 import { AssignBedModal } from './components/modals/AssignBedModal';
 import { AreaSelectionModal } from './components/modals/AreaSelectionModal'; // Import
 import { cn } from './lib/utils';
+import { NotificationToasts } from './components/NotificationToast';
 
 export default function App() {
   const { state, actions } = useHospitalState();
@@ -92,22 +93,18 @@ export default function App() {
           </div>
           <form onSubmit={actions.handleLogin} className="space-y-4 md:space-y-6">
             <div className="space-y-2">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest ml-1">Email Institucional</Label>
-              <Input type="email" value={state.loginEmail} onChange={e => actions.setLoginEmail(e.target.value)} className="h-11 md:h-12 rounded-xl" />
+              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest ml-1">Usuario</Label>
+              <Input type="text" autoComplete="username" value={state.loginEmail} onChange={e => actions.setLoginEmail(e.target.value)} className="h-11 md:h-12 rounded-xl" />
             </div>
             <div className="space-y-2">
               <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest ml-1">Contraseña</Label>
-              <Input type="password" value={state.loginPass} onChange={e => actions.setLoginPass(e.target.value)} className="h-11 md:h-12 rounded-xl" />
+              <Input type="password" autoComplete="current-password" value={state.loginPass} onChange={e => actions.setLoginPass(e.target.value)} className="h-11 md:h-12 rounded-xl" />
             </div>
             {state.loginError && <p className="text-red-500 text-xs font-bold text-center">{state.loginError}</p>}
-            <Button type="submit" className="w-full h-11 md:h-12 bg-zinc-950 hover:bg-black rounded-xl text-white font-semibold">Entrar al Sistema</Button>
+            <Button type="submit" disabled={state.loginLoading} className="w-full h-11 md:h-12 bg-zinc-950 hover:bg-black rounded-xl text-white font-semibold disabled:opacity-60">
+              {state.loginLoading ? 'Verificando...' : 'Entrar al Sistema'}
+            </Button>
           </form>
-          <div className="mt-6 md:mt-8 pt-6 md:pt-8 border-t border-slate-100 flex flex-wrap justify-center gap-4">
-            <button onClick={() => { actions.setLoginEmail('admin@hpr.com'); actions.setLoginPass('1234'); }} className="text-[9px] font-bold text-slate-400 hover:text-zinc-950 uppercase">Admin</button>
-            <button onClick={() => { actions.setLoginEmail('admision@hpr.com'); actions.setLoginPass('1234'); }} className="text-[9px] font-bold text-slate-400 hover:text-zinc-950 uppercase">Admisión</button>
-            <button onClick={() => { actions.setLoginEmail('azafata@hpr.com'); actions.setLoginPass('1234'); }} className="text-[9px] font-bold text-slate-400 hover:text-zinc-950 uppercase">Azafata</button>
-            <button onClick={() => { actions.setLoginEmail('enfermeria@hpr.com'); actions.setLoginPass('1234'); }} className="text-[9px] font-bold text-slate-400 hover:text-zinc-950 uppercase">Enfermería</button>
-          </div>
         </Card>
       </div>
     );
@@ -115,6 +112,24 @@ export default function App() {
 
   return (
     <div className="h-screen h-[100dvh] w-full flex flex-col md:flex-row bg-slate-50 overflow-hidden font-sans text-slate-900">
+      {/* Toast notifications */}
+      <NotificationToasts
+        toasts={state.toasts}
+        onDismiss={actions.handleDismissToast}
+        onTap={(n) => {
+          if (n.ticketId) actions.setCurrentView('REQUESTS');
+        }}
+      />
+
+      {/* Loading overlay */}
+      {state.ticketActionLoading && (
+        <div className="fixed inset-0 z-[100] bg-black/30 backdrop-blur-sm flex items-center justify-center">
+          <div className="bg-white rounded-2xl shadow-2xl px-8 py-6 flex flex-col items-center gap-3">
+            <div className="w-10 h-10 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
+            <span className="text-sm font-medium text-slate-600">Guardando en sistema...</span>
+          </div>
+        </div>
+      )}
       {/* Sidebar Desktop */}
       <aside className="hidden md:flex w-48 bg-zinc-950 text-zinc-300 flex-col shrink-0 border-r border-zinc-900 z-30">
         <div className="h-20 flex items-center px-4 border-b border-zinc-900 shrink-0">
@@ -257,6 +272,24 @@ export default function App() {
             </div>
           </div>
         </header>
+
+        {/* Banner de sesión por vencer */}
+        {state.tokenExpirySoon && (
+          <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center justify-between gap-3 shrink-0">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
+              <p className="text-xs font-semibold text-amber-800">
+                Tu sesión vence en <span className="font-black">{state.tokenMinutesLeft} min</span>. Guardá tu trabajo y volvé a ingresar.
+              </p>
+            </div>
+            <button
+              onClick={actions.handleLogout}
+              className="text-[10px] font-black uppercase tracking-widest text-amber-700 hover:text-amber-900 border border-amber-300 rounded-lg px-2 py-1 hover:bg-amber-100 transition-colors shrink-0"
+            >
+              Renovar sesión
+            </button>
+          </div>
+        )}
 
         <main className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 bg-slate-50/50 relative overscroll-y-contain">
           {/* Monitor — solo Admin y Admisión */}

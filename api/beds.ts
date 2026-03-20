@@ -8,9 +8,11 @@
  *  3. GET /oauth_resource/<endpoint>  Authorization: Bearer <token>
  */
 
+import { requireAuth } from './jwt';
+
 const GAMMA_BASE = process.env.GAMMA_VM_URL ?? 'http://35.224.5.114/proxy/index.php';
-const CLIENT_ID = process.env.GAMMA_CLIENT_ID ?? '';
-const CLIENT_SECRET = process.env.GAMMA_CLIENT_SECRET ?? '';
+const CLIENT_ID = process.env.AZURE_CLIENTE_ID ?? '';
+const CLIENT_SECRET = process.env.AZURE_CLIENT_SECRET ?? '';
 
 // ── Token cache (survives warm invocations) ──────────────────────────────────
 const tokenCache = new Map<string, { token: string; exp: number }>();
@@ -48,7 +50,13 @@ async function getToken(scope: string): Promise<string> {
     }),
   });
 
-  const tokenData = (await tokenRes.json()) as Record<string, unknown>;
+  const tokenText = await tokenRes.text();
+  let tokenData: Record<string, unknown>;
+  try {
+    tokenData = JSON.parse(tokenText) as Record<string, unknown>;
+  } catch {
+    throw new Error(`Token endpoint returned non-JSON (status ${tokenRes.status}): ${tokenText.slice(0, 200)}`);
+  }
   if (!tokenData.access_token) {
     throw new Error(`Token error for scope "${scope}": ${JSON.stringify(tokenData)}`);
   }
@@ -187,12 +195,12 @@ function transformBeds(mapData: GammaSector[], occupiedData: GammaSector[]) {
 }
 
 // ── Handler ──────────────────────────────────────────────────────────────────
-export default async function handler(req: any, res: any) {
+async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
 
   if (!CLIENT_ID || !CLIENT_SECRET) {
     res.status(503).json({
-      error: 'GAMMA_CLIENT_ID / GAMMA_CLIENT_SECRET not set in environment variables.',
+      error: 'AZURE_CLIENTE_ID / AZURE_CLIENT_SECRET not set in environment variables.',
     });
     return;
   }
@@ -241,3 +249,5 @@ export default async function handler(req: any, res: any) {
     res.status(500).json({ error: err.message ?? 'Internal error' });
   }
 }
+
+export default requireAuth(handler);

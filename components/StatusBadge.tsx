@@ -12,8 +12,8 @@ const statusConfig: Record<TicketStatus, { label: string; variant: "default" | "
   [TicketStatus.IN_TRANSIT]: { label: 'Habitación Lista', variant: 'info' },
   [TicketStatus.IN_TRANSPORT]: { label: 'En Traslado', variant: 'secondary' },
   [TicketStatus.WAITING_CONSOLIDATION]: { label: 'Por Consolidar', variant: 'purple' },
-  [TicketStatus.COMPLETED]: { label: 'Finalizado', variant: 'success' },
-  [TicketStatus.REJECTED]: { label: 'Rechazado', variant: 'destructive' },
+  [TicketStatus.COMPLETED]: { label: 'Consolidado', variant: 'success' },
+  [TicketStatus.REJECTED]: { label: 'Cancelado', variant: 'destructive' },
 };
 
 export const StatusBadge: React.FC<Props> = ({ status }) => {

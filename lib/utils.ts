@@ -8,19 +8,56 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
- * Formatea una fecha ISO (YYYY-MM-DD) a un formato legible local (DD/MM/YY)
+ * Formatea una fecha ISO (YYYY-MM-DD o full ISO datetime) a formato legible
  */
 export function formatDateReadable(isoDate: string | undefined): string {
   if (!isoDate) return "---";
   try {
-    const [year, month, day] = isoDate.split("-").map(Number);
-    const date = new Date(year, month - 1, day);
-    return new Intl.DateTimeFormat('es-ES', {
+    const date = new Date(isoDate);
+    if (isNaN(date.getTime())) return isoDate;
+    return new Intl.DateTimeFormat('es-AR', {
       day: '2-digit',
       month: '2-digit',
       year: '2-digit'
     }).format(date);
-  } catch (e) {
+  } catch {
+    return isoDate;
+  }
+}
+
+/**
+ * Formatea una fecha ISO completa a "DD/MM/YY HH:mm"
+ */
+export function formatDateTime(isoDate: string | undefined): string {
+  if (!isoDate) return "---";
+  try {
+    const date = new Date(isoDate);
+    if (isNaN(date.getTime())) return isoDate;
+    return new Intl.DateTimeFormat('es-AR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(date);
+  } catch {
+    return isoDate;
+  }
+}
+
+/**
+ * Formatea solo la hora de un ISO datetime a "HH:mm"
+ */
+export function formatTime(isoDate: string | undefined): string {
+  if (!isoDate) return "---";
+  try {
+    const date = new Date(isoDate);
+    if (isNaN(date.getTime())) return isoDate;
+    return new Intl.DateTimeFormat('es-AR', {
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(date);
+  } catch {
     return isoDate;
   }
 }

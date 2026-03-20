@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(tasklist)",
+      "Bash(findstr /I 'node tsx')",
+      "Bash(taskkill //F //PID 11036)",
+      "Bash(taskkill //F //PID 21616)",
+      "Bash(taskkill //F //PID 26272)",
+      "Bash(netstat -ano)",
+      "Bash(findstr \":3000 :5173\")",
+      "Bash(findstr \"LISTENING\")"
+    ]
+  }
+}

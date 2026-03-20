@@ -100,34 +100,43 @@ export interface Notification {
 }
 
 export enum TicketStatus {
-  WAITING_ROOM = 'WAITING_ROOM',         // Dest en preparación, esperando que Azafata destino marque "Habitación Lista"
-  IN_TRANSIT = 'IN_TRANSIT',             // Habitación lista / disponible, esperando que Azafata origen inicie traslado
-  IN_TRANSPORT = 'IN_TRANSPORT',         // Traslado iniciado por Azafata origen, esperando confirmación de recepción
-  WAITING_CONSOLIDATION = 'WAITING_CONSOLIDATION', // Recepción OK, esperando que Admisión consolide en PROGAL
-  COMPLETED = 'COMPLETED',               // Consolidado
-  REJECTED = 'REJECTED',
+  WAITING_ROOM = 'Esperando Habitacion',
+  IN_TRANSIT = 'Habitacion Lista',
+  IN_TRANSPORT = 'En Traslado',
+  WAITING_CONSOLIDATION = 'Por Consolidar',
+  COMPLETED = 'Consolidado',
+  REJECTED = 'Cancelado',
 }
 
 export interface Ticket {
   id: string;
+  spItemId?: string;        // SharePoint List item ID — set after first SP write
   sede: SedeType;
   patientName: string;
-  origin: string; // Bed ID
-  destination: string | null; // Bed ID
+  patientCode?: string;     // Codigo paciente Gamma
+  origin: string;           // Cama origen label
+  originBedCode?: string;   // Codigo cama origen
+  originBedStatus?: string; // Status cama origen (Ocupada → En preparación)
+  destination: string | null; // Cama destino label
+  destinationBedCode?: string;   // Codigo cama destino
+  destinationBedStatus?: string; // Status cama destino (Prep/Disponible → Asignada → Ocupada)
   workflow: WorkflowType;
   status: TicketStatus;
-  createdAt: string;
+  createdAt: string;        // FechaInicio_T
+  completedAt?: string;     // FechaFin_T (cuando se consolida)
+  financier?: string;       // Financiador / Obra Social
+  createdBy?: string;       // ConcatName_Usr del usuario que crea
+  createdById?: string;     // ID del usuario que crea
   date?: string;
   bedAssignedAt?: string;
   cleaningDoneAt?: string;
   transportStartedAt?: string;
   receptionConfirmedAt?: string;
-  completedAt?: string;
   itrSource?: string;
   changeReason?: string;
   rejectionReason?: string;
   isBedClean: boolean;
   isReasonValidated: boolean;
-  targetBedOriginalStatus?: BedStatus; // To track if it was Available or Prep
+  targetBedOriginalStatus?: BedStatus;
   observations?: string;
 }

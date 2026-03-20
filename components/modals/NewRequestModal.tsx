@@ -96,6 +96,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
                 setOrigin(val);
                 const bed = beds.find(b => b.label === val);
                 if (bed?.patientName) setPatientName(bed.patientName);
+                if (bed?.institution) setItrSource(bed.institution);
               }}
               options={availableOrigins.map(bed => ({
                 label: `${bed.label} (${bed.patientName || 'Sin Nombre'})`,
@@ -141,13 +142,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
           {workflow === WorkflowType.ITR_TO_FLOOR && (
             <div className="grid gap-2">
               <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Origen ITR / Financiador</Label>
-              <SearchableSelect
-                value={itrSource}
-                onValueChange={setItrSource}
-                options={ITR_SOURCES.map(source => ({ label: source, value: source }))}
-                placeholder="Seleccione Financiador"
-                showSearch={false}
-              />
+              <Input placeholder="Financiador / Obra Social" value={itrSource} onChange={e => setItrSource(e.target.value)} className="h-12 rounded-xl" />
             </div>
           )}
 

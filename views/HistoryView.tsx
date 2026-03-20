@@ -15,7 +15,7 @@ import { Calendar } from '../components/ui/calendar';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table';
 import { Badge } from '../components/ui/badge';
 import { AuditModal } from '../components/AuditModal';
-import { cn, formatDateReadable, calculateTicketMetrics, formatBedName } from '../lib/utils';
+import { cn, formatDateReadable, formatDateTime, calculateTicketMetrics, formatBedName } from '../lib/utils';
 
 interface HistoryViewProps {
   tickets: Ticket[];
@@ -90,7 +90,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
       "Tipo Workflow": WORKFLOW_LABELS[t.workflow],
       "Origen": t.origin,
       "Destino": t.destination || 'N/A',
-      "Resultado": t.status === TicketStatus.REJECTED ? 'RECHAZADO' : 'COMPLETADO',
+      "Resultado": t.status === TicketStatus.REJECTED ? 'CANCELADO' : 'CONSOLIDADO',
       "Tiempo Total (min)": calculateTicketMetrics(t).totalCycleTime
     }));
 
@@ -197,7 +197,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
                     ) : (
                       <Badge variant="success" className="text-[8px] uppercase font-black px-1.5 py-0">Finalizado</Badge>
                     )}
-                    <span className="text-[10px] font-black font-mono text-slate-400 tabular-nums">{formatDateReadable(t.date)}</span>
+                    <span className="text-[10px] font-black font-mono text-slate-400 tabular-nums">{formatDateTime(t.createdAt)}</span>
                   </div>
                   <h3 className="font-black text-slate-900 text-sm leading-tight uppercase tracking-tight">{t.patientName}</h3>
                 </div>
@@ -250,15 +250,15 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
               ) : (
                 filteredHistory.map((t) => (
                   <TableRow key={t.id} className={cn("hover:bg-slate-50/50 transition-colors border-b border-slate-100 last:border-0 group", t.status === TicketStatus.REJECTED && "bg-red-50/5")}>
-                    <TableCell className="text-[10px] font-bold text-slate-400 px-6 py-5 tabular-nums">
-                      {formatDateReadable(t.date)}
+                    <TableCell className="text-xs font-bold text-slate-500 px-6 py-5 tabular-nums whitespace-nowrap">
+                      {formatDateTime(t.createdAt)}
                     </TableCell>
                     <TableCell className="py-5">
                       <div className="font-black text-slate-950 text-base uppercase tracking-tight">{t.patientName}</div>
                       <div className="text-[11px] text-slate-400 font-mono mt-0.5 font-bold uppercase">{t.id}</div>
                     </TableCell>
                     <TableCell className="py-5">
-                      <Badge variant="outline" className="text-[8px] font-black uppercase tracking-wider bg-slate-50 text-slate-500 border-slate-200 rounded-lg px-2 py-0.5">
+                      <Badge variant="outline" className="text-[10px] font-bold uppercase tracking-wide bg-slate-50 text-slate-600 border-slate-200 rounded-lg px-3 py-1">
                         {WORKFLOW_LABELS[t.workflow]}
                       </Badge>
                     </TableCell>
@@ -271,15 +271,18 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
                       </div>
                     </TableCell>
                     <TableCell className="py-5">
-                      <div className="flex flex-col gap-1.5">
+                      <div className="flex flex-col gap-1">
                         {t.status === TicketStatus.REJECTED ? (
-                          <div className="flex items-center gap-1.5 text-[10px] text-red-600 font-black bg-red-50 w-fit px-2 py-0.5 rounded-lg border border-red-100 uppercase tabular-nums">
-                            <AlertCircle className="w-3 h-3" /> Rechazado {t.completedAt}
+                          <div className="flex items-center gap-2 text-[11px] text-red-600 font-bold bg-red-50 w-fit px-3 py-1.5 rounded-lg border border-red-100">
+                            <AlertCircle className="w-3.5 h-3.5" /> Cancelado
                           </div>
                         ) : (
-                          <div className="flex items-center gap-1.5 text-[10px] text-emerald-600 font-black bg-emerald-50 w-fit px-2 py-0.5 rounded-lg border border-emerald-100 uppercase tabular-nums">
-                            <CheckCircle2 className="w-3 h-3" /> Finalizado {t.completedAt}
+                          <div className="flex items-center gap-2 text-[11px] text-emerald-600 font-bold bg-emerald-50 w-fit px-3 py-1.5 rounded-lg border border-emerald-100">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Consolidado
                           </div>
+                        )}
+                        {t.completedAt && (
+                          <span className="text-[10px] text-slate-400 font-medium tabular-nums ml-1">{formatDateTime(t.completedAt)}</span>
                         )}
                       </div>
                     </TableCell>
