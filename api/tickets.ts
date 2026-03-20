@@ -7,9 +7,9 @@
  * PATCH /api/tickets         → update ticket  { spItemId, ...fields to update }
  */
 
-import { graphFetch }  from './graph';
-import { requireAuth } from './jwt';
-import { Ticket, TicketStatus, WorkflowType, SedeType, BedStatus } from '../types';
+import { graphFetch }  from './graph.js';
+import { requireAuth } from './jwt.js';
+import { Ticket, TicketStatus, WorkflowType, SedeType, BedStatus } from '../types.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = 'c7417674-9084-416d-a955-7024161a3194'; // 07.Traslados
@@ -111,7 +111,7 @@ function ticketToFields(t: Partial<Ticket>): Record<string, unknown> {
 
   // IDUsuario_T is a number column in SP
   if (fields.IDUsuario_T !== undefined) {
-    fields.IDUsuario_T = Number(fields.IDUsuario_T);
+    (fields as Record<string, unknown>).IDUsuario_T = Number(fields.IDUsuario_T);
   }
 
   return fields;

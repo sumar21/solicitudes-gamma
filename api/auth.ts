@@ -7,8 +7,8 @@
  * Returns: { user, token }  — token JWT con 8h de vida
  */
 
-import { graphFetch } from './graph';
-import { signToken }  from './jwt';
+import { graphFetch } from './graph.js';
+import { signToken }  from './jwt.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = 'e623ad06-ff62-441f-b67d-666224af5805'; // 00.Usuarios

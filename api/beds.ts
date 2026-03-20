@@ -8,7 +8,7 @@
  *  3. GET /oauth_resource/<endpoint>  Authorization: Bearer <token>
  */
 
-import { requireAuth } from './jwt';
+import { requireAuth } from './jwt.js';
 
 const GAMMA_BASE = process.env.GAMMA_VM_URL ?? 'http://35.224.5.114/proxy/index.php';
 const CLIENT_ID = process.env.AZURE_CLIENTE_ID ?? '';

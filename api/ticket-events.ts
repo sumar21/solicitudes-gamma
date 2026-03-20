@@ -5,8 +5,8 @@
  * Body: { ticketId, tipo, usuario, usuarioId }
  */
 
-import { graphFetch }  from './graph';
-import { requireAuth } from './jwt';
+import { graphFetch }  from './graph.js';
+import { requireAuth } from './jwt.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = 'bd50c2be-0ec7-45d7-b1f5-abf10546675d'; // 08.DetalleTraslados
