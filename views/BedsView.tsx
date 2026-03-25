@@ -33,9 +33,10 @@ interface BedsViewProps {
   beds: Bed[];
   tickets: Ticket[];
   currentUser: User | null;
+  bedsLoading?: boolean;
 }
 
-export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser }) => {
+export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
 
   // Map beds to their assigned ticket (for "Asignada" beds)
@@ -434,6 +435,15 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser }
           })}
         </div>
       </div>
+
+      {/* Loading skeleton */}
+      {bedsLoading && beds.length === 0 && (
+        <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-12 lg:grid-cols-16 xl:grid-cols-20 gap-1 md:gap-1.5">
+          {Array.from({ length: 40 }).map((_, i) => (
+            <div key={i} className="aspect-square rounded-lg bg-slate-100 animate-pulse" />
+          ))}
+        </div>
+      )}
 
       <div className="flex flex-col gap-3 md:gap-4">
         {sortedAreaEntries.map(([areaName, areaBeds]) => (

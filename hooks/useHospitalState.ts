@@ -127,12 +127,13 @@ export const useHospitalState = () => {
   const [loginError, setLoginError]                = useState('');
   const [loginLoading, setLoginLoading]            = useState(false);
   const [bedsLoading, setBedsLoading]              = useState(false);
+  const [bedsError, setBedsError]                  = useState<string | null>(null);
   const [ticketActionLoading, setTicketActionLoading] = useState(false);
   const writingRef = React.useRef(false); // block polls during SP writes
   const ticketsEtagRef = React.useRef<string | null>(null); // ETag for smart polling
   const prevTicketSnapshotRef = React.useRef<Map<string, string>>(new Map()); // id → status for change detection
   const initialLoadDoneRef = React.useRef(false); // skip notifications on first load
-  const [rawBeds, setRawBeds]                      = useState<Bed[]>(MOCK_BEDS);
+  const [rawBeds, setRawBeds]                      = useState<Bed[]>([]);
   const [tickets, setTickets]                      = useState<Ticket[]>(MOCK_TICKETS);
 
   const beds = useMemo(() => {
@@ -143,13 +144,34 @@ export const useHospitalState = () => {
   // ── Data fetchers ─────────────────────────────────────────────────────────────
   const fetchBeds = useCallback(async () => {
     setBedsLoading(true);
+    setBedsError(null);
     try {
+      console.log('[fetchBeds] GET /api/beds ...');
       const r = await authFetch('/api/beds');
+      console.log('[fetchBeds] status:', r.status);
       if (r.status === 401) { handleLogout(); return; }
-      if (!r.ok) return;
-      const data: { beds: Bed[] } = await r.json();
-      if (Array.isArray(data.beds) && data.beds.length > 0) setRawBeds(data.beds);
-    } catch { /* keep current data */ }
+      const text = await r.text();
+      console.log('[fetchBeds] body:', text.slice(0, 500));
+      if (!r.ok) {
+        setBedsError(`HTTP ${r.status} — mostrando datos de prueba`);
+        setRawBeds(MOCK_BEDS);
+        return;
+      }
+      const data: { beds: Bed[]; error?: string } = JSON.parse(text);
+      if (data.error) { setBedsError(data.error); setRawBeds(MOCK_BEDS); return; }
+      if (Array.isArray(data.beds) && data.beds.length > 0) {
+        console.log('[fetchBeds] camas recibidas:', data.beds.length);
+        setBedsError(null);
+        setRawBeds(data.beds);
+      } else {
+        setBedsError('API sin datos — mostrando datos de prueba');
+        setRawBeds(MOCK_BEDS);
+      }
+    } catch (e: any) {
+      console.error('[fetchBeds] error:', e);
+      setBedsError('Sin conexión a la API — mostrando datos de prueba');
+      setRawBeds(MOCK_BEDS);
+    }
     finally { setBedsLoading(false); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authFetch]);
@@ -588,7 +610,7 @@ export const useHospitalState = () => {
     state: {
       currentUser, currentView, activeRole, sortConfig, requestsSearchTerm,
       notifications, filteredNotifications, toasts, tickets, filteredTickets,
-      loginEmail, loginPass, loginError, loginLoading, bedsLoading, ticketActionLoading, beds,
+      loginEmail, loginPass, loginError, loginLoading, bedsLoading, bedsError, ticketActionLoading, beds,
       tokenExpirySoon, tokenMinutesLeft,
     },
     actions: {

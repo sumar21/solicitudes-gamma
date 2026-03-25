@@ -11,8 +11,8 @@
 import { requireAuth } from './jwt.js';
 
 const GAMMA_BASE = process.env.GAMMA_VM_URL ?? 'http://35.224.5.114/proxy/index.php';
-const CLIENT_ID = process.env.AZURE_CLIENTE_ID ?? '';
-const CLIENT_SECRET = process.env.AZURE_CLIENT_SECRET ?? '';
+const CLIENT_ID = process.env.CLIENT_ID ?? '';
+const CLIENT_SECRET = process.env.CLIENT_SECRET ?? '';
 
 // ── Token cache (survives warm invocations) ──────────────────────────────────
 const tokenCache = new Map<string, { token: string; exp: number }>();
@@ -148,7 +148,7 @@ function mapEstado(estado: string | undefined): string {
   const e = estado.toLowerCase();
   if (e.includes('ocup')) return STATUS.OCCUPIED;
   if (e.includes('prep')) return STATUS.PREPARATION;
-  if (e.includes('inhab')) return STATUS.DISABLED;
+  if (e.includes('inhab') || e.includes('inact')) return STATUS.DISABLED;
   return STATUS.OCCUPIED; // unknown occupied states → OCCUPIED
 }
 
@@ -170,22 +170,30 @@ function transformBeds(mapData: GammaSector[], occupiedData: GammaSector[]) {
   for (const sector of mapData) {
     for (const room of sector.habitaciones ?? []) {
       for (const bed of room.camas ?? []) {
+        // mapData already includes estado and patient info per bed.
+        // occData is used as fallback/supplement only.
         const occ = occLookup.get(`${sector.codigo}-${room.codigo}-${bed.codigo}`);
+        const estado = bed.estado ?? occ?.estado;
+        const paciente = bed.paciente ?? occ?.paciente;
+        const origenEvento = bed.origen_evento ?? occ?.origen_evento;
+        const numeroEvento = bed.numero_evento ?? occ?.numero_evento;
+        const codigoPaciente = bed.codigo_paciente ?? occ?.codigo_paciente;
 
         beds.push({
           id: `BED-${id++}`,
           label: `${room.nombre} - ${bed.nombre ?? `Cama 0${bed.codigo}`}`,
-          area: sector.nombre,                     // matches Area enum values directly
-          status: mapEstado(occ?.estado),
-          patientName: occ?.paciente ?? undefined,
+          area: sector.nombre,
+          status: mapEstado(estado),
+          patientName: paciente ?? undefined,
           roomCode: String(room.codigo),
           bedCode: String(bed.codigo),
-          eventOrigin: occ?.origen_evento ?? undefined,
-          eventNumber: occ?.numero_evento ?? undefined,
-          patientCode: occ?.codigo_paciente ?? undefined,
+          eventOrigin: origenEvento ?? undefined,
+          eventNumber: numeroEvento ?? undefined,
+          patientCode: codigoPaciente ?? undefined,
           institution: undefined as string | undefined,
           dni: undefined as string | undefined,
           age: undefined as number | undefined,
+          sex: undefined as 'M' | 'F' | undefined,
         });
       }
     }
@@ -240,6 +248,7 @@ async function handler(req: any, res: any) {
         bed.institution = p.ENT_NOMBRE_FANTASIA?.trim() || undefined;
         bed.dni = p.ENT_NUMERO_DOCUMENTO?.trim() || undefined;
         bed.age = p.PCN_FECHA_NACIMIENTO ? calcAge(p.PCN_FECHA_NACIMIENTO) : undefined;
+        bed.sex = p.PCN_SEXO === 'M' || p.PCN_SEXO === 'F' ? p.PCN_SEXO : undefined;
       });
     }
 
