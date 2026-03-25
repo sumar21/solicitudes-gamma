@@ -50,204 +50,11 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     return map;
   }, [tickets]);
 
-  const exportPDF = useCallback(async () => {
-    // Convert SVG logo to PNG via canvas
-    const svgToLogoPng = (): Promise<string | null> => {
-      return new Promise((resolve) => {
-        try {
-          const svgMarkup = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 299 300" fill="none">
-            <path d="M177.763 209.923C175.477 205.948 171.246 203.498 166.673 203.498H132.327C127.75 203.498 123.523 205.948 121.236 209.923L104.063 239.768C101.776 243.743 101.776 248.643 104.063 252.618L121.236 282.462C123.523 286.437 127.753 288.887 132.327 288.887H166.676C171.252 288.887 175.479 286.437 177.766 282.462L194.939 252.618C197.226 248.643 197.226 243.743 194.939 239.768L177.763 209.923Z" fill="#022C22"/>
-            <path d="M121.236 90.078C123.523 94.053 127.753 96.503 132.327 96.503H166.676C171.252 96.503 175.479 94.053 177.766 90.078L194.939 60.2336C197.226 56.2586 197.226 51.3586 194.939 47.3836L177.763 17.5363C175.477 13.5613 171.249 11.1113 166.673 11.1113H132.327C127.75 11.1113 123.523 13.5613 121.236 17.5363L104.063 47.3808C101.776 51.3558 101.776 56.2558 104.063 60.2308L121.236 90.078Z" fill="#022C22"/>
-            <path d="M277.967 191.673L260.794 161.825C258.507 157.85 254.276 155.4 249.703 155.4H215.354C210.778 155.4 206.55 157.85 204.263 161.825L187.09 191.67C184.803 195.645 184.803 200.545 187.09 204.52L204.263 234.364C206.55 238.339 210.78 240.789 215.354 240.789H249.703C254.279 240.789 258.507 238.339 260.794 234.364L277.967 204.52C280.254 200.548 280.254 195.648 277.967 191.673Z" fill="#022C22"/>
-            <path d="M38.2046 138.175C40.4914 142.15 44.7217 144.6 49.2953 144.6H83.6443C88.2207 144.6 92.4482 142.15 94.735 138.175L111.908 108.33C114.195 104.355 114.195 99.4554 111.908 95.4804L94.735 65.6359C92.4482 61.6609 88.2179 59.2109 83.6443 59.2109H49.2981C44.7217 59.2109 40.4942 61.6609 38.2074 65.6359L21.0315 95.4776C18.7447 99.4526 18.7447 104.353 21.0315 108.328L38.2046 138.175Z" fill="#022C22"/>
-            <path d="M111.911 191.672L94.7378 161.827C92.451 157.852 88.2207 155.402 83.6471 155.402H49.2981C44.7217 155.402 40.4942 157.852 38.2074 161.827L21.0315 191.672C18.7447 195.647 18.7447 200.547 21.0315 204.522L38.2046 234.366C40.4914 238.341 44.7217 240.791 49.2953 240.791H83.6443C88.2207 240.791 92.4482 238.341 94.735 234.366L111.908 204.522C114.198 200.547 114.198 195.647 111.911 191.672Z" fill="#022C22"/>
-            <path d="M187.087 108.328L202.187 134.567H183.43C179.142 127.098 173.821 117.831 173.821 117.831C171.863 114.428 168.242 112.331 164.327 112.331H134.926C131.008 112.331 127.39 114.428 125.433 117.831L110.732 143.379C108.774 146.781 108.774 150.976 110.732 154.379L125.433 179.926C127.39 183.329 131.008 185.426 134.926 185.426H164.327C168.245 185.426 171.863 183.329 173.821 179.926L184.305 161.704H148.89V143.829H177.536H188.737H211.054C212.417 144.317 213.859 144.601 215.348 144.601H249.697C254.274 144.601 258.501 142.151 260.788 138.176L277.961 108.331C280.248 104.356 280.248 99.4563 277.961 95.4813L260.794 65.634C258.507 61.659 254.277 59.209 249.703 59.209H215.354C210.778 59.209 206.55 61.659 204.263 65.634L187.09 95.4785C184.801 99.4535 184.801 104.353 187.087 108.328Z" fill="#022C22"/>
-          </svg>`;
-          const blob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' });
-          const url = URL.createObjectURL(blob);
-          const img = new Image();
-          img.onload = () => {
-            const canvas = document.createElement('canvas');
-            canvas.width = 200;
-            canvas.height = 200;
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-              ctx.drawImage(img, 0, 0, 200, 200);
-              resolve(canvas.toDataURL('image/png'));
-            } else {
-              resolve(null);
-            }
-            URL.revokeObjectURL(url);
-          };
-          img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
-          img.src = url;
-        } catch { resolve(null); }
-      });
-    };
-
-    const logoPng = await svgToLogoPng();
-
-    const doc = new jsPDF({ orientation: 'landscape' });
-    const pageW = doc.internal.pageSize.getWidth();
-    const pageH = doc.internal.pageSize.getHeight();
-    const now = new Date().toLocaleString('es-AR');
-    const margin = 10;
-
-    type RGB = [number, number, number];
-    const statusColors: Record<string, { bg: RGB; text: RGB; dot: RGB }> = {
-      [BedStatus.AVAILABLE]:   { bg: [209, 250, 229], text: [4, 120, 87],    dot: [16, 185, 129] },
-      [BedStatus.OCCUPIED]:    { bg: [254, 226, 226], text: [153, 27, 27],   dot: [220, 38, 38] },
-      [BedStatus.PREPARATION]: { bg: [254, 243, 199], text: [146, 64, 14],   dot: [245, 158, 11] },
-      [BedStatus.ASSIGNED]:    { bg: [224, 231, 255], text: [55, 48, 163],   dot: [99, 102, 241] },
-      [BedStatus.DISABLED]:    { bg: [241, 245, 249], text: [100, 116, 139], dot: [148, 163, 184] },
-    };
-
-    const drawHeader = (logoPng: string | null) => {
-      const logoSize = 12;
-      const textX = logoPng ? margin + logoSize + 4 : margin;
-
-      // Logo
-      if (logoPng) {
-        try { doc.addImage(logoPng, 'PNG', margin, 4, logoSize, logoSize); } catch { /* no logo */ }
-      }
-
-      // Grupo Gamma
-      doc.setFontSize(14);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(2, 44, 34); // #022C22
-      doc.text('Grupo Gamma', textX, 10);
-
-      // MediFlow subtitle
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(100, 116, 139);
-      doc.text('MediFlow', textX, 15);
-
-      // Right side: sede + date
-      doc.setFontSize(7);
-      doc.setTextColor(148, 163, 184);
-      doc.text(`Sede ${currentUser?.sede || 'HPR'}  ·  ${now}`, pageW - margin, 10, { align: 'right' });
-
-      // Thin green line separator
-      doc.setDrawColor(7, 146, 113);
-      doc.setLineWidth(0.5);
-      doc.line(margin, 19, pageW - margin, 19);
-    };
-
-    // Group beds by area
-    const grouped: Record<string, typeof beds> = {};
-    beds.forEach(b => {
-      if (!grouped[b.area]) grouped[b.area] = [];
-      grouped[b.area].push(b);
-    });
-
-    // Card dimensions
-    const cardW = 32;
-    const cardHSmall = 18;   // non-occupied
-    const cardHBig = 30;     // occupied (more info)
-    const cardGap = 2.5;
-    const cols = Math.floor((pageW - margin * 2 + cardGap) / (cardW + cardGap));
-
-    let curY = 26;
-    let pageStarted = false;
-
-    const ensurePage = (needed: number) => {
-      if (curY + needed > pageH - margin) {
-        doc.addPage();
-        drawHeader(logoPng);
-        curY = 26;
-      }
-    };
-
-    drawHeader(logoPng);
-
-    for (const [areaName, areaBeds] of Object.entries(grouped)) {
-      // Area label
-      ensurePage(cardHBig + 10);
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(51, 65, 85);
-      doc.text(areaName, margin, curY + 4);
-      doc.setDrawColor(226, 232, 240);
-      doc.line(margin + doc.getTextWidth(areaName) + 3, curY + 2, pageW - margin, curY + 2);
-      curY += 8;
-
-      let col = 0;
-      for (const bed of areaBeds) {
-        const ticket = bedTicketMap.get(bed.label);
-        const isOccupied = bed.status === BedStatus.OCCUPIED;
-        const isAssigned = bed.status === BedStatus.ASSIGNED && !!ticket;
-        const cardH = (isOccupied || isAssigned) ? cardHBig : cardHSmall;
-
-        if (col >= cols) { col = 0; curY += cardH + cardGap; }
-        ensurePage(cardH + cardGap);
-
-        const x = margin + col * (cardW + cardGap);
-        const y = curY;
-        const colors = statusColors[bed.status] || statusColors[BedStatus.DISABLED];
-
-        // Card background
-        doc.setFillColor(...colors.bg);
-        doc.roundedRect(x, y, cardW, cardH, 2, 2, 'F');
-
-        // Status dot
-        doc.setFillColor(...colors.dot);
-        doc.circle(x + cardW - 3, y + 3, 1.2, 'F');
-
-        // Room-Bed code
-        doc.setFontSize(9);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(...colors.text);
-        doc.text(`${bed.roomCode}-${bed.bedCode}`, x + cardW / 2, y + 7, { align: 'center' });
-
-        // Status label
-        doc.setFontSize(5);
-        doc.setFont('helvetica', 'normal');
-        doc.text(bed.status, x + cardW / 2, y + 11, { align: 'center' });
-
-        // Extra info for occupied beds
-        if (isOccupied) {
-          doc.setFontSize(5.5);
-          doc.setFont('helvetica', 'bold');
-          doc.setTextColor(30, 41, 59);
-          const name = (bed.patientName || '').substring(0, 20);
-          doc.text(name, x + 2, y + 16);
-
-          doc.setFontSize(4.5);
-          doc.setFont('helvetica', 'normal');
-          doc.setTextColor(100, 116, 139);
-          if (bed.institution) doc.text(bed.institution.substring(0, 22), x + 2, y + 20);
-          if (bed.dni) doc.text(`DNI: ${bed.dni}`, x + 2, y + 23.5);
-          if (bed.attendingPhysician) doc.text(`Dr: ${bed.attendingPhysician.substring(0, 18)}`, x + 2, y + 27);
-        }
-
-        // Extra info for assigned beds (from ticket)
-        if (isAssigned && ticket) {
-          doc.setFontSize(5.5);
-          doc.setFont('helvetica', 'bold');
-          doc.setTextColor(30, 41, 59);
-          doc.text((ticket.patientName || '').substring(0, 20), x + 2, y + 16);
-
-          doc.setFontSize(4.5);
-          doc.setFont('helvetica', 'normal');
-          doc.setTextColor(100, 116, 139);
-          doc.text(`Desde: ${ticket.origin?.replace(/Habitación /g, '').substring(0, 18) || ''}`, x + 2, y + 20);
-          if (ticket.financier) doc.text(ticket.financier.substring(0, 22), x + 2, y + 23.5);
-          doc.text(ticket.status, x + 2, y + 27);
-        }
-
-        col++;
-      }
-      curY += ((areaBeds.some(b => b.status === BedStatus.OCCUPIED || (b.status === BedStatus.ASSIGNED && bedTicketMap.has(b.label)))) ? cardHBig : cardHSmall) + cardGap + 3;
-    }
-
-    doc.save(`mapa-camas-${new Date().toISOString().slice(0, 10)}.pdf`);
-  }, [beds, bedTicketMap, currentUser]);
-
   // Filters state
   const [searchFilter, setSearchFilter] = useState('');
 
   const isAdmission = currentUser?.role === Role.ADMISSION || currentUser?.role === Role.ADMIN;
+  void isAdmission; // used implicitly via role checks below
 
   const [areaFilters, setAreaFilters] = useState<Set<string>>(() => {
     const all = new Set<string>(Object.values(Area));
@@ -259,7 +66,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   const [statusFilters, setStatusFilters] = useState<Set<string>>(new Set());
 
   const toggleArea = (area: string) => {
-    setAreaFilters(prev => {
+    setAreaFilters((prev: Set<string>) => {
       const next = new Set(prev);
       next.has(area) ? next.delete(area) : next.add(area);
       return next;
@@ -267,7 +74,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   };
 
   const toggleStatus = (status: string) => {
-    setStatusFilters(prev => {
+    setStatusFilters((prev: Set<string>) => {
       const next = new Set(prev);
       next.has(status) ? next.delete(status) : next.add(status);
       return next;
@@ -310,11 +117,11 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     }
 
     return result;
-  }, [beds, currentUser, searchFilter, areaFilters, statusFilters]);
+  }, [beds, currentUser, searchFilter, areaFilters, statusFilters, allAreas.length]);
 
   // Group beds by Area, ordered with HIT first
   const bedsByArea: Record<string, Bed[]> = {};
-  filteredBeds.forEach(bed => {
+  filteredBeds.forEach((bed: Bed) => {
     if (!bedsByArea[bed.area]) bedsByArea[bed.area] = [];
     bedsByArea[bed.area].push(bed);
   });
@@ -324,28 +131,283 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
   });
 
+  // ── PDF Export ─────────────────────────────────────────────────────────────
+  const exportPDF = useCallback(async () => {
+    // Inline helper: rasterise the SVG logo to a PNG data-URL
+    const svgToLogoPng = (): Promise<string | null> => {
+      return new Promise((resolve) => {
+        try {
+          const svgMarkup = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 299 300" fill="none">
+            <path d="M177.763 209.923C175.477 205.948 171.246 203.498 166.673 203.498H132.327C127.75 203.498 123.523 205.948 121.236 209.923L104.063 239.768C101.776 243.743 101.776 248.643 104.063 252.618L121.236 282.462C123.523 286.437 127.753 288.887 132.327 288.887H166.676C171.252 288.887 175.479 286.437 177.766 282.462L194.939 252.618C197.226 248.643 197.226 243.743 194.939 239.768L177.763 209.923Z" fill="#022C22"/>
+            <path d="M121.236 90.078C123.523 94.053 127.753 96.503 132.327 96.503H166.676C171.252 96.503 175.479 94.053 177.766 90.078L194.939 60.2336C197.226 56.2586 197.226 51.3586 194.939 47.3836L177.763 17.5363C175.477 13.5613 171.249 11.1113 166.673 11.1113H132.327C127.75 11.1113 123.523 13.5613 121.236 17.5363L104.063 47.3808C101.776 51.3558 101.776 56.2558 104.063 60.2308L121.236 90.078Z" fill="#022C22"/>
+            <path d="M277.967 191.673L260.794 161.825C258.507 157.85 254.276 155.4 249.703 155.4H215.354C210.778 155.4 206.55 157.85 204.263 161.825L187.09 191.67C184.803 195.645 184.803 200.545 187.09 204.52L204.263 234.364C206.55 238.339 210.78 240.789 215.354 240.789H249.703C254.279 240.789 258.507 238.339 260.794 234.364L277.967 204.52C280.254 200.548 280.254 195.648 277.967 191.673Z" fill="#022C22"/>
+            <path d="M38.2046 138.175C40.4914 142.15 44.7217 144.6 49.2953 144.6H83.6443C88.2207 144.6 92.4482 142.15 94.735 138.175L111.908 108.33C114.195 104.355 114.195 99.4554 111.908 95.4804L94.735 65.6359C92.4482 61.6609 88.2179 59.2109 83.6443 59.2109H49.2981C44.7217 59.2109 40.4942 61.6609 38.2074 65.6359L21.0315 95.4776C18.7447 99.4526 18.7447 104.353 21.0315 108.328L38.2046 138.175Z" fill="#022C22"/>
+            <path d="M111.911 191.672L94.7378 161.827C92.451 157.852 88.2207 155.402 83.6471 155.402H49.2981C44.7217 155.402 40.4942 157.852 38.2074 161.827L21.0315 191.672C18.7447 195.647 18.7447 200.547 21.0315 204.522L38.2046 234.366C40.4914 238.341 44.7217 240.791 49.2953 240.791H83.6443C88.2207 240.791 92.4482 238.341 94.735 234.366L111.908 204.522C114.198 200.547 114.198 195.647 111.911 191.672Z" fill="#022C22"/>
+            <path d="M187.087 108.328L202.187 134.567H183.43C179.142 127.098 173.821 117.831 173.821 117.831C171.863 114.428 168.242 112.331 164.327 112.331H134.926C131.008 112.331 127.39 114.428 125.433 117.831L110.732 143.379C108.774 146.781 108.774 150.976 110.732 154.379L125.433 179.926C127.39 183.329 131.008 185.426 134.926 185.426H164.327C168.245 185.426 171.863 183.329 173.821 179.926L184.305 161.704H148.89V143.829H177.536H188.737H211.054C212.417 144.317 213.859 144.601 215.348 144.601H249.697C254.274 144.601 258.501 142.151 260.788 138.176L277.961 108.331C280.248 104.356 280.248 99.4563 277.961 95.4813L260.794 65.634C258.507 61.659 254.277 59.209 249.703 59.209H215.354C210.778 59.209 206.55 61.659 204.263 65.634L187.09 95.4785C184.801 99.4535 184.801 104.353 187.087 108.328Z" fill="#022C22"/>
+          </svg>`;
+          const blob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' });
+          const url = URL.createObjectURL(blob);
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 200;
+            canvas.height = 200;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img, 0, 0, 200, 200);
+              resolve(canvas.toDataURL('image/png'));
+            } else {
+              resolve(null);
+            }
+            URL.revokeObjectURL(url);
+          };
+          img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+          img.src = url;
+        } catch { resolve(null); }
+      });
+    };
+
+    const logoPng = await svgToLogoPng();
+
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const now = new Date().toLocaleString('es-AR');
+    const margin = 10;
+
+    type RGB = [number, number, number];
+
+    // Status display config: dot color + label text color
+    const statusDotColor: Record<string, RGB> = {
+      [BedStatus.AVAILABLE]:   [16, 185, 129],   // emerald
+      [BedStatus.OCCUPIED]:    [220, 38, 38],     // red
+      [BedStatus.PREPARATION]: [245, 158, 11],    // amber
+      [BedStatus.ASSIGNED]:    [99, 102, 241],    // indigo
+      [BedStatus.DISABLED]:    [148, 163, 184],   // slate
+    };
+    const statusTextColor: Record<string, RGB> = {
+      [BedStatus.AVAILABLE]:   [4, 120, 87],
+      [BedStatus.OCCUPIED]:    [153, 27, 27],
+      [BedStatus.PREPARATION]: [146, 64, 14],
+      [BedStatus.ASSIGNED]:    [55, 48, 163],
+      [BedStatus.DISABLED]:    [100, 116, 139],
+    };
+
+    // ── Page header ──────────────────────────────────────────────────────────
+    const drawHeader = (logo: string | null) => {
+      const logoSize = 12;
+      const textX = logo ? margin + logoSize + 4 : margin;
+
+      if (logo) {
+        try { doc.addImage(logo, 'PNG', margin, 4, logoSize, logoSize); } catch { /* skip */ }
+      }
+
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(2, 44, 34);
+      doc.text('Grupo Gamma', textX, 10);
+
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(100, 116, 139);
+      doc.text('MediFlow', textX, 15);
+
+      doc.setFontSize(7);
+      doc.setTextColor(148, 163, 184);
+      doc.text(`Sede ${currentUser?.sede || 'HPR'}  ·  ${now}`, pageW - margin, 10, { align: 'right' });
+
+      // Green separator line
+      doc.setDrawColor(7, 146, 113);
+      doc.setLineWidth(0.5);
+      doc.line(margin, 19, pageW - margin, 19);
+    };
+
+    // ── Column layout ────────────────────────────────────────────────────────
+    // Columns: Hab.(14) | Cama(10) | Estado(22) | Paciente(55) | DNI(22) | Edad(10) | Sexo(10) | Profesional(40) | Financiador(40)
+    const colWidths = [14, 10, 22, 55, 22, 10, 10, 40, 40];
+    const colHeaders = ['Hab.', 'Cama', 'Estado', 'Paciente', 'DNI', 'Edad', 'Sexo', 'Profesional', 'Financiador'];
+    const rowH = 6;
+    const tableWidth = colWidths.reduce((s, w) => s + w, 0);
+
+    // X start positions for each column
+    const colX: number[] = [];
+    let cx = margin;
+    for (const w of colWidths) {
+      colX.push(cx);
+      cx += w;
+    }
+
+    let curY = 26;
+
+    const ensurePage = (needed: number) => {
+      if (curY + needed > pageH - margin) {
+        doc.addPage();
+        drawHeader(logoPng);
+        curY = 26;
+      }
+    };
+
+    // Draw the column header row
+    const drawTableHeader = () => {
+      ensurePage(rowH + 2);
+      doc.setFillColor(226, 232, 240); // slate-200
+      doc.rect(margin, curY, tableWidth, rowH, 'F');
+      doc.setFontSize(6);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(71, 85, 105); // slate-600
+      colHeaders.forEach((h, i) => {
+        doc.text(h, colX[i] + 1.5, curY + rowH - 1.8);
+      });
+      curY += rowH;
+    };
+
+    drawHeader(logoPng);
+
+    // ── Rows ─────────────────────────────────────────────────────────────────
+    let globalRowIndex = 0; // for alternating background across all areas
+
+    for (const [areaKey, areaBeds] of sortedAreaEntries) {
+      const areaLabel = AREA_LABELS[areaKey] ?? areaKey;
+
+      // Area shaded header row
+      ensurePage(rowH + rowH + 2);
+      doc.setFillColor(30, 41, 59); // slate-800
+      doc.rect(margin, curY, tableWidth, rowH, 'F');
+      doc.setFontSize(7);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(226, 232, 240); // slate-200
+      doc.text(areaLabel, margin + 2, curY + rowH - 1.8);
+      curY += rowH;
+
+      // Column headers after each area title
+      drawTableHeader();
+
+      for (const bed of areaBeds) {
+        ensurePage(rowH);
+
+        const isOccupied = bed.status === BedStatus.OCCUPIED;
+        const ticket = bedTicketMap.get(bed.label);
+        const isAssigned = bed.status === BedStatus.ASSIGNED && !!ticket;
+        const showPatientData = isOccupied || isAssigned;
+
+        // Alternating row background
+        const even = globalRowIndex % 2 === 0;
+        const rowBg: RGB = even ? [255, 255, 255] : [248, 248, 248];
+        doc.setFillColor(...rowBg);
+        doc.rect(margin, curY, tableWidth, rowH, 'F');
+
+        // Light row border
+        doc.setDrawColor(226, 232, 240);
+        doc.setLineWidth(0.1);
+        doc.line(margin, curY + rowH, margin + tableWidth, curY + rowH);
+
+        const textY = curY + rowH - 1.8;
+
+        // Col 0: Habitación
+        doc.setFontSize(6.5);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(30, 41, 59);
+        doc.text(bed.roomCode ?? '', colX[0] + 1.5, textY);
+
+        // Col 1: Cama
+        doc.text(bed.bedCode ?? '', colX[1] + 1.5, textY);
+
+        // Col 2: Estado — colored dot + text
+        const dotColor: RGB = statusDotColor[bed.status] ?? [148, 163, 184];
+        const txtColor: RGB = statusTextColor[bed.status] ?? [100, 116, 139];
+        doc.setFillColor(...dotColor);
+        doc.circle(colX[2] + 2.2, curY + rowH / 2, 1.2, 'F');
+        doc.setFontSize(6);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(...txtColor);
+        doc.text(bed.status, colX[2] + 5, textY);
+
+        // Reset font for data cells
+        doc.setFontSize(6.5);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(30, 41, 59);
+
+        if (showPatientData) {
+          const patientName = isOccupied
+            ? (bed.patientName ?? '')
+            : (ticket?.patientName ?? '');
+          const dni = isOccupied
+            ? (bed.dni ?? '')
+            : '';
+          const age = isOccupied
+            ? (bed.age != null ? String(bed.age) : '')
+            : '';
+          const sex = isOccupied
+            ? (bed.sex === 'M' ? 'M' : bed.sex === 'F' ? 'F' : '')
+            : '';
+          const physician = isOccupied
+            ? (bed.attendingPhysician ?? '')
+            : '';
+          const financier = isOccupied
+            ? (bed.institution ?? '')
+            : (ticket?.financier ?? '');
+
+          // Col 3: Paciente
+          const maxPatientChars = Math.floor(colWidths[3] / 1.6);
+          doc.text(patientName.substring(0, maxPatientChars), colX[3] + 1.5, textY);
+
+          // Col 4: DNI
+          doc.text(dni.substring(0, 12), colX[4] + 1.5, textY);
+
+          // Col 5: Edad
+          doc.text(age, colX[5] + 1.5, textY);
+
+          // Col 6: Sexo
+          doc.text(sex, colX[6] + 1.5, textY);
+
+          // Col 7: Profesional
+          const maxPhysChars = Math.floor(colWidths[7] / 1.6);
+          doc.text(physician.substring(0, maxPhysChars), colX[7] + 1.5, textY);
+
+          // Col 8: Financiador
+          const maxFinChars = Math.floor(colWidths[8] / 1.6);
+          doc.text(financier.substring(0, maxFinChars), colX[8] + 1.5, textY);
+        } else {
+          // Non-occupied: just show bed code in patient column (dimmed)
+          doc.setTextColor(148, 163, 184);
+          doc.text(`${bed.roomCode}-${bed.bedCode}`, colX[3] + 1.5, textY);
+        }
+
+        curY += rowH;
+        globalRowIndex++;
+      }
+
+      // Small gap between areas
+      curY += 3;
+    }
+
+    doc.save(`mapa-camas-${new Date().toISOString().slice(0, 10)}.pdf`);
+  }, [filteredBeds, sortedAreaEntries, bedTicketMap, currentUser]);
+
+  // ── Status helpers ────────────────────────────────────────────────────────
   const getStatusColor = (status: BedStatus) => {
     switch (status) {
-      case BedStatus.AVAILABLE: return "bg-emerald-100 text-emerald-700 border-emerald-300 hover:bg-emerald-200";
-      case BedStatus.OCCUPIED: return "bg-red-100 text-red-700 border-red-300 hover:bg-red-200";
+      case BedStatus.AVAILABLE:   return "bg-emerald-100 text-emerald-700 border-emerald-300 hover:bg-emerald-200";
+      case BedStatus.OCCUPIED:    return "bg-red-100 text-red-700 border-red-300 hover:bg-red-200";
       case BedStatus.PREPARATION: return "bg-amber-100 text-amber-700 border-amber-300 hover:bg-amber-200";
-      case BedStatus.ASSIGNED: return "bg-indigo-100 text-indigo-700 border-indigo-300 hover:bg-indigo-200";
-      case BedStatus.DISABLED: return "bg-slate-100 text-slate-500 border-slate-300 hover:bg-slate-200";
-      default: return "bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200";
+      case BedStatus.ASSIGNED:    return "bg-indigo-100 text-indigo-700 border-indigo-300 hover:bg-indigo-200";
+      case BedStatus.DISABLED:    return "bg-slate-100 text-slate-500 border-slate-300 hover:bg-slate-200";
+      default:                    return "bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200";
     }
   };
 
   const getStatusDot = (status: BedStatus) => {
     switch (status) {
-      case BedStatus.AVAILABLE: return "bg-emerald-500";
-      case BedStatus.OCCUPIED: return "bg-red-500";
+      case BedStatus.AVAILABLE:   return "bg-emerald-500";
+      case BedStatus.OCCUPIED:    return "bg-red-500";
       case BedStatus.PREPARATION: return "bg-amber-500";
-      case BedStatus.ASSIGNED: return "bg-indigo-500";
-      case BedStatus.DISABLED: return "bg-slate-400";
-      default: return "bg-slate-400";
+      case BedStatus.ASSIGNED:    return "bg-indigo-500";
+      case BedStatus.DISABLED:    return "bg-slate-400";
+      default:                    return "bg-slate-400";
     }
   };
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="p-2 md:p-3 space-y-2 md:space-y-4 max-w-[1600px] mx-auto w-full relative">
       {/* Filters bar */}
@@ -357,7 +419,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
             <Input
               placeholder="Paciente, evento, financiador, médico, habitación..."
               value={searchFilter}
-              onChange={(e) => setSearchFilter(e.target.value)}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchFilter(e.target.value)}
               className="pl-9 h-9 text-xs rounded-xl border-slate-200"
             />
             {searchFilter && (
@@ -468,11 +530,11 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     )}
                   >
                     <div className={cn("absolute top-1 right-1 w-1 h-1 md:w-1.5 md:h-1.5 rounded-full shadow-sm", getStatusDot(bed.status))} />
-                    
+
                     <span className="text-[9px] sm:text-[10px] md:text-xs font-black tracking-tighter mt-0.5">
                       {shortCode}
                     </span>
-                    
+
                     {/* Desktop extra info preview */}
                     <div className="hidden md:flex flex-col items-center mt-0 w-full px-0.5 opacity-80 group-hover:opacity-100 transition-opacity">
                       {bed.status === BedStatus.OCCUPIED && (
