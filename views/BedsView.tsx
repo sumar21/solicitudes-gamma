@@ -498,12 +498,32 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
         </div>
       </div>
 
-      {/* Loading skeleton */}
+      {/* Loading — first load: skeleton */}
       {bedsLoading && beds.length === 0 && (
-        <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-12 lg:grid-cols-16 xl:grid-cols-20 gap-1 md:gap-1.5">
-          {Array.from({ length: 40 }).map((_, i) => (
-            <div key={i} className="aspect-square rounded-lg bg-slate-100 animate-pulse" />
-          ))}
+        <div className="flex flex-col items-center justify-center gap-3 py-16 text-slate-400">
+          <div className="flex items-center gap-2">
+            <svg className="animate-spin h-4 w-4 text-slate-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+            </svg>
+            <span className="text-sm font-semibold tracking-wide">Cargando camas...</span>
+          </div>
+          <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-12 lg:grid-cols-16 xl:grid-cols-20 gap-1 md:gap-1.5 w-full opacity-40">
+            {Array.from({ length: 40 }).map((_, i) => (
+              <div key={i} className="aspect-square rounded-lg bg-slate-100 animate-pulse" />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Loading — refresh while data already exists */}
+      {bedsLoading && beds.length > 0 && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-500 text-xs font-semibold w-fit">
+          <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+          </svg>
+          Actualizando camas...
         </div>
       )}
 
