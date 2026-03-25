@@ -57,6 +57,7 @@ export interface Bed {
   attendingPhysician?: string;
   dni?: string;
   age?: number;
+  sex?: 'M' | 'F';
 }
 
 export type ViewMode = 'HOME' | 'REQUESTS' | 'USERS' | 'HISTORY' | 'BEDS';

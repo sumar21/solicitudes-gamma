@@ -41,12 +41,14 @@ export const generateMockBeds = (): Bed[] => {
         let patientName: string | undefined = undefined;
         let institution: string | undefined = undefined;
         let attendingPhysician: string | undefined = undefined;
+        let sex: 'M' | 'F' | undefined = undefined;
 
         if (r > 0.6) {
           status = BedStatus.OCCUPIED;
           patientName = PATIENT_NAMES[patientIdx % PATIENT_NAMES.length];
           institution = INSTITUTIONS[patientIdx % INSTITUTIONS.length];
           attendingPhysician = PHYSICIANS[patientIdx % PHYSICIANS.length];
+          sex = patientIdx % 2 === 0 ? 'M' : 'F';
           patientIdx++;
         } else if (r > 0.4) {
           status = BedStatus.PREPARATION;
@@ -60,6 +62,7 @@ export const generateMockBeds = (): Bed[] => {
           patientName,
           institution,
           attendingPhysician,
+          sex,
           roomCode: room.codigo.toString(),
           bedCode: bed.codigo.toString(),
           eventOrigin: status === BedStatus.OCCUPIED ? 'HIN' : undefined,

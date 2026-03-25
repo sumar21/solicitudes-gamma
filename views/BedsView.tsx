@@ -1,12 +1,33 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { Bed, BedStatus, Ticket, TicketStatus, User, Role, Area } from '../types';
 import { Input } from '../components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { cn } from '../lib/utils';
-import { BedDouble, User as UserIcon, Info, Search, X, Download } from 'lucide-react';
+import { BedDouble, User as UserIcon, Info, Search, X, Download, ChevronDown, Check } from 'lucide-react';
 import { Dialog, DialogContent } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
+import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import jsPDF from 'jspdf';
+
+const AREA_LABELS: Record<string, string> = {
+  [Area.PISO_4]: 'Piso 4',
+  [Area.PISO_5]: 'Piso 5',
+  [Area.PISO_6]: 'Piso 6',
+  [Area.PISO_7]: 'Piso 7',
+  [Area.PISO_8]: 'Piso 8',
+  [Area.HIT]:    'ITR',
+  [Area.HSS]:    'Sueño',
+  [Area.HUC]:    'UCO',
+  [Area.HUQ]:    'URP',
+  [Area.HUT]:    'UTI',
+};
+
+const AREA_ORDER: Area[] = [
+  Area.HIT,
+  Area.PISO_4, Area.PISO_5, Area.PISO_6, Area.PISO_7, Area.PISO_8,
+  Area.HUC, Area.HUT, Area.HUQ, Area.HSS,
+];
+
+const HIDDEN_BY_DEFAULT_ADMISSION = new Set<string>([Area.HSS, Area.HUQ]);
 
 interface BedsViewProps {
   beds: Bed[];
@@ -224,10 +245,40 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser }
 
   // Filters state
   const [searchFilter, setSearchFilter] = useState('');
-  const [areaFilter, setAreaFilter] = useState<string>('ALL');
-  const [statusFilter, setStatusFilter] = useState<string>('ALL');
 
   const isAdmission = currentUser?.role === Role.ADMISSION || currentUser?.role === Role.ADMIN;
+
+  const [areaFilters, setAreaFilters] = useState<Set<string>>(() => {
+    const all = new Set<string>(Object.values(Area));
+    if (currentUser?.role === Role.ADMISSION || currentUser?.role === Role.ADMIN) {
+      HIDDEN_BY_DEFAULT_ADMISSION.forEach(a => all.delete(a));
+    }
+    return all;
+  });
+  const [statusFilters, setStatusFilters] = useState<Set<string>>(new Set());
+
+  const toggleArea = (area: string) => {
+    setAreaFilters(prev => {
+      const next = new Set(prev);
+      next.has(area) ? next.delete(area) : next.add(area);
+      return next;
+    });
+  };
+
+  const toggleStatus = (status: string) => {
+    setStatusFilters(prev => {
+      const next = new Set(prev);
+      next.has(status) ? next.delete(status) : next.add(status);
+      return next;
+    });
+  };
+
+  const allAreas = Object.values(Area) as string[];
+  const areaFilterLabel = areaFilters.size === allAreas.length
+    ? 'Todos los sectores'
+    : areaFilters.size === 0
+      ? 'Ningún sector'
+      : `${areaFilters.size} sector${areaFilters.size > 1 ? 'es' : ''}`;
 
   // Filter beds based on user role, assigned areas and search filters
   const filteredBeds = useMemo(() => {
@@ -250,21 +301,26 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser }
         bed.bedCode?.includes(q)
       );
     }
-    if (areaFilter !== 'ALL') {
-      result = result.filter(bed => bed.area === areaFilter);
+    if (areaFilters.size < allAreas.length) {
+      result = result.filter(bed => areaFilters.has(bed.area));
     }
-    if (statusFilter !== 'ALL') {
-      result = result.filter(bed => bed.status === statusFilter);
+    if (statusFilters.size > 0) {
+      result = result.filter(bed => statusFilters.has(bed.status));
     }
 
     return result;
-  }, [beds, currentUser, searchFilter, areaFilter, statusFilter]);
+  }, [beds, currentUser, searchFilter, areaFilters, statusFilters]);
 
-  // Group beds by Area
+  // Group beds by Area, ordered with HIT first
   const bedsByArea: Record<string, Bed[]> = {};
   filteredBeds.forEach(bed => {
     if (!bedsByArea[bed.area]) bedsByArea[bed.area] = [];
     bedsByArea[bed.area].push(bed);
+  });
+  const sortedAreaEntries = Object.entries(bedsByArea).sort(([a], [b]) => {
+    const ia = AREA_ORDER.indexOf(a as Area);
+    const ib = AREA_ORDER.indexOf(b as Area);
+    return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
   });
 
   const getStatusColor = (status: BedStatus) => {
@@ -310,18 +366,37 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser }
             )}
           </div>
 
-          {/* Area dropdown */}
-          <Select value={areaFilter} onValueChange={setAreaFilter}>
-            <SelectTrigger className="h-9 w-auto min-w-[140px] text-xs rounded-xl border-slate-200">
-              <SelectValue placeholder="Todos los pisos" />
-            </SelectTrigger>
-            <SelectContent className="rounded-xl border-slate-200">
-              <SelectItem value="ALL">Todos los pisos</SelectItem>
-              {Object.values(Area).map((area) => (
-                <SelectItem key={area} value={area}>{area}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {/* Area multi-select */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <button className="flex items-center gap-1.5 h-9 px-3 text-xs rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-colors min-w-[160px] justify-between">
+                <span>{areaFilterLabel}</span>
+                <ChevronDown className="h-3.5 w-3.5 text-slate-400 ml-1" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-52 p-2">
+              <div className="flex flex-col gap-0.5">
+                <button
+                  onClick={() => setAreaFilters(areaFilters.size === allAreas.length ? new Set() : new Set(allAreas))}
+                  className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-50 transition-colors"
+                >
+                  <Check className={cn("h-3.5 w-3.5", areaFilters.size === allAreas.length ? "text-slate-800" : "text-transparent")} />
+                  Todos los sectores
+                </button>
+                <div className="my-1 border-t border-slate-100" />
+                {AREA_ORDER.map(area => (
+                  <button
+                    key={area}
+                    onClick={() => toggleArea(area)}
+                    className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-slate-600 hover:bg-slate-50 transition-colors"
+                  >
+                    <Check className={cn("h-3.5 w-3.5 flex-shrink-0", areaFilters.has(area) ? "text-slate-800" : "text-transparent")} />
+                    <span className="truncate">{AREA_LABELS[area] ?? area}</span>
+                  </button>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
 
           {/* Bed count + PDF */}
           <div className="flex items-center gap-1.5 ml-auto">
@@ -336,36 +411,36 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser }
           </div>
         </div>
 
-        {/* Status buttons */}
+        {/* Status multi-select buttons */}
         <div className="flex flex-wrap gap-1.5">
-          {[{ value: 'ALL', label: 'Todas', dot: 'bg-slate-400' }, ...Object.values(BedStatus).map(s => ({
-            value: s,
-            label: s,
-            dot: s === BedStatus.AVAILABLE ? 'bg-emerald-500' : s === BedStatus.OCCUPIED ? 'bg-red-500' : s === BedStatus.PREPARATION ? 'bg-amber-500' : s === BedStatus.ASSIGNED ? 'bg-indigo-500' : 'bg-slate-400',
-          }))].map(({ value, label, dot }) => (
-            <button
-              key={value}
-              onClick={() => setStatusFilter(value)}
-              className={cn(
-                "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
-                statusFilter === value
-                  ? "bg-slate-900 text-white border-slate-900 shadow-sm"
-                  : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
-              )}
-            >
-              <span className={cn("w-2 h-2 rounded-full", dot)} />
-              {label}
-            </button>
-          ))}
+          {Object.values(BedStatus).map(s => {
+            const dot = s === BedStatus.AVAILABLE ? 'bg-emerald-500' : s === BedStatus.OCCUPIED ? 'bg-red-500' : s === BedStatus.PREPARATION ? 'bg-amber-500' : s === BedStatus.ASSIGNED ? 'bg-indigo-500' : 'bg-slate-400';
+            const active = statusFilters.has(s);
+            return (
+              <button
+                key={s}
+                onClick={() => toggleStatus(s)}
+                className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
+                  active
+                    ? "bg-slate-900 text-white border-slate-900 shadow-sm"
+                    : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                )}
+              >
+                <span className={cn("w-2 h-2 rounded-full", dot)} />
+                {s}
+              </button>
+            );
+          })}
         </div>
       </div>
 
       <div className="flex flex-col gap-3 md:gap-4">
-        {Object.entries(bedsByArea).map(([areaName, areaBeds]) => (
+        {sortedAreaEntries.map(([areaName, areaBeds]) => (
           <div key={areaName} className="space-y-3">
             <div className="flex items-center gap-2">
               <span className="inline-flex items-center rounded-lg bg-slate-100/50 border border-slate-200 text-slate-600 font-bold px-2 py-0.5 text-xs">
-                {areaName}
+                {AREA_LABELS[areaName] ?? areaName}
               </span>
               <div className="h-px flex-1 bg-slate-100" />
             </div>
@@ -471,7 +546,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser }
                         <p className="text-base font-black text-slate-900 leading-snug">{selectedBed.patientName}</p>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-3 gap-3">
                         <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100">
                           <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">DNI</p>
                           <p className="text-sm font-mono font-bold text-slate-700">{selectedBed.dni || '—'}</p>
@@ -480,11 +555,20 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser }
                           <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Edad</p>
                           <p className="text-sm font-bold text-slate-700">{selectedBed.age != null ? `${selectedBed.age} años` : '—'}</p>
                         </div>
+                        <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100">
+                          <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Sexo</p>
+                          <p className="text-sm font-bold text-slate-700">{selectedBed.sex === 'M' ? 'Masculino' : selectedBed.sex === 'F' ? 'Femenino' : '—'}</p>
+                        </div>
                       </div>
 
                       <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100">
                         <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Financiador</p>
                         <p className="text-sm font-semibold text-slate-700 leading-snug">{selectedBed.institution || '—'}</p>
+                      </div>
+
+                      <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100">
+                        <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Profesional interviniente</p>
+                        <p className="text-sm font-semibold text-slate-700">{selectedBed.attendingPhysician || '—'}</p>
                       </div>
 
                       <div className="grid grid-cols-2 gap-3">

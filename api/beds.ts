@@ -200,7 +200,7 @@ async function handler(req: any, res: any) {
 
   if (!CLIENT_ID || !CLIENT_SECRET) {
     res.status(503).json({
-      error: 'AZURE_CLIENTE_ID / AZURE_CLIENT_SECRET not set in environment variables.',
+      error: 'CLIENT_ID / CLIENT_SECRET not set in environment variables.',
     });
     return;
   }
