@@ -13,7 +13,9 @@ export function cn(...inputs: ClassValue[]) {
 export function formatDateReadable(isoDate: string | undefined): string {
   if (!isoDate) return "---";
   try {
-    const date = new Date(isoDate);
+    // Parse as local date to avoid UTC offset issues (e.g. "2026-03-01" → Mar 1, not Feb 28)
+    const parts = isoDate.slice(0, 10).split('-').map(Number);
+    const date = new Date(parts[0], parts[1] - 1, parts[2]);
     if (isNaN(date.getTime())) return isoDate;
     return new Intl.DateTimeFormat('es-AR', {
       day: '2-digit',

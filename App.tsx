@@ -62,6 +62,13 @@ export default function App() {
     }
   }, [state.currentUser?.id]);
 
+  // Refresh beds when entering Mapa de Camas view
+  useEffect(() => {
+    if (state.currentView === 'BEDS') {
+      actions.fetchBeds();
+    }
+  }, [state.currentView]);
+
   const onConfirmBed = (bed: string) => {
     if (selectedTicketId) {
       actions.handleAssignBedAction(selectedTicketId, bed);
@@ -422,11 +429,11 @@ export default function App() {
             />
           )}
           {/* Historial — todos los roles */}
-          {state.currentView === 'HISTORY' && <HistoryView tickets={state.filteredTickets} />}
+          {state.currentView === 'HISTORY' && <HistoryView tickets={state.historyTickets} />}
           {/* Usuarios — solo Admin */}
           {isAdmin && state.currentView === 'USERS' && <UserManagementView currentUser={state.currentUser} />}
           {/* Mapa de Camas — todos los roles, o fallback si el rol no tiene otra vista */}
-          {(state.currentView === 'BEDS' || (!hasFullAccess && !hasAzafataAccess)) && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} />}
+          {(state.currentView === 'BEDS' || (!hasFullAccess && !hasAzafataAccess)) && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} />}
         </main>
       </div>
 

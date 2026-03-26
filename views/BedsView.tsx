@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback } from 'react';
 import { Bed, BedStatus, Ticket, TicketStatus, User, Role, Area } from '../types';
 import { Input } from '../components/ui/input';
 import { cn } from '../lib/utils';
-import { BedDouble, User as UserIcon, Info, Search, X, Download, ChevronDown, Check } from 'lucide-react';
+import { BedDouble, User as UserIcon, Info, Search, X, Download, ChevronDown, Check, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { Dialog, DialogContent } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
@@ -34,9 +34,10 @@ interface BedsViewProps {
   tickets: Ticket[];
   currentUser: User | null;
   bedsLoading?: boolean;
+  bedsError?: string | null;
 }
 
-export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading }) => {
+export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
 
   // Map beds to their assigned ticket (for "Asignada" beds)
@@ -97,17 +98,23 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       result = result.filter(bed => currentUser.assignedAreas?.includes(bed.area));
     }
 
-    // Universal text search (patient, event, institution, physician)
+    // Universal text search (patient, event, institution, physician, assigned ticket patient)
     if (searchFilter) {
       const q = searchFilter.toLowerCase();
-      result = result.filter(bed =>
-        bed.patientName?.toLowerCase().includes(q) ||
-        bed.eventNumber?.toString().includes(q) ||
-        bed.institution?.toLowerCase().includes(q) ||
-        bed.attendingPhysician?.toLowerCase().includes(q) ||
-        bed.roomCode?.includes(q) ||
-        bed.bedCode?.includes(q)
-      );
+      result = result.filter(bed => {
+        if (
+          bed.patientName?.toLowerCase().includes(q) ||
+          bed.eventNumber?.toString().includes(q) ||
+          bed.institution?.toLowerCase().includes(q) ||
+          bed.attendingPhysician?.toLowerCase().includes(q) ||
+          bed.roomCode?.includes(q) ||
+          bed.bedCode?.includes(q)
+        ) return true;
+        // Also search in assigned ticket patient name (for beds in transfer)
+        const assignedTicket = bedTicketMap.get(bed.label);
+        if (assignedTicket?.patientName?.toLowerCase().includes(q)) return true;
+        return false;
+      });
     }
     if (areaFilters.size < allAreas.length) {
       result = result.filter(bed => areaFilters.has(bed.area));
@@ -117,7 +124,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     }
 
     return result;
-  }, [beds, currentUser, searchFilter, areaFilters, statusFilters, allAreas.length]);
+  }, [beds, currentUser, searchFilter, areaFilters, statusFilters, allAreas.length, bedTicketMap]);
 
   // Group beds by Area, ordered with HIT first
   const bedsByArea: Record<string, Bed[]> = {};
@@ -461,12 +468,24 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
             </PopoverContent>
           </Popover>
 
-          {/* Bed count + PDF */}
+          {/* Bed count + data source + PDF */}
           <div className="flex items-center gap-1.5 ml-auto">
             <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-50 border border-slate-100 text-[10px] md:text-xs font-black text-slate-500 uppercase tracking-wider">
               <BedDouble className="h-3 w-3 text-slate-400" />
               <span>{filteredBeds.length} camas</span>
             </div>
+            {/* Data source indicator — hidden for production, set to false to enable */}
+            {false && (bedsError ? (
+              <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-50 border border-amber-200 text-[10px] font-bold text-amber-700 uppercase tracking-wider" title={bedsError}>
+                <AlertTriangle className="h-3 w-3" />
+                <span className="hidden sm:inline">Datos Mock</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-[10px] font-bold text-emerald-700 uppercase tracking-wider">
+                <CheckCircle2 className="h-3 w-3" />
+                <span className="hidden sm:inline">PROGAL</span>
+              </div>
+            ))}
             <Button variant="outline" size="sm" onClick={exportPDF} className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50">
               <Download className="h-3 w-3" />
               <span className="hidden sm:inline">PDF</span>
@@ -578,7 +597,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
 
       {/* Bed Details Modal */}
       <Dialog open={!!selectedBed} onOpenChange={(open) => !open && setSelectedBed(null)}>
-        <DialogContent className="sm:max-w-[400px] p-0 overflow-hidden rounded-3xl border-0 shadow-2xl">
+        <DialogContent className="sm:max-w-[400px] p-0 overflow-hidden rounded-3xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
           {selectedBed && (() => {
             type A = { headerBg: string; iconBg: string; icon: string; pill: string; dot: string; patientBg: string; patientBorder: string; label: string };
             const theme: Record<BedStatus, A> = {

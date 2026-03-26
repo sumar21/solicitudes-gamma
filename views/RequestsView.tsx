@@ -187,7 +187,13 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
         <div className="flex flex-col sm:flex-row items-center gap-3 w-full lg:w-auto">
           {(currentUser?.role === Role.ADMIN || currentUser?.role === Role.ADMISSION) && (
             <div className="flex items-center gap-2 w-full sm:w-auto bg-white p-1 rounded-xl border border-slate-200 shadow-sm overflow-x-auto no-scrollbar">
-              {Object.entries(ROLE_LABELS).map(([k, v]) => (
+              {Object.entries(ROLE_LABELS)
+                .filter(([k]) => {
+                  if (currentUser?.role === Role.ADMIN) return true;
+                  if (currentUser?.role === Role.ADMISSION) return k === Role.ADMISSION || k === Role.HOSTESS;
+                  return false;
+                })
+                .map(([k, v]) => (
                 <button
                   key={k}
                   onClick={() => setActiveRole(k as Role)}

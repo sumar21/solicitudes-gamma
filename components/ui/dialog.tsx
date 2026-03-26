@@ -60,21 +60,30 @@ DialogTrigger.displayName = "DialogTrigger";
 const DialogContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, children, ...props }, ref) => {
     const { open, onOpenChange } = React.useContext(DialogContext);
-    
+
+    React.useEffect(() => {
+      if (!open) return;
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') onOpenChange(false);
+      };
+      document.addEventListener('keydown', handleKeyDown);
+      return () => document.removeEventListener('keydown', handleKeyDown);
+    }, [open, onOpenChange]);
+
     if (!open) return null;
 
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
         {/* Overlay */}
-        <div 
-            className="fixed inset-0 bg-black/40 backdrop-blur-[2px] transition-opacity animate-in fade-in" 
+        <div
+            className="fixed inset-0 bg-black/40 backdrop-blur-[2px] transition-opacity animate-in fade-in"
             onClick={() => onOpenChange(false)}
         />
         {/* Content - w-[92vw] para mobile y max-w-lg para desktop */}
         <div
           ref={ref}
           className={cn(
-            "relative z-50 grid w-[94vw] max-w-lg gap-4 border border-slate-100 bg-white p-6 shadow-xl duration-200 animate-in zoom-in-95 rounded-2xl md:w-full",
+            "relative z-50 grid w-[94vw] max-w-lg gap-4 border border-slate-100 bg-white p-6 shadow-xl duration-200 animate-in zoom-in-95 rounded-2xl md:w-full max-h-[90vh] overflow-y-auto",
             className
           )}
           {...props}
@@ -83,7 +92,7 @@ const DialogContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTML
           <button
             type="button"
             onClick={() => onOpenChange(false)}
-            className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-white transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-slate-100 data-[state=open]:text-slate-500"
+            className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-white transition-opacity hover:opacity-100 focus:outline-none disabled:pointer-events-none data-[state=open]:bg-slate-100 data-[state=open]:text-slate-500"
           >
             <X className="h-4 w-4" />
             <span className="sr-only">Close</span>

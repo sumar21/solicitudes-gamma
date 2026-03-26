@@ -153,23 +153,30 @@ export const useHospitalState = () => {
       const text = await r.text();
       console.log('[fetchBeds] body:', text.slice(0, 500));
       if (!r.ok) {
-        setBedsError(`HTTP ${r.status} — mostrando datos de prueba`);
+        setBedsError(`HTTP ${r.status} — ${text.slice(0, 200)}`);
         setRawBeds(MOCK_BEDS);
         return;
       }
-      const data: { beds: Bed[]; error?: string } = JSON.parse(text);
-      if (data.error) { setBedsError(data.error); setRawBeds(MOCK_BEDS); return; }
+      let data: { beds: Bed[]; error?: string };
+      try {
+        data = JSON.parse(text);
+      } catch {
+        setBedsError(`Respuesta no es JSON válido — ${text.slice(0, 200)}`);
+        setRawBeds(MOCK_BEDS);
+        return;
+      }
+      if (data.error) { setBedsError(`API error: ${data.error}`); setRawBeds(MOCK_BEDS); return; }
       if (Array.isArray(data.beds) && data.beds.length > 0) {
         console.log('[fetchBeds] camas recibidas:', data.beds.length);
         setBedsError(null);
         setRawBeds(data.beds);
       } else {
-        setBedsError('API sin datos — mostrando datos de prueba');
+        setBedsError(`API devolvió ${data.beds?.length ?? 0} camas (array vacío o nulo)`);
         setRawBeds(MOCK_BEDS);
       }
     } catch (e: any) {
       console.error('[fetchBeds] error:', e);
-      setBedsError('Sin conexión a la API — mostrando datos de prueba');
+      setBedsError(`Fetch falló: ${e?.message || e}`);
       setRawBeds(MOCK_BEDS);
     }
     finally { setBedsLoading(false); }
@@ -417,6 +424,9 @@ export const useHospitalState = () => {
       });
     }
 
+    // Base filtered by sede (used for history view, before search/sort)
+    const baseFiltered = [...result];
+
     if (requestsSearchTerm) {
       const term = requestsSearchTerm.toLowerCase();
       result = result.filter(t =>
@@ -426,13 +436,13 @@ export const useHospitalState = () => {
       );
     }
 
-    return [...result].sort((a, b) => {
+    return { sorted: [...result].sort((a, b) => {
       const valA = a[sortConfig.key] || '';
       const valB = b[sortConfig.key] || '';
       if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
       if (valA > valB) return sortConfig.direction === 'asc' ?  1 : -1;
       return 0;
-    });
+    }), baseFiltered };
   }, [tickets, currentUser, requestsSearchTerm, sortConfig, beds]);
 
   // ── Ticket actions ────────────────────────────────────────────────────────────
@@ -609,7 +619,9 @@ export const useHospitalState = () => {
   return {
     state: {
       currentUser, currentView, activeRole, sortConfig, requestsSearchTerm,
-      notifications, filteredNotifications, toasts, tickets, filteredTickets,
+      notifications, filteredNotifications, toasts, tickets,
+      filteredTickets: filteredTickets.sorted,
+      historyTickets: filteredTickets.baseFiltered,
       loginEmail, loginPass, loginError, loginLoading, bedsLoading, bedsError, ticketActionLoading, beds,
       tokenExpirySoon, tokenMinutesLeft,
     },
@@ -618,6 +630,7 @@ export const useHospitalState = () => {
       setLoginEmail, setLoginPass,
       handleLogin, handleLogout,
       handleCreateTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
+      fetchBeds,
       handleUpdateUserAreas, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleDismissToast,
       handleStartTransport,
       handleValidateTicket:    (_id: string) => {},

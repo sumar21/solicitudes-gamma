@@ -51,7 +51,10 @@ const DateRangeTrigger = React.forwardRef<
 DateRangeTrigger.displayName = "DateRangeTrigger";
 
 export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
-  const todayISO = new Date().toISOString().slice(0, 10);
+  const todayISO = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  })();
   const [startDate, setStartDate] = useState(todayISO);
   const [endDate, setEndDate] = useState(todayISO);
   const [searchTerm, setSearchTerm] = useState('');
