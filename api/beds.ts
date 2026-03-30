@@ -229,10 +229,17 @@ async function handler(req: any, res: any) {
       }),
     ]);
 
-    const [mapData, occData] = (await Promise.all([
+    const [mapRaw, occRaw] = await Promise.all([
       mapRes.json(),
       occRes.json(),
-    ])) as [GammaSector[], GammaSector[]];
+    ]);
+
+    const mapData: GammaSector[] = Array.isArray(mapRaw) ? mapRaw : [];
+    const occData: GammaSector[] = Array.isArray(occRaw) ? occRaw : [];
+
+    if (!mapData.length) {
+      console.warn('[api/beds] mapData is empty or not an array:', typeof mapRaw);
+    }
 
     const beds = transformBeds(mapData, occData);
 

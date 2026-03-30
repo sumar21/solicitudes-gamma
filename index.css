@@ -9,6 +9,7 @@
 }
 ::-webkit-scrollbar-track {
   background: transparent;
+  margin-block: 8px;
 }
 ::-webkit-scrollbar-thumb {
   background: #cbd5e1;

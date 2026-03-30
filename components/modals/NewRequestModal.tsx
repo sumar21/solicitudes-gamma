@@ -40,6 +40,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!origin || !destination) return;
+    if (workflow === WorkflowType.ROOM_CHANGE && !reason) return;
     
     // Auto-fill patient name if origin is selected and has patient
     const originBed = beds.find(b => b.label === origin);
@@ -128,7 +129,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
 
           {workflow === WorkflowType.ROOM_CHANGE && (
             <div className="grid gap-2">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Motivo del Cambio</Label>
+              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Motivo del Cambio <span className="text-red-500">*</span></Label>
               <SearchableSelect
                 value={reason}
                 onValueChange={setReason}

@@ -67,12 +67,16 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
     return tickets
       .filter(t => t.status === TicketStatus.COMPLETED || t.status === TicketStatus.REJECTED)
       .filter(t => {
-        const matchesSearch = t.patientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                             t.id.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesSearch = searchTerm
+          ? t.patientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            t.id.toLowerCase().includes(searchTerm.toLowerCase())
+          : true;
+        // When searching by patient/ID, skip date filter to show full journey
+        if (searchTerm && matchesSearch) return true;
         const ticketDate = (t.date || '').slice(0, 10);
         const matchesStart = startDate ? ticketDate >= startDate : true;
         const matchesEnd = endDate ? ticketDate <= endDate : true;
-        return matchesSearch && matchesStart && matchesEnd;
+        return matchesStart && matchesEnd;
       })
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   }, [tickets, startDate, endDate, searchTerm]);

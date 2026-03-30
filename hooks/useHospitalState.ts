@@ -295,6 +295,20 @@ export const useHospitalState = () => {
         .map(n => ({ id: `TOAST-${n.id}`, notification: n }));
       if (relevantToasts.length > 0) {
         setToasts(prev => [...relevantToasts, ...prev].slice(0, 5)); // max 5 toasts
+
+        // Browser notifications (works even when tab is not in foreground)
+        if ('Notification' in window && window.Notification.permission === 'granted') {
+          for (const toast of relevantToasts) {
+            const n = toast.notification;
+            try {
+              new window.Notification(n.title, {
+                body: n.message,
+                icon: '/favicon.ico',
+                tag: n.id, // prevents duplicates
+              });
+            } catch { /* silent — some browsers block from non-secure contexts */ }
+          }
+        }
       }
     }
 
@@ -382,6 +396,11 @@ export const useHospitalState = () => {
       setCurrentUser(user);
       setActiveRole(user.role as Role);
       setCurrentView(user.role === Role.HOSTESS ? 'REQUESTS' : 'HOME');
+
+      // Request browser notification permission
+      if ('Notification' in window && window.Notification.permission === 'default') {
+        window.Notification.requestPermission();
+      }
     } catch (err: any) {
       setLoginError(`Error inesperado: ${err?.message ?? String(err)}`);
     } finally {

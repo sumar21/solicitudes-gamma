@@ -57,8 +57,8 @@ const DialogTrigger = React.forwardRef<HTMLElement, React.HTMLAttributes<HTMLEle
 );
 DialogTrigger.displayName = "DialogTrigger";
 
-const DialogContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
-  ({ className, children, ...props }, ref) => {
+const DialogContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement> & { noPadding?: boolean }>(
+  ({ className, children, noPadding, ...props }, ref) => {
     const { open, onOpenChange } = React.useContext(DialogContext);
 
     React.useEffect(() => {
@@ -79,24 +79,28 @@ const DialogContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTML
             className="fixed inset-0 bg-black/40 backdrop-blur-[2px] transition-opacity animate-in fade-in"
             onClick={() => onOpenChange(false)}
         />
-        {/* Content - w-[92vw] para mobile y max-w-lg para desktop */}
         <div
           ref={ref}
           className={cn(
-            "relative z-50 grid w-[94vw] max-w-lg gap-4 border border-slate-100 bg-white p-6 shadow-xl duration-200 animate-in zoom-in-95 rounded-2xl md:w-full max-h-[90vh] overflow-y-auto",
+            "relative z-50 flex flex-col w-[94vw] max-w-lg border border-slate-100 bg-white shadow-xl duration-200 animate-in zoom-in-95 rounded-2xl md:w-full max-h-[85vh]",
             className
           )}
+          style={{ isolation: 'isolate', overflow: 'clip' }}
           {...props}
         >
-          {children}
+          {/* Close button — fixed at top, outside scroll */}
           <button
             type="button"
             onClick={() => onOpenChange(false)}
-            className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-white transition-opacity hover:opacity-100 focus:outline-none disabled:pointer-events-none data-[state=open]:bg-slate-100 data-[state=open]:text-slate-500"
+            className="absolute right-4 top-4 z-10 rounded-full p-1 bg-white/80 backdrop-blur-sm opacity-70 ring-offset-white transition-opacity hover:opacity-100 focus:outline-none"
           >
             <X className="h-4 w-4" />
             <span className="sr-only">Close</span>
           </button>
+          {/* Scrollable content */}
+          <div className={cn("overflow-y-auto flex-1 grid gap-4 rounded-[inherit] max-h-[inherit]", noPadding ? "p-0" : "p-6")}>
+            {children}
+          </div>
         </div>
       </div>
     );

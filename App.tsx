@@ -55,7 +55,7 @@ export default function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [isConfigOpen, setIsConfigOpen] = useState(state.currentView === 'USERS');
 
-  // Open Area Selection on login if Hostess has no areas assigned
+  // Open Area Selection on login only if Hostess has NO areas from ABM
   useEffect(() => {
     if (state.currentUser?.role === Role.HOSTESS && (!state.currentUser.assignedAreas || state.currentUser.assignedAreas.length === 0)) {
       setIsAreaSelectionOpen(true);
@@ -372,13 +372,9 @@ export default function App() {
                 </Popover>
               )}
               {state.currentUser?.role === Role.HOSTESS && (
-                <Button
-                  variant="outline"
-                  className="h-10 sm:h-8 text-xs sm:text-[10px] font-black uppercase tracking-wider px-2 sm:px-2 rounded-xl border-zinc-200 bg-zinc-50 hover:bg-zinc-100 active:scale-95 transition-all shadow-sm"
-                  onClick={() => setIsAreaSelectionOpen(true)}
-                >
+                <span className="h-10 sm:h-8 text-xs sm:text-[10px] font-black uppercase tracking-wider px-2 sm:px-2 rounded-xl border border-zinc-200 bg-zinc-50 shadow-sm flex items-center">
                   SECTORES: {state.currentUser.assignedAreas?.length || 0}
-                </Button>
+                </span>
               )}
               <div className="hidden sm:flex flex-col items-end">
                 <span className="text-xs font-bold text-slate-900 leading-none">{state.currentUser.name}</span>

@@ -13,7 +13,7 @@ import { Badge } from '../components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table';
 import { StatusBadge } from '../components/StatusBadge';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
-import { cn, formatBedName } from '../lib/utils';
+import { cn, formatBedName, formatDateTime } from '../lib/utils';
 
 interface RequestsViewProps {
   tickets: Ticket[];
@@ -78,9 +78,18 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
           return true;
         }
         if (activeRole === Role.HOSTESS) {
-          return t.status === TicketStatus.WAITING_ROOM ||
+          const validStatus = t.status === TicketStatus.WAITING_ROOM ||
             t.status === TicketStatus.IN_TRANSIT ||
             t.status === TicketStatus.IN_TRANSPORT;
+          if (!validStatus) return false;
+          // Azafata only sees tickets in her assigned areas
+          if (currentUser?.assignedAreas?.length) {
+            const originBed = beds.find(b => b.label === t.origin);
+            const destBed = t.destination ? beds.find(b => b.label === t.destination) : null;
+            return currentUser.assignedAreas.includes(originBed?.area as string) ||
+                   currentUser.assignedAreas.includes(destBed?.area as string);
+          }
+          return validStatus;
         }
         return false;
       });
@@ -95,7 +104,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       return 0;
     });
     return sortableItems;
-  }, [tickets, activeRole, sortConfig, searchTerm]);
+  }, [tickets, activeRole, sortConfig, searchTerm, beds, currentUser]);
 
   const renderActionButtons = (ticket: Ticket, isMobile = false) => {
     const size = isMobile ? "default" : "sm";
@@ -255,7 +264,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                     {WORKFLOW_SHORT[ticket.workflow]}
                   </Badge>
                   <div className="text-[10px] font-bold text-slate-400 tabular-nums flex items-center gap-1">
-                    <Clock className="w-3 h-3" /> {ticket.createdAt}
+                    <Clock className="w-3 h-3" /> {formatDateTime(ticket.createdAt)}
                   </div>
                 </div>
               </div>
@@ -353,7 +362,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                     <TableCell>
                       <StatusBadge status={ticket.status} />
                       <div className="flex items-center gap-1.5 text-slate-400 text-[10px] font-bold tabular-nums mt-2">
-                        <Clock className="w-3 h-3 opacity-50" /> {ticket.createdAt}
+                        <Clock className="w-3 h-3 opacity-50" /> {formatDateTime(ticket.createdAt)}
                       </div>
                     </TableCell>
                     <TableCell>
