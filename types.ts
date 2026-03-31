@@ -60,7 +60,35 @@ export interface Bed {
   sex?: 'M' | 'F';
 }
 
-export type ViewMode = 'HOME' | 'REQUESTS' | 'USERS' | 'HISTORY' | 'BEDS';
+export type ViewMode = 'HOME' | 'REQUESTS' | 'USERS' | 'HISTORY' | 'BEDS' | 'HOUSEKEEPING';
+
+// ── Cleaning / Housekeeping ─────────────────────────────────────────────────
+export enum CleaningTaskType {
+  POST_DISCHARGE = 'Limpieza por Alta',
+  DAILY_ROUTINE  = 'Limpieza Diaria',
+}
+
+export interface ChecklistItem {
+  id: string;
+  label: string;
+  checked: boolean;
+}
+
+export interface CleaningTask {
+  id: string;
+  roomLabel: string;       // bed label (matches Bed.label)
+  area: Area;
+  roomCode: string;
+  bedCode: string;
+  type: CleaningTaskType;
+  checklist: ChecklistItem[];
+  completed: boolean;
+  completedAt?: string;
+  assignedAt: string;
+  linkedTicketId?: string; // for post-discharge tasks
+  priority: 'normal' | 'urgent';
+  patientName?: string;    // for post-discharge context
+}
 export type SortKey = 'status' | 'patientName' | 'origin' | 'createdAt';
 export type SortDirection = 'asc' | 'desc';
 

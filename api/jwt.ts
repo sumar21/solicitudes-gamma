@@ -21,7 +21,7 @@ export interface AppTokenPayload extends JWTPayload {
 }
 
 // ── Sign ─────────────────────────────────────────────────────────────────────
-export async function signToken(payload: Omit<AppTokenPayload, keyof JWTPayload>): Promise<string> {
+export async function signToken(payload: { id: string; name: string; role: string; sede: string; email: string }): Promise<string> {
   const expiry = payload.role === 'HOSTESS' ? EXPIRY_HOSTESS : EXPIRY_DEFAULT;
   return new SignJWT(payload as JWTPayload)
     .setProtectedHeader({ alg: 'HS256' })

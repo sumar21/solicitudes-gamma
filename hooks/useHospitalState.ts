@@ -3,8 +3,10 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   WorkflowType, Role, SedeType, Ticket, TicketStatus, User, Area,
   Notification, NotificationType, ViewMode, SortConfig, Bed, BedStatus,
+  CleaningTask,
 } from '../types';
 import { MOCK_TICKETS, MOCK_BEDS } from '../lib/constants';
+import { generateMockCleaningTasks } from '../lib/mock-cleaning-data';
 
 // ── JWT helpers (client-side, solo lectura — sin verificar firma) ─────────────
 function parseJwtPayload(token: string): Record<string, unknown> | null {
@@ -75,6 +77,7 @@ export const useHospitalState = () => {
     if (saved) {
       const user = JSON.parse(saved);
       if (user.role === Role.HOSTESS) return 'REQUESTS';
+      if (user.role === Role.HOUSEKEEPING) return 'HOUSEKEEPING';
     }
     return 'HOME';
   });
@@ -135,6 +138,7 @@ export const useHospitalState = () => {
   const initialLoadDoneRef = React.useRef(false); // skip notifications on first load
   const [rawBeds, setRawBeds]                      = useState<Bed[]>([]);
   const [tickets, setTickets]                      = useState<Ticket[]>(MOCK_TICKETS);
+  const [cleaningTasks, setCleaningTasks]          = useState<CleaningTask[]>(() => generateMockCleaningTasks());
 
   const beds = useMemo(() => {
     const active = tickets.filter(t => t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED);
@@ -433,7 +437,7 @@ export const useHospitalState = () => {
       setToken(data.token);
       setCurrentUser(user);
       setActiveRole(user.role as Role);
-      setCurrentView(user.role === Role.HOSTESS ? 'REQUESTS' : 'HOME');
+      setCurrentView(user.role === Role.HOSTESS ? 'REQUESTS' : user.role === Role.HOUSEKEEPING ? 'HOUSEKEEPING' : 'HOME');
 
       // Request browser notification permission
       if ('Notification' in window && window.Notification.permission === 'default') {
@@ -673,6 +677,38 @@ export const useHospitalState = () => {
   const handleMarkAllNotificationsRead  = ()            => setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
   const handleDismissToast              = (id: string) => setToasts(prev => prev.filter(t => t.id !== id));
 
+  // ── Cleaning task actions (demo — mock only) ─────────────────────────────────
+  const toggleCleaningChecklistItem = (taskId: string, itemId: string) => {
+    setCleaningTasks(prev => prev.map(task => {
+      if (task.id !== taskId) return task;
+      return {
+        ...task,
+        checklist: task.checklist.map(item =>
+          item.id === itemId ? { ...item, checked: !item.checked } : item
+        ),
+      };
+    }));
+  };
+
+  const completeCleaningTask = (taskId: string) => {
+    setCleaningTasks(prev => prev.map(task => {
+      if (task.id !== taskId) return task;
+      return { ...task, completed: true, completedAt: new Date().toISOString() };
+    }));
+    const task = cleaningTasks.find(t => t.id === taskId);
+    if (task) {
+      setNotifications(n => [{
+        id: `NOTIF-CLN-${taskId}`,
+        type: NotificationType.STATUS_UPDATE,
+        title: 'Limpieza Completada',
+        message: `Hab. ${task.roomCode} - Cama ${task.bedCode} lista`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isRead: false,
+        sede: currentUser?.sede ?? SedeType.HPR,
+      }, ...n]);
+    }
+  };
+
   return {
     state: {
       currentUser, currentView, activeRole, sortConfig, requestsSearchTerm,
@@ -681,6 +717,7 @@ export const useHospitalState = () => {
       historyTickets: filteredTickets.baseFiltered,
       loginEmail, loginPass, loginError, loginLoading, bedsLoading, bedsError, ticketActionLoading, beds,
       tokenExpirySoon, tokenMinutesLeft,
+      cleaningTasks,
     },
     actions: {
       setCurrentUser, setCurrentView, setActiveRole, setSortConfig, setRequestsSearchTerm,
@@ -690,6 +727,7 @@ export const useHospitalState = () => {
       fetchBeds,
       handleUpdateUserAreas, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleDismissToast,
       handleStartTransport,
+      toggleCleaningChecklistItem, completeCleaningTask,
       handleValidateTicket:    (_id: string) => {},
       handleAssignBedAction:   (_id: string, _bed: string) => {},
       handleHousekeepingAction:(_id: string) => {},

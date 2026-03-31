@@ -51,7 +51,11 @@ import {
   EyeOff,
   User,
   Pencil,
-  Trash2
+  Trash2,
+  Sparkles,
+  CheckCircle,
+  ListChecks,
+  Check
 } from 'lucide-react';
 
 export {
@@ -106,5 +110,9 @@ export {
   EyeOff,
   User,
   Pencil,
-  Trash2
+  Trash2,
+  Sparkles,
+  CheckCircle,
+  ListChecks,
+  Check
 };
