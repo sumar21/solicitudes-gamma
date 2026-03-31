@@ -17,6 +17,7 @@ import { HistoryView } from './views/HistoryView';
 import { BedsView } from './views/BedsView';
 import { UserManagementView } from './views/UserManagementView';
 import { HousekeepingView } from './views/HousekeepingView';
+import { IncidentsView } from './views/IncidentsView';
 
 // Hooks & Constants
 import { useHospitalState } from './hooks/useHospitalState';
@@ -99,6 +100,9 @@ export default function App() {
 
   // Mucama: Limpieza + Mapa de Camas
   const hasHousekeepingAccess = state.currentUser?.role === Role.HOUSEKEEPING || isAdmin;
+
+  // Técnico: Incidentes + Mapa de Camas
+  const hasTechnicianAccess = state.currentUser?.role === Role.TECHNICIAN || isAdmin;
 
   // Cualquier role con al menos acceso a Operativa
   const hasOperationalAccess = hasFullAccess || hasAzafataAccess;
@@ -228,7 +232,10 @@ export default function App() {
             {hasHousekeepingAccess && (
               <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'HOUSEKEEPING' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('HOUSEKEEPING')}><SprayCan className="w-4 h-4" />Limpieza</Button>
             )}
-            {hasFullAccess && (
+            {hasTechnicianAccess && (
+              <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'INCIDENTS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('INCIDENTS')}><Settings className="w-4 h-4" />Incidentes</Button>
+            )}
+            {(hasFullAccess || hasAzafataAccess) && (
               <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'HISTORY' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('HISTORY')}><History className="w-4 h-4" />Historial</Button>
             )}
             <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'BEDS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('BEDS')}><Menu className="w-4 h-4" />Mapa de Camas</Button>
@@ -272,7 +279,7 @@ export default function App() {
               <GammaLogo size={20} />
             </button>
             <h1 className="text-lg md:text-xl font-black text-slate-900 tracking-tight truncate max-w-[100px] xs:max-w-[180px] sm:max-w-none">
-              {state.currentView === 'HOME' ? 'Monitor' : state.currentView === 'REQUESTS' ? 'Operativa' : state.currentView === 'BEDS' ? 'Mapa de Camas' : state.currentView === 'USERS' ? 'Usuarios' : state.currentView === 'HOUSEKEEPING' ? 'Limpieza' : 'Historial'}
+              {state.currentView === 'HOME' ? 'Monitor' : state.currentView === 'REQUESTS' ? 'Operativa' : state.currentView === 'BEDS' ? 'Mapa de Camas' : state.currentView === 'USERS' ? 'Usuarios' : state.currentView === 'HOUSEKEEPING' ? 'Limpieza' : state.currentView === 'INCIDENTS' ? 'Incidentes' : 'Historial'}
             </h1>
           </div>
           
@@ -319,7 +326,10 @@ export default function App() {
                 {hasHousekeepingAccess && (
                   <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'HOUSEKEEPING' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('HOUSEKEEPING'); setIsMobileMenuOpen(false); }}><SprayCan className="w-4 h-4" />Limpieza</Button>
                 )}
-                {hasFullAccess && (
+                {hasTechnicianAccess && (
+                  <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'INCIDENTS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('INCIDENTS'); setIsMobileMenuOpen(false); }}><Settings className="w-4 h-4" />Incidentes</Button>
+                )}
+                {(hasFullAccess || hasAzafataAccess) && (
                   <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'HISTORY' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('HISTORY'); setIsMobileMenuOpen(false); }}><History className="w-4 h-4" />Historial</Button>
                 )}
                 <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'BEDS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('BEDS'); setIsMobileMenuOpen(false); }}><Menu className="w-4 h-4" />Mapa de Camas</Button>
@@ -444,6 +454,15 @@ export default function App() {
               tasks={state.cleaningTasks}
               onToggleItem={actions.toggleCleaningChecklistItem}
               onComplete={actions.completeCleaningTask}
+              onMaintenanceStatus={actions.setMaintenanceItemStatus}
+            />
+          )}
+          {/* Incidentes — Técnicos y Admin */}
+          {hasTechnicianAccess && state.currentView === 'INCIDENTS' && (
+            <IncidentsView
+              incidents={state.incidents}
+              onResolve={actions.resolveIncident}
+              onStartProgress={actions.startIncidentProgress}
             />
           )}
           {/* Historial — todos los roles */}
@@ -451,7 +470,7 @@ export default function App() {
           {/* Usuarios — solo Admin */}
           {isAdmin && state.currentView === 'USERS' && <UserManagementView currentUser={state.currentUser} />}
           {/* Mapa de Camas — todos los roles, o fallback si el rol no tiene otra vista */}
-          {(state.currentView === 'BEDS' || (!hasFullAccess && !hasAzafataAccess && !hasHousekeepingAccess)) && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} />}
+          {(state.currentView === 'BEDS' || (!hasFullAccess && !hasAzafataAccess && !hasHousekeepingAccess && !hasTechnicianAccess)) && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} />}
         </main>
       </div>
 

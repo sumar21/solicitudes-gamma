@@ -15,6 +15,7 @@ export enum Role {
   COORDINATOR = 'COORDINATOR',
   ADMISSION = 'ADMISSION',
   HOUSEKEEPING = 'HOUSEKEEPING',
+  TECHNICIAN = 'TECHNICIAN',
   NURSING = 'NURSING',
   ADMIN = 'ADMIN',
   HOSTESS = 'HOSTESS', // Azafata
@@ -60,7 +61,7 @@ export interface Bed {
   sex?: 'M' | 'F';
 }
 
-export type ViewMode = 'HOME' | 'REQUESTS' | 'USERS' | 'HISTORY' | 'BEDS' | 'HOUSEKEEPING';
+export type ViewMode = 'HOME' | 'REQUESTS' | 'USERS' | 'HISTORY' | 'BEDS' | 'HOUSEKEEPING' | 'INCIDENTS';
 
 // ── Cleaning / Housekeeping ─────────────────────────────────────────────────
 export enum CleaningTaskType {
@@ -88,7 +89,41 @@ export interface CleaningTask {
   linkedTicketId?: string; // for post-discharge tasks
   priority: 'normal' | 'urgent';
   patientName?: string;    // for post-discharge context
+  maintenanceChecklist?: MaintenanceItem[]; // daily tasks include maintenance review
 }
+
+// ── Maintenance ─────────────────────────────────────────────────────────────
+export type MaintenanceStatus = 'pending' | 'ok' | 'fault';
+
+export interface MaintenanceItem {
+  id: string;
+  label: string;
+  category: string;        // Electricidad, Plomería, Mobiliario, etc.
+  status: MaintenanceStatus;
+}
+
+export enum IncidentStatus {
+  OPEN = 'Abierto',
+  IN_PROGRESS = 'En Proceso',
+  RESOLVED = 'Resuelto',
+}
+
+export interface Incident {
+  id: string;
+  roomCode: string;
+  bedCode: string;
+  area: Area;
+  roomLabel: string;
+  category: string;        // Electricidad, Plomería, etc.
+  issue: string;           // "Luz de techo no funciona"
+  status: IncidentStatus;
+  createdAt: string;
+  resolvedAt?: string;
+  createdBy: string;       // mucama name
+  resolvedBy?: string;     // tecnico name
+  notes?: string;
+}
+
 export type SortKey = 'status' | 'patientName' | 'origin' | 'createdAt';
 export type SortDirection = 'asc' | 'desc';
 

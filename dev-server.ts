@@ -84,6 +84,7 @@ const routes: Record<string, () => Promise<any>> = {
   '/api/test':          () => import('./api/test'),
   '/api/users':              () => import('./api/users'),
   '/api/validate-location':  () => import('./api/validate-location'),
+  '/api/demo-token':         () => import('./api/demo-token'),
 };
 
 const server = createServer(async (req, res) => {

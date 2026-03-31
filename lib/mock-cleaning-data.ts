@@ -1,4 +1,4 @@
-import { CleaningTask, CleaningTaskType, ChecklistItem, Area } from '../types';
+import { CleaningTask, CleaningTaskType, ChecklistItem, Area, MaintenanceItem } from '../types';
 
 const POST_DISCHARGE_CHECKLIST: Omit<ChecklistItem, 'id'>[] = [
   { label: 'Sanitización completa de habitación', checked: false },
@@ -16,10 +16,37 @@ const DAILY_CHECKLIST: Omit<ChecklistItem, 'id'>[] = [
   { label: 'Reposición de insumos', checked: false },
 ];
 
-function makeChecklist(template: Omit<ChecklistItem, 'id'>[], taskId: string): ChecklistItem[] {
+// ── Maintenance checklist template (hospital room inspection) ────────────────
+const MAINTENANCE_TEMPLATE: Omit<MaintenanceItem, 'id'>[] = [
+  { label: 'Luz de techo / plafón', category: 'Electricidad', status: 'pending' },
+  { label: 'Luz de velador / cabecera', category: 'Electricidad', status: 'pending' },
+  { label: 'Enchufes y tomacorrientes', category: 'Electricidad', status: 'pending' },
+  { label: 'Llamador de enfermería', category: 'Electricidad', status: 'pending' },
+  { label: 'Grifo lavatorio', category: 'Plomería', status: 'pending' },
+  { label: 'Grifo ducha / bañera', category: 'Plomería', status: 'pending' },
+  { label: 'Descarga inodoro', category: 'Plomería', status: 'pending' },
+  { label: 'Desagües (sin obstrucciones)', category: 'Plomería', status: 'pending' },
+  { label: 'Cama articulada (mecanismo)', category: 'Mobiliario', status: 'pending' },
+  { label: 'Mesa de comer', category: 'Mobiliario', status: 'pending' },
+  { label: 'Silla / sillón acompañante', category: 'Mobiliario', status: 'pending' },
+  { label: 'Puerta de habitación', category: 'Infraestructura', status: 'pending' },
+  { label: 'Puerta de baño', category: 'Infraestructura', status: 'pending' },
+  { label: 'Ventana (cierre y persiana)', category: 'Infraestructura', status: 'pending' },
+  { label: 'Aire acondicionado / calefacción', category: 'Climatización', status: 'pending' },
+  { label: 'TV / control remoto', category: 'Equipamiento', status: 'pending' },
+];
+
+export function makeChecklist(template: Omit<ChecklistItem, 'id'>[], taskId: string): ChecklistItem[] {
   return template.map((item, i) => ({
     ...item,
     id: `${taskId}-CK-${i}`,
+  }));
+}
+
+export function makeMaintenanceChecklist(taskId: string): MaintenanceItem[] {
+  return MAINTENANCE_TEMPLATE.map((item, i) => ({
+    ...item,
+    id: `${taskId}-MT-${i}`,
   }));
 }
 
@@ -37,41 +64,17 @@ const DAILY_ROOMS = [
   { roomCode: '801', bedCode: '02', area: Area.PISO_8, label: 'Internacion 8° Piso HPR - Cama 02' },
 ];
 
-// Rooms for post-discharge (linked to transfers)
-const DISCHARGE_ROOMS = [
-  { roomCode: '421', bedCode: '01', area: Area.PISO_4, label: 'Internacion 4° Piso HPR - Cama 07', patientName: 'GONZALEZ, MARIA ELENA', ticketId: 'TSL-DEMO-001' },
-  { roomCode: '525', bedCode: '01', area: Area.PISO_5, label: 'Internacion 5° Piso HPR - Cama 09', patientName: 'FERNANDEZ, CARLOS ALBERTO', ticketId: 'TSL-DEMO-002' },
-  { roomCode: '613', bedCode: '02', area: Area.PISO_6, label: 'Internacion 6° Piso HPR - Cama 12', patientName: 'MARTINEZ, ANA LUCIA', ticketId: 'TSL-DEMO-003' },
-];
+// Checklist template for post-discharge — exported so useHospitalState can use it
+export const POST_DISCHARGE_TEMPLATE = POST_DISCHARGE_CHECKLIST;
 
-export function generateMockCleaningTasks(): CleaningTask[] {
+export function generateMockDailyTasks(): CleaningTask[] {
   const now = new Date();
   const tasks: CleaningTask[] = [];
 
-  // Post-discharge tasks (urgent, from transfers)
-  DISCHARGE_ROOMS.forEach((room, i) => {
-    const id = `CLN-ALT-${String(i + 1).padStart(3, '0')}`;
-    const assignedAt = new Date(now.getTime() - (30 + i * 15) * 60000).toISOString();
-    tasks.push({
-      id,
-      roomLabel: room.label,
-      area: room.area,
-      roomCode: room.roomCode,
-      bedCode: room.bedCode,
-      type: CleaningTaskType.POST_DISCHARGE,
-      checklist: makeChecklist(POST_DISCHARGE_CHECKLIST, id),
-      completed: false,
-      assignedAt,
-      linkedTicketId: room.ticketId,
-      priority: 'urgent',
-      patientName: room.patientName,
-    });
-  });
-
-  // Daily routine tasks
+  // Daily routine tasks with maintenance checklist included
   DAILY_ROOMS.forEach((room, i) => {
     const id = `CLN-DIA-${String(i + 1).padStart(3, '0')}`;
-    const hour = 7 + Math.floor(i / 3); // stagger across morning
+    const hour = 7 + Math.floor(i / 3);
     const assignedAt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, 0).toISOString();
     tasks.push({
       id,
@@ -81,6 +84,7 @@ export function generateMockCleaningTasks(): CleaningTask[] {
       bedCode: room.bedCode,
       type: CleaningTaskType.DAILY_ROUTINE,
       checklist: makeChecklist(DAILY_CHECKLIST, id),
+      maintenanceChecklist: makeMaintenanceChecklist(id),
       completed: false,
       assignedAt,
       priority: 'normal',

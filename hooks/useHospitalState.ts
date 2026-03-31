@@ -3,10 +3,10 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   WorkflowType, Role, SedeType, Ticket, TicketStatus, User, Area,
   Notification, NotificationType, ViewMode, SortConfig, Bed, BedStatus,
-  CleaningTask,
+  CleaningTask, CleaningTaskType, MaintenanceStatus, Incident, IncidentStatus,
 } from '../types';
 import { MOCK_TICKETS, MOCK_BEDS } from '../lib/constants';
-import { generateMockCleaningTasks } from '../lib/mock-cleaning-data';
+import { generateMockDailyTasks, POST_DISCHARGE_TEMPLATE, makeChecklist } from '../lib/mock-cleaning-data';
 
 // ── JWT helpers (client-side, solo lectura — sin verificar firma) ─────────────
 function parseJwtPayload(token: string): Record<string, unknown> | null {
@@ -78,6 +78,7 @@ export const useHospitalState = () => {
       const user = JSON.parse(saved);
       if (user.role === Role.HOSTESS) return 'REQUESTS';
       if (user.role === Role.HOUSEKEEPING) return 'HOUSEKEEPING';
+      if (user.role === Role.TECHNICIAN) return 'INCIDENTS';
     }
     return 'HOME';
   });
@@ -138,7 +139,39 @@ export const useHospitalState = () => {
   const initialLoadDoneRef = React.useRef(false); // skip notifications on first load
   const [rawBeds, setRawBeds]                      = useState<Bed[]>([]);
   const [tickets, setTickets]                      = useState<Ticket[]>(MOCK_TICKETS);
-  const [cleaningTasks, setCleaningTasks]          = useState<CleaningTask[]>(() => generateMockCleaningTasks());
+  const [cleaningTasks, setCleaningTasks]          = useState<CleaningTask[]>(() => generateMockDailyTasks());
+  const [incidents, setIncidents]                  = useState<Incident[]>([]);
+
+  // ── Derive post-discharge cleaning tasks from real tickets in WAITING_ROOM ──
+  // When a transfer is created, the destination bed needs cleaning before the patient moves in
+  const allCleaningTasks = useMemo(() => {
+    const activeTransfers = tickets.filter(t =>
+      t.status === TicketStatus.WAITING_ROOM && t.destination
+    );
+    const dischargeTasks: CleaningTask[] = activeTransfers.map(t => {
+      const destBed = rawBeds.find(b => b.label === t.destination);
+      const id = `CLN-ALT-${t.id}`;
+      // Check if user already completed this task
+      const existing = cleaningTasks.find(ct => ct.id === id);
+      if (existing) return existing;
+      return {
+        id,
+        roomLabel: t.destination!,
+        area: (destBed?.area ?? '') as Area,
+        roomCode: destBed?.roomCode ?? '',
+        bedCode: destBed?.bedCode ?? '',
+        type: CleaningTaskType.POST_DISCHARGE,
+        checklist: makeChecklist(POST_DISCHARGE_TEMPLATE, id),
+        completed: false,
+        assignedAt: t.createdAt,
+        linkedTicketId: t.id,
+        priority: 'urgent' as const,
+        patientName: t.patientName,
+      };
+    });
+    // Merge: discharge tasks first, then daily mocks
+    return [...dischargeTasks, ...cleaningTasks];
+  }, [tickets, rawBeds, cleaningTasks]);
 
   const beds = useMemo(() => {
     const active = tickets.filter(t => t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED);
@@ -224,6 +257,8 @@ export const useHospitalState = () => {
   // ── Change detection — generate notifications from polling updates ───────────
   useEffect(() => {
     if (!currentUser || writingRef.current) return;
+    // Technician gets no polling notifications
+    if (currentUser.role === Role.TECHNICIAN) return;
 
     const prev = prevTicketSnapshotRef.current;
     const next = new Map(tickets.map(t => [t.id, t.status]));
@@ -262,30 +297,45 @@ export const useHospitalState = () => {
 
       if (prevStatus === undefined) {
         // ── New ticket appeared ─────────────────────────────────────────
-        const notif: Notification = {
-          id: `NOTIF-POLL-${t.id}`, isRead: false,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          type: NotificationType.NEW_TICKET,
-          title: 'Nueva Solicitud de Traslado',
-          message: `${t.patientName}: ${t.origin} → ${t.destination ?? '?'}`,
-          ticketId: t.id, sede: t.sede,
-          originArea, destinationArea: destArea,
-        };
-        newNotifs.push(notif);
-      } else if (prevStatus !== t.status) {
-        // ── Status changed ──────────────────────────────────────────────
-        const label = statusChangeLabel(prevStatus, t.status);
-        if (label) {
-          const notif: Notification = {
-            id: `NOTIF-POLL-${t.id}-${t.status}`, isRead: false,
+        // Housekeeping: only notify about new tickets needing cleaning
+        if (currentUser.role === Role.HOUSEKEEPING) {
+          if (t.status === TicketStatus.WAITING_ROOM && t.destination) {
+            newNotifs.push({
+              id: `NOTIF-CLN-NEW-${t.id}`, isRead: false,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              type: NotificationType.NEW_TICKET,
+              title: 'Limpieza Requerida',
+              message: `${t.destination} — paciente ${t.patientName}`,
+              ticketId: t.id, sede: t.sede,
+              originArea, destinationArea: destArea,
+            });
+          }
+        } else {
+          newNotifs.push({
+            id: `NOTIF-POLL-${t.id}`, isRead: false,
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            type: NotificationType.STATUS_UPDATE,
-            title: label.title,
+            type: NotificationType.NEW_TICKET,
+            title: 'Nueva Solicitud de Traslado',
             message: `${t.patientName}: ${t.origin} → ${t.destination ?? '?'}`,
             ticketId: t.id, sede: t.sede,
             originArea, destinationArea: destArea,
-          };
-          newNotifs.push(notif);
+          });
+        }
+      } else if (prevStatus !== t.status) {
+        // ── Status changed — skip for housekeeping ──────────────────────
+        if (currentUser.role !== Role.HOUSEKEEPING) {
+          const label = statusChangeLabel(prevStatus, t.status);
+          if (label) {
+            newNotifs.push({
+              id: `NOTIF-POLL-${t.id}-${t.status}`, isRead: false,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              type: NotificationType.STATUS_UPDATE,
+              title: label.title,
+              message: `${t.patientName}: ${t.origin} → ${t.destination ?? '?'}`,
+              ticketId: t.id, sede: t.sede,
+              originArea, destinationArea: destArea,
+            });
+          }
         }
       }
     }
@@ -353,12 +403,73 @@ export const useHospitalState = () => {
     } catch { /* non-blocking */ }
   };
 
+  // ── Demo mock users (bypasses SharePoint auth) ───────────────────────────────
+  const DEMO_USERS: Record<string, { password: string; user: User; defaultView: ViewMode }> = {
+    'mucama1': {
+      password: 'demo', defaultView: 'HOUSEKEEPING',
+      user: {
+        id: 'DEMO-HK-1', name: 'María López', email: 'mucama1@demo.com',
+        role: Role.HOUSEKEEPING, sede: SedeType.HPR, avatar: '', lastLogin: new Date().toISOString(),
+      },
+    },
+    'mucama2': {
+      password: 'demo', defaultView: 'HOUSEKEEPING',
+      user: {
+        id: 'DEMO-HK-2', name: 'Ana Gómez', email: 'mucama2@demo.com',
+        role: Role.HOUSEKEEPING, sede: SedeType.HPR, avatar: '', lastLogin: new Date().toISOString(),
+      },
+    },
+    'tecnico1': {
+      password: 'demo', defaultView: 'INCIDENTS',
+      user: {
+        id: 'DEMO-TC-1', name: 'Carlos Ruiz', email: 'tecnico1@demo.com',
+        role: Role.TECHNICIAN, sede: SedeType.HPR, avatar: '', lastLogin: new Date().toISOString(),
+      },
+    },
+    'tecnico2': {
+      password: 'demo', defaultView: 'INCIDENTS',
+      user: {
+        id: 'DEMO-TC-2', name: 'Jorge Fernández', email: 'tecnico2@demo.com',
+        role: Role.TECHNICIAN, sede: SedeType.HPR, avatar: '', lastLogin: new Date().toISOString(),
+      },
+    },
+  };
+
   // ── Auth ──────────────────────────────────────────────────────────────────────
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
     setLoginLoading(true);
     try {
+      // ── Check demo users first — get a real JWT from the server ────────
+      const demoEntry = DEMO_USERS[loginEmail.toLowerCase()];
+      if (demoEntry) {
+        if (loginPass !== demoEntry.password) {
+          setLoginError('Contraseña incorrecta');
+          return;
+        }
+        const user = { ...demoEntry.user };
+        try {
+          const tokenRes = await fetch('/api/demo-token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: user.id, name: user.name, role: user.role, sede: user.sede, email: user.email }),
+          });
+          const tokenData = await tokenRes.json();
+          if (tokenData.token) {
+            sessionStorage.setItem(TOKEN_KEY, tokenData.token);
+            sessionStorage.setItem(USER_KEY, JSON.stringify(user));
+            setToken(tokenData.token);
+            setCurrentUser(user);
+            setActiveRole(user.role as Role);
+            setCurrentView(demoEntry.defaultView);
+            return;
+          }
+        } catch { /* fallback below */ }
+        setLoginError('No se pudo generar token de demo');
+        return;
+      }
+
       const controller = new AbortController();
       const timeout    = setTimeout(() => controller.abort(), 10_000);
       let res: Response;
@@ -394,50 +505,15 @@ export const useHospitalState = () => {
           .filter(s => areaValues.includes(s)) as Area[];
       }
 
-      // ── Location validation (skip for SUMAR superusers) ──────────────────
-      if (user.sede !== 'SUMAR') {
-        // Get browser geolocation (best effort, non-blocking timeout)
-        let userLat: number | undefined;
-        let userLng: number | undefined;
-        try {
-          const coords = await new Promise<{ lat: number; lng: number } | null>((resolve) => {
-            if (!navigator.geolocation) { resolve(null); return; }
-            navigator.geolocation.getCurrentPosition(
-              (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-              () => resolve(null),
-              { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 },
-            );
-          });
-          if (coords) { userLat = coords.lat; userLng = coords.lng; }
-        } catch { /* geo unavailable, IP check will be used */ }
-
-        // Call validation endpoint (uses token from auth)
-        try {
-          const locRes = await fetch('/api/validate-location', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${data.token}`,
-            },
-            body: JSON.stringify({ sede: user.sede, lat: userLat, lng: userLng }),
-          });
-          const locData = await locRes.json();
-          if (locData.allowed === false) {
-            setLoginError(locData.reason || 'Ubicación no autorizada para esta sede');
-            return;
-          }
-        } catch {
-          // If validation fails (network error), allow access (fail-open)
-          console.warn('[login] Location validation unavailable, proceeding');
-        }
-      }
+      // ── Location validation — disabled for demo, enable in develop/main ──
+      // if (user.sede !== 'SUMAR') { ... }
 
       sessionStorage.setItem(TOKEN_KEY, data.token);
       sessionStorage.setItem(USER_KEY,  JSON.stringify(user));
       setToken(data.token);
       setCurrentUser(user);
       setActiveRole(user.role as Role);
-      setCurrentView(user.role === Role.HOSTESS ? 'REQUESTS' : user.role === Role.HOUSEKEEPING ? 'HOUSEKEEPING' : 'HOME');
+      setCurrentView(user.role === Role.HOSTESS ? 'REQUESTS' : user.role === Role.HOUSEKEEPING ? 'HOUSEKEEPING' : user.role === Role.TECHNICIAN ? 'INCIDENTS' : 'HOME');
 
       // Request browser notification permission
       if ('Notification' in window && window.Notification.permission === 'default') {
@@ -691,17 +767,119 @@ export const useHospitalState = () => {
   };
 
   const completeCleaningTask = (taskId: string) => {
-    setCleaningTasks(prev => prev.map(task => {
-      if (task.id !== taskId) return task;
-      return { ...task, completed: true, completedAt: new Date().toISOString() };
+    // Find task in the merged list (allCleaningTasks includes derived discharge tasks)
+    const task = allCleaningTasks.find(t => t.id === taskId);
+
+    setCleaningTasks(prev => prev.map(t => {
+      if (t.id !== taskId) return t;
+      return { ...t, completed: true, completedAt: new Date().toISOString() };
     }));
-    const task = cleaningTasks.find(t => t.id === taskId);
+
     if (task) {
+      // Notification
       setNotifications(n => [{
         id: `NOTIF-CLN-${taskId}`,
         type: NotificationType.STATUS_UPDATE,
         title: 'Limpieza Completada',
         message: `Hab. ${task.roomCode} - Cama ${task.bedCode} lista`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isRead: false,
+        sede: currentUser?.sede ?? SedeType.HPR,
+      }, ...n]);
+
+      // If linked to a transfer ticket, advance it to IN_TRANSIT (= "Habitación Lista")
+      if (task.linkedTicketId) {
+        const ticket = tickets.find(t => t.id === task.linkedTicketId);
+        if (ticket && ticket.status === TicketStatus.WAITING_ROOM) {
+          const now = new Date().toISOString();
+          const updates = {
+            status: TicketStatus.IN_TRANSIT,
+            isBedClean: true,
+            cleaningDoneAt: now,
+            destinationBedStatus: BedStatus.ASSIGNED,
+          };
+          setTickets(prev => prev.map(t => t.id === task.linkedTicketId ? { ...t, ...updates } : t));
+          if (ticket.spItemId) spUpdate(ticket.spItemId, updates);
+          spLogEvent(ticket.id, 'Habitacion Preparada');
+
+          // Also add notification for the transfer
+          setNotifications(n => [{
+            id: `NOTIF-ROOM-READY-${ticket.id}`,
+            type: NotificationType.STATUS_UPDATE,
+            title: 'Habitación Lista',
+            message: `${ticket.patientName}: ${ticket.origin} → ${ticket.destination}`,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            isRead: false,
+            ticketId: ticket.id,
+            sede: ticket.sede,
+          }, ...n]);
+        }
+      }
+    }
+  };
+
+  // ── Maintenance status toggle (within daily cleaning tasks) ──────────────────
+  const setMaintenanceItemStatus = (taskId: string, itemId: string, status: MaintenanceStatus) => {
+    setCleaningTasks(prev => prev.map(task => {
+      if (task.id !== taskId || !task.maintenanceChecklist) return task;
+      const updatedMaintenance = task.maintenanceChecklist.map(item =>
+        item.id === itemId ? { ...item, status } : item
+      );
+      // If marked as fault, create an incident automatically
+      if (status === 'fault') {
+        const faultItem = task.maintenanceChecklist.find(m => m.id === itemId);
+        if (faultItem) {
+          const incidentId = `INC-${taskId}-${itemId}`;
+          // Only create if not already exists
+          setIncidents(prev => {
+            if (prev.some(i => i.id === incidentId)) return prev;
+            return [...prev, {
+              id: incidentId,
+              roomCode: task.roomCode,
+              bedCode: task.bedCode,
+              area: task.area,
+              roomLabel: task.roomLabel,
+              category: faultItem.category,
+              issue: faultItem.label,
+              status: IncidentStatus.OPEN,
+              createdAt: new Date().toISOString(),
+              createdBy: currentUser?.name ?? 'Mucama',
+            }];
+          });
+        }
+      }
+      // If changed back to OK, remove the incident
+      if (status === 'ok') {
+        const incidentId = `INC-${taskId}-${itemId}`;
+        setIncidents(prev => prev.filter(i => i.id !== incidentId));
+      }
+      return { ...task, maintenanceChecklist: updatedMaintenance };
+    }));
+  };
+
+  // ── Incident actions (for Technician) ──────────────────────────────────────
+  const startIncidentProgress = (incidentId: string) => {
+    setIncidents(prev => prev.map(i =>
+      i.id === incidentId ? { ...i, status: IncidentStatus.IN_PROGRESS } : i
+    ));
+  };
+
+  const resolveIncident = (incidentId: string) => {
+    setIncidents(prev => prev.map(i =>
+      i.id === incidentId ? {
+        ...i,
+        status: IncidentStatus.RESOLVED,
+        resolvedAt: new Date().toISOString(),
+        resolvedBy: currentUser?.name ?? 'Técnico',
+      } : i
+    ));
+    const incident = incidents.find(i => i.id === incidentId);
+    if (incident) {
+      setNotifications(n => [{
+        id: `NOTIF-INC-${incidentId}`,
+        type: NotificationType.STATUS_UPDATE,
+        title: 'Incidente Resuelto',
+        message: `Hab. ${incident.roomCode}: ${incident.issue}`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         isRead: false,
         sede: currentUser?.sede ?? SedeType.HPR,
@@ -717,7 +895,8 @@ export const useHospitalState = () => {
       historyTickets: filteredTickets.baseFiltered,
       loginEmail, loginPass, loginError, loginLoading, bedsLoading, bedsError, ticketActionLoading, beds,
       tokenExpirySoon, tokenMinutesLeft,
-      cleaningTasks,
+      cleaningTasks: allCleaningTasks,
+      incidents,
     },
     actions: {
       setCurrentUser, setCurrentView, setActiveRole, setSortConfig, setRequestsSearchTerm,
@@ -727,7 +906,8 @@ export const useHospitalState = () => {
       fetchBeds,
       handleUpdateUserAreas, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleDismissToast,
       handleStartTransport,
-      toggleCleaningChecklistItem, completeCleaningTask,
+      toggleCleaningChecklistItem, completeCleaningTask, setMaintenanceItemStatus,
+      startIncidentProgress, resolveIncident,
       handleValidateTicket:    (_id: string) => {},
       handleAssignBedAction:   (_id: string, _bed: string) => {},
       handleHousekeepingAction:(_id: string) => {},
