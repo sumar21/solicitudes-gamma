@@ -82,7 +82,8 @@ const routes: Record<string, () => Promise<any>> = {
   '/api/tickets':       () => import('./api/tickets'),
   '/api/ticket-events': () => import('./api/ticket-events'),
   '/api/test':          () => import('./api/test'),
-  '/api/users':         () => import('./api/users'),
+  '/api/users':              () => import('./api/users'),
+  '/api/validate-location':  () => import('./api/validate-location'),
 };
 
 const server = createServer(async (req, res) => {
@@ -119,6 +120,8 @@ const server = createServer(async (req, res) => {
       headers: req.headers,
       body,
       query: Object.fromEntries(url.searchParams),
+      socket: req.socket,
+      connection: req.connection,
     };
 
     const vercelRes = createRes(res);

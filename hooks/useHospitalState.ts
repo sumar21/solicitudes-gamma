@@ -390,6 +390,44 @@ export const useHospitalState = () => {
           .filter(s => areaValues.includes(s)) as Area[];
       }
 
+      // ── Location validation (skip for SUMAR superusers) ──────────────────
+      if (user.sede !== 'SUMAR') {
+        // Get browser geolocation (best effort, non-blocking timeout)
+        let userLat: number | undefined;
+        let userLng: number | undefined;
+        try {
+          const coords = await new Promise<{ lat: number; lng: number } | null>((resolve) => {
+            if (!navigator.geolocation) { resolve(null); return; }
+            navigator.geolocation.getCurrentPosition(
+              (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+              () => resolve(null),
+              { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 },
+            );
+          });
+          if (coords) { userLat = coords.lat; userLng = coords.lng; }
+        } catch { /* geo unavailable, IP check will be used */ }
+
+        // Call validation endpoint (uses token from auth)
+        try {
+          const locRes = await fetch('/api/validate-location', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${data.token}`,
+            },
+            body: JSON.stringify({ sede: user.sede, lat: userLat, lng: userLng }),
+          });
+          const locData = await locRes.json();
+          if (locData.allowed === false) {
+            setLoginError(locData.reason || 'Ubicación no autorizada para esta sede');
+            return;
+          }
+        } catch {
+          // If validation fails (network error), allow access (fail-open)
+          console.warn('[login] Location validation unavailable, proceeding');
+        }
+      }
+
       sessionStorage.setItem(TOKEN_KEY, data.token);
       sessionStorage.setItem(USER_KEY,  JSON.stringify(user));
       setToken(data.token);
