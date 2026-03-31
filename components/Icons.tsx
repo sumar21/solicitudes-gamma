@@ -55,7 +55,8 @@ import {
   Sparkles,
   CheckCircle,
   ListChecks,
-  Check
+  Check,
+  ArrowLeft
 } from 'lucide-react';
 
 export {
@@ -114,5 +115,6 @@ export {
   Sparkles,
   CheckCircle,
   ListChecks,
-  Check
+  Check,
+  ArrowLeft
 };

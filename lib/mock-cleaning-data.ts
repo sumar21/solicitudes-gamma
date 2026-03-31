@@ -18,22 +18,12 @@ const DAILY_CHECKLIST: Omit<ChecklistItem, 'id'>[] = [
 
 // ── Maintenance checklist template (hospital room inspection) ────────────────
 const MAINTENANCE_TEMPLATE: Omit<MaintenanceItem, 'id'>[] = [
-  { label: 'Luz de techo / plafón', category: 'Electricidad', status: 'pending' },
-  { label: 'Luz de velador / cabecera', category: 'Electricidad', status: 'pending' },
-  { label: 'Enchufes y tomacorrientes', category: 'Electricidad', status: 'pending' },
-  { label: 'Llamador de enfermería', category: 'Electricidad', status: 'pending' },
-  { label: 'Grifo lavatorio', category: 'Plomería', status: 'pending' },
-  { label: 'Grifo ducha / bañera', category: 'Plomería', status: 'pending' },
-  { label: 'Descarga inodoro', category: 'Plomería', status: 'pending' },
-  { label: 'Desagües (sin obstrucciones)', category: 'Plomería', status: 'pending' },
-  { label: 'Cama articulada (mecanismo)', category: 'Mobiliario', status: 'pending' },
-  { label: 'Mesa de comer', category: 'Mobiliario', status: 'pending' },
-  { label: 'Silla / sillón acompañante', category: 'Mobiliario', status: 'pending' },
-  { label: 'Puerta de habitación', category: 'Infraestructura', status: 'pending' },
-  { label: 'Puerta de baño', category: 'Infraestructura', status: 'pending' },
-  { label: 'Ventana (cierre y persiana)', category: 'Infraestructura', status: 'pending' },
-  { label: 'Aire acondicionado / calefacción', category: 'Climatización', status: 'pending' },
-  { label: 'TV / control remoto', category: 'Equipamiento', status: 'pending' },
+  { label: 'Electricidad (luces, enchufes, llamador)', category: 'Electricidad', status: 'ok' },
+  { label: 'Plomería (grifos, inodoro, desagües)', category: 'Plomería', status: 'ok' },
+  { label: 'Mobiliario (cama, mesa, sillón)', category: 'Mobiliario', status: 'ok' },
+  { label: 'Infraestructura (puertas, ventanas)', category: 'Infraestructura', status: 'ok' },
+  { label: 'Climatización (A/C, calefacción)', category: 'Climatización', status: 'ok' },
+  { label: 'Equipamiento (TV, control remoto)', category: 'Equipamiento', status: 'ok' },
 ];
 
 export function makeChecklist(template: Omit<ChecklistItem, 'id'>[], taskId: string): ChecklistItem[] {

@@ -858,32 +858,33 @@ export const useHospitalState = () => {
   };
 
   // ── Incident actions (for Technician) ──────────────────────────────────────
-  const startIncidentProgress = (incidentId: string) => {
+  const startIncidentProgress = (incidentIdOrIds: string | string[]) => {
+    const ids = new Set(Array.isArray(incidentIdOrIds) ? incidentIdOrIds : [incidentIdOrIds]);
     setIncidents(prev => prev.map(i =>
-      i.id === incidentId ? { ...i, status: IncidentStatus.IN_PROGRESS } : i
+      ids.has(i.id) ? { ...i, status: IncidentStatus.IN_PROGRESS } : i
     ));
   };
 
-  const resolveIncident = (incidentId: string) => {
+  const resolveIncident = (incidentIdOrIds: string | string[]) => {
+    const ids = new Set(Array.isArray(incidentIdOrIds) ? incidentIdOrIds : [incidentIdOrIds]);
+    const now = new Date().toISOString();
+    const resolvedBy = currentUser?.name ?? 'Técnico';
     setIncidents(prev => prev.map(i =>
-      i.id === incidentId ? {
-        ...i,
-        status: IncidentStatus.RESOLVED,
-        resolvedAt: new Date().toISOString(),
-        resolvedBy: currentUser?.name ?? 'Técnico',
-      } : i
+      ids.has(i.id) ? { ...i, status: IncidentStatus.RESOLVED, resolvedAt: now, resolvedBy } : i
     ));
-    const incident = incidents.find(i => i.id === incidentId);
-    if (incident) {
-      setNotifications(n => [{
-        id: `NOTIF-INC-${incidentId}`,
+    const resolved = incidents.filter(i => ids.has(i.id));
+    if (resolved.length > 0) {
+      const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const newNotifs = resolved.map(incident => ({
+        id: `NOTIF-INC-${incident.id}`,
         type: NotificationType.STATUS_UPDATE,
         title: 'Incidente Resuelto',
         message: `Hab. ${incident.roomCode}: ${incident.issue}`,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp,
         isRead: false,
         sede: currentUser?.sede ?? SedeType.HPR,
-      }, ...n]);
+      }));
+      setNotifications(n => [...newNotifs, ...n]);
     }
   };
 

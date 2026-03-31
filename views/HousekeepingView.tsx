@@ -5,7 +5,7 @@ import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import {
   SprayCan, Clock, BedDouble, CheckCircle2, Sparkles,
-  CheckCircle, ListChecks, AlertCircle, Check, Settings, X
+  CheckCircle, ListChecks, AlertCircle, Check, Settings, X, ArrowLeft
 } from '../components/Icons';
 import { cn } from '../lib/utils';
 
@@ -27,6 +27,204 @@ const AREA_SHORT: Record<string, string> = {
   'Unidad de Terapia Intensiva HPR': 'UTI',
 };
 
+const formatTime = (iso: string) => {
+  try {
+    return new Date(iso).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+  } catch { return '--:--'; }
+};
+
+// ── Task Detail View ────────────────────────────────────────────────────────
+const TaskDetail: React.FC<{
+  task: CleaningTask;
+  onBack: () => void;
+  onToggleItem: (taskId: string, itemId: string) => void;
+  onComplete: (taskId: string) => void;
+  onMaintenanceStatus: (taskId: string, itemId: string, status: MaintenanceStatus) => void;
+}> = ({ task, onBack, onToggleItem, onComplete, onMaintenanceStatus }) => {
+  const [activeSection, setActiveSection] = useState<'cleaning' | 'maintenance'>('cleaning');
+  const isDischarge = task.type === CleaningTaskType.POST_DISCHARGE;
+  const checkedCount = task.checklist.filter(c => c.checked).length;
+  const totalCount = task.checklist.length;
+  const allChecked = checkedCount === totalCount;
+  const mItems = task.maintenanceChecklist ?? [];
+  const mFaults = mItems.filter(m => m.status === 'fault').length;
+  const canComplete = allChecked;
+
+  return (
+    <div className="p-4 md:p-8 animate-in slide-in-from-right-4 duration-200 max-w-2xl mx-auto space-y-4 pb-24 md:pb-8">
+      {/* Back + header */}
+      <button onClick={onBack} className="flex items-center gap-2 text-sm font-bold text-slate-400 hover:text-slate-600 transition-colors">
+        <ArrowLeft className="w-4 h-4" /> Volver a tareas
+      </button>
+
+      <div className="flex items-center gap-3">
+        <div className={cn(
+          "w-12 h-12 rounded-xl flex items-center justify-center shrink-0",
+          isDischarge ? "bg-red-50 text-red-500" : "bg-blue-50 text-blue-500"
+        )}>
+          <BedDouble className="w-6 h-6" />
+        </div>
+        <div>
+          <h1 className="text-lg font-black text-slate-900">Hab. {task.roomCode} - Cama {task.bedCode}</h1>
+          <p className="text-xs font-bold text-slate-400">{AREA_SHORT[task.area] || task.area} · {formatTime(task.assignedAt)}</p>
+        </div>
+        <Badge
+          variant={isDischarge ? 'destructive' : 'outline'}
+          className={cn("ml-auto text-[9px] font-black uppercase px-2 py-0.5", !isDischarge && "bg-blue-50 text-blue-600 border-blue-200")}
+        >
+          {isDischarge ? 'Alta' : 'Diaria'}
+        </Badge>
+      </div>
+
+      {isDischarge && task.patientName && (
+        <div className="px-3 py-2 bg-red-50 border border-red-100 rounded-xl">
+          <p className="text-[9px] font-black text-red-400 uppercase">Paciente dado de alta</p>
+          <p className="text-sm font-bold text-red-800">{task.patientName}</p>
+        </div>
+      )}
+
+      {/* Section tabs */}
+      {mItems.length > 0 && (
+        <div className="flex gap-1 bg-slate-50 p-1 rounded-xl border border-slate-200">
+          <button
+            onClick={() => setActiveSection('cleaning')}
+            className={cn(
+              "flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg text-xs font-black uppercase tracking-tight transition-all",
+              activeSection === 'cleaning' ? "bg-white shadow-sm text-emerald-700" : "text-slate-400"
+            )}
+          >
+            <SprayCan className="w-3.5 h-3.5" /> Limpieza
+            <span className={cn("text-[9px] px-1.5 py-0.5 rounded-full font-black",
+              allChecked ? "bg-emerald-100 text-emerald-700" : activeSection === 'cleaning' ? "bg-slate-100 text-slate-600" : "bg-slate-200 text-slate-400"
+            )}>
+              {allChecked ? 'OK' : `${checkedCount}/${totalCount}`}
+            </span>
+          </button>
+          <button
+            onClick={() => setActiveSection('maintenance')}
+            className={cn(
+              "flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg text-xs font-black uppercase tracking-tight transition-all",
+              activeSection === 'maintenance' ? "bg-white shadow-sm text-orange-700" : "text-slate-400",
+              mFaults > 0 && activeSection !== 'maintenance' && "text-red-500"
+            )}
+          >
+            <Settings className="w-3.5 h-3.5" /> Revisión
+            {mFaults > 0 ? (
+              <span className="bg-red-500 text-white text-[8px] px-1.5 py-0.5 rounded-full font-black">{mFaults}</span>
+            ) : (
+              <span className={cn("text-[9px] px-1.5 py-0.5 rounded-full font-black", activeSection === 'maintenance' ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-400")}>OK</span>
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* Cleaning checklist */}
+      {activeSection === 'cleaning' && (
+        <div className="space-y-2">
+          {task.checklist.map(item => (
+            <label
+              key={item.id}
+              className={cn(
+                "flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all active:scale-[0.98]",
+                item.checked ? "bg-emerald-50 border-emerald-200" : "bg-white border-slate-100 hover:border-slate-200"
+              )}
+            >
+              <div className={cn(
+                "w-6 h-6 rounded-lg border-2 flex items-center justify-center shrink-0 transition-colors",
+                item.checked ? "bg-emerald-600 border-emerald-600" : "border-slate-300 bg-white"
+              )}>
+                {item.checked && <Check className="w-3.5 h-3.5 text-white" strokeWidth={3} />}
+              </div>
+              <span className={cn(
+                "text-sm font-medium transition-colors",
+                item.checked ? "text-emerald-700 line-through" : "text-slate-700"
+              )}>
+                {item.label}
+              </span>
+              <input type="checkbox" className="sr-only" checked={item.checked} onChange={() => onToggleItem(task.id, item.id)} />
+            </label>
+          ))}
+        </div>
+      )}
+
+      {/* Maintenance checklist */}
+      {activeSection === 'maintenance' && mItems.length > 0 && (
+        <div className="space-y-2">
+          {mItems.map(item => (
+            <div
+              key={item.id}
+              className={cn(
+                "flex items-center gap-3 p-3 rounded-xl border transition-all",
+                item.status === 'ok' && "bg-emerald-50 border-emerald-200",
+                item.status === 'fault' && "bg-red-50 border-red-200",
+                item.status === 'pending' && "bg-white border-slate-100"
+              )}
+            >
+              <span className={cn(
+                "text-sm font-medium flex-1",
+                item.status === 'ok' && "text-emerald-700",
+                item.status === 'fault' && "text-red-700",
+                item.status === 'pending' && "text-slate-600"
+              )}>
+                {item.label}
+              </span>
+              <div className="flex gap-1.5">
+                <button
+                  onClick={() => onMaintenanceStatus(task.id, item.id, 'ok')}
+                  className={cn(
+                    "w-9 h-9 rounded-lg flex items-center justify-center transition-all",
+                    item.status === 'ok'
+                      ? "bg-emerald-600 text-white shadow-sm"
+                      : "bg-slate-100 text-slate-400 hover:bg-emerald-100 hover:text-emerald-600"
+                  )}
+                >
+                  <Check className="w-4 h-4" strokeWidth={3} />
+                </button>
+                <button
+                  onClick={() => onMaintenanceStatus(task.id, item.id, 'fault')}
+                  className={cn(
+                    "w-9 h-9 rounded-lg flex items-center justify-center transition-all",
+                    item.status === 'fault'
+                      ? "bg-red-600 text-white shadow-sm"
+                      : "bg-slate-100 text-slate-400 hover:bg-red-100 hover:text-red-600"
+                  )}
+                >
+                  <X className="w-4 h-4" strokeWidth={3} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Summary */}
+      {mFaults > 0 && (
+        <div className="px-3 py-2 bg-red-50 border border-red-100 rounded-xl">
+          <p className="text-xs font-bold text-red-700">
+            {mFaults} falla{mFaults > 1 ? 's' : ''} de mantenimiento reportada{mFaults > 1 ? 's' : ''}
+          </p>
+        </div>
+      )}
+      <Button
+        onClick={() => onComplete(task.id)}
+        disabled={!canComplete}
+        className={cn(
+          "w-full h-12 rounded-xl font-black text-sm uppercase tracking-widest transition-all",
+          canComplete
+            ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-600/20"
+            : "bg-slate-100 text-slate-400 cursor-not-allowed"
+        )}
+      >
+        <CheckCircle2 className="w-4 h-4 mr-2" />
+        {!canComplete
+          ? `Faltan ${totalCount - checkedCount} items de limpieza`
+          : mFaults === 0 ? 'Confirmar — Todo OK' : 'Confirmar con observaciones'}
+      </Button>
+    </div>
+  );
+};
+
+// ── Main Housekeeping View ──────────────────────────────────────────────────
 export const HousekeepingView: React.FC<HousekeepingViewProps> = ({
   tasks,
   onToggleItem,
@@ -34,9 +232,7 @@ export const HousekeepingView: React.FC<HousekeepingViewProps> = ({
   onMaintenanceStatus,
 }) => {
   const [activeTab, setActiveTab] = useState<'all' | 'discharge' | 'daily'>('all');
-  const [expandedTask, setExpandedTask] = useState<string | null>(null);
-  // Track which section is active inside expanded card: 'cleaning' or 'maintenance'
-  const [activeSection, setActiveSection] = useState<'cleaning' | 'maintenance'>('cleaning');
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     let result = [...tasks];
@@ -50,16 +246,26 @@ export const HousekeepingView: React.FC<HousekeepingViewProps> = ({
     return result;
   }, [tasks, activeTab]);
 
+  const selectedTask = selectedTaskId ? tasks.find(t => t.id === selectedTaskId) : null;
+
   const pendingCount = tasks.filter(t => !t.completed).length;
   const dischargeCount = tasks.filter(t => t.type === CleaningTaskType.POST_DISCHARGE && !t.completed).length;
   const dailyCount = tasks.filter(t => t.type === CleaningTaskType.DAILY_ROUTINE && !t.completed).length;
 
-  const formatTime = (iso: string) => {
-    try {
-      return new Date(iso).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
-    } catch { return '--:--'; }
-  };
+  // ── Detail view ──────────────────────────────────────────────────────────
+  if (selectedTask) {
+    return (
+      <TaskDetail
+        task={selectedTask}
+        onBack={() => setSelectedTaskId(null)}
+        onToggleItem={onToggleItem}
+        onComplete={(id) => { onComplete(id); setSelectedTaskId(null); }}
+        onMaintenanceStatus={onMaintenanceStatus}
+      />
+    );
+  }
 
+  // ── Task list view ───────────────────────────────────────────────────────
   return (
     <div className="p-4 md:p-8 animate-in slide-in-from-right-4 duration-300 max-w-full space-y-4 md:space-y-6 pb-24 md:pb-8">
       {/* Header */}
@@ -126,42 +332,32 @@ export const HousekeepingView: React.FC<HousekeepingViewProps> = ({
           </div>
         ) : (
           filtered.map(task => {
-            const isExpanded = expandedTask === task.id;
+            const isDischarge = task.type === CleaningTaskType.POST_DISCHARGE;
             const checkedCount = task.checklist.filter(c => c.checked).length;
             const totalCount = task.checklist.length;
-            const allChecked = checkedCount === totalCount;
-            const isDischarge = task.type === CleaningTaskType.POST_DISCHARGE;
             const progressPct = totalCount > 0 ? (checkedCount / totalCount) * 100 : 0;
-
-            // Maintenance stats
+            const allChecked = checkedCount === totalCount;
             const mItems = task.maintenanceChecklist ?? [];
-            const mReviewed = mItems.filter(m => m.status !== 'pending').length;
             const mFaults = mItems.filter(m => m.status === 'fault').length;
-            const allMaintenanceReviewed = mItems.length > 0 ? mReviewed === mItems.length : true;
-            const canComplete = allChecked && allMaintenanceReviewed;
 
             return (
               <Card
                 key={task.id}
+                onClick={() => !task.completed && setSelectedTaskId(task.id)}
                 className={cn(
                   "relative overflow-hidden transition-all duration-200",
-                  isExpanded && "md:col-span-2",
                   task.completed
                     ? "opacity-50 border-slate-100 bg-slate-50"
                     : isDischarge
-                      ? "border-red-200 bg-white shadow-sm hover:shadow-md"
-                      : "border-slate-200 bg-white shadow-sm hover:shadow-md"
+                      ? "border-red-200 bg-white shadow-sm hover:shadow-md cursor-pointer"
+                      : "border-slate-200 bg-white shadow-sm hover:shadow-md cursor-pointer"
                 )}
               >
                 {isDischarge && !task.completed && (
                   <div className="absolute top-0 left-0 w-1 h-full bg-red-500" />
                 )}
 
-                {/* Card header */}
-                <button
-                  className="w-full text-left p-4 pb-3"
-                  onClick={() => { setExpandedTask(isExpanded ? null : task.id); setActiveSection('cleaning'); }}
-                >
+                <div className="p-4">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-3">
                       <div className={cn(
@@ -205,15 +401,14 @@ export const HousekeepingView: React.FC<HousekeepingViewProps> = ({
                     </div>
                   )}
 
-                  {/* Progress bar */}
+                  {/* Progress */}
                   {!task.completed && (
                     <div className="mt-3 ml-[52px]">
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-[9px] font-bold text-slate-400 flex items-center gap-1">
                           <ListChecks className="w-3 h-3" />
                           {checkedCount}/{totalCount} limpieza
-                          {mItems.length > 0 && <> · {mReviewed}/{mItems.length} revisión</>}
-                          {mFaults > 0 && <span className="text-red-500 ml-1">({mFaults} falla{mFaults > 1 ? 's' : ''})</span>}
+                          {mFaults > 0 && <span className="text-red-500 ml-1">· {mFaults} falla{mFaults > 1 ? 's' : ''}</span>}
                         </span>
                         <span className="text-[9px] font-black text-slate-500">{Math.round(progressPct)}%</span>
                       </div>
@@ -228,150 +423,7 @@ export const HousekeepingView: React.FC<HousekeepingViewProps> = ({
                       </div>
                     </div>
                   )}
-                </button>
-
-                {/* Expanded content */}
-                {isExpanded && !task.completed && (
-                  <div className="px-4 pb-4 space-y-3 animate-in slide-in-from-top-2 duration-200">
-                    <div className="border-t border-slate-100 pt-3" />
-
-                    {/* Section tabs for daily tasks with maintenance */}
-                    {mItems.length > 0 && (
-                      <div className="flex gap-1 bg-slate-50 p-0.5 rounded-lg">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setActiveSection('cleaning'); }}
-                          className={cn(
-                            "flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-[10px] font-black uppercase tracking-tight transition-all",
-                            activeSection === 'cleaning' ? "bg-white shadow-sm text-emerald-700" : "text-slate-400"
-                          )}
-                        >
-                          <SprayCan className="w-3 h-3" /> Limpieza
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setActiveSection('maintenance'); }}
-                          className={cn(
-                            "flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-[10px] font-black uppercase tracking-tight transition-all",
-                            activeSection === 'maintenance' ? "bg-white shadow-sm text-orange-700" : "text-slate-400",
-                            mFaults > 0 && activeSection !== 'maintenance' && "text-red-500"
-                          )}
-                        >
-                          <Settings className="w-3 h-3" /> Revisión
-                          {mFaults > 0 && (
-                            <span className="bg-red-500 text-white text-[7px] px-1 py-0.5 rounded-full">{mFaults}</span>
-                          )}
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Cleaning checklist */}
-                    {activeSection === 'cleaning' && (
-                      <div className="space-y-2">
-                        {task.checklist.map(item => (
-                          <label
-                            key={item.id}
-                            className={cn(
-                              "flex items-center gap-3 p-2.5 rounded-xl border cursor-pointer transition-all active:scale-[0.98]",
-                              item.checked ? "bg-emerald-50 border-emerald-200" : "bg-white border-slate-100 hover:border-slate-200"
-                            )}
-                          >
-                            <div className={cn(
-                              "w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors",
-                              item.checked ? "bg-emerald-600 border-emerald-600" : "border-slate-300 bg-white"
-                            )}>
-                              {item.checked && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
-                            </div>
-                            <span className={cn(
-                              "text-xs font-medium transition-colors",
-                              item.checked ? "text-emerald-700 line-through" : "text-slate-700"
-                            )}>
-                              {item.label}
-                            </span>
-                            <input type="checkbox" className="sr-only" checked={item.checked} onChange={() => onToggleItem(task.id, item.id)} />
-                          </label>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Maintenance checklist */}
-                    {activeSection === 'maintenance' && mItems.length > 0 && (
-                      <div className="space-y-2">
-                        {/* Group by category */}
-                        {Object.entries(
-                          mItems.reduce((acc: Record<string, typeof mItems>, item) => {
-                            if (!acc[item.category]) acc[item.category] = [];
-                            acc[item.category].push(item);
-                            return acc;
-                          }, {} as Record<string, typeof mItems>)
-                        ).map(([category, items]: [string, typeof mItems]) => (
-                          <div key={category}>
-                            <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1.5 px-1">{category}</p>
-                            {items.map(item => (
-                              <div
-                                key={item.id}
-                                className={cn(
-                                  "flex items-center gap-2 p-2.5 rounded-xl border mb-1.5 transition-all",
-                                  item.status === 'ok' && "bg-emerald-50 border-emerald-200",
-                                  item.status === 'fault' && "bg-red-50 border-red-200",
-                                  item.status === 'pending' && "bg-white border-slate-100"
-                                )}
-                              >
-                                <span className={cn(
-                                  "text-xs font-medium flex-1",
-                                  item.status === 'ok' && "text-emerald-700",
-                                  item.status === 'fault' && "text-red-700",
-                                  item.status === 'pending' && "text-slate-600"
-                                )}>
-                                  {item.label}
-                                </span>
-                                <div className="flex gap-1">
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); onMaintenanceStatus(task.id, item.id, 'ok'); }}
-                                    className={cn(
-                                      "w-8 h-8 rounded-lg flex items-center justify-center transition-all text-xs font-black",
-                                      item.status === 'ok'
-                                        ? "bg-emerald-600 text-white shadow-sm"
-                                        : "bg-slate-100 text-slate-400 hover:bg-emerald-100 hover:text-emerald-600"
-                                    )}
-                                    title="OK"
-                                  >
-                                    <Check className="w-4 h-4" strokeWidth={3} />
-                                  </button>
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); onMaintenanceStatus(task.id, item.id, 'fault'); }}
-                                    className={cn(
-                                      "w-8 h-8 rounded-lg flex items-center justify-center transition-all text-xs font-black",
-                                      item.status === 'fault'
-                                        ? "bg-red-600 text-white shadow-sm"
-                                        : "bg-slate-100 text-slate-400 hover:bg-red-100 hover:text-red-600"
-                                    )}
-                                    title="Falla"
-                                  >
-                                    <X className="w-4 h-4" strokeWidth={3} />
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Complete button */}
-                    <Button
-                      onClick={(e) => { e.stopPropagation(); onComplete(task.id); }}
-                      disabled={!canComplete}
-                      className={cn(
-                        "w-full h-11 rounded-xl font-black text-xs uppercase tracking-widest transition-all",
-                        canComplete
-                          ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-600/20"
-                          : "bg-slate-100 text-slate-400 cursor-not-allowed"
-                      )}
-                    >
-                      <CheckCircle2 className="w-4 h-4 mr-2" />
-                      {canComplete ? 'Completar Tarea' : !allChecked ? `Faltan ${totalCount - checkedCount} items de limpieza` : `Revisar ${mItems.length - mReviewed} items de mantenimiento`}
-                    </Button>
-                  </div>
-                )}
+                </div>
 
                 {task.completed && (
                   <div className="px-4 pb-3">

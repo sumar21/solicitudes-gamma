@@ -470,7 +470,7 @@ export default function App() {
           {/* Usuarios — solo Admin */}
           {isAdmin && state.currentView === 'USERS' && <UserManagementView currentUser={state.currentUser} />}
           {/* Mapa de Camas — todos los roles, o fallback si el rol no tiene otra vista */}
-          {(state.currentView === 'BEDS' || (!hasFullAccess && !hasAzafataAccess && !hasHousekeepingAccess && !hasTechnicianAccess)) && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} />}
+          {(state.currentView === 'BEDS' || (!hasFullAccess && !hasAzafataAccess && !hasHousekeepingAccess && !hasTechnicianAccess)) && <BedsView beds={state.beds} tickets={state.tickets} incidents={state.incidents} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} />}
         </main>
       </div>
 

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
-import { Bed, BedStatus, Ticket, TicketStatus, User, Role, Area } from '../types';
+import { Bed, BedStatus, Ticket, TicketStatus, User, Role, Area, Incident, IncidentStatus } from '../types';
 import { Input } from '../components/ui/input';
 import { cn } from '../lib/utils';
 import { BedDouble, User as UserIcon, Info, Search, X, Download, ChevronDown, Check, AlertTriangle, CheckCircle2 } from 'lucide-react';
@@ -32,13 +32,25 @@ const HIDDEN_BY_DEFAULT_ADMISSION = new Set<string>([Area.HSS, Area.HUQ]);
 interface BedsViewProps {
   beds: Bed[];
   tickets: Ticket[];
+  incidents?: Incident[];
   currentUser: User | null;
   bedsLoading?: boolean;
   bedsError?: string | null;
 }
 
-export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError }) => {
+export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, incidents = [], currentUser, bedsLoading, bedsError }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
+
+  // Beds with open/in-progress incidents (keyed by "roomCode-bedCode")
+  const incidentBeds = useMemo(() => {
+    const set = new Set<string>();
+    for (const inc of incidents) {
+      if (inc.status !== IncidentStatus.RESOLVED) {
+        set.add(`${inc.roomCode}-${inc.bedCode}`);
+      }
+    }
+    return set;
+  }, [incidents]);
 
   // Map beds to their assigned ticket (for "Asignada" beds)
   const bedTicketMap = useMemo(() => {
@@ -740,6 +752,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
             <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-12 lg:grid-cols-16 xl:grid-cols-20 gap-1 md:gap-1.5">
               {areaBeds.map(bed => {
                 const shortCode = `${bed.roomCode}-${bed.bedCode}`;
+                const hasIncident = incidentBeds.has(shortCode);
 
                 return (
                   <button
@@ -747,10 +760,16 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     onClick={() => setSelectedBed(bed)}
                     className={cn(
                       "relative flex flex-col items-center justify-center aspect-square rounded-lg border transition-all duration-200 overflow-hidden group",
-                      getStatusColor(bed.status)
+                      getStatusColor(bed.status),
+                      hasIncident && "ring-2 ring-orange-400 ring-offset-1"
                     )}
                   >
                     <div className={cn("absolute top-1 right-1 w-1 h-1 md:w-1.5 md:h-1.5 rounded-full shadow-sm", getStatusDot(bed.status))} />
+                    {hasIncident && (
+                      <div className="absolute top-0.5 left-0.5 w-3 h-3 md:w-3.5 md:h-3.5 bg-orange-500 rounded-full flex items-center justify-center">
+                        <AlertTriangle className="w-2 h-2 md:w-2.5 md:h-2.5 text-white" strokeWidth={3} />
+                      </div>
+                    )}
 
                     <span className="text-[9px] sm:text-[10px] md:text-xs font-black tracking-tighter mt-0.5">
                       {shortCode}
