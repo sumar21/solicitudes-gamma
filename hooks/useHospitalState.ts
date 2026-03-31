@@ -21,6 +21,25 @@ function getTokenMinutesLeft(token: string | null): number {
   return Math.floor(((payload.exp as number) * 1000 - Date.now()) / 60_000);
 }
 
+// ── Notification sound (Web Audio API — no external files needed) ────────────
+function playNotificationSound() {
+  try {
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, ctx.currentTime);       // A5
+    osc.frequency.setValueAtTime(1175, ctx.currentTime + 0.1); // D6
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.3);
+    osc.onended = () => ctx.close();
+  } catch { /* silent — AudioContext may be blocked */ }
+}
+
 // ── Bed merge ─────────────────────────────────────────────────────────────────
 function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[]): Bed[] {
   const result = gammaBeds.map(b => ({ ...b }));
@@ -295,6 +314,7 @@ export const useHospitalState = () => {
         .map(n => ({ id: `TOAST-${n.id}`, notification: n }));
       if (relevantToasts.length > 0) {
         setToasts(prev => [...relevantToasts, ...prev].slice(0, 5)); // max 5 toasts
+        playNotificationSound();
 
         // Browser notifications (works even when tab is not in foreground)
         if ('Notification' in window && window.Notification.permission === 'granted') {

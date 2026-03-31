@@ -55,7 +55,11 @@ async function handler(req: any, res: any) {
   if (!sede) return res.status(400).json({ error: 'sede is required' });
 
   const clientIp = getClientIp(req);
-  console.log(`[validate-location] sede=${sede} ip=${clientIp} lat=${lat} lng=${lng}`);
+
+  // SUMAR is a superuser sede — validate against HPR (only sede in this app)
+  const effectiveSede = String(sede).toUpperCase() === 'SUMAR' ? 'HPR' : sede;
+
+  console.log(`[validate-location] sede=${sede}${effectiveSede !== sede ? ` (→ ${effectiveSede})` : ''} ip=${clientIp} lat=${lat} lng=${lng}`);
 
   try {
     // Fetch all active GeoIPS records
@@ -75,7 +79,7 @@ async function handler(req: any, res: any) {
     const items = data.value ?? [];
 
     // Normalize sede matching: "HPR" should match "HPR - GRUPO GAMMA S.A."
-    const sedeNorm = sede.trim().toUpperCase();
+    const sedeNorm = effectiveSede.trim().toUpperCase();
     const matchesSede = (recordSede: string) => {
       const r = (recordSede || '').trim().toUpperCase();
       return r.startsWith(sedeNorm) || r.includes(sedeNorm);
@@ -102,10 +106,13 @@ async function handler(req: any, res: any) {
       }
     }
 
-    console.log(`[validate-location] Found ${geoRecords.length} geo records, ${ipPrefixes.length} IP prefixes for sede ${sede}`);
+    console.log(`[validate-location] Found ${geoRecords.length} geo records, ${ipPrefixes.length} IP prefixes for sede ${effectiveSede}`);
+    if (ipPrefixes.length > 0) console.log(`[validate-location] Allowed IP prefixes: [${ipPrefixes.join(', ')}]`);
+    if (geoRecords.length > 0) console.log(`[validate-location] Allowed geo points: [${geoRecords.map(g => `(${g.lat},${g.lng})`).join(', ')}]`);
 
     // If no restrictions configured for this sede, allow
     if (geoRecords.length === 0 && ipPrefixes.length === 0) {
+      console.log(`[validate-location] ✓ No restrictions configured → allowed`);
       return res.status(200).json({ allowed: true, ip: clientIp, reason: 'no_restrictions' });
     }
 
@@ -114,13 +121,19 @@ async function handler(req: any, res: any) {
     if (clientIp && ipPrefixes.length > 0) {
       const clientParts = clientIp.split('.');
       const clientSubnet = clientParts.slice(0, 3).join('.');
+      console.log(`[validate-location] Client subnet: ${clientSubnet} (full IP: ${clientIp})`);
       for (const prefix of ipPrefixes) {
         if (clientSubnet === prefix) {
           ipValid = true;
-          console.log(`[validate-location] IP match: ${clientSubnet} === ${prefix}`);
+          console.log(`[validate-location] ✓ IP match: ${clientSubnet} === ${prefix}`);
           break;
         }
       }
+      if (!ipValid) {
+        console.log(`[validate-location] ✗ IP no match: ${clientSubnet} not in [${ipPrefixes.join(', ')}]`);
+      }
+    } else if (!clientIp) {
+      console.log(`[validate-location] ✗ No client IP detected`);
     }
 
     if (ipValid) {
@@ -135,13 +148,17 @@ async function handler(req: any, res: any) {
       if (!isNaN(userLat) && !isNaN(userLng)) {
         for (const rec of geoRecords) {
           const dist = haversineMeters(userLat, userLng, rec.lat, rec.lng);
-          console.log(`[validate-location] Distance to (${rec.lat},${rec.lng}): ${dist.toFixed(0)}m`);
+          console.log(`[validate-location] Geo distance to (${rec.lat},${rec.lng}): ${dist.toFixed(0)}m (max ${GEO_RADIUS_METERS}m)`);
           if (dist <= GEO_RADIUS_METERS) {
             geoValid = true;
+            console.log(`[validate-location] ✓ Geo match`);
             break;
           }
         }
+        if (!geoValid) console.log(`[validate-location] ✗ Geo no match — too far from all points`);
       }
+    } else {
+      console.log(`[validate-location] Geo skipped — lat/lng not provided`);
     }
 
     if (geoValid) {
@@ -149,6 +166,7 @@ async function handler(req: any, res: any) {
     }
 
     // ── Neither matched ─────────────────────────────────────────────────────
+    console.log(`[validate-location] ✗ DENIED — neither IP nor geo matched for ${clientIp}`);
     return res.status(200).json({
       allowed: false,
       ip: clientIp,
