@@ -14,9 +14,10 @@ interface NewRequestModalProps {
   onOpenChange: (open: boolean) => void;
   onCreate: (data: { patientName: string; origin: string; destination: string; workflow: WorkflowType; reason?: string; itrSource?: string; observations?: string; isolation?: boolean }) => void;
   beds: Bed[];
+  isolatedPatients?: Set<string>;
 }
 
-export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenChange, onCreate, beds }) => {
+export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenChange, onCreate, beds, isolatedPatients = new Set() }) => {
   const [workflow, setWorkflow] = useState<WorkflowType>(WorkflowType.INTERNAL);
   const [patientName, setPatientName] = useState('');
   const [origin, setOrigin] = useState('');
@@ -102,6 +103,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
                 const bed = beds.find(b => b.label === val);
                 if (bed?.patientName) setPatientName(bed.patientName);
                 if (bed?.institution) setItrSource(bed.institution);
+                if (bed?.patientCode && isolatedPatients.has(bed.patientCode)) setIsolation(true);
               }}
               options={availableOrigins.map(bed => ({
                 label: `${bed.label} (${bed.patientName || 'Sin Nombre'})`,

@@ -439,6 +439,7 @@ export default function App() {
         onOpenChange={setIsNewRequestOpen}
         onCreate={onNewRequestCreated}
         beds={state.beds}
+        isolatedPatients={state.isolatedPatients}
       />
       <AssignBedModal open={isAssignBedOpen} onOpenChange={setIsAssignBedOpen} onConfirm={onConfirmBed} />
       <AreaSelectionModal

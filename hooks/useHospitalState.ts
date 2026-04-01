@@ -181,14 +181,27 @@ export const useHospitalState = () => {
     return mergeBeds(rawBeds, active);
   }, [rawBeds, tickets]);
 
-  // Derive isolatedBeds (bed labels) from isolatedPatients (patientCodes) + beds
+  // Derive isolatedBeds (bed labels) from isolatedPatients (patientCodes) + beds + active tickets
   const isolatedBeds = useMemo(() => {
     const set = new Set<string>();
+    // 1. Check beds directly (from Gamma data)
     for (const bed of beds) {
       if (bed.patientCode && isolatedPatients.has(bed.patientCode)) set.add(bed.label);
     }
+    // 2. Check active tickets — if an isolated patient is being transferred,
+    //    mark the destination bed (patient follows the ticket, not the old bed)
+    for (const t of tickets) {
+      if (t.status === TicketStatus.COMPLETED || t.status === TicketStatus.REJECTED) continue;
+      if (!t.destination) continue;
+      // Find patientCode from the origin bed
+      const originBed = rawBeds.find(b => b.label === t.origin);
+      if (originBed?.patientCode && isolatedPatients.has(originBed.patientCode)) {
+        set.add(t.destination); // mark destination as isolated
+        set.delete(t.origin);  // origin is no longer isolated (patient is moving)
+      }
+    }
     return set;
-  }, [beds, isolatedPatients]);
+  }, [beds, rawBeds, tickets, isolatedPatients]);
 
   // ── Data fetchers ─────────────────────────────────────────────────────────────
   const fetchBeds = useCallback(async () => {
@@ -591,10 +604,10 @@ export const useHospitalState = () => {
     setTicketActionLoading(true);
     writingRef.current = true;
 
-    // If isolation requested, activate it for the patient
+    // If isolation requested AND patient not already isolated, activate it
     if (data.isolation) {
       const sourceBed = beds.find(b => b.label === data.origin);
-      if (sourceBed?.patientCode) {
+      if (sourceBed?.patientCode && !isolatedPatients.has(sourceBed.patientCode)) {
         setIsolatedPatients(prev => new Set(prev).add(sourceBed.patientCode!));
         authFetch('/api/isolations', {
           method: 'POST',
@@ -814,6 +827,7 @@ export const useHospitalState = () => {
       loginEmail, loginPass, loginError, loginLoading, bedsLoading, bedsError, ticketActionLoading, beds,
       tokenExpirySoon, tokenMinutesLeft,
       isolatedBeds,
+      isolatedPatients,
     },
     actions: {
       setCurrentUser, setCurrentView, setActiveRole, setSortConfig, setRequestsSearchTerm,
