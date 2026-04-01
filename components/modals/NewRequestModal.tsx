@@ -12,7 +12,7 @@ import { ITR_SOURCES, ROOM_CHANGE_REASONS } from '../../lib/constants';
 interface NewRequestModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreate: (data: { patientName: string; origin: string; destination: string; workflow: WorkflowType; reason?: string; itrSource?: string; observations?: string }) => void;
+  onCreate: (data: { patientName: string; origin: string; destination: string; workflow: WorkflowType; reason?: string; itrSource?: string; observations?: string; isolation?: boolean }) => void;
   beds: Bed[];
 }
 
@@ -24,6 +24,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
   const [reason, setReason] = useState('');
   const [itrSource, setItrSource] = useState('');
   const [observations, setObservations] = useState('');
+  const [isolation, setIsolation] = useState(false);
 
   React.useEffect(() => {
     if (!open) {
@@ -34,6 +35,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
       setReason('');
       setItrSource('');
       setObservations('');
+      setIsolation(false);
     }
   }, [open]);
 
@@ -53,7 +55,8 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
       workflow,
       reason: workflow === WorkflowType.ROOM_CHANGE ? reason : undefined,
       itrSource: workflow === WorkflowType.ITR_TO_FLOOR ? itrSource : undefined,
-      observations: observations.trim() !== '' ? observations : undefined
+      observations: observations.trim() !== '' ? observations : undefined,
+      isolation,
     });
     
     // Reset form
@@ -63,6 +66,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
     setReason('');
     setItrSource('');
     setObservations('');
+    setIsolation(false);
     onOpenChange(false);
   };
 
@@ -72,8 +76,8 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[500px] rounded-3xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader><DialogTitle className="text-2xl pr-6">Nueva Solicitud de Traslado</DialogTitle></DialogHeader>
-        <form id="create-ticket-form" onSubmit={handleSubmit} className="grid gap-6 py-4">
+        <DialogHeader><DialogTitle className="text-xl pr-6">Nueva Solicitud de Traslado</DialogTitle></DialogHeader>
+        <form id="create-ticket-form" onSubmit={handleSubmit} className="grid gap-4 py-2">
           <div className="grid gap-2">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Tipo de Escenario</Label>
             <SearchableSelect
@@ -110,7 +114,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
 
           <div className="grid gap-2">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Paciente</Label>
-            <Input required placeholder="Nombre completo" value={patientName} onChange={e => setPatientName(e.target.value)} className="h-12 rounded-xl" />
+            <Input required placeholder="Nombre completo" value={patientName} onChange={e => setPatientName(e.target.value)} className="h-10 rounded-xl" />
           </div>
 
           <div className="grid gap-2">
@@ -143,18 +147,26 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
           {workflow === WorkflowType.ITR_TO_FLOOR && (
             <div className="grid gap-2">
               <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Origen ITR / Financiador</Label>
-              <Input placeholder="Financiador / Obra Social" value={itrSource} onChange={e => setItrSource(e.target.value)} className="h-12 rounded-xl" />
+              <Input placeholder="Financiador / Obra Social" value={itrSource} onChange={e => setItrSource(e.target.value)} className="h-10 rounded-xl" />
             </div>
           )}
 
+          <label className="flex items-center gap-2.5 px-3 py-2 rounded-xl border border-violet-200 bg-violet-50/50 cursor-pointer hover:bg-violet-50 transition-colors">
+            <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors ${isolation ? 'bg-violet-600 border-violet-600' : 'border-slate-300 bg-white'}`}>
+              {isolation && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
+            </div>
+            <span className="text-sm font-bold text-violet-800">Requiere Aislamiento</span>
+            <input type="checkbox" className="sr-only" checked={isolation} onChange={e => setIsolation(e.target.checked)} />
+          </label>
+
           <div className="grid gap-2">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Observaciones (Opcional)</Label>
-            <Input placeholder="Notas para la azafata o equipo..." value={observations} onChange={e => setObservations(e.target.value)} className="h-12 rounded-xl" />
+            <Input placeholder="Notas para la azafata o equipo..." value={observations} onChange={e => setObservations(e.target.value)} className="h-10 rounded-xl" />
           </div>
         </form>
         <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)} className="rounded-xl h-12 px-6">Cancelar</Button>
-          <Button type="submit" form="create-ticket-form" className="bg-emerald-950 text-white rounded-xl h-12 px-8">Generar Ticket</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)} className="rounded-xl h-10 px-6">Cancelar</Button>
+          <Button type="submit" form="create-ticket-form" className="bg-emerald-950 text-white rounded-xl h-10 px-8">Generar Ticket</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

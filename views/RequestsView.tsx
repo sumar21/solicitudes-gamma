@@ -1,6 +1,6 @@
 
 import React, { useMemo } from 'react';
-import { Ticket, Role, TicketStatus, SortConfig, SortKey, WorkflowType, User, Bed, BedStatus } from '../types';
+import { Ticket, Role, TicketStatus, SortConfig, SortKey, WorkflowType, User, Bed, BedStatus, Area } from '../types';
 import {
   Search, Plus, Timer, Clock, ArrowRightLeft,
   ChevronUp, ChevronDown, CheckCircle2, BedDouble, Users, ClipboardCheck, AlertCircle, X, XCircle, Info, MapPin
@@ -82,12 +82,15 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
             t.status === TicketStatus.IN_TRANSIT ||
             t.status === TicketStatus.IN_TRANSPORT;
           if (!validStatus) return false;
-          // Azafata only sees tickets in her assigned areas
-          if (currentUser?.assignedAreas?.length) {
-            const originBed = beds.find(b => b.label === t.origin);
-            const destBed = t.destination ? beds.find(b => b.label === t.destination) : null;
-            return currentUser.assignedAreas.includes(originBed?.area as string) ||
-                   currentUser.assignedAreas.includes(destBed?.area as string);
+          // Azafata only sees tickets in her assigned areas (skip if all areas or beds not loaded)
+          if (currentUser?.assignedAreas?.length && beds.length > 0) {
+            const allAreas = Object.values(Area);
+            if (currentUser.assignedAreas.length < allAreas.length - 1) {
+              const originArea = beds.find(b => b.label === t.origin)?.area ?? beds.find(b => t.origin?.includes(b.area))?.area;
+              const destArea = t.destination ? (beds.find(b => b.label === t.destination)?.area ?? beds.find(b => t.destination?.includes(b.area))?.area) : undefined;
+              return currentUser.assignedAreas.includes(originArea as string) ||
+                     currentUser.assignedAreas.includes(destArea as string);
+            }
           }
           return validStatus;
         }
@@ -351,8 +354,8 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                 <TableRow>
                   <TableCell colSpan={8} className="h-48 text-center text-slate-500 bg-white">
                     <div className="flex flex-col items-center justify-center gap-3 opacity-20">
-                      <Search className="w-10 h-10" />
-                      <p className="text-sm font-black uppercase tracking-widest">Sin resultados</p>
+                      <Search className="w-10 h-10 animate-pulse" />
+                      <p className="text-sm font-black uppercase tracking-widest">Cargando...</p>
                     </div>
                   </TableCell>
                 </TableRow>

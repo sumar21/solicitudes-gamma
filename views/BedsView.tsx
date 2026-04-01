@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback } from 'react';
 import { Bed, BedStatus, Ticket, TicketStatus, User, Role, Area } from '../types';
 import { Input } from '../components/ui/input';
 import { cn } from '../lib/utils';
-import { BedDouble, User as UserIcon, Info, Search, X, Download, ChevronDown, Check, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { BedDouble, User as UserIcon, Info, Search, X, Download, ChevronDown, Check, AlertTriangle, CheckCircle2, ShieldAlert } from 'lucide-react';
 import { Dialog, DialogContent } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
@@ -35,10 +35,36 @@ interface BedsViewProps {
   currentUser: User | null;
   bedsLoading?: boolean;
   bedsError?: string | null;
+  isolatedBeds?: Set<string>;
+  onToggleIsolation?: (bedLabel: string) => void;
 }
 
-export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError }) => {
+export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onToggleIsolation }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
+
+  const canEditIsolation = currentUser?.role === Role.ADMISSION || currentUser?.role === Role.ADMIN;
+
+  // Rooms that have an isolated patient — other beds in same room are blocked
+  const blockedByIsolation = useMemo(() => {
+    const blocked = new Set<string>();
+    // Group beds by roomCode
+    const roomMap = new Map<string, Bed[]>();
+    for (const bed of beds) {
+      if (!bed.roomCode) continue;
+      if (!roomMap.has(bed.roomCode)) roomMap.set(bed.roomCode, []);
+      roomMap.get(bed.roomCode)!.push(bed);
+    }
+    // For each room, if any bed is isolated, block the others
+    for (const [, roomBeds] of roomMap) {
+      const hasIsolated = roomBeds.some(b => isolatedBeds.has(b.label));
+      if (hasIsolated) {
+        for (const b of roomBeds) {
+          if (!isolatedBeds.has(b.label)) blocked.add(b.label);
+        }
+      }
+    }
+    return blocked;
+  }, [beds, isolatedBeds]);
 
   // Map beds to their assigned ticket (for "Asignada" beds)
   const bedTicketMap = useMemo(() => {
@@ -740,6 +766,8 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
             <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-12 lg:grid-cols-16 xl:grid-cols-20 gap-1 md:gap-1.5">
               {areaBeds.map(bed => {
                 const shortCode = `${bed.roomCode}-${bed.bedCode}`;
+                const isIsolated = isolatedBeds.has(bed.label);
+                const isBlocked = blockedByIsolation.has(bed.label);
 
                 return (
                   <button
@@ -747,10 +775,21 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     onClick={() => setSelectedBed(bed)}
                     className={cn(
                       "relative flex flex-col items-center justify-center aspect-square rounded-lg border transition-all duration-200 overflow-hidden group",
-                      getStatusColor(bed.status)
+                      isBlocked ? "bg-violet-50 border-violet-300 opacity-60" : getStatusColor(bed.status),
+                      isIsolated && "ring-2 ring-violet-500 ring-offset-1"
                     )}
                   >
-                    <div className={cn("absolute top-1 right-1 w-1 h-1 md:w-1.5 md:h-1.5 rounded-full shadow-sm", getStatusDot(bed.status))} />
+                    <div className={cn("absolute top-1 right-1 w-1 h-1 md:w-1.5 md:h-1.5 rounded-full shadow-sm", isBlocked ? "bg-violet-400" : getStatusDot(bed.status))} />
+                    {isIsolated && (
+                      <div className="absolute top-0.5 left-0.5 w-3 h-3 md:w-3.5 md:h-3.5 bg-violet-600 rounded-full flex items-center justify-center">
+                        <ShieldAlert className="w-2 h-2 md:w-2.5 md:h-2.5 text-white" strokeWidth={3} />
+                      </div>
+                    )}
+                    {isBlocked && (
+                      <div className="absolute top-0.5 left-0.5 w-3 h-3 md:w-3.5 md:h-3.5 bg-violet-400 rounded-full flex items-center justify-center">
+                        <X className="w-2 h-2 md:w-2.5 md:h-2.5 text-white" strokeWidth={3} />
+                      </div>
+                    )}
 
                     <span className="text-[9px] sm:text-[10px] md:text-xs font-black tracking-tighter mt-0.5">
                       {shortCode}
@@ -779,7 +818,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
 
       {/* Bed Details Modal */}
       <Dialog open={!!selectedBed} onOpenChange={(open) => !open && setSelectedBed(null)}>
-        <DialogContent noPadding className="sm:max-w-[400px] rounded-3xl border-0 shadow-2xl">
+        <DialogContent noPadding className="sm:max-w-[400px] rounded-3xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
           {selectedBed && (() => {
             type A = { headerBg: string; iconBg: string; icon: string; pill: string; dot: string; patientBg: string; patientBorder: string; label: string };
             const theme: Record<BedStatus, A> = {
@@ -799,82 +838,71 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
 
             return (
               <div>
-                {/* Soft pastel header */}
-                <div className={cn("p-7 flex flex-col items-center text-center gap-3", t.headerBg)}>
-                  <div className={cn("w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm", t.iconBg)}>
-                    <BedDouble className={cn("w-7 h-7", t.icon)} />
+                {/* Header */}
+                <div className={cn("px-6 py-5 flex items-center gap-4", t.headerBg)}>
+                  <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm shrink-0", t.iconBg)}>
+                    <BedDouble className={cn("w-6 h-6", t.icon)} />
                   </div>
-                  <div>
-                    <h2 className="text-lg font-black tracking-tight text-slate-900">{selectedBed.label}</h2>
-                    <span className={cn("inline-flex items-center gap-1.5 mt-2 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest", t.pill)}>
+                  <div className="flex-1 min-w-0">
+                    <h2 className="text-base font-black tracking-tight text-slate-900 truncate">Hab. {selectedBed.roomCode} — Cama {selectedBed.bedCode}</h2>
+                    <span className={cn("inline-flex items-center gap-1.5 mt-1 px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest", t.pill)}>
                       <span className={cn("w-1.5 h-1.5 rounded-full", t.dot)} />
                       {selectedBed.status}
                     </span>
                   </div>
                 </div>
 
-                {/* White slide-up panel */}
-                <div className="-mt-4 bg-white rounded-t-3xl relative z-10 p-5 space-y-3">
-
-                  {/* Room + Bed stat cards */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100">
-                      <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1">Habitación</p>
-                      <p className="text-2xl font-black text-slate-800 leading-none">{selectedBed.roomCode}</p>
-                    </div>
-                    <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100">
-                      <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1">Cama</p>
-                      <p className="text-2xl font-black text-slate-800 leading-none">{selectedBed.bedCode}</p>
-                    </div>
-                  </div>
+                {/* Content */}
+                <div className="p-5 space-y-3">
 
                   {/* OCCUPIED — patient info */}
                   {isOccupied && (
                     <>
-                      <div className={cn("rounded-2xl p-4 border", t.patientBg, t.patientBorder)}>
-                        <div className="flex items-center gap-1.5 mb-1.5">
+                      <div className={cn("rounded-2xl p-3.5 border", t.patientBg, t.patientBorder)}>
+                        <div className="flex items-center gap-1.5 mb-1">
                           <UserIcon className={cn("w-3.5 h-3.5", t.label)} />
                           <span className={cn("text-[9px] font-bold uppercase tracking-widest", t.label)}>Paciente</span>
                         </div>
                         <p className="text-base font-black text-slate-900 leading-snug">{selectedBed.patientName}</p>
                       </div>
 
-                      <div className="grid grid-cols-3 gap-3">
-                        <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100">
-                          <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">DNI</p>
+                      <div className="grid grid-cols-3 gap-2.5">
+                        <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                          <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">DNI</p>
                           <p className="text-sm font-mono font-bold text-slate-700">{selectedBed.dni || '—'}</p>
                         </div>
-                        <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100">
-                          <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Edad</p>
-                          <p className="text-sm font-bold text-slate-700">{selectedBed.age != null ? `${selectedBed.age} años` : '—'}</p>
+                        <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                          <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Edad</p>
+                          <p className="text-sm font-bold text-slate-700">{selectedBed.age != null ? `${selectedBed.age}` : '—'}</p>
                         </div>
-                        <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100">
-                          <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Sexo</p>
-                          <p className="text-sm font-bold text-slate-700">{selectedBed.sex === 'M' ? 'Masculino' : selectedBed.sex === 'F' ? 'Femenino' : '—'}</p>
+                        <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                          <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Sexo</p>
+                          <p className="text-sm font-bold text-slate-700">{selectedBed.sex === 'M' ? 'M' : selectedBed.sex === 'F' ? 'F' : '—'}</p>
                         </div>
                       </div>
 
-                      <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100">
-                        <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Financiador</p>
-                        <p className="text-sm font-semibold text-slate-700 leading-snug">{selectedBed.institution || '—'}</p>
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                          <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Financiador</p>
+                          <p className="text-sm font-semibold text-slate-700 truncate">{selectedBed.institution || '—'}</p>
+                        </div>
+                        <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                          <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Profesional</p>
+                          <p className="text-sm font-semibold text-slate-700 truncate">{selectedBed.attendingPhysician || '—'}</p>
+                        </div>
                       </div>
 
-                      <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100">
-                        <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Profesional interviniente</p>
-                        <p className="text-sm font-semibold text-slate-700">{selectedBed.attendingPhysician || '—'}</p>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100">
-                          <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Evento</p>
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                          <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Evento</p>
                           <p className="text-sm font-mono font-bold text-slate-700">
                             {selectedBed.eventOrigin && selectedBed.eventNumber
                               ? `${selectedBed.eventOrigin}-${selectedBed.eventNumber}`
                               : '—'}
                           </p>
                         </div>
-                        <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100">
-                          <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">ID Paciente</p>
+                        <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                          <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">ID Paciente</p>
                           <p className="text-sm font-mono font-bold text-slate-700">{selectedBed.patientCode || '—'}</p>
                         </div>
                       </div>
@@ -885,38 +913,26 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     const assignedTicket = bedTicketMap.get(selectedBed.label);
                     return (
                       <>
-                        <div className="bg-indigo-50 rounded-2xl p-4 border border-indigo-100 flex items-start gap-3">
-                          <Info className="w-5 h-5 text-indigo-400 mt-0.5 flex-shrink-0" />
-                          <div>
-                            <p className="text-sm font-bold text-indigo-800">Cama Reservada</p>
-                            <p className="text-xs text-indigo-500 mt-0.5 leading-relaxed">Es el destino de un traslado en curso. No disponible para nuevas asignaciones.</p>
-                          </div>
+                        <div className="bg-indigo-50 rounded-xl p-3 border border-indigo-100 flex items-center gap-2">
+                          <Info className="w-4 h-4 text-indigo-400 flex-shrink-0" />
+                          <p className="text-xs font-bold text-indigo-800">Reservada — traslado en curso</p>
                         </div>
                         {assignedTicket && (
                           <>
-                            <div className={cn("rounded-2xl p-4 border", t.patientBg, t.patientBorder)}>
-                              <div className="flex items-center gap-1.5 mb-1.5">
-                                <UserIcon className={cn("w-3.5 h-3.5", t.label)} />
-                                <span className={cn("text-[9px] font-bold uppercase tracking-widest", t.label)}>Paciente en traslado</span>
-                              </div>
-                              <p className="text-base font-black text-slate-900 leading-snug">{assignedTicket.patientName}</p>
+                            <div className={cn("rounded-xl p-3 border", t.patientBg, t.patientBorder)}>
+                              <span className={cn("text-[8px] font-bold uppercase", t.label)}>Paciente en traslado</span>
+                              <p className="text-sm font-black text-slate-900">{assignedTicket.patientName}</p>
                             </div>
-                            <div className="grid grid-cols-2 gap-3">
-                              <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100">
-                                <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Origen</p>
-                                <p className="text-xs font-bold text-slate-700">{assignedTicket.origin}</p>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-100">
+                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-0.5">Origen</p>
+                                <p className="text-xs font-bold text-slate-700 truncate">{assignedTicket.origin}</p>
                               </div>
-                              <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100">
-                                <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Estado</p>
+                              <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-100">
+                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-0.5">Estado</p>
                                 <p className="text-xs font-bold text-slate-700">{assignedTicket.status}</p>
                               </div>
                             </div>
-                            {assignedTicket.financier && (
-                              <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100">
-                                <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Financiador</p>
-                                <p className="text-sm font-semibold text-slate-700">{assignedTicket.financier}</p>
-                              </div>
-                            )}
                           </>
                         )}
                       </>
@@ -924,24 +940,54 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                   })()}
 
                   {isAvailable && (
-                    <div className="bg-emerald-50 rounded-2xl p-4 border border-emerald-100 flex items-center justify-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                      <p className="text-sm font-semibold text-emerald-700">Lista para recibir paciente</p>
+                    <div className="bg-emerald-50 rounded-xl p-3 border border-emerald-100 flex items-center justify-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                      <p className="text-xs font-semibold text-emerald-700">Lista para recibir paciente</p>
                     </div>
                   )}
 
                   {isPrep && (
-                    <div className="bg-amber-50 rounded-2xl p-4 border border-amber-100 flex items-center gap-3">
-                      <Info className="w-5 h-5 text-amber-400 flex-shrink-0" />
-                      <p className="text-xs font-semibold text-amber-700 leading-relaxed">Esta cama se está preparando para un nuevo ingreso.</p>
+                    <div className="bg-amber-50 rounded-xl p-3 border border-amber-100 flex items-center gap-2">
+                      <Info className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                      <p className="text-xs font-semibold text-amber-700">En preparación para nuevo ingreso</p>
                     </div>
                   )}
 
                   {isDisabled && (
-                    <div className="bg-slate-100 rounded-2xl p-4 border border-slate-200 flex items-center justify-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-slate-400" />
-                      <p className="text-sm font-semibold text-slate-500">Cama fuera de servicio</p>
+                    <div className="bg-slate-100 rounded-xl p-3 border border-slate-200 flex items-center justify-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                      <p className="text-xs font-semibold text-slate-500">Fuera de servicio</p>
                     </div>
+                  )}
+
+                  {/* Isolation indicator */}
+                  {isolatedBeds.has(selectedBed.label) && (
+                    <div className="bg-violet-50 rounded-2xl p-3.5 border border-violet-200 flex items-center gap-3">
+                      <ShieldAlert className="w-5 h-5 text-violet-600 flex-shrink-0" />
+                      <p className="text-xs font-bold text-violet-800">Aislamiento — camas de la habitación bloqueadas</p>
+                    </div>
+                  )}
+                  {blockedByIsolation.has(selectedBed.label) && (
+                    <div className="bg-violet-50 rounded-2xl p-3.5 border border-violet-200 flex items-center gap-3">
+                      <ShieldAlert className="w-5 h-5 text-violet-400 flex-shrink-0" />
+                      <p className="text-xs font-bold text-violet-700">Bloqueada — paciente aislado en esta habitación</p>
+                    </div>
+                  )}
+
+                  {/* Toggle isolation — only Admission/Admin, only occupied beds */}
+                  {canEditIsolation && isOccupied && onToggleIsolation && (
+                    <button
+                      onClick={() => { onToggleIsolation(selectedBed.label); setSelectedBed({ ...selectedBed }); }}
+                      className={cn(
+                        "w-full flex items-center justify-center gap-2 p-3 rounded-2xl border-2 transition-all text-sm font-bold",
+                        isolatedBeds.has(selectedBed.label)
+                          ? "border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100"
+                          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                      )}
+                    >
+                      <ShieldAlert className="w-4 h-4" />
+                      {isolatedBeds.has(selectedBed.label) ? 'Quitar Aislamiento' : 'Marcar Aislamiento'}
+                    </button>
                   )}
 
                 </div>

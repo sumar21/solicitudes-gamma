@@ -92,7 +92,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-[1000px] w-[94vw] md:w-full p-0 overflow-hidden border border-slate-200 shadow-2xl rounded-2xl md:rounded-3xl bg-white [&>button]:hidden">
-        <div className="flex flex-col h-full max-h-[90vh]">
+        <div className="flex flex-col max-h-[90vh]">
 
           {/* HEADER */}
           <div className="bg-white px-5 py-5 md:px-8 md:py-6 flex flex-col border-b border-slate-100 shrink-0">
@@ -278,8 +278,8 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
             </div>
           </div>
 
-          <div className="bg-slate-50/80 px-6 py-4 flex items-center justify-center md:justify-end border-t border-slate-100 shrink-0">
-             <Button onClick={onClose} variant="outline" className="w-full md:w-auto h-11 px-8 rounded-xl font-semibold text-xs uppercase tracking-widest bg-white hover:bg-slate-50 border-slate-200 text-slate-600 transition-all">
+          <div className="bg-slate-50/80 px-4 py-3 flex items-center justify-center md:justify-end border-t border-slate-100 shrink-0">
+             <Button onClick={onClose} variant="outline" className="w-full md:w-auto h-9 px-6 rounded-xl font-semibold text-xs uppercase tracking-widest bg-white hover:bg-slate-50 border-slate-200 text-slate-600 transition-all">
                Cerrar Auditoría
              </Button>
           </div>

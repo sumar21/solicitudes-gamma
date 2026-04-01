@@ -21,22 +21,40 @@ function getTokenMinutesLeft(token: string | null): number {
   return Math.floor(((payload.exp as number) * 1000 - Date.now()) / 60_000);
 }
 
-// ── Notification sound (Web Audio API — no external files needed) ────────────
+// ── Notification sound (Web Audio API — soft, clean chime) ───────────────────
 function playNotificationSound() {
   try {
     const ctx = new AudioContext();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(880, ctx.currentTime);       // A5
-    osc.frequency.setValueAtTime(1175, ctx.currentTime + 0.1); // D6
-    gain.gain.setValueAtTime(0.3, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.3);
-    osc.onended = () => ctx.close();
+    // Resume if browser suspended it (autoplay policy)
+    if (ctx.state === 'suspended') ctx.resume();
+    const t = ctx.currentTime;
+
+    // Two layered soft tones for a warm "ding-ding" feel
+    const notes = [
+      { freq: 784, start: 0,    dur: 0.25 },  // G5
+      { freq: 1047, start: 0.12, dur: 0.3  },  // C6
+    ];
+
+    for (const note of notes) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.value = note.freq;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      // Soft attack + smooth fade out (no harsh start/stop)
+      gain.gain.setValueAtTime(0, t + note.start);
+      gain.gain.linearRampToValueAtTime(0.15, t + note.start + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + note.start + note.dur);
+
+      osc.start(t + note.start);
+      osc.stop(t + note.start + note.dur);
+    }
+
+    // Close context after all notes finish
+    setTimeout(() => ctx.close(), 500);
   } catch { /* silent — AudioContext may be blocked */ }
 }
 
@@ -152,13 +170,25 @@ export const useHospitalState = () => {
   const ticketsEtagRef = React.useRef<string | null>(null); // ETag for smart polling
   const prevTicketSnapshotRef = React.useRef<Map<string, string>>(new Map()); // id → status for change detection
   const initialLoadDoneRef = React.useRef(false); // skip notifications on first load
+  const soundCooldownRef = React.useRef(false); // prevent sound spam
   const [rawBeds, setRawBeds]                      = useState<Bed[]>([]);
   const [tickets, setTickets]                      = useState<Ticket[]>(MOCK_TICKETS);
+  // Isolation: stored by patientCode, derived to bed labels via beds data
+  const [isolatedPatients, setIsolatedPatients]    = useState<Set<string>>(new Set()); // patientCodes with active isolation
 
   const beds = useMemo(() => {
     const active = tickets.filter(t => t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED);
     return mergeBeds(rawBeds, active);
   }, [rawBeds, tickets]);
+
+  // Derive isolatedBeds (bed labels) from isolatedPatients (patientCodes) + beds
+  const isolatedBeds = useMemo(() => {
+    const set = new Set<string>();
+    for (const bed of beds) {
+      if (bed.patientCode && isolatedPatients.has(bed.patientCode)) set.add(bed.label);
+    }
+    return set;
+  }, [beds, isolatedPatients]);
 
   // ── Data fetchers ─────────────────────────────────────────────────────────────
   const fetchBeds = useCallback(async () => {
@@ -314,7 +344,12 @@ export const useHospitalState = () => {
         .map(n => ({ id: `TOAST-${n.id}`, notification: n }));
       if (relevantToasts.length > 0) {
         setToasts(prev => [...relevantToasts, ...prev].slice(0, 5)); // max 5 toasts
-        playNotificationSound();
+        // Play sound once, with cooldown to avoid spam on reload
+        if (!soundCooldownRef.current) {
+          playNotificationSound();
+          soundCooldownRef.current = true;
+          setTimeout(() => { soundCooldownRef.current = false; }, 3000);
+        }
 
         // Browser notifications (works even when tab is not in foreground)
         if ('Notification' in window && window.Notification.permission === 'granted') {
@@ -412,7 +447,6 @@ export const useHospitalState = () => {
 
       // ── Location validation (skip for SUMAR superusers) ──────────────────
       if (user.sede !== 'SUMAR') {
-        // Get browser geolocation (best effort, non-blocking timeout)
         let userLat: number | undefined;
         let userLng: number | undefined;
         try {
@@ -427,7 +461,6 @@ export const useHospitalState = () => {
           if (coords) { userLat = coords.lat; userLng = coords.lng; }
         } catch { /* geo unavailable, IP check will be used */ }
 
-        // Call validation endpoint (uses token from auth)
         try {
           const locRes = await fetch('/api/validate-location', {
             method: 'POST',
@@ -443,7 +476,6 @@ export const useHospitalState = () => {
             return;
           }
         } catch {
-          // If validation fails (network error), allow access (fail-open)
           console.warn('[login] Location validation unavailable, proceeding');
         }
       }
@@ -454,6 +486,13 @@ export const useHospitalState = () => {
       setCurrentUser(user);
       setActiveRole(user.role as Role);
       setCurrentView(user.role === Role.HOSTESS ? 'REQUESTS' : 'HOME');
+
+      // Pre-fetch beds + tickets so HOSTESS view has data immediately
+      fetchBeds();
+      fetchTickets();
+
+      // Load isolations from SharePoint
+      fetchIsolations();
 
       // Request browser notification permission
       if ('Notification' in window && window.Notification.permission === 'default') {
@@ -492,13 +531,24 @@ export const useHospitalState = () => {
       result = result.filter(t => t.sede === currentUser?.sede);
 
     if (currentUser?.role === Role.HOSTESS && currentUser.assignedAreas?.length) {
-      result = result.filter(t => {
-        const originBed    = beds.find(b => b.label === t.origin);
-        const destBed      = t.destination ? beds.find(b => b.label === t.destination) : null;
-        const originInArea = originBed ? currentUser.assignedAreas?.includes(originBed.area) : false;
-        const destInArea   = destBed   ? currentUser.assignedAreas?.includes(destBed.area)   : false;
-        return originInArea || destInArea;
-      });
+      const allAreas = new Set(Object.values(Area) as string[]);
+      const hasAll = currentUser.assignedAreas.length >= allAreas.size - 1; // 9 of 10 = effectively all
+      // Only filter if azafata has a subset of areas AND beds are loaded to resolve areas
+      if (!hasAll && beds.length > 0) {
+        // Build a map from area label → set of bed labels for fast lookup
+        const areaByLabel = new Map<string, Area>();
+        for (const b of beds) if (b.area) areaByLabel.set(b.label, b.area);
+
+        result = result.filter(t => {
+          // Try matching by label first, then by area prefix in the ticket origin/destination
+          const originArea = areaByLabel.get(t.origin) ?? beds.find(b => t.origin?.includes(b.area))?.area;
+          const destArea   = t.destination ? (areaByLabel.get(t.destination) ?? beds.find(b => t.destination?.includes(b.area))?.area) : undefined;
+          const originInArea = originArea ? currentUser.assignedAreas?.includes(originArea) : false;
+          const destInArea   = destArea   ? currentUser.assignedAreas?.includes(destArea)   : false;
+          return originInArea || destInArea;
+        });
+      }
+      // If beds not loaded yet OR azafata has all areas → show all tickets (no area filter)
     }
 
     // Base filtered by sede (used for history view, before search/sort)
@@ -534,12 +584,29 @@ export const useHospitalState = () => {
     }, ...prev]);
   };
 
-  const handleCreateTicket = async (data: Partial<Ticket>) => {
+  const handleCreateTicket = async (data: Partial<Ticket> & { isolation?: boolean }) => {
     if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) {
       alert('Solo Admisión o Admin pueden crear solicitudes.'); return;
     }
     setTicketActionLoading(true);
     writingRef.current = true;
+
+    // If isolation requested, activate it for the patient
+    if (data.isolation) {
+      const sourceBed = beds.find(b => b.label === data.origin);
+      if (sourceBed?.patientCode) {
+        setIsolatedPatients(prev => new Set(prev).add(sourceBed.patientCode!));
+        authFetch('/api/isolations', {
+          method: 'POST',
+          body: JSON.stringify({
+            patientCode: sourceBed.patientCode,
+            patientName: sourceBed.patientName || data.patientName || '',
+            userName: currentUser?.name || '',
+          }),
+        }).catch(() => {});
+      }
+    }
+
     try { await _createTicket(data); } finally {
       // wait a beat then unlock polling and sync
       setTimeout(async () => {
@@ -612,7 +679,7 @@ export const useHospitalState = () => {
 
   const handleRoomReady = (ticketId: string) => {
     const ticket = tickets.find(t => t.id === ticketId);
-    if (!ticket?.destination) return;
+    if (!ticket?.destination || ticket.status === TicketStatus.IN_TRANSIT) return;
     const now     = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const updates = { status: TicketStatus.IN_TRANSIT, cleaningDoneAt: now, destinationBedStatus: BedStatus.ASSIGNED } as const;
     setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
@@ -628,7 +695,7 @@ export const useHospitalState = () => {
 
   const handleStartTransport = (ticketId: string) => {
     const ticket = tickets.find(t => t.id === ticketId);
-    if (!ticket) return;
+    if (!ticket || ticket.status === TicketStatus.IN_TRANSPORT) return;
     const now     = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const updates = { status: TicketStatus.IN_TRANSPORT, transportStartedAt: now } as const;
     setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
@@ -664,9 +731,10 @@ export const useHospitalState = () => {
       alert('Solo Admisión o Admin pueden consolidar en PROGAL.'); return;
     }
     const ticket = tickets.find(t => t.id === ticketId);
-    if (!ticket) return;
+    if (!ticket || ticket.status === TicketStatus.COMPLETED) return;
     const updates = { status: TicketStatus.COMPLETED, completedAt: new Date().toISOString(), originBedStatus: BedStatus.PREPARATION } as const;
     setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
+    // Isolation follows the patient automatically (derived from patientCode + beds)
     addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Traslado Finalizado',
       message: `El traslado de ${ticket.patientName} ha sido consolidado en PROGAL.`,
       ticketId: ticket.id, sede: ticket.sede,
@@ -689,6 +757,50 @@ export const useHospitalState = () => {
     sessionStorage.setItem(USER_KEY, JSON.stringify(updatedUser));
   };
 
+  // ── Isolation toggle (Admission/Admin only) ────────────────────────────────
+  const toggleIsolation = (bedLabel: string) => {
+    if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) return;
+    const bed = beds.find(b => b.label === bedLabel);
+    if (!bed?.patientCode) return;
+    const code = bed.patientCode;
+    const isActive = isolatedPatients.has(code);
+
+    // Optimistic update
+    setIsolatedPatients(prev => {
+      const next = new Set(prev);
+      isActive ? next.delete(code) : next.add(code);
+      return next;
+    });
+
+    // Persist to SharePoint
+    authFetch('/api/isolations', {
+      method: isActive ? 'DELETE' : 'POST',
+      body: JSON.stringify({
+        patientCode: code,
+        patientName: bed.patientName || '',
+        userName: currentUser?.name || '',
+      }),
+    }).catch(() => {
+      // Rollback on error
+      setIsolatedPatients(prev => {
+        const next = new Set(prev);
+        isActive ? next.add(code) : next.delete(code);
+        return next;
+      });
+    });
+  };
+
+  // Fetch isolations on login
+  const fetchIsolations = async () => {
+    try {
+      const res = await authFetch('/api/isolations');
+      if (!res.ok) return;
+      const data = await res.json();
+      const codes = new Set<string>((data.isolations ?? []).map((i: any) => i.patientCode));
+      setIsolatedPatients(codes);
+    } catch { /* silent */ }
+  };
+
   const handleMarkNotificationRead      = (id: string) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
   const handleMarkAllNotificationsRead  = ()            => setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
   const handleDismissToast              = (id: string) => setToasts(prev => prev.filter(t => t.id !== id));
@@ -701,6 +813,7 @@ export const useHospitalState = () => {
       historyTickets: filteredTickets.baseFiltered,
       loginEmail, loginPass, loginError, loginLoading, bedsLoading, bedsError, ticketActionLoading, beds,
       tokenExpirySoon, tokenMinutesLeft,
+      isolatedBeds,
     },
     actions: {
       setCurrentUser, setCurrentView, setActiveRole, setSortConfig, setRequestsSearchTerm,
@@ -710,6 +823,7 @@ export const useHospitalState = () => {
       fetchBeds,
       handleUpdateUserAreas, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleDismissToast,
       handleStartTransport,
+      toggleIsolation,
       handleValidateTicket:    (_id: string) => {},
       handleAssignBedAction:   (_id: string, _bed: string) => {},
       handleHousekeepingAction:(_id: string) => {},

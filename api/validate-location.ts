@@ -56,6 +56,12 @@ async function handler(req: any, res: any) {
 
   const clientIp = getClientIp(req);
 
+  // Allow localhost in development
+  if (clientIp === '::1' || clientIp === '127.0.0.1' || clientIp === '::ffff:127.0.0.1') {
+    console.log(`[validate-location] ✓ Localhost detected (${clientIp}) — allowed`);
+    return res.status(200).json({ allowed: true, ip: clientIp, method: 'localhost' });
+  }
+
   // SUMAR is a superuser sede — validate against HPR (only sede in this app)
   const effectiveSede = String(sede).toUpperCase() === 'SUMAR' ? 'HPR' : sede;
 
@@ -91,18 +97,27 @@ async function handler(req: any, res: any) {
 
     for (const item of items) {
       const f = item.fields as Record<string, unknown>;
-      if (!matchesSede(String(f.Sedes_S ?? ''))) continue;
+      const recordSede = String(f.Sedes_S ?? '');
+      const tipo = String(f.Tipo_GI ?? '');
+      const ip = String(f.IP_GI ?? '');
 
-      const tipo = String(f.Tipo_GI ?? '').toLowerCase();
-      if (tipo.includes('geo') || tipo.includes('ubicacion')) {
+      if (!matchesSede(recordSede)) {
+        console.log(`[validate-location]   skip record: sede="${recordSede}" (no match for ${sedeNorm})`);
+        continue;
+      }
+
+      const tipoLower = tipo.toLowerCase();
+      if (tipoLower.includes('geo') || tipoLower.includes('ubicacion')) {
         const rLat = Number(f.LatResumidaNum_GI);
         const rLng = Number(f.LongResumidaNum_GI);
         if (!isNaN(rLat) && !isNaN(rLng)) {
           geoRecords.push({ lat: rLat, lng: rLng });
         }
-      } else if (tipo.includes('ip') || tipo.includes('direc')) {
-        const prefix = String(f.IP_GI ?? '').trim().replace(/\.$/, '');
+      } else if (tipoLower.includes('ip') || tipoLower.includes('direc')) {
+        const prefix = ip.trim().replace(/\.$/, '');
         if (prefix) ipPrefixes.push(prefix);
+      } else {
+        console.log(`[validate-location]   skip record: sede="${recordSede}" tipo="${tipo}" ip="${ip}" — tipo not recognized`);
       }
     }
 
