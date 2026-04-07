@@ -165,7 +165,8 @@ export async function sendPushToSubscribers(params: PushParams): Promise<void> {
                 Status_N: 'Enviada',
                 Fecha_N: now,
               },
-            });
+            }),
+          });
           if (!r.ok) {
             const errText = await r.text();
             console.error(`[push-utils] Failed to save notification for user ${sub.userId}:`, r.status, errText);
