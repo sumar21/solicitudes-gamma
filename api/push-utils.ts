@@ -151,22 +151,31 @@ export async function sendPushToSubscribers(params: PushParams): Promise<void> {
     const notifPath = `/sites/${SITE_ID}/lists/${NOTIF_LIST_ID}/items`;
     const now = new Date().toISOString();
     Promise.allSettled(
-      relevant.map(sub =>
-        graphFetch(notifPath, {
-          method: 'POST',
-          body: JSON.stringify({
-            fields: {
-              TicketId_N: params.ticketId ?? '',
-              UserId_N: Number(sub.userId) || 0,
-              Title_N: params.title,
-              Message_N: params.body,
-              Type_N: params.type ?? '',
-              Status_N: 'Enviada',
-              Fecha_N: now,
-            },
-          }),
-        })
-      )
+      relevant.map(async (sub) => {
+        try {
+          const r = await graphFetch(notifPath, {
+            method: 'POST',
+            body: JSON.stringify({
+              fields: {
+                TicketId_N: params.ticketId ?? '',
+                UserId_N: Number(sub.userId) || 0,
+                Title_N: params.title,
+                Message_N: params.body,
+                Type_N: params.type ?? '',
+                Status_N: 'Enviada',
+                Fecha_N: now,
+              },
+            });
+          if (!r.ok) {
+            const errText = await r.text();
+            console.error(`[push-utils] Failed to save notification for user ${sub.userId}:`, r.status, errText);
+          } else {
+            console.log(`[push-utils] Saved notification for user ${sub.userId}`);
+          }
+        } catch (err) {
+          console.error(`[push-utils] Error saving notification for user ${sub.userId}:`, err);
+        }
+      })
     ).catch(() => {});
   }
 }

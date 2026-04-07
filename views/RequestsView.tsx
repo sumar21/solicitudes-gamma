@@ -33,6 +33,7 @@ interface RequestsViewProps {
   onRoomReady: (id: string) => void;
   onConfirmReception: (id: string) => void;
   onConsolidate: (id: string) => void;
+  onReject?: (id: string) => void;
   currentUser: User | null;
   beds: Bed[];
 }
@@ -54,7 +55,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   searchTerm, setSearchTerm, sortConfig, onSort,
   onNewRequest, onValidateReason, onAssignBed,
   onHousekeepingAction, onStartTransport, onCompleteTransport,
-  onRoomReady, onConfirmReception, onConsolidate, currentUser, beds
+  onRoomReady, onConfirmReception, onConsolidate, onReject, currentUser, beds
 }) => {
 
   const sortedTickets = useMemo(() => {
@@ -167,12 +168,21 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
 
     // ── ADMISIÓN / ADMIN ─────────────────────────────────────────────────────
     if (activeRole === Role.ADMISSION || activeRole === Role.ADMIN) {
-      if (ticket.status === TicketStatus.WAITING_CONSOLIDATION)
-        return (
-          <Button size={size} className={cn(btnClass, "bg-purple-600 hover:bg-purple-700 text-white")} onClick={() => onConsolidate(ticket.id)}>
-            <BedDouble className="w-3.5 h-3.5 mr-2" /> Consolidar PROGAL
-          </Button>
-        );
+      const canCancel = ticket.status !== TicketStatus.COMPLETED && ticket.status !== TicketStatus.REJECTED;
+      return (
+        <div className={cn("flex gap-1.5", isMobile ? "flex-col" : "flex-row")}>
+          {ticket.status === TicketStatus.WAITING_CONSOLIDATION && (
+            <Button size={size} className={cn(btnClass, "bg-purple-600 hover:bg-purple-700 text-white")} onClick={() => onConsolidate(ticket.id)}>
+              <BedDouble className="w-3.5 h-3.5 mr-2" /> Consolidar PROGAL
+            </Button>
+          )}
+          {canCancel && onReject && (
+            <Button size={size} variant="outline" className={cn(btnClass, "border-red-200 text-red-600 hover:bg-red-50")} onClick={() => onReject(ticket.id)}>
+              <XCircle className="w-3.5 h-3.5 mr-2" /> Cancelar
+            </Button>
+          )}
+        </div>
+      );
     }
 
     return null;

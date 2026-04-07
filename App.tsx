@@ -29,7 +29,8 @@ import { Bell } from './components/Icons';
 // Modals
 import { NewRequestModal } from './components/modals/NewRequestModal';
 import { AssignBedModal } from './components/modals/AssignBedModal';
-import { AreaSelectionModal } from './components/modals/AreaSelectionModal'; // Import
+import { AreaSelectionModal } from './components/modals/AreaSelectionModal';
+import { RejectionModal } from './components/modals/RejectionModal';
 import { cn, calculateTicketMetrics } from './lib/utils';
 import { NotificationToasts } from './components/NotificationToast';
 
@@ -47,7 +48,9 @@ export default function App() {
   // UI State local (para control de modales)
   const [isNewRequestOpen, setIsNewRequestOpen] = useState(false);
   const [isAssignBedOpen, setIsAssignBedOpen] = useState(false);
-  const [isAreaSelectionOpen, setIsAreaSelectionOpen] = useState(false); // New state
+  const [isAreaSelectionOpen, setIsAreaSelectionOpen] = useState(false);
+  const [isRejectOpen, setIsRejectOpen] = useState(false);
+  const [rejectTicketId, setRejectTicketId] = useState<string | null>(null);
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -420,6 +423,7 @@ export default function App() {
               onRoomReady={actions.handleRoomReady}
               onConfirmReception={actions.handleConfirmReception}
               onConsolidate={actions.handleConsolidate}
+              onReject={(id) => { setRejectTicketId(id); setIsRejectOpen(true); }}
               currentUser={state.currentUser}
               beds={state.beds}
             />
@@ -442,6 +446,14 @@ export default function App() {
         isolatedPatients={state.isolatedPatients}
       />
       <AssignBedModal open={isAssignBedOpen} onOpenChange={setIsAssignBedOpen} onConfirm={onConfirmBed} />
+      <RejectionModal
+        open={isRejectOpen}
+        onOpenChange={setIsRejectOpen}
+        onConfirm={(reason) => {
+          if (rejectTicketId) actions.handleRejectTicket(rejectTicketId, reason);
+          setRejectTicketId(null);
+        }}
+      />
       <AreaSelectionModal
         open={isAreaSelectionOpen}
         onOpenChange={setIsAreaSelectionOpen}

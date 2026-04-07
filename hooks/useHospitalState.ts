@@ -770,6 +770,24 @@ export const useHospitalState = () => {
     setTimeout(() => { fetchBeds(); fetchTickets(); }, 5000);
   };
 
+  const handleRejectTicket = async (ticketId: string, reason: string) => {
+    if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) {
+      alert('Solo Admisión o Admin pueden cancelar traslados.'); return;
+    }
+    const ticket = tickets.find(t => t.id === ticketId);
+    if (!ticket || ticket.status === TicketStatus.REJECTED || ticket.status === TicketStatus.COMPLETED) return;
+    const updates = { status: TicketStatus.REJECTED, rejectionReason: reason, completedAt: new Date().toISOString() };
+    setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
+    addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Traslado Cancelado',
+      message: `El traslado de ${ticket.patientName} ha sido cancelado. Motivo: ${reason}`,
+      ticketId: ticket.id, sede: ticket.sede,
+      originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
+      destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
+    });
+    if (ticket.spItemId) await spUpdate(ticket.spItemId, updates);
+    spLogEvent(ticket.id, `Cancelado: ${reason}`);
+  };
+
   const handleUpdateUserAreas = (areas: Area[]) => {
     if (!currentUser) return;
     const updatedUser = { ...currentUser, assignedAreas: areas };
@@ -844,6 +862,7 @@ export const useHospitalState = () => {
       fetchBeds,
       handleUpdateUserAreas, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleDismissToast,
       handleStartTransport,
+      handleRejectTicket,
       toggleIsolation,
       handleValidateTicket:    (_id: string) => {},
       handleAssignBedAction:   (_id: string, _bed: string) => {},
