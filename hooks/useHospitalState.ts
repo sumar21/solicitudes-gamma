@@ -507,9 +507,16 @@ export const useHospitalState = () => {
       // Load isolations from SharePoint
       fetchIsolations();
 
-      // Request browser notification permission
-      if ('Notification' in window && window.Notification.permission === 'default') {
-        window.Notification.requestPermission();
+      // Subscribe to Web Push notifications
+      if ('Notification' in window) {
+        if (window.Notification.permission === 'default') {
+          await window.Notification.requestPermission();
+        }
+        if (window.Notification.permission === 'granted') {
+          import('../lib/pushSubscription').then(({ subscribeToPush }) => {
+            subscribeToPush(data.token, user.id, user.role, user.assignedAreas ?? [], user.sede);
+          }).catch(() => {});
+        }
       }
     } catch (err: any) {
       setLoginError(`Error inesperado: ${err?.message ?? String(err)}`);

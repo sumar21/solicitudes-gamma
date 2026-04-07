@@ -85,6 +85,8 @@ const routes: Record<string, () => Promise<any>> = {
   '/api/users':              () => import('./api/users'),
   '/api/validate-location':  () => import('./api/validate-location'),
   '/api/isolations':         () => import('./api/isolations'),
+  '/api/push-subscribe':     () => import('./api/push-subscribe'),
+  '/api/notifications':      () => import('./api/notifications'),
 };
 
 const server = createServer(async (req, res) => {
