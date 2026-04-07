@@ -10,6 +10,7 @@
 import { graphFetch }  from './graph.js';
 import { requireAuth } from './jwt.js';
 import { Ticket, TicketStatus, WorkflowType, SedeType, BedStatus } from '../types.js';
+import { sendPushToSubscribers } from './push-utils.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = 'c7417674-9084-416d-a955-7024161a3194'; // 07.Traslados
@@ -172,6 +173,19 @@ async function handler(req: any, res: any) {
       if (!spRes.ok) throw new Error(`SP POST failed (${spRes.status}): ${await spRes.text()}`);
 
       const data = (await spRes.json()) as { id: string };
+
+      // Send push notification for new ticket (non-blocking)
+      sendPushToSubscribers({
+        title: 'Nueva Solicitud de Traslado',
+        body: `${ticket.patientName}: ${ticket.origin} → ${ticket.destination ?? '?'}`,
+        ticketId: ticket.id,
+        type: 'NEW_TICKET',
+        originArea: ticket.origin,       // area resolved by push-utils
+        destinationArea: ticket.destination,
+        sede: ticket.sede,
+        excludeUserId: (req as any).user?.id,
+      }).catch(() => {});
+
       return res.status(201).json({ spItemId: data.id });
     }
 
@@ -189,6 +203,29 @@ async function handler(req: any, res: any) {
       );
 
       if (!spRes.ok) throw new Error(`SP PATCH failed (${spRes.status}): ${await spRes.text()}`);
+
+      // Send push notification for status change (non-blocking)
+      if (updates.status) {
+        const statusLabels: Record<string, string> = {
+          [TicketStatus.IN_TRANSIT]: 'Habitación Lista',
+          [TicketStatus.IN_TRANSPORT]: 'Traslado en Curso',
+          [TicketStatus.WAITING_CONSOLIDATION]: 'Recepción Confirmada',
+          [TicketStatus.COMPLETED]: 'Traslado Finalizado',
+        };
+        const label = statusLabels[updates.status];
+        if (label) {
+          sendPushToSubscribers({
+            title: label,
+            body: `${updates.patientName ?? 'Paciente'}: ${updates.origin ?? ''} → ${updates.destination ?? ''}`,
+            ticketId: updates.id,
+            type: 'STATUS_UPDATE',
+            originArea: updates.origin,
+            destinationArea: updates.destination,
+            sede: updates.sede,
+            excludeUserId: (req as any).user?.id,
+          }).catch(() => {});
+        }
+      }
 
       return res.status(200).json({ ok: true });
     }
