@@ -37,7 +37,7 @@ interface RequestsViewProps {
   onReject?: (id: string) => void;
   currentUser: User | null;
   beds: Bed[];
-  isolatedPatients?: Set<string>;
+  isolatedPatients?: Map<string, any>;
 }
 
 const ROLE_LABELS: Partial<Record<Role, string>> = {
@@ -62,8 +62,12 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
 
   const isTicketIsolated = (ticket: Ticket): boolean => {
     if (!isolatedPatients?.size) return false;
+    // Check by patientCode from bed data
     const originBed = beds.find(b => b.label === ticket.origin);
-    return !!(originBed?.patientCode && isolatedPatients.has(originBed.patientCode));
+    if (originBed?.patientCode && isolatedPatients.has(originBed.patientCode)) return true;
+    // Fallback: check by patientCode from ticket itself
+    if (ticket.patientCode && isolatedPatients.has(ticket.patientCode)) return true;
+    return false;
   };
 
   const sortedTickets = useMemo(() => {
@@ -126,11 +130,15 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     if (activeRole === Role.HOSTESS) {
       if (!currentUser?.assignedAreas) return null;
 
+      const allAreas = Object.values(Area);
+      const hasAllAreas = currentUser.assignedAreas.length >= allAreas.length - 1;
+
       const originBed = beds.find(b => b.label === ticket.origin);
       const destBed = ticket.destination ? beds.find(b => b.label === ticket.destination) : null;
 
-      const isOriginHostess = !!(originBed && currentUser.assignedAreas.includes(originBed.area));
-      const isDestHostess = !!(destBed && currentUser.assignedAreas.includes(destBed.area));
+      // If azafata has all areas, she can act on everything
+      const isOriginHostess = hasAllAreas || !!(originBed && currentUser.assignedAreas.includes(originBed.area));
+      const isDestHostess = hasAllAreas || !!(destBed && currentUser.assignedAreas.includes(destBed.area));
 
       // Si no es de ninguna de las dos áreas, no muestra nada
       if (!isOriginHostess && !isDestHostess) return null;

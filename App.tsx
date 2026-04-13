@@ -524,6 +524,10 @@ export default function App() {
             <div className="border-t border-slate-100 pt-3 flex gap-2">
               <button
                 onClick={() => {
+                  // Mark all SP notifications as read
+                  (state.unreadSpNotifications ?? []).forEach((n: any) => {
+                    actions.handleMarkNotificationRead(n.id);
+                  });
                   actions.handleMarkAllNotificationsRead();
                   setIsUnreadModalOpen(false);
                 }}

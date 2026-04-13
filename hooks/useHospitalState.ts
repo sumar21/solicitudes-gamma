@@ -4,7 +4,7 @@ import {
   WorkflowType, Role, SedeType, Ticket, TicketStatus, User, Area,
   Notification, NotificationType, ViewMode, SortConfig, Bed, BedStatus, IsolationType,
 } from '../types';
-import { MOCK_TICKETS, MOCK_BEDS } from '../lib/constants';
+import { MOCK_TICKETS } from '../lib/constants';
 
 // ── JWT helpers (client-side, solo lectura — sin verificar firma) ─────────────
 function parseJwtPayload(token: string): Record<string, unknown> | null {
@@ -170,6 +170,7 @@ export const useHospitalState = () => {
   const ticketsEtagRef = React.useRef<string | null>(null); // ETag for smart polling
   const prevTicketSnapshotRef = React.useRef<Map<string, string>>(new Map()); // id → status for change detection
   const initialLoadDoneRef = React.useRef(false); // skip notifications on first load
+  const bedsEnrichedRef = React.useRef(false); // only enrich beds once per session
   const soundCooldownRef = React.useRef(false); // prevent sound spam
   const [rawBeds, setRawBeds]                      = useState<Bed[]>([]);
   const [tickets, setTickets]                      = useState<Ticket[]>(MOCK_TICKETS);
@@ -208,38 +209,66 @@ export const useHospitalState = () => {
     setBedsLoading(true);
     setBedsError(null);
     try {
-      console.log('[fetchBeds] GET /api/beds ...');
+      // Phase 1: fast fetch (map + occupied only, no enrichment)
       const r = await authFetch('/api/beds');
-      console.log('[fetchBeds] status:', r.status);
       if (r.status === 401) { handleLogout(); return; }
       const text = await r.text();
-      console.log('[fetchBeds] body:', text.slice(0, 500));
-      if (!r.ok) {
-        setBedsError(`HTTP ${r.status} — ${text.slice(0, 200)}`);
-        setRawBeds(MOCK_BEDS);
-        return;
-      }
+      if (!r.ok) { setBedsError(`HTTP ${r.status}`); return; } // keep previous data
       let data: { beds: Bed[]; error?: string };
-      try {
-        data = JSON.parse(text);
-      } catch {
-        setBedsError(`Respuesta no es JSON válido — ${text.slice(0, 200)}`);
-        setRawBeds(MOCK_BEDS);
-        return;
-      }
-      if (data.error) { setBedsError(`API error: ${data.error}`); setRawBeds(MOCK_BEDS); return; }
+      try { data = JSON.parse(text); } catch { setBedsError('Respuesta no válida'); return; }
+      if (data.error) { setBedsError(`API error: ${data.error}`); return; }
       if (Array.isArray(data.beds) && data.beds.length > 0) {
-        console.log('[fetchBeds] camas recibidas:', data.beds.length);
+        // If we already have beds with occupied data but new response has none occupied,
+        // Gamma probably failed partially — skip this update
+        const hasOccupied = data.beds.some((b: any) => b.status === 'Ocupada' || b.status === 'En preparación' || b.status === 'Inhabilitada');
+        if (!hasOccupied && rawBeds.length > 0 && rawBeds.some(b => b.status === BedStatus.OCCUPIED)) {
+          console.warn('[fetchBeds] Skipping update — no occupied beds (Gamma partial failure)');
+          return;
+        }
         setBedsError(null);
-        setRawBeds(data.beds);
-      } else {
-        setBedsError(`API devolvió ${data.beds?.length ?? 0} camas (array vacío o nulo)`);
-        setRawBeds(MOCK_BEDS);
+        if (bedsEnrichedRef.current) {
+          // Merge: keep enriched data, update basic fields (status, patientName, etc.)
+          setRawBeds(prev => {
+            const enrichedMap = new Map(prev.map(b => [b.id, b]));
+            return data.beds.map((b: Bed) => {
+              const enriched = enrichedMap.get(b.id);
+              if (enriched) {
+                return { ...enriched, status: b.status, patientName: b.patientName, patientCode: b.patientCode };
+              }
+              return b;
+            });
+          });
+        } else {
+          setRawBeds(data.beds);
+        }
+
+        // Phase 2: enrich ONCE (not on every poll) — patient details + event details
+        if (!bedsEnrichedRef.current) {
+          bedsEnrichedRef.current = true;
+          console.log('[fetchBeds] Phase 2: enriching beds...');
+          authFetch('/api/beds?enrich=1').then(async (r2) => {
+            console.log('[fetchBeds] Enrich status:', r2.status);
+            if (!r2.ok) { console.warn('[fetchBeds] Enrich failed:', r2.status); bedsEnrichedRef.current = false; return; }
+            try {
+              const d2 = await r2.json();
+              console.log('[fetchBeds] Enrich response: beds count=', d2.beds?.length);
+              if (Array.isArray(d2.beds) && d2.beds.length > 0) {
+                // Check if enrichment actually added data
+                const sample = d2.beds.find((b: any) => b.dni || b.institution || b.diagnosis);
+                console.log('[fetchBeds] Enrich sample:', sample ? `${sample.patientName} dni=${sample.dni} inst=${sample.institution} diag=${sample.diagnosis}` : 'NO enriched data found');
+                setRawBeds(d2.beds);
+              } else {
+                bedsEnrichedRef.current = false; // retry if empty
+              }
+            } catch { bedsEnrichedRef.current = false; }
+          }).catch(() => { bedsEnrichedRef.current = false; });
+        }
       }
+      // If beds came empty, DON'T clear existing data — Gamma might be flaky
     } catch (e: any) {
       console.error('[fetchBeds] error:', e);
-      setBedsError(`Fetch falló: ${e?.message || e}`);
-      setRawBeds(MOCK_BEDS);
+      setBedsError(`Error: ${e?.message || e}`);
+      // DON'T clear rawBeds — keep previous data on error
     }
     finally { setBedsLoading(false); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -274,6 +303,7 @@ export const useHospitalState = () => {
     if (!token) return;
     fetchBeds();
     fetchTickets();
+    fetchIsolations();
     const ticketPoll = setInterval(fetchTickets, POLL_TICKETS_MS);
     const bedPoll    = setInterval(fetchBeds, POLL_BEDS_MS);
     return () => { clearInterval(ticketPoll); clearInterval(bedPoll); };
@@ -534,12 +564,32 @@ export const useHospitalState = () => {
   };
 
   const handleLogout = useCallback(() => {
+    // Unsubscribe push notifications for this user
+    const t = localStorage.getItem(TOKEN_KEY);
+    if (t && 'serviceWorker' in navigator && 'PushManager' in window) {
+      navigator.serviceWorker.ready.then(reg => {
+        reg.pushManager.getSubscription().then(sub => {
+          if (sub) {
+            // Delete subscription from SP
+            fetch('/api/push-subscribe', {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` },
+              body: JSON.stringify({ endpoint: sub.endpoint }),
+            }).catch(() => {});
+            // Unsubscribe from browser
+            sub.unsubscribe().catch(() => {});
+          }
+        }).catch(() => {});
+      }).catch(() => {});
+    }
+
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
     setToken(null);
     setCurrentUser(null);
     setExpirySoon(false);
     setMinutesLeft(0);
+    bedsEnrichedRef.current = false;
   }, []);
 
   // ── Filtered data ─────────────────────────────────────────────────────────────
@@ -619,21 +669,26 @@ export const useHospitalState = () => {
     setTicketActionLoading(true);
     writingRef.current = true;
 
-    // If isolation requested AND patient not already isolated, activate it
+    // If isolation requested, activate or update type
     if (data.isolation) {
       const sourceBed = beds.find(b => b.label === data.origin);
       const isoType = (data as any).isolationType as IsolationType | undefined;
-      if (sourceBed?.patientCode && !isolatedPatients.has(sourceBed.patientCode)) {
-        setIsolatedPatients(prev => { const next = new Map(prev); next.set(sourceBed.patientCode!, isoType ?? IsolationType.CONTACTO); return next; });
-        authFetch('/api/isolations', {
-          method: 'POST',
-          body: JSON.stringify({
-            patientCode: sourceBed.patientCode,
-            patientName: sourceBed.patientName || data.patientName || '',
-            userName: currentUser?.name || '',
-            tipo: isoType ?? IsolationType.CONTACTO,
-          }),
-        }).catch(() => {});
+      if (sourceBed?.patientCode) {
+        const currentType = isolatedPatients.get(sourceBed.patientCode.trim());
+        const newType = isoType ?? IsolationType.CONTACTO;
+        // Create or update if type changed
+        if (!currentType || currentType !== newType) {
+          setIsolatedPatients(prev => { const next = new Map(prev); next.set(sourceBed.patientCode!.trim(), newType); return next; });
+          authFetch('/api/isolations', {
+            method: 'POST',
+            body: JSON.stringify({
+              patientCode: sourceBed.patientCode,
+              patientName: sourceBed.patientName || data.patientName || '',
+              userName: currentUser?.name || '',
+              tipo: newType,
+            }),
+          }).catch(() => {});
+        }
       }
     }
 

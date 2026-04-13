@@ -55,7 +55,8 @@ async function getToken(scope: string): Promise<string> {
   try {
     tokenData = JSON.parse(tokenText) as Record<string, unknown>;
   } catch {
-    throw new Error(`Token endpoint returned non-JSON (status ${tokenRes.status}): ${tokenText.slice(0, 200)}`);
+    console.warn(`[api/beds] Token endpoint returned non-JSON for scope "${scope}" (status ${tokenRes.status})`);
+    return ''; // return empty token — calls will fail gracefully
   }
   if (!tokenData.access_token) {
     throw new Error(`Token error for scope "${scope}": ${JSON.stringify(tokenData)}`);
@@ -242,12 +243,14 @@ async function handler(req: any, res: any) {
     return;
   }
 
+  const url = new URL(req.url ?? '/', 'http://localhost');
+  const enrich = url.searchParams.get('enrich') === '1';
+
   try {
-    const [tokenMap, tokenOcc, tokenPat, tokenEvt] = await Promise.all([
+    // Phase 1: always fetch map + occupied (fast — 2 calls)
+    const [tokenMap, tokenOcc] = await Promise.all([
       getToken('obtenermapacamas'),
       getToken('obtenermapacamasocupadas'),
-      getToken('consultarpacientecodigo'),
-      getToken('obtenereventointernacion'),
     ]);
 
     const [mapRes, occRes] = await Promise.all([
@@ -259,9 +262,13 @@ async function handler(req: any, res: any) {
       }),
     ]);
 
+    const safeJson = async (r: Response) => {
+      const text = await r.text();
+      try { return JSON.parse(text); } catch { console.warn('[api/beds] Non-JSON response:', text.slice(0, 100)); return []; }
+    };
     const [mapRaw, occRaw] = await Promise.all([
-      mapRes.json(),
-      occRes.json(),
+      safeJson(mapRes),
+      safeJson(occRes),
     ]);
 
     const mapData: GammaSector[] = Array.isArray(mapRaw) ? mapRaw : [];
@@ -273,40 +280,53 @@ async function handler(req: any, res: any) {
 
     const beds = transformBeds(mapData, occData);
 
-    // Enrich occupied beds — patient details + event details in ONE parallel batch
-    const occupiedBeds = beds.filter(b => b.patientCode && b.status === STATUS.OCCUPIED);
-    if (occupiedBeds.length > 0) {
-      const enrichResults = await Promise.all(
-        occupiedBeds.map(async (b) => {
-          const [patient, event] = await Promise.all([
-            fetchPatientDetails(tokenPat, b.patientCode!),
-            b.eventOrigin && b.eventNumber
-              ? fetchEventDetails(tokenEvt, b.eventOrigin, b.eventNumber)
-              : Promise.resolve(null),
-          ]);
-          return { patient, event };
-        }),
-      );
-      occupiedBeds.forEach((bed, i) => {
-        const { patient: p, event: evt } = enrichResults[i];
-        if (p) {
-          bed.institution = p.ENT_NOMBRE_FANTASIA?.trim() || undefined;
-          bed.dni = p.ENT_NUMERO_DOCUMENTO?.trim() || undefined;
-          bed.age = p.PCN_FECHA_NACIMIENTO ? calcAge(p.PCN_FECHA_NACIMIENTO) : undefined;
-          bed.sex = p.PCN_SEXO === 'M' || p.PCN_SEXO === 'F' ? p.PCN_SEXO : undefined;
-        }
-        if (evt) {
-          bed.diagnosis = evt.EVE_DIAGNOSTICO?.trim() || undefined;
-          if (evt.PROFESIONAL_NOMBRE?.trim()) {
-            bed.prescribingPhysician = evt.PROFESIONAL_NOMBRE.trim();
+    // Phase 2: only if ?enrich=1, fetch patient + event details (slow — N calls per occupied bed)
+    if (enrich) {
+      console.log('[api/beds] Enrich: getting tokens...');
+      const [tokenPat, tokenEvt] = await Promise.all([
+        getToken('consultarpacientecodigo'),
+        getToken('obtenereventointernacion'),
+      ]);
+      console.log('[api/beds] Enrich: tokens OK');
+
+      const occupiedBeds = beds.filter(b => b.patientCode && b.status === STATUS.OCCUPIED);
+      console.log(`[api/beds] Enrich: ${occupiedBeds.length} occupied beds to enrich`);
+      if (occupiedBeds.length > 0) {
+        const enrichResults = await Promise.all(
+          occupiedBeds.map(async (b) => {
+            const [patient, event] = await Promise.all([
+              fetchPatientDetails(tokenPat, b.patientCode!),
+              b.eventOrigin && b.eventNumber
+                ? fetchEventDetails(tokenEvt, b.eventOrigin, b.eventNumber)
+                : Promise.resolve(null),
+            ]);
+            return { patient, event };
+          }),
+        );
+        occupiedBeds.forEach((bed, i) => {
+          const { patient: p, event: evt } = enrichResults[i];
+          if (p) {
+            bed.institution = p.ENT_NOMBRE_FANTASIA?.trim() || undefined;
+            bed.dni = p.ENT_NUMERO_DOCUMENTO?.trim() || undefined;
+            bed.age = p.PCN_FECHA_NACIMIENTO ? calcAge(p.PCN_FECHA_NACIMIENTO) : undefined;
+            bed.sex = p.PCN_SEXO === 'M' || p.PCN_SEXO === 'F' ? p.PCN_SEXO : undefined;
           }
-          if (!bed.institution && evt.INSTITUCION_NOMBRE) {
-            bed.institution = evt.INSTITUCION_NOMBRE.trim();
+          if (evt) {
+            bed.diagnosis = evt.EVE_DIAGNOSTICO?.trim() || undefined;
+            if (evt.PROFESIONAL_NOMBRE?.trim()) {
+              bed.prescribingPhysician = evt.PROFESIONAL_NOMBRE.trim();
+            }
+            if (!bed.institution && evt.INSTITUCION_NOMBRE) {
+              bed.institution = evt.INSTITUCION_NOMBRE.trim();
+            }
           }
-        }
-      });
+        });
+        const enriched = occupiedBeds.filter(b => b.dni || b.diagnosis || b.prescribingPhysician).length;
+        console.log(`[api/beds] Enrich done: ${enriched}/${occupiedBeds.length} beds enriched`);
+      }
     }
 
+    console.log(`[api/beds] Returning ${beds.length} beds (enrich=${enrich})`);
     res.status(200).json({ beds });
   } catch (err: any) {
     console.error('[api/beds]', err);

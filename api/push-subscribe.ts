@@ -13,17 +13,43 @@ const LIST_ID = '648fde7b-89d2-40ac-bc4a-63661508b50a'; // 09.PushSubscriptions
 
 async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   if (!SITE_ID || !LIST_ID) return res.status(503).json({ error: 'SharePoint not configured' });
+
+  const basePath = `/sites/${SITE_ID}/lists/${LIST_ID}/items`;
+
+  // ── DELETE — remove subscription on logout ─────────────────────────────
+  if (req.method === 'DELETE') {
+    const { endpoint } = req.body ?? {};
+    if (!endpoint) return res.status(400).json({ error: 'endpoint required' });
+    try {
+      const filter = encodeURIComponent(`fields/Endpoint_PS eq '${endpoint.replace(/'/g, "''")}'`);
+      const existing = await graphFetch(
+        `${basePath}?$expand=fields&$filter=${filter}&$top=1`,
+        { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
+      );
+      if (existing.ok) {
+        const data = (await existing.json()) as { value: Record<string, unknown>[] };
+        if (data.value?.length > 0) {
+          const itemId = String(data.value[0].id);
+          await graphFetch(`${basePath}/${itemId}`, { method: 'DELETE' });
+          console.log(`[push-subscribe] Deleted subscription for endpoint`);
+        }
+      }
+      return res.status(200).json({ ok: true });
+    } catch (err: any) {
+      console.error('[push-subscribe] DELETE error:', err);
+      return res.status(200).json({ ok: true }); // don't block logout
+    }
+  }
+
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const { endpoint, keys, userId, role, assignedAreas, sede } = req.body ?? {};
   if (!endpoint || !keys) return res.status(400).json({ error: 'endpoint and keys required' });
-
-  const basePath = `/sites/${SITE_ID}/lists/${LIST_ID}/items`;
 
   try {
     // Check if subscription with this endpoint already exists
