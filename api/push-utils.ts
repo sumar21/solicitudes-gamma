@@ -86,9 +86,15 @@ function isRelevant(sub: Subscription, params: PushParams): boolean {
   // Hostess: only if ticket area intersects their assigned areas
   if (role === 'HOSTESS') {
     if (!sub.assignedAreas.length) return false;
+    // If hostess has 9+ areas, she gets all notifications (effectively full access)
+    if (sub.assignedAreas.length >= 9) return true;
     const { originArea, destinationArea } = params;
-    return (!!originArea && sub.assignedAreas.includes(originArea)) ||
-           (!!destinationArea && sub.assignedAreas.includes(destinationArea));
+    // originArea/destinationArea may be bed labels — check if any assigned area is contained in them
+    const matchesArea = (bedLabel?: string) => {
+      if (!bedLabel) return false;
+      return sub.assignedAreas.some(area => bedLabel.includes(area) || area.includes(bedLabel));
+    };
+    return matchesArea(originArea) || matchesArea(destinationArea);
   }
 
   // Other roles: no push notifications
@@ -105,15 +111,21 @@ async function deleteSubscription(spItemId: string): Promise<void> {
 }
 
 export async function sendPushToSubscribers(params: PushParams): Promise<void> {
+  console.log(`[push-utils] Called with: title="${params.title}" sede="${params.sede}" excludeUser="${params.excludeUserId}"`);
   if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
     console.warn('[push-utils] VAPID keys not configured, skipping push');
     return;
   }
+  console.log('[push-utils] VAPID keys OK, fetching subscriptions...');
 
   const subs = await fetchSubscriptions(params.sede);
-  const relevant = subs.filter(s => isRelevant(s, params));
+  console.log(`[push-utils] Found ${subs.length} total subscription(s)`);
+  subs.forEach(s => console.log(`  - user=${s.userId} role=${s.role} areas=${s.assignedAreas.join(',')}`));
 
-  if (relevant.length === 0) return;
+  const relevant = subs.filter(s => isRelevant(s, params));
+  console.log(`[push-utils] ${relevant.length} relevant after filtering`);
+
+  if (relevant.length === 0) { console.log('[push-utils] No relevant subscribers, skipping'); return; }
 
   console.log(`[push-utils] Sending push to ${relevant.length} subscriber(s) for: ${params.title}`);
 
@@ -149,7 +161,7 @@ export async function sendPushToSubscribers(params: PushParams): Promise<void> {
   // Save notification records in 10.Notificaciones (non-blocking)
   if (SITE_ID && NOTIF_LIST_ID) {
     const notifPath = `/sites/${SITE_ID}/lists/${NOTIF_LIST_ID}/items`;
-    const now = new Date().toISOString();
+    const now = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(); // UTC-3 (Argentina)
     Promise.allSettled(
       relevant.map(async (sub) => {
         try {

@@ -182,6 +182,7 @@ async function handler(req: any, res: any) {
       const data = (await spRes.json()) as { id: string };
 
       // Send push notification for new ticket (non-blocking)
+      console.log('[tickets] POST success, sending push notification...');
       sendPushToSubscribers({
         title: 'Nueva Solicitud de Traslado',
         body: `${ticket.patientName}: ${ticket.origin} → ${ticket.destination ?? '?'}`,
@@ -191,7 +192,7 @@ async function handler(req: any, res: any) {
         destinationArea: ticket.destination,
         sede: ticket.sede,
         excludeUserId: (req as any).user?.id,
-      }).catch(() => {});
+      }).catch((err: any) => console.error('[tickets] Push error:', err));
 
       return res.status(201).json({ spItemId: data.id });
     }
@@ -230,7 +231,7 @@ async function handler(req: any, res: any) {
             destinationArea: updates.destination,
             sede: updates.sede,
             excludeUserId: (req as any).user?.id,
-          }).catch(() => {});
+          }).catch((err: any) => console.error('[tickets] Push error:', err));
         }
       }
 

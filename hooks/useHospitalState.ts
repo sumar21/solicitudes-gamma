@@ -82,7 +82,7 @@ function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[]): Bed[] {
 }
 
 const POLL_TICKETS_MS     = 8_000;   // tickets: poll every 8s
-const POLL_BEDS_MS        = 60_000;  // beds: poll every 60s (Gamma API, changes less)
+const POLL_BEDS_MS        = 60_000;  // beds: poll every 60s
 
 /** Human-readable labels for status transitions (for poll-based notifications) */
 function statusChangeLabel(_from: string, to: string): { title: string } | null {
@@ -170,7 +170,8 @@ export const useHospitalState = () => {
   const ticketsEtagRef = React.useRef<string | null>(null); // ETag for smart polling
   const prevTicketSnapshotRef = React.useRef<Map<string, string>>(new Map()); // id → status for change detection
   const initialLoadDoneRef = React.useRef(false); // skip notifications on first load
-  const bedsEnrichedRef = React.useRef(false); // only enrich beds once per session
+  const appStartTimeRef = React.useRef(Date.now()); // suppress notifications for first 15s
+  const bedsEtagRef = React.useRef<string | null>(null); // ETag for beds 304 support
   const soundCooldownRef = React.useRef(false); // prevent sound spam
   const [rawBeds, setRawBeds]                      = useState<Bed[]>([]);
   const [tickets, setTickets]                      = useState<Ticket[]>(MOCK_TICKETS);
@@ -209,69 +210,50 @@ export const useHospitalState = () => {
     setBedsLoading(true);
     setBedsError(null);
     try {
-      // Phase 1: fast fetch (map + occupied only, no enrichment)
-      const r = await authFetch('/api/beds');
+      const headers: Record<string, string> = {};
+      if (bedsEtagRef.current) headers['If-None-Match'] = bedsEtagRef.current;
+
+      const r = await authFetch('/api/beds', { headers });
       if (r.status === 401) { handleLogout(); return; }
-      const text = await r.text();
-      if (!r.ok) { setBedsError(`HTTP ${r.status}`); return; } // keep previous data
-      let data: { beds: Bed[]; error?: string };
-      try { data = JSON.parse(text); } catch { setBedsError('Respuesta no válida'); return; }
-      if (data.error) { setBedsError(`API error: ${data.error}`); return; }
+      if (r.status === 304) return; // no changes
+      if (!r.ok) return; // keep previous data
+
+      const etag = r.headers.get('etag');
+      if (etag) bedsEtagRef.current = etag;
+
+      const data = await r.json();
+      if (data.error) return;
+
       if (Array.isArray(data.beds) && data.beds.length > 0) {
-        // If we already have beds with occupied data but new response has none occupied,
-        // Gamma probably failed partially — skip this update
+        // Skip partial failures (all beds available when we know some are occupied)
         const hasOccupied = data.beds.some((b: any) => b.status === 'Ocupada' || b.status === 'En preparación' || b.status === 'Inhabilitada');
         if (!hasOccupied && rawBeds.length > 0 && rawBeds.some(b => b.status === BedStatus.OCCUPIED)) {
-          console.warn('[fetchBeds] Skipping update — no occupied beds (Gamma partial failure)');
-          return;
+          return; // Gamma partial failure — keep previous data
         }
         setBedsError(null);
-        if (bedsEnrichedRef.current) {
-          // Merge: keep enriched data, update basic fields (status, patientName, etc.)
-          setRawBeds(prev => {
-            const enrichedMap = new Map(prev.map(b => [b.id, b]));
-            return data.beds.map((b: Bed) => {
-              const enriched = enrichedMap.get(b.id);
-              if (enriched) {
-                return { ...enriched, status: b.status, patientName: b.patientName, patientCode: b.patientCode };
-              }
-              return b;
-            });
-          });
-        } else {
-          setRawBeds(data.beds);
-        }
-
-        // Phase 2: enrich ONCE (not on every poll) — patient details + event details
-        if (!bedsEnrichedRef.current) {
-          bedsEnrichedRef.current = true;
-          console.log('[fetchBeds] Phase 2: enriching beds...');
-          authFetch('/api/beds?enrich=1').then(async (r2) => {
-            console.log('[fetchBeds] Enrich status:', r2.status);
-            if (!r2.ok) { console.warn('[fetchBeds] Enrich failed:', r2.status); bedsEnrichedRef.current = false; return; }
-            try {
-              const d2 = await r2.json();
-              console.log('[fetchBeds] Enrich response: beds count=', d2.beds?.length);
-              if (Array.isArray(d2.beds) && d2.beds.length > 0) {
-                // Check if enrichment actually added data
-                const sample = d2.beds.find((b: any) => b.dni || b.institution || b.diagnosis);
-                console.log('[fetchBeds] Enrich sample:', sample ? `${sample.patientName} dni=${sample.dni} inst=${sample.institution} diag=${sample.diagnosis}` : 'NO enriched data found');
-                setRawBeds(d2.beds);
-              } else {
-                bedsEnrichedRef.current = false; // retry if empty
-              }
-            } catch { bedsEnrichedRef.current = false; }
-          }).catch(() => { bedsEnrichedRef.current = false; });
-        }
+        setRawBeds(data.beds);
       }
-      // If beds came empty, DON'T clear existing data — Gamma might be flaky
     } catch (e: any) {
       console.error('[fetchBeds] error:', e);
-      setBedsError(`Error: ${e?.message || e}`);
-      // DON'T clear rawBeds — keep previous data on error
     }
     finally { setBedsLoading(false); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authFetch]);
+
+  // ── On-demand bed enrichment (single bed) ─────────────────────────────────
+  const enrichBed = useCallback(async (bed: Bed): Promise<Bed> => {
+    if (!bed.patientCode) return bed;
+    try {
+      const params = new URLSearchParams({ patientCode: bed.patientCode });
+      if (bed.eventOrigin) params.set('eventOrigin', bed.eventOrigin);
+      if (bed.eventNumber != null) params.set('eventNumber', String(bed.eventNumber));
+      const r = await authFetch(`/api/bed-enrich?${params}`);
+      if (!r.ok) return bed;
+      const data = await r.json();
+      return { ...bed, ...data };
+    } catch {
+      return bed;
+    }
   }, [authFetch]);
 
   const fetchTickets = useCallback(async () => {
@@ -316,8 +298,8 @@ export const useHospitalState = () => {
     const prev = prevTicketSnapshotRef.current;
     const next = new Map(tickets.map(t => [t.id, t.status]));
 
-    // Skip first load — don't spam notifications for existing tickets
-    if (!initialLoadDoneRef.current) {
+    // Skip first load + suppress notifications for first 15 seconds after app start
+    if (!initialLoadDoneRef.current || (Date.now() - appStartTimeRef.current < 15_000)) {
       prevTicketSnapshotRef.current = next;
       if (tickets.length > 0) initialLoadDoneRef.current = true;
       return;
@@ -589,7 +571,7 @@ export const useHospitalState = () => {
     setCurrentUser(null);
     setExpirySoon(false);
     setMinutesLeft(0);
-    bedsEnrichedRef.current = false;
+    bedsEtagRef.current = null;
   }, []);
 
   // ── Filtered data ─────────────────────────────────────────────────────────────
@@ -987,7 +969,7 @@ export const useHospitalState = () => {
       setLoginEmail, setLoginPass,
       handleLogin, handleLogout,
       handleCreateTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
-      fetchBeds,
+      fetchBeds, enrichBed,
       handleUpdateUserAreas, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleDismissToast,
       handleStartTransport,
       handleRejectTicket,

@@ -1,167 +1,18 @@
 /**
- * Vercel serverless function — proxies the Grupo Gamma bed map API.
- * Credentials stay server-side; the browser only ever sees /api/beds.
+ * GET /api/beds — bed map from Gamma (fast, cached, no enrichment).
  *
- * Gamma auth flow:
- *  1. GET /oauth_authorize?response_type=code&client_id=...&state=xyz  → auth_code
- *  2. POST /oauth_token { grant_type, client_id, client_secret, code, scope } → access_token
- *  3. GET /oauth_resource/<endpoint>  Authorization: Bearer <token>
+ * Only calls 2 Gamma endpoints: obtenermapacamas + obtenermapacamasocupadas.
+ * Returns basic bed data (status, patientName, patientCode, event info).
+ * Enrichment (DNI, financier, diagnosis, physician) is handled by /api/bed-enrich.
+ *
+ * Server-side cache: 45s TTL. ETag support for 304 responses.
  */
 
 import { requireAuth } from './jwt.js';
-
-const GAMMA_BASE = process.env.GAMMA_VM_URL ?? 'http://35.224.5.114/proxy/index.php';
-const CLIENT_ID = process.env.CLIENT_ID ?? '';
-const CLIENT_SECRET = process.env.CLIENT_SECRET ?? '';
-
-// ── Token cache (survives warm invocations) ──────────────────────────────────
-const tokenCache = new Map<string, { token: string; exp: number }>();
-
-async function getToken(scope: string): Promise<string> {
-  const cached = tokenCache.get(scope);
-  if (cached && Date.now() < cached.exp) return cached.token;
-
-  // Step 1 — auth code
-  const codeRes = await fetch(
-    `${GAMMA_BASE}/oauth_authorize?response_type=code&client_id=${encodeURIComponent(CLIENT_ID)}&state=xyz`,
-  );
-  const codeText = await codeRes.text();
-
-  let code: string;
-  try {
-    const parsed = JSON.parse(codeText) as Record<string, unknown>;
-    code =
-      String(parsed.code ?? parsed.auth_code ?? parsed.authorization_code ?? '').trim() ||
-      codeText.trim();
-  } catch {
-    code = codeText.trim();
-  }
-
-  // Step 2 — access token
-  const tokenRes = await fetch(`${GAMMA_BASE}/oauth_token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      grant_type: 'client_credentials',
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
-      code,
-      scope,
-    }),
-  });
-
-  const tokenText = await tokenRes.text();
-  let tokenData: Record<string, unknown>;
-  try {
-    tokenData = JSON.parse(tokenText) as Record<string, unknown>;
-  } catch {
-    console.warn(`[api/beds] Token endpoint returned non-JSON for scope "${scope}" (status ${tokenRes.status})`);
-    return ''; // return empty token — calls will fail gracefully
-  }
-  if (!tokenData.access_token) {
-    throw new Error(`Token error for scope "${scope}": ${JSON.stringify(tokenData)}`);
-  }
-
-  const expiresIn = parseInt(String(tokenData.expires_in ?? '3600'), 10);
-  tokenCache.set(scope, {
-    token: String(tokenData.access_token),
-    exp: Date.now() + (expiresIn - 60) * 1000,
-  });
-
-  return String(tokenData.access_token);
-}
-
-// ── Gamma response types ─────────────────────────────────────────────────────
-interface GammaBed {
-  codigo: number;
-  nombre?: string;
-  estado?: string;
-  origen_evento?: string;
-  numero_evento?: number;
-  codigo_paciente?: string;
-  paciente?: string;
-}
-interface GammaPatient {
-  PCN_NUMERO?: string;
-  ENT_NOMBRE?: string;
-  ENT_TIPO_DOCUMENTO?: string;
-  ENT_NUMERO_DOCUMENTO?: string;
-  PCN_FECHA_NACIMIENTO?: string; // "DD/MM/YYYY"
-  ENT_NOMBRE_FANTASIA?: string;  // obra social / financiador
-  PCN_NUMERO_AFILIADO?: string;
-  PCN_SEXO?: string;
-}
-interface GammaRoom {
-  codigo: number;
-  nombre: string;
-  tipo?: string;
-  camas: GammaBed[];
-}
-interface GammaSector {
-  codigo: string;
-  nombre: string;
-  habitaciones: GammaRoom[];
-}
-
-// ── Patient helpers ──────────────────────────────────────────────────────────
-function calcAge(fechaNac: string): number | undefined {
-  // format: "DD/MM/YYYY"
-  const parts = fechaNac.split('/');
-  if (parts.length !== 3) return undefined;
-  const [d, m, y] = parts;
-  const born = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
-  if (isNaN(born.getTime())) return undefined;
-  const today = new Date();
-  let age = today.getFullYear() - born.getFullYear();
-  if (
-    today.getMonth() < born.getMonth() ||
-    (today.getMonth() === born.getMonth() && today.getDate() < born.getDate())
-  ) age--;
-  return age;
-}
-
-interface GammaEvent {
-  EVE_ORIGEN?: string;
-  EVE_NUMERO?: number;
-  EVE_PACIENTE?: string;
-  PACIENTE_NOMBRE?: string;
-  EVE_PROFESIONAL_SOLICITANTE?: string;
-  PROFESIONAL_NOMBRE?: string;
-  EVC_INSTITUCION?: string;
-  INSTITUCION_NOMBRE?: string;
-  EVE_DIAGNOSTICO?: string;
-}
-
-async function fetchEventDetails(token: string, eventOrigin: string, eventNumber: number): Promise<GammaEvent | null> {
-  try {
-    const res = await fetch(
-      `${GAMMA_BASE}/oauth_resource/obtenereventointernacion?empresa=HPR&origen=${encodeURIComponent(eventOrigin)}&numero=${encodeURIComponent(String(eventNumber))}`,
-      { headers: { Authorization: `Bearer ${token}` } },
-    );
-    if (!res.ok) return null;
-    const data: unknown = await res.json();
-    if (data && typeof data === 'object') return data as GammaEvent;
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-async function fetchPatientDetails(token: string, patientCode: string): Promise<GammaPatient | null> {
-  try {
-    const res = await fetch(
-      `${GAMMA_BASE}/oauth_resource/consultarpacientecodigo?codigo=${encodeURIComponent(patientCode)}`,
-      { headers: { Authorization: `Bearer ${token}` } },
-    );
-    if (!res.ok) return null;
-    const data: unknown = await res.json();
-    if (Array.isArray(data) && data.length > 0) return data[0] as GammaPatient;
-    if (data && typeof data === 'object') return data as GammaPatient;
-    return null;
-  } catch {
-    return null;
-  }
-}
+import {
+  getToken, GAMMA_BASE, simpleHash,
+  GammaBed, GammaSector,
+} from './gamma-client.js';
 
 // ── BedStatus string values (mirrors types.ts enum) ──────────────────────────
 const STATUS = {
@@ -177,12 +28,11 @@ function mapEstado(estado: string | undefined): string {
   if (e.includes('ocup')) return STATUS.OCCUPIED;
   if (e.includes('prep')) return STATUS.PREPARATION;
   if (e.includes('inhab') || e.includes('inact')) return STATUS.DISABLED;
-  return STATUS.OCCUPIED; // unknown occupied states → OCCUPIED
+  return STATUS.OCCUPIED;
 }
 
 // ── Transform Gamma data → app Bed[] ────────────────────────────────────────
 function transformBeds(mapData: GammaSector[], occupiedData: GammaSector[]) {
-  // Build lookup by "sectorCode-roomCode-bedCode"
   const occLookup = new Map<string, GammaBed>();
   for (const sector of occupiedData) {
     for (const room of sector.habitaciones ?? []) {
@@ -198,14 +48,14 @@ function transformBeds(mapData: GammaSector[], occupiedData: GammaSector[]) {
   for (const sector of mapData) {
     for (const room of sector.habitaciones ?? []) {
       for (const bed of room.camas ?? []) {
-        // mapData already includes estado and patient info per bed.
-        // occData is used as fallback/supplement only.
         const occ = occLookup.get(`${sector.codigo}-${room.codigo}-${bed.codigo}`);
         const estado = bed.estado ?? occ?.estado;
         const paciente = bed.paciente ?? occ?.paciente;
         const origenEvento = bed.origen_evento ?? occ?.origen_evento;
         const numeroEvento = bed.numero_evento ?? occ?.numero_evento;
         const codigoPaciente = bed.codigo_paciente ?? occ?.codigo_paciente;
+        const profesional = bed.profesional ?? occ?.profesional;
+        const institucion = bed.institucion ?? occ?.institucion;
 
         beds.push({
           id: `BED-${id++}`,
@@ -218,12 +68,8 @@ function transformBeds(mapData: GammaSector[], occupiedData: GammaSector[]) {
           eventOrigin: origenEvento ?? undefined,
           eventNumber: numeroEvento ?? undefined,
           patientCode: codigoPaciente ? String(codigoPaciente).trim() : undefined,
-          institution: undefined as string | undefined,
-          dni: undefined as string | undefined,
-          age: undefined as number | undefined,
-          sex: undefined as 'M' | 'F' | undefined,
-          diagnosis: undefined as string | undefined,
-          prescribingPhysician: undefined as string | undefined,
+          institution: institucion?.trim() || undefined,
+          prescribingPhysician: profesional?.trim() || undefined,
         });
       }
     }
@@ -232,26 +78,45 @@ function transformBeds(mapData: GammaSector[], occupiedData: GammaSector[]) {
   return beds;
 }
 
+// ── Server-side response cache (survives warm invocations) ──────────────────
+let bedsCache: { beds: any[]; etag: string; timestamp: number } | null = null;
+const BEDS_CACHE_TTL = 45_000; // 45 seconds
+
 // ── Handler ──────────────────────────────────────────────────────────────────
 async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
 
+  const CLIENT_ID = process.env.CLIENT_ID ?? '';
+  const CLIENT_SECRET = process.env.CLIENT_SECRET ?? '';
+
   if (!CLIENT_ID || !CLIENT_SECRET) {
-    res.status(503).json({
-      error: 'CLIENT_ID / CLIENT_SECRET not set in environment variables.',
-    });
-    return;
+    return res.status(503).json({ error: 'CLIENT_ID / CLIENT_SECRET not configured' });
   }
 
-  const url = new URL(req.url ?? '/', 'http://localhost');
-  const enrich = url.searchParams.get('enrich') === '1';
+  // Check ETag — if client has current data, return 304
+  const ifNoneMatch = req.headers?.['if-none-match'];
+  if (bedsCache && Date.now() - bedsCache.timestamp < BEDS_CACHE_TTL) {
+    if (ifNoneMatch === bedsCache.etag) {
+      return res.status(304).end();
+    }
+    // Serve from cache
+    res.setHeader('ETag', bedsCache.etag);
+    return res.status(200).json({ beds: bedsCache.beds });
+  }
 
   try {
-    // Phase 1: always fetch map + occupied (fast — 2 calls)
     const [tokenMap, tokenOcc] = await Promise.all([
       getToken('obtenermapacamas'),
       getToken('obtenermapacamasocupadas'),
     ]);
+
+    const safeJson = async (r: Response) => {
+      const text = await r.text();
+      try { return JSON.parse(text); } catch {
+        console.warn('[api/beds] Non-JSON response:', text.slice(0, 100));
+        return [];
+      }
+    };
 
     const [mapRes, occRes] = await Promise.all([
       fetch(`${GAMMA_BASE}/oauth_resource/obtenermapacamas`, {
@@ -262,74 +127,32 @@ async function handler(req: any, res: any) {
       }),
     ]);
 
-    const safeJson = async (r: Response) => {
-      const text = await r.text();
-      try { return JSON.parse(text); } catch { console.warn('[api/beds] Non-JSON response:', text.slice(0, 100)); return []; }
-    };
-    const [mapRaw, occRaw] = await Promise.all([
-      safeJson(mapRes),
-      safeJson(occRes),
-    ]);
+    const [mapRaw, occRaw] = await Promise.all([safeJson(mapRes), safeJson(occRes)]);
 
     const mapData: GammaSector[] = Array.isArray(mapRaw) ? mapRaw : [];
     const occData: GammaSector[] = Array.isArray(occRaw) ? occRaw : [];
 
     if (!mapData.length) {
-      console.warn('[api/beds] mapData is empty or not an array:', typeof mapRaw);
+      console.warn('[api/beds] mapData empty — Gamma may be down');
     }
 
     const beds = transformBeds(mapData, occData);
 
-    // Phase 2: only if ?enrich=1, fetch patient + event details (slow — N calls per occupied bed)
-    if (enrich) {
-      console.log('[api/beds] Enrich: getting tokens...');
-      const [tokenPat, tokenEvt] = await Promise.all([
-        getToken('consultarpacientecodigo'),
-        getToken('obtenereventointernacion'),
-      ]);
-      console.log('[api/beds] Enrich: tokens OK');
+    // Update cache
+    const etag = simpleHash(beds.map(b => `${b.id}:${b.status}:${b.patientCode ?? ''}`).join('|'));
+    bedsCache = { beds, etag, timestamp: Date.now() };
 
-      const occupiedBeds = beds.filter(b => b.patientCode && b.status === STATUS.OCCUPIED);
-      console.log(`[api/beds] Enrich: ${occupiedBeds.length} occupied beds to enrich`);
-      if (occupiedBeds.length > 0) {
-        const enrichResults = await Promise.all(
-          occupiedBeds.map(async (b) => {
-            const [patient, event] = await Promise.all([
-              fetchPatientDetails(tokenPat, b.patientCode!),
-              b.eventOrigin && b.eventNumber
-                ? fetchEventDetails(tokenEvt, b.eventOrigin, b.eventNumber)
-                : Promise.resolve(null),
-            ]);
-            return { patient, event };
-          }),
-        );
-        occupiedBeds.forEach((bed, i) => {
-          const { patient: p, event: evt } = enrichResults[i];
-          if (p) {
-            bed.institution = p.ENT_NOMBRE_FANTASIA?.trim() || undefined;
-            bed.dni = p.ENT_NUMERO_DOCUMENTO?.trim() || undefined;
-            bed.age = p.PCN_FECHA_NACIMIENTO ? calcAge(p.PCN_FECHA_NACIMIENTO) : undefined;
-            bed.sex = p.PCN_SEXO === 'M' || p.PCN_SEXO === 'F' ? p.PCN_SEXO : undefined;
-          }
-          if (evt) {
-            bed.diagnosis = evt.EVE_DIAGNOSTICO?.trim() || undefined;
-            if (evt.PROFESIONAL_NOMBRE?.trim()) {
-              bed.prescribingPhysician = evt.PROFESIONAL_NOMBRE.trim();
-            }
-            if (!bed.institution && evt.INSTITUCION_NOMBRE) {
-              bed.institution = evt.INSTITUCION_NOMBRE.trim();
-            }
-          }
-        });
-        const enriched = occupiedBeds.filter(b => b.dni || b.diagnosis || b.prescribingPhysician).length;
-        console.log(`[api/beds] Enrich done: ${enriched}/${occupiedBeds.length} beds enriched`);
-      }
-    }
-
-    console.log(`[api/beds] Returning ${beds.length} beds (enrich=${enrich})`);
+    res.setHeader('ETag', etag);
     res.status(200).json({ beds });
   } catch (err: any) {
     console.error('[api/beds]', err);
+
+    // If we have stale cache, serve it rather than erroring
+    if (bedsCache) {
+      res.setHeader('ETag', bedsCache.etag);
+      return res.status(200).json({ beds: bedsCache.beds });
+    }
+
     res.status(500).json({ error: err.message ?? 'Internal error' });
   }
 }

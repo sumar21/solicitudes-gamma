@@ -71,11 +71,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   };
 
   const sortedTickets = useMemo(() => {
-    let filtered = tickets.filter(t => t.status !== TicketStatus.COMPLETED);
-
-    if (activeRole !== Role.ADMIN && activeRole !== Role.COORDINATOR && activeRole !== Role.ADMISSION) {
-      filtered = filtered.filter(t => t.status !== TicketStatus.REJECTED);
-    }
+    let filtered = tickets.filter(t => t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED);
 
     if (searchTerm) {
       const searchLower = searchTerm.toLowerCase();

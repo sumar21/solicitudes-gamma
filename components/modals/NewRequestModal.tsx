@@ -15,9 +15,10 @@ interface NewRequestModalProps {
   onCreate: (data: { patientName: string; origin: string; destination: string; workflow: WorkflowType; reason?: string; itrSource?: string; observations?: string; isolation?: boolean }) => void;
   beds: Bed[];
   isolatedPatients?: Map<string, IsolationType>;
+  activeTransferOrigins?: Set<string>;
 }
 
-export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenChange, onCreate, beds, isolatedPatients = new Map() }) => {
+export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenChange, onCreate, beds, isolatedPatients = new Map(), activeTransferOrigins = new Set() }) => {
   const [workflow, setWorkflow] = useState<WorkflowType>(WorkflowType.INTERNAL);
   const [patientName, setPatientName] = useState('');
   const [origin, setOrigin] = useState('');
@@ -118,6 +119,12 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
               placeholder="Seleccionar Origen"
               searchPlaceholder="Buscar cama de origen..."
             />
+            {origin && activeTransferOrigins.has(origin) && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200">
+                <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+                <p className="text-xs font-medium text-amber-800">Esta cama ya tiene un traslado activo. Debe finalizar o cancelarse antes de crear otro.</p>
+              </div>
+            )}
           </div>
 
           <div className="grid gap-2">
@@ -190,7 +197,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
         </form>
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} className="rounded-xl h-10 px-6">Cancelar</Button>
-          <Button type="submit" form="create-ticket-form" className="bg-emerald-950 text-white rounded-xl h-10 px-8">Generar Ticket</Button>
+          <Button type="submit" form="create-ticket-form" disabled={!!(origin && activeTransferOrigins.has(origin))} className="bg-emerald-950 text-white rounded-xl h-10 px-8 disabled:opacity-50">Generar Ticket</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

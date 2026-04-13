@@ -38,6 +38,7 @@ interface BedsViewProps {
   isolatedBeds?: Set<string>;
   isolatedPatients?: Map<string, IsolationType>;
   onToggleIsolation?: (bedLabel: string, isolationType?: IsolationType) => void;
+  onEnrichBed?: (bed: Bed) => Promise<Bed>;
 }
 
 // Color map for isolation types
@@ -53,8 +54,31 @@ const ISOLATION_COLORS: Record<string, { ring: string; bg: string; text: string;
 };
 const DEFAULT_ISO_COLOR = { ring: 'ring-violet-400', bg: 'bg-violet-500', text: 'text-violet-700', dot: 'bg-violet-500' };
 
-export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), isolatedPatients = new Map(), onToggleIsolation }) => {
+export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), isolatedPatients = new Map(), onToggleIsolation, onEnrichBed }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
+  const [enrichedBed, setEnrichedBed] = useState<Bed | null>(null);
+  const [enrichLoading, setEnrichLoading] = useState(false);
+
+  // On-demand enrichment when user clicks an occupied bed
+  React.useEffect(() => {
+    if (!selectedBed || selectedBed.status !== BedStatus.OCCUPIED || !onEnrichBed) {
+      setEnrichedBed(null);
+      return;
+    }
+    // If bed already has enrichment data, use it directly
+    if (selectedBed.dni && selectedBed.diagnosis) {
+      setEnrichedBed(selectedBed);
+      return;
+    }
+    setEnrichLoading(true);
+    setEnrichedBed(null);
+    onEnrichBed(selectedBed).then(enriched => {
+      setEnrichedBed(enriched);
+      setEnrichLoading(false);
+    }).catch(() => setEnrichLoading(false));
+  }, [selectedBed?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const displayBed = enrichedBed ?? selectedBed;
 
   const canEditIsolation = currentUser?.role === Role.ADMISSION || currentUser?.role === Role.ADMIN;
 
@@ -118,14 +142,13 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   const [statusFilters, setStatusFilters] = useState<Set<string>>(new Set());
   const [showIsolatedOnly, setShowIsolatedOnly] = useState(false);
   const [financierFilters, setFinancierFilters] = useState<Set<string>>(new Set());
-  const [physicianFilters, setPhysicianFilters] = useState<Set<string>>(new Set());
   const [financierSearch, setFinancierSearch] = useState('');
+
+  const [physicianFilters, setPhysicianFilters] = useState<Set<string>>(new Set());
   const [physicianSearch, setPhysicianSearch] = useState('');
 
-
-  // Derive unique financiers and physicians from occupied beds
   const uniqueFinanciers = useMemo(() => [...new Set(beds.filter((b: Bed) => b.institution).map((b: Bed) => b.institution!))].sort(), [beds]);
-  const uniquePhysicians = useMemo(() => [...new Set(beds.filter((b: Bed) => b.prescribingPhysician || b.attendingPhysician).map((b: Bed) => (b.prescribingPhysician || b.attendingPhysician)!))].sort(), [beds]);
+  const uniquePhysicians = useMemo(() => [...new Set(beds.filter((b: Bed) => b.prescribingPhysician).map((b: Bed) => b.prescribingPhysician!))].sort(), [beds]);
 
   const toggleArea = (area: string) => {
     setAreaFilters((prev: Set<string>) => {
@@ -192,10 +215,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       result = result.filter(bed => bed.institution && financierFilters.has(bed.institution));
     }
     if (physicianFilters.size > 0) {
-      result = result.filter(bed => {
-        const prof = bed.prescribingPhysician || bed.attendingPhysician;
-        return prof && physicianFilters.has(prof);
-      });
+      result = result.filter(bed => bed.prescribingPhysician && physicianFilters.has(bed.prescribingPhysician));
     }
 
     return result;
@@ -305,9 +325,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     };
 
     // ── Column layout ────────────────────────────────────────────────────────
-    // Columns: Hab.(14) | Cama(10) | Estado(22) | Paciente(45) | DNI(22) | Edad(10) | Sexo(10) | Profesional(40) | Diagnóstico(45) | Financiador(39)
-    const colWidths = [14, 10, 22, 45, 22, 10, 10, 40, 45, 39];
-    const colHeaders = ['Hab.', 'Cama', 'Estado', 'Paciente', 'DNI', 'Edad', 'Sexo', 'Profesional', 'Diagnóstico', 'Financiador'];
+    // Columns: Hab.(14) | Cama(10) | Estado(22) | Paciente(50) | DNI(22) | Edad(10) | Sexo(10) | Profesional(45) | Financiador(44)
+    const colWidths = [14, 10, 22, 50, 22, 10, 10, 45, 44];
+    const colHeaders = ['Hab.', 'Cama', 'Estado', 'Paciente', 'DNI', 'Edad', 'Sexo', 'Profesional', 'Financiador'];
     const rowH = 6;
     const tableWidth = colWidths.reduce((s, w) => s + w, 0);
 
@@ -444,14 +464,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
           const maxPhysChars = Math.floor(colWidths[7] / 1.6);
           doc.text(prof.substring(0, maxPhysChars), colX[7] + 1.5, textY);
 
-          // Col 8: Diagnóstico
-          const diagnosis = isOccupied ? (bed.diagnosis ?? '') : '';
-          const maxDiagChars = Math.floor(colWidths[8] / 1.6);
-          doc.text(diagnosis.substring(0, maxDiagChars), colX[8] + 1.5, textY);
-
-          // Col 9: Financiador
-          const maxFinChars = Math.floor(colWidths[9] / 1.6);
-          doc.text(financier.substring(0, maxFinChars), colX[9] + 1.5, textY);
+          // Col 8: Financiador
+          const maxFinChars = Math.floor(colWidths[8] / 1.6);
+          doc.text(financier.substring(0, maxFinChars), colX[8] + 1.5, textY);
         } else {
           // Non-occupied: just show bed code in patient column (dimmed)
           doc.setTextColor(148, 163, 184);
@@ -533,9 +548,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       doc.line(margin, 19, pageW - margin, 19);
     };
 
-    // Columns: Paciente(45) | Hab.(14) | Cama(10) | Sector(22) | Estado(22) | DNI(22) | Edad(10) | Sexo(10) | Profesional(38) | Diagnóstico(42) | Financiador(38)
-    const colWidths = [45, 14, 10, 22, 22, 22, 10, 10, 38, 42, 38];
-    const colHeaders = ['Paciente', 'Hab.', 'Cama', 'Sector', 'Estado', 'DNI', 'Edad', 'Sexo', 'Profesional', 'Diagnóstico', 'Financiador'];
+    // Columns: Paciente(50) | Hab.(14) | Cama(10) | Sector(22) | Estado(22) | DNI(22) | Edad(10) | Sexo(10) | Profesional(42) | Financiador(42)
+    const colWidths = [50, 14, 10, 22, 22, 22, 10, 10, 42, 42];
+    const colHeaders = ['Paciente', 'Hab.', 'Cama', 'Sector', 'Estado', 'DNI', 'Edad', 'Sexo', 'Profesional', 'Financiador'];
     const rowH = 6;
     const tableWidth = colWidths.reduce((s, w) => s + w, 0);
     const colX: number[] = [];
@@ -580,7 +595,6 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
           sex: isOccupied ? (bed.sex === 'M' ? 'M' : bed.sex === 'F' ? 'F' : '') : '',
           physician: isOccupied ? (bed.attendingPhysician ?? '') : '',
           prescriptor: isOccupied ? (bed.prescribingPhysician ?? '') : '',
-          diagnosis: isOccupied ? (bed.diagnosis ?? '') : '',
           financier: isOccupied ? (bed.institution ?? '') : (ticket?.financier ?? ''),
         };
       })
@@ -627,10 +641,8 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       // Profesional (prescriptor from event, fallback to attending)
       const prof = row.prescriptor || row.physician;
       doc.text(prof.substring(0, Math.floor(colWidths[8] / 1.6)), colX[8] + 1.5, textY);
-      // Diagnóstico
-      doc.text(row.diagnosis.substring(0, Math.floor(colWidths[9] / 1.6)), colX[9] + 1.5, textY);
       // Financiador
-      doc.text(row.financier.substring(0, Math.floor(colWidths[10] / 1.6)), colX[10] + 1.5, textY);
+      doc.text(row.financier.substring(0, Math.floor(colWidths[9] / 1.6)), colX[9] + 1.5, textY);
 
       curY += rowH;
     });
@@ -788,7 +800,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
             </button>
           )}
 
-          {/* Multi-select filters: Financiador & Profesional */}
+          {/* Financier filter */}
           {uniqueFinanciers.length > 0 && (
             <Popover>
               <PopoverTrigger asChild>
@@ -814,18 +826,18 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     type="text"
                     placeholder="Buscar financiador..."
                     value={financierSearch}
-                    onChange={e => setFinancierSearch(e.target.value)}
+                    onChange={(e: any) => setFinancierSearch(e.target.value)}
                     className="w-full pl-7 pr-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-400"
                   />
                 </div>
                 <div className="max-h-48 overflow-y-auto">
-                  {uniqueFinanciers.filter(f => f.toLowerCase().includes(financierSearch.toLowerCase())).map(f => (
+                  {uniqueFinanciers.filter((f: string) => f.toLowerCase().includes(financierSearch.toLowerCase())).map((f: string) => (
                     <label key={f} className={cn(
                       "flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer text-xs transition-colors",
                       financierFilters.has(f) ? "bg-emerald-50 text-emerald-800 font-bold" : "hover:bg-slate-50 text-slate-600"
                     )}>
                       <input type="checkbox" checked={financierFilters.has(f)} onChange={() => {
-                        setFinancierFilters(prev => { const next = new Set(prev); next.has(f) ? next.delete(f) : next.add(f); return next; });
+                        setFinancierFilters((prev: Set<string>) => { const next = new Set(prev); next.has(f) ? next.delete(f) : next.add(f); return next; });
                       }} className="accent-emerald-600 w-3.5 h-3.5" />
                       {f}
                     </label>
@@ -835,6 +847,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
             </Popover>
           )}
 
+          {/* Physician filter */}
           {uniquePhysicians.length > 0 && (
             <Popover>
               <PopoverTrigger asChild>
@@ -860,18 +873,18 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     type="text"
                     placeholder="Buscar profesional..."
                     value={physicianSearch}
-                    onChange={e => setPhysicianSearch(e.target.value)}
+                    onChange={(e: any) => setPhysicianSearch(e.target.value)}
                     className="w-full pl-7 pr-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-400"
                   />
                 </div>
                 <div className="max-h-48 overflow-y-auto">
-                  {uniquePhysicians.filter(p => p.toLowerCase().includes(physicianSearch.toLowerCase())).map(p => (
+                  {uniquePhysicians.filter((p: string) => p.toLowerCase().includes(physicianSearch.toLowerCase())).map((p: string) => (
                     <label key={p} className={cn(
                       "flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer text-xs transition-colors",
                       physicianFilters.has(p) ? "bg-emerald-50 text-emerald-800 font-bold" : "hover:bg-slate-50 text-slate-600"
                     )}>
                       <input type="checkbox" checked={physicianFilters.has(p)} onChange={() => {
-                        setPhysicianFilters(prev => { const next = new Set(prev); next.has(p) ? next.delete(p) : next.add(p); return next; });
+                        setPhysicianFilters((prev: Set<string>) => { const next = new Set(prev); next.has(p) ? next.delete(p) : next.add(p); return next; });
                       }} className="accent-emerald-600 w-3.5 h-3.5" />
                       {p}
                     </label>
@@ -1028,15 +1041,15 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                       <div className="grid grid-cols-4 gap-2.5">
                         <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
                           <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">DNI</p>
-                          <p className="text-sm font-mono font-bold text-slate-700">{selectedBed.dni || '—'}</p>
+                          <p className="text-sm font-mono font-bold text-slate-700">{enrichLoading ? <span className="inline-block w-4 h-4 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : (displayBed?.dni || '—')}</p>
                         </div>
                         <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
                           <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Edad</p>
-                          <p className="text-sm font-bold text-slate-700">{selectedBed.age != null ? `${selectedBed.age}` : '—'}</p>
+                          <p className="text-sm font-bold text-slate-700">{enrichLoading ? <span className="inline-block w-4 h-4 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : (displayBed?.age != null ? `${displayBed.age}` : '—')}</p>
                         </div>
                         <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
                           <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Sexo</p>
-                          <p className="text-sm font-bold text-slate-700">{selectedBed.sex === 'M' ? 'M' : selectedBed.sex === 'F' ? 'F' : '—'}</p>
+                          <p className="text-sm font-bold text-slate-700">{enrichLoading ? <span className="inline-block w-4 h-4 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : (displayBed?.sex === 'M' ? 'M' : displayBed?.sex === 'F' ? 'F' : '—')}</p>
                         </div>
                         <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
                           <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Evento</p>
@@ -1051,7 +1064,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                       <div className="grid grid-cols-2 gap-2.5">
                         <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
                           <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Financiador</p>
-                          <p className="text-sm font-semibold text-slate-700">{selectedBed.institution || '—'}</p>
+                          <p className="text-sm font-semibold text-slate-700">{enrichLoading ? <span className="inline-block w-4 h-4 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : (displayBed?.institution || '—')}</p>
                         </div>
                         <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
                           <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">ID Paciente</p>
@@ -1061,13 +1074,13 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
 
                       <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
                         <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Profesional</p>
-                        <p className="text-sm font-semibold text-slate-700">{selectedBed.prescribingPhysician || selectedBed.attendingPhysician || '—'}</p>
+                        <p className="text-sm font-semibold text-slate-700">{enrichLoading ? <span className="inline-block w-4 h-4 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : (displayBed?.prescribingPhysician || displayBed?.attendingPhysician || '—')}</p>
                       </div>
 
-                      {selectedBed.diagnosis && (
+                      {(displayBed?.diagnosis || enrichLoading) && (
                         <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
                           <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Diagnóstico</p>
-                          <p className="text-sm font-semibold text-slate-700">{selectedBed.diagnosis}</p>
+                          <p className="text-sm font-semibold text-slate-700">{enrichLoading ? <span className="inline-block w-4 h-4 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : displayBed?.diagnosis}</p>
                         </div>
                       )}
                     </>

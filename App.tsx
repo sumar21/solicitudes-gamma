@@ -458,7 +458,7 @@ export default function App() {
           {/* Roles — solo Admin */}
           {isAdmin && (state.currentView as string) === 'ROLES' && <RoleManagementView currentUser={state.currentUser} />}
           {/* Mapa de Camas — todos los roles, o fallback si el rol no tiene otra vista */}
-          {(state.currentView === 'BEDS' || (!hasFullAccess && !hasAzafataAccess)) && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} isolatedPatients={state.isolatedPatients} onToggleIsolation={actions.toggleIsolation} />}
+          {(state.currentView === 'BEDS' || (!hasFullAccess && !hasAzafataAccess)) && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} isolatedPatients={state.isolatedPatients} onToggleIsolation={actions.toggleIsolation} onEnrichBed={actions.enrichBed} />}
         </main>
       </div>
 
@@ -469,6 +469,7 @@ export default function App() {
         onCreate={onNewRequestCreated}
         beds={state.beds}
         isolatedPatients={state.isolatedPatients}
+        activeTransferOrigins={new Set(state.tickets.filter(t => t.status !== 'Consolidado' && t.status !== 'Cancelado').map(t => t.origin))}
       />
       <AssignBedModal open={isAssignBedOpen} onOpenChange={setIsAssignBedOpen} onConfirm={onConfirmBed} />
       <RejectionModal
