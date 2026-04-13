@@ -273,39 +273,36 @@ async function handler(req: any, res: any) {
 
     const beds = transformBeds(mapData, occData);
 
-    // Enrich occupied beds with patient details (DNI, age, financiador)
+    // Enrich occupied beds — patient details + event details in ONE parallel batch
     const occupiedBeds = beds.filter(b => b.patientCode && b.status === STATUS.OCCUPIED);
     if (occupiedBeds.length > 0) {
-      const patientResults = await Promise.all(
-        occupiedBeds.map(b => fetchPatientDetails(tokenPat, b.patientCode!)),
+      const enrichResults = await Promise.all(
+        occupiedBeds.map(async (b) => {
+          const [patient, event] = await Promise.all([
+            fetchPatientDetails(tokenPat, b.patientCode!),
+            b.eventOrigin && b.eventNumber
+              ? fetchEventDetails(tokenEvt, b.eventOrigin, b.eventNumber)
+              : Promise.resolve(null),
+          ]);
+          return { patient, event };
+        }),
       );
       occupiedBeds.forEach((bed, i) => {
-        const p = patientResults[i];
-        if (!p) return;
-        bed.institution = p.ENT_NOMBRE_FANTASIA?.trim() || undefined;
-        bed.dni = p.ENT_NUMERO_DOCUMENTO?.trim() || undefined;
-        bed.age = p.PCN_FECHA_NACIMIENTO ? calcAge(p.PCN_FECHA_NACIMIENTO) : undefined;
-        bed.sex = p.PCN_SEXO === 'M' || p.PCN_SEXO === 'F' ? p.PCN_SEXO : undefined;
-      });
-    }
-
-    // Enrich occupied beds with event details (diagnosis, prescribing physician)
-    const bedsWithEvent = beds.filter(b => b.eventOrigin && b.eventNumber && b.status === STATUS.OCCUPIED);
-    if (bedsWithEvent.length > 0) {
-      const eventResults = await Promise.all(
-        bedsWithEvent.map(b => fetchEventDetails(tokenEvt, b.eventOrigin!, b.eventNumber!)),
-      );
-      bedsWithEvent.forEach((bed, i) => {
-        const evt = eventResults[i];
-        if (!evt) return;
-        bed.diagnosis = evt.EVE_DIAGNOSTICO?.trim() || undefined;
-        // Use event physician as primary (more complete than patient endpoint)
-        if (evt.PROFESIONAL_NOMBRE?.trim()) {
-          bed.prescribingPhysician = evt.PROFESIONAL_NOMBRE.trim();
+        const { patient: p, event: evt } = enrichResults[i];
+        if (p) {
+          bed.institution = p.ENT_NOMBRE_FANTASIA?.trim() || undefined;
+          bed.dni = p.ENT_NUMERO_DOCUMENTO?.trim() || undefined;
+          bed.age = p.PCN_FECHA_NACIMIENTO ? calcAge(p.PCN_FECHA_NACIMIENTO) : undefined;
+          bed.sex = p.PCN_SEXO === 'M' || p.PCN_SEXO === 'F' ? p.PCN_SEXO : undefined;
         }
-        // Use event institution if patient one is empty
-        if (!bed.institution && evt.INSTITUCION_NOMBRE) {
-          bed.institution = evt.INSTITUCION_NOMBRE.trim();
+        if (evt) {
+          bed.diagnosis = evt.EVE_DIAGNOSTICO?.trim() || undefined;
+          if (evt.PROFESIONAL_NOMBRE?.trim()) {
+            bed.prescribingPhysician = evt.PROFESIONAL_NOMBRE.trim();
+          }
+          if (!bed.institution && evt.INSTITUCION_NOMBRE) {
+            bed.institution = evt.INSTITUCION_NOMBRE.trim();
+          }
         }
       });
     }

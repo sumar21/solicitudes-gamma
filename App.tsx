@@ -51,6 +51,7 @@ export default function App() {
   const [isAssignBedOpen, setIsAssignBedOpen] = useState(false);
   const [isAreaSelectionOpen, setIsAreaSelectionOpen] = useState(false);
   const [isRejectOpen, setIsRejectOpen] = useState(false);
+  const [isUnreadModalOpen, setIsUnreadModalOpen] = useState(false);
   const [rejectTicketId, setRejectTicketId] = useState<string | null>(null);
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
@@ -400,7 +401,7 @@ export default function App() {
               </p>
             </div>
             <button
-              onClick={() => { actions.setCurrentView('REQUESTS' as any); }}
+              onClick={() => setIsUnreadModalOpen(true)}
               className="text-[10px] font-black uppercase tracking-widest text-red-700 hover:text-red-900 border border-red-300 rounded-lg px-2 py-1 hover:bg-red-100 transition-colors shrink-0"
             >
               Ver pendientes
@@ -484,6 +485,62 @@ export default function App() {
         onConfirm={actions.handleUpdateUserAreas}
         initialSelectedAreas={state.currentUser?.assignedAreas}
       />
+
+      {/* Modal de notificaciones pendientes */}
+      <Dialog open={isUnreadModalOpen} onOpenChange={setIsUnreadModalOpen}>
+        <DialogContent className="sm:max-w-[500px] rounded-3xl max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="text-xl flex items-center gap-2">
+              <Bell className="w-5 h-5 text-red-500" />
+              Notificaciones Pendientes
+              <span className="text-sm font-bold text-red-500 bg-red-50 px-2 py-0.5 rounded-full">{state.unreadSpNotifications?.length || 0}</span>
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto space-y-2 py-2">
+            {(state.unreadSpNotifications ?? []).map((n: any) => (
+              <div key={n.id} className="flex items-start gap-3 p-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition-colors">
+                <span className="w-2 h-2 rounded-full bg-red-500 mt-1.5 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-slate-900">{n.title}</p>
+                  <p className="text-xs text-slate-500 truncate">{n.message}</p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">{n.fecha ? new Date(n.fecha).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}</p>
+                </div>
+                <button
+                  onClick={() => actions.handleMarkNotificationRead(n.id)}
+                  className="text-[9px] font-bold uppercase text-emerald-600 hover:text-emerald-800 border border-emerald-200 rounded-lg px-2 py-1 hover:bg-emerald-50 transition-colors shrink-0"
+                >
+                  Leída
+                </button>
+              </div>
+            ))}
+            {(state.unreadSpNotifications ?? []).length === 0 && (
+              <div className="py-10 text-center">
+                <Bell className="w-10 h-10 mx-auto mb-3 text-emerald-200" />
+                <p className="text-sm font-bold text-slate-300">Sin notificaciones pendientes</p>
+              </div>
+            )}
+          </div>
+          {(state.unreadSpNotifications ?? []).length > 0 && (
+            <div className="border-t border-slate-100 pt-3 flex gap-2">
+              <button
+                onClick={() => {
+                  actions.handleMarkAllNotificationsRead();
+                  setIsUnreadModalOpen(false);
+                }}
+                className="flex-1 h-10 rounded-xl font-bold text-xs uppercase tracking-widest bg-emerald-600 hover:bg-emerald-700 text-white transition-colors"
+              >
+                Marcar todas como leídas
+              </button>
+              <button
+                onClick={() => setIsUnreadModalOpen(false)}
+                className="h-10 px-4 rounded-xl font-bold text-xs uppercase tracking-widest border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors"
+              >
+                Cerrar
+              </button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={isLegendModalOpen} onOpenChange={setIsLegendModalOpen}>
         <DialogContent className="sm:max-w-md">

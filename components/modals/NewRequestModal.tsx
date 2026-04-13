@@ -79,7 +79,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px] rounded-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-[550px] rounded-3xl max-h-[92vh] overflow-y-auto">
         <DialogHeader><DialogTitle className="text-xl pr-6">Nueva Solicitud de Traslado</DialogTitle></DialogHeader>
         <form id="create-ticket-form" onSubmit={handleSubmit} className="grid gap-4 py-2">
           <div className="grid gap-2">
@@ -168,13 +168,13 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
               <input type="checkbox" className="sr-only" checked={isolation} onChange={e => { setIsolation(e.target.checked); if (!e.target.checked) setIsolationType(''); }} />
             </label>
             {isolation && (
-              <div className="grid grid-cols-4 gap-1 px-1">
+              <div className="flex flex-wrap gap-1 px-1">
                 {Object.values(IsolationType).map(t => (
                   <button
                     key={t}
                     type="button"
                     onClick={() => setIsolationType(t)}
-                    className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[9px] font-bold transition-all ${isolationType === t ? 'border-violet-400 bg-violet-50 text-violet-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+                    className={`px-2 py-0.5 rounded-full border text-[8px] font-bold transition-all ${isolationType === t ? 'border-violet-400 bg-violet-500 text-white' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}
                   >
                     {t}
                   </button>
