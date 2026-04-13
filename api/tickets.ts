@@ -48,6 +48,12 @@ function simpleHash(str: string): string {
 // ── SP item → Ticket ─────────────────────────────────────────────────────────
 function spToTicket(item: Record<string, unknown>): Ticket {
   const f = item.fields as Record<string, unknown>;
+
+  // SP item-level timestamps — if created ≈ modified (within 2s), nobody interacted → can cancel
+  const createdDT  = item.createdDateTime  ? new Date(String(item.createdDateTime)).getTime()  : 0;
+  const modifiedDT = item.lastModifiedDateTime ? new Date(String(item.lastModifiedDateTime)).getTime() : 0;
+  const canCancel  = createdDT > 0 && modifiedDT > 0 && Math.abs(modifiedDT - createdDT) < 2000;
+
   return {
     spItemId:               String(item.id),
     id:                     String(f.IDUnivocoTraslado_T ?? ''),
@@ -74,6 +80,7 @@ function spToTicket(item: Record<string, unknown>): Ticket {
     rejectionReason:        f.MotivoCancelacion_T ? String(f.MotivoCancelacion_T) : undefined,
     observations:           f.ObservacionesTraslado_T ? String(f.ObservacionesTraslado_T) : undefined,
     targetBedOriginalStatus: f.StatusCamaD_T ? (f.StatusCamaD_T as BedStatus) : undefined,
+    canCancel,
   };
 }
 

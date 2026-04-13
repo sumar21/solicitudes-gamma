@@ -87,6 +87,7 @@ const routes: Record<string, () => Promise<any>> = {
   '/api/isolations':         () => import('./api/isolations'),
   '/api/push-subscribe':     () => import('./api/push-subscribe'),
   '/api/notifications':      () => import('./api/notifications'),
+  '/api/roles':              () => import('./api/roles'),
 };
 
 const server = createServer(async (req, res) => {

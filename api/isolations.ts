@@ -41,6 +41,7 @@ async function handler(req: any, res: any) {
           spItemId: String(item.id),
           patientCode: String(f.CodigoPaciente_A ?? ''),
           patientName: String(f.NombrePaciente_A ?? ''),
+          tipo: String(f.Tipo_A ?? ''),
           createdBy: String(f.Usuario_A ?? ''),
           createdAt: String(f.Fecha_A ?? ''),
         };
@@ -54,7 +55,7 @@ async function handler(req: any, res: any) {
 
   // ── POST — create or reactivate isolation ─────────────────────────────────
   if (req.method === 'POST') {
-    const { patientCode, patientName, userName } = req.body ?? {};
+    const { patientCode, patientName, userName, tipo } = req.body ?? {};
     if (!patientCode) return res.status(400).json({ error: 'patientCode is required' });
 
     try {
@@ -77,6 +78,7 @@ async function handler(req: any, res: any) {
               Usuario_A: userName || '',
               Fecha_A: new Date().toISOString(),
               NombrePaciente_A: patientName || '',
+              Tipo_A: tipo || '',
             }),
           });
           console.log(`[isolations] Reactivated isolation for patient ${patientCode}`);
@@ -89,11 +91,12 @@ async function handler(req: any, res: any) {
         method: 'POST',
         body: JSON.stringify({
           fields: {
-            CodigoPaciente_A: String(patientCode),
+            CodigoPaciente_A: String(patientCode).trim(),
             NombrePaciente_A: String(patientName || ''),
             Status_A: 'Activo',
             Usuario_A: String(userName || ''),
             Fecha_A: new Date().toISOString(),
+            Tipo_A: String(tipo || ''),
           },
         }),
       });

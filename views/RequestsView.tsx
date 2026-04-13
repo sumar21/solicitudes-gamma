@@ -5,6 +5,7 @@ import {
   Search, Plus, Timer, Clock, ArrowRightLeft,
   ChevronUp, ChevronDown, CheckCircle2, BedDouble, Users, ClipboardCheck, AlertCircle, X, XCircle, Info, MapPin
 } from '../components/Icons';
+import { ShieldAlert } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Card } from '../components/ui/card';
@@ -36,6 +37,7 @@ interface RequestsViewProps {
   onReject?: (id: string) => void;
   currentUser: User | null;
   beds: Bed[];
+  isolatedPatients?: Set<string>;
 }
 
 const ROLE_LABELS: Partial<Record<Role, string>> = {
@@ -55,8 +57,14 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   searchTerm, setSearchTerm, sortConfig, onSort,
   onNewRequest, onValidateReason, onAssignBed,
   onHousekeepingAction, onStartTransport, onCompleteTransport,
-  onRoomReady, onConfirmReception, onConsolidate, onReject, currentUser, beds
+  onRoomReady, onConfirmReception, onConsolidate, onReject, currentUser, beds, isolatedPatients
 }) => {
+
+  const isTicketIsolated = (ticket: Ticket): boolean => {
+    if (!isolatedPatients?.size) return false;
+    const originBed = beds.find(b => b.label === ticket.origin);
+    return !!(originBed?.patientCode && isolatedPatients.has(originBed.patientCode));
+  };
 
   const sortedTickets = useMemo(() => {
     let filtered = tickets.filter(t => t.status !== TicketStatus.COMPLETED);
@@ -168,7 +176,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
 
     // ── ADMISIÓN / ADMIN ─────────────────────────────────────────────────────
     if (activeRole === Role.ADMISSION || activeRole === Role.ADMIN) {
-      const canCancel = ticket.status !== TicketStatus.COMPLETED && ticket.status !== TicketStatus.REJECTED;
+      const canCancel = ticket.status !== TicketStatus.COMPLETED && ticket.status !== TicketStatus.REJECTED && ticket.canCancel !== false;
       return (
         <div className={cn("flex gap-1.5", isMobile ? "flex-col" : "flex-row")}>
           {ticket.status === TicketStatus.WAITING_CONSOLIDATION && (
@@ -270,7 +278,14 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                     <StatusBadge status={ticket.status} />
                     <span className="text-[9px] font-black font-mono text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100">{ticket.id}</span>
                   </div>
-                  <h3 className="font-black text-slate-950 text-base leading-tight tracking-tight uppercase">{ticket.patientName}</h3>
+                  <div className="flex items-center gap-1.5">
+                    <h3 className="font-black text-slate-950 text-base leading-tight tracking-tight uppercase">{ticket.patientName}</h3>
+                    {isTicketIsolated(ticket) && (
+                      <span className="w-5 h-5 rounded-full bg-violet-500 flex items-center justify-center shrink-0" title="Paciente en aislamiento">
+                        <ShieldAlert className="w-3 h-3 text-white" strokeWidth={3} />
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="flex flex-col items-end gap-1">
                   <Badge variant="outline" className="text-[9px] bg-slate-50 text-slate-500 border-slate-200 font-black py-0">
@@ -364,8 +379,8 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                 <TableRow>
                   <TableCell colSpan={8} className="h-48 text-center text-slate-500 bg-white">
                     <div className="flex flex-col items-center justify-center gap-3 opacity-20">
-                      <Search className="w-10 h-10 animate-pulse" />
-                      <p className="text-sm font-black uppercase tracking-widest">Cargando...</p>
+                      <Search className={cn("w-10 h-10", tickets.length === 0 && "animate-pulse")} />
+                      <p className="text-sm font-black uppercase tracking-widest">{tickets.length === 0 ? 'Cargando...' : 'Sin resultados'}</p>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -397,7 +412,14 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="font-black text-slate-950 text-base uppercase tracking-tight">{ticket.patientName}</div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-black text-slate-950 text-base uppercase tracking-tight">{ticket.patientName}</span>
+                        {isTicketIsolated(ticket) && (
+                          <span className="w-5 h-5 rounded-full bg-violet-500 flex items-center justify-center shrink-0" title="Paciente en aislamiento">
+                            <ShieldAlert className="w-3 h-3 text-white" strokeWidth={3} />
+                          </span>
+                        )}
+                      </div>
                       <div className="text-[11px] text-slate-400 font-mono mt-0.5 uppercase">{ticket.id}</div>
                     </TableCell>
                     <TableCell>

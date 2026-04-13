@@ -16,6 +16,7 @@ import { RequestsView } from './views/RequestsView';
 import { HistoryView } from './views/HistoryView';
 import { BedsView } from './views/BedsView';
 import { UserManagementView } from './views/UserManagementView';
+import { RoleManagementView } from './views/RoleManagementView';
 
 // Hooks & Constants
 import { useHospitalState } from './hooks/useHospitalState';
@@ -56,7 +57,7 @@ export default function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isLegendModalOpen, setIsLegendModalOpen] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [isConfigOpen, setIsConfigOpen] = useState(state.currentView === 'USERS');
+  const [isConfigOpen, setIsConfigOpen] = useState(state.currentView === 'USERS' || (state.currentView as string) === 'ROLES');
 
   // Open Area Selection on login only if Hostess has NO areas from ABM
   useEffect(() => {
@@ -244,6 +245,7 @@ export default function App() {
               {isConfigOpen && (
                 <div className="ml-4 mt-1 space-y-0.5 border-l border-white/10 pl-3">
                   <Button variant="ghost" className={cn("w-full justify-start gap-3 h-9 rounded-lg text-sm", state.currentView === 'USERS' ? 'bg-white/15 text-white font-bold' : 'text-white/60 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('USERS')}><Users className="w-3.5 h-3.5" />Usuarios</Button>
+                  <Button variant="ghost" className={cn("w-full justify-start gap-3 h-9 rounded-lg text-sm", state.currentView === 'ROLES' as any ? 'bg-white/15 text-white font-bold' : 'text-white/60 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('ROLES' as any)}><Settings className="w-3.5 h-3.5" />Roles</Button>
                 </div>
               )}
             </div>
@@ -266,7 +268,7 @@ export default function App() {
               <GammaLogo size={20} />
             </button>
             <h1 className="text-lg md:text-xl font-black text-slate-900 tracking-tight truncate max-w-[100px] xs:max-w-[180px] sm:max-w-none">
-              {state.currentView === 'HOME' ? 'Monitor' : state.currentView === 'REQUESTS' ? 'Operativa' : state.currentView === 'BEDS' ? 'Mapa de Camas' : state.currentView === 'USERS' ? 'Usuarios' : 'Historial'}
+              {state.currentView === 'HOME' ? 'Monitor' : state.currentView === 'REQUESTS' ? 'Operativa' : state.currentView === 'BEDS' ? 'Mapa de Camas' : state.currentView === 'USERS' ? 'Usuarios' : (state.currentView as string) === 'ROLES' ? 'Roles' : 'Historial'}
             </h1>
           </div>
           
@@ -329,6 +331,7 @@ export default function App() {
                   {isConfigOpen && (
                     <div className="ml-4 mt-1 space-y-0.5 border-l border-white/10 pl-3">
                       <Button variant="ghost" className={cn("w-full justify-start gap-3 h-9 rounded-lg text-sm", state.currentView === 'USERS' ? 'bg-white/15 text-white font-bold' : 'text-white/60 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('USERS'); setIsMobileMenuOpen(false); }}><Users className="w-3.5 h-3.5" />Usuarios</Button>
+                      <Button variant="ghost" className={cn("w-full justify-start gap-3 h-9 rounded-lg text-sm", state.currentView === 'ROLES' as any ? 'bg-white/15 text-white font-bold' : 'text-white/60 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('ROLES' as any); setIsMobileMenuOpen(false); }}><Settings className="w-3.5 h-3.5" />Roles</Button>
                     </div>
                   )}
                 </div>
@@ -387,6 +390,24 @@ export default function App() {
           </div>
         </header>
 
+        {/* Banner de notificaciones sin leer */}
+        {state.unreadSpNotifications?.length > 0 && (
+          <div className="bg-red-50 border-b border-red-200 px-4 py-2 flex items-center justify-between gap-3 shrink-0">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shrink-0" />
+              <p className="text-xs font-semibold text-red-800">
+                Tenés <span className="font-black">{state.unreadSpNotifications.length}</span> notificación{state.unreadSpNotifications.length > 1 ? 'es' : ''} sin confirmar hace más de 5 minutos
+              </p>
+            </div>
+            <button
+              onClick={() => { actions.setCurrentView('REQUESTS' as any); }}
+              className="text-[10px] font-black uppercase tracking-widest text-red-700 hover:text-red-900 border border-red-300 rounded-lg px-2 py-1 hover:bg-red-100 transition-colors shrink-0"
+            >
+              Ver pendientes
+            </button>
+          </div>
+        )}
+
         {/* Banner de sesión por vencer */}
         {state.tokenExpirySoon && (
           <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center justify-between gap-3 shrink-0">
@@ -426,14 +447,17 @@ export default function App() {
               onReject={(id) => { setRejectTicketId(id); setIsRejectOpen(true); }}
               currentUser={state.currentUser}
               beds={state.beds}
+              isolatedPatients={state.isolatedPatients}
             />
           )}
           {/* Historial — todos los roles */}
           {state.currentView === 'HISTORY' && <HistoryView tickets={state.historyTickets} />}
           {/* Usuarios — solo Admin */}
           {isAdmin && state.currentView === 'USERS' && <UserManagementView currentUser={state.currentUser} />}
+          {/* Roles — solo Admin */}
+          {isAdmin && (state.currentView as string) === 'ROLES' && <RoleManagementView currentUser={state.currentUser} />}
           {/* Mapa de Camas — todos los roles, o fallback si el rol no tiene otra vista */}
-          {(state.currentView === 'BEDS' || (!hasFullAccess && !hasAzafataAccess)) && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} onToggleIsolation={actions.toggleIsolation} />}
+          {(state.currentView === 'BEDS' || (!hasFullAccess && !hasAzafataAccess)) && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} isolatedPatients={state.isolatedPatients} onToggleIsolation={actions.toggleIsolation} />}
         </main>
       </div>
 
@@ -486,6 +510,19 @@ export default function App() {
             <div className="flex items-center gap-3">
               <div className="w-4 h-4 rounded-full bg-slate-400" />
               <span className="text-sm font-bold text-slate-700">INHABILITADA</span>
+            </div>
+            <div className="border-t border-slate-100 pt-3 mt-1 space-y-2">
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">Aislamientos</span>
+              <div className="grid grid-cols-2 gap-1.5">
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-pink-500" /><span className="text-xs text-slate-600">Neutropénico</span></div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-slate-500" /><span className="text-xs text-slate-600">Trasplante</span></div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-green-500" /><span className="text-xs text-slate-600">Respiratorio</span></div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-500" /><span className="text-xs text-slate-600">Por Gotas</span></div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-yellow-500" /><span className="text-xs text-slate-600">Covid</span></div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-violet-500" /><span className="text-xs text-slate-600">Entomológico</span></div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-orange-500" /><span className="text-xs text-slate-600">Contacto</span></div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-amber-800" /><span className="text-xs text-slate-600">CD</span></div>
+              </div>
             </div>
           </div>
         </DialogContent>

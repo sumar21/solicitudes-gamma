@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   WorkflowType, Role, SedeType, Ticket, TicketStatus, User, Area,
-  Notification, NotificationType, ViewMode, SortConfig, Bed, BedStatus,
+  Notification, NotificationType, ViewMode, SortConfig, Bed, BedStatus, IsolationType,
 } from '../types';
 import { MOCK_TICKETS, MOCK_BEDS } from '../lib/constants';
 
@@ -103,12 +103,12 @@ export const useHospitalState = () => {
 
   // ── Session init ─────────────────────────────────────────────────────────────
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    const saved = sessionStorage.getItem(USER_KEY);
+    const saved = localStorage.getItem(USER_KEY);
     return saved ? JSON.parse(saved) : null;
   });
 
   const [currentView, setCurrentView] = useState<ViewMode>(() => {
-    const saved = sessionStorage.getItem(USER_KEY);
+    const saved = localStorage.getItem(USER_KEY);
     if (saved) {
       const user = JSON.parse(saved);
       if (user.role === Role.HOSTESS) return 'REQUESTS';
@@ -117,19 +117,19 @@ export const useHospitalState = () => {
   });
 
   const [activeRole, setActiveRole] = useState<Role>(() => {
-    const saved = sessionStorage.getItem(USER_KEY);
+    const saved = localStorage.getItem(USER_KEY);
     return saved ? (JSON.parse(saved).role as Role) : Role.ADMISSION;
   });
 
   // ── Token state ───────────────────────────────────────────────────────────────
-  const [token, setToken]                 = useState<string | null>(() => sessionStorage.getItem(TOKEN_KEY));
+  const [token, setToken]                 = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [tokenExpirySoon, setExpirySoon]  = useState(false);
-  const [tokenMinutesLeft, setMinutesLeft]= useState(() => getTokenMinutesLeft(sessionStorage.getItem(TOKEN_KEY)));
+  const [tokenMinutesLeft, setMinutesLeft]= useState(() => getTokenMinutesLeft(localStorage.getItem(TOKEN_KEY)));
 
   // Check token expiry every minute
   useEffect(() => {
     const check = () => {
-      const t    = sessionStorage.getItem(TOKEN_KEY);
+      const t    = localStorage.getItem(TOKEN_KEY);
       const mins = getTokenMinutesLeft(t);
       setMinutesLeft(mins);
       setExpirySoon(mins > 0 && mins <= WARNING_MINUTES);
@@ -143,7 +143,7 @@ export const useHospitalState = () => {
 
   // ── authFetch — agrega Authorization header en todos los requests ─────────────
   const authFetch = useCallback((url: string, options?: RequestInit): Promise<Response> => {
-    const t = sessionStorage.getItem(TOKEN_KEY);
+    const t = localStorage.getItem(TOKEN_KEY);
     return fetch(url, {
       ...options,
       headers: {
@@ -174,7 +174,7 @@ export const useHospitalState = () => {
   const [rawBeds, setRawBeds]                      = useState<Bed[]>([]);
   const [tickets, setTickets]                      = useState<Ticket[]>(MOCK_TICKETS);
   // Isolation: stored by patientCode, derived to bed labels via beds data
-  const [isolatedPatients, setIsolatedPatients]    = useState<Set<string>>(new Set()); // patientCodes with active isolation
+  const [isolatedPatients, setIsolatedPatients]    = useState<Map<string, IsolationType>>(new Map()); // patientCode → isolation type
 
   const beds = useMemo(() => {
     const active = tickets.filter(t => t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED);
@@ -394,11 +394,19 @@ export const useHospitalState = () => {
     } catch { return undefined; }
   };
 
-  const spUpdate = async (spItemId: string, updates: Partial<Ticket>): Promise<void> => {
+  const spUpdate = async (spItemId: string, updates: Partial<Ticket>, ticket?: Ticket): Promise<void> => {
     try {
+      // Include ticket context so push notifications have full info
+      const context = ticket ? {
+        id: ticket.id,
+        patientName: ticket.patientName,
+        origin: ticket.origin,
+        destination: ticket.destination,
+        sede: ticket.sede,
+      } : {};
       await authFetch('/api/tickets', {
         method: 'PATCH',
-        body:   JSON.stringify({ spItemId, ...updates }),
+        body:   JSON.stringify({ spItemId, ...context, ...updates }),
       });
     } catch { /* next poll will reconcile */ }
   };
@@ -493,8 +501,8 @@ export const useHospitalState = () => {
         }
       }
 
-      sessionStorage.setItem(TOKEN_KEY, data.token);
-      sessionStorage.setItem(USER_KEY,  JSON.stringify(user));
+      localStorage.setItem(TOKEN_KEY, data.token);
+      localStorage.setItem(USER_KEY,  JSON.stringify(user));
       setToken(data.token);
       setCurrentUser(user);
       setActiveRole(user.role as Role);
@@ -526,8 +534,8 @@ export const useHospitalState = () => {
   };
 
   const handleLogout = useCallback(() => {
-    sessionStorage.removeItem(TOKEN_KEY);
-    sessionStorage.removeItem(USER_KEY);
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
     setToken(null);
     setCurrentUser(null);
     setExpirySoon(false);
@@ -614,14 +622,16 @@ export const useHospitalState = () => {
     // If isolation requested AND patient not already isolated, activate it
     if (data.isolation) {
       const sourceBed = beds.find(b => b.label === data.origin);
+      const isoType = (data as any).isolationType as IsolationType | undefined;
       if (sourceBed?.patientCode && !isolatedPatients.has(sourceBed.patientCode)) {
-        setIsolatedPatients(prev => new Set(prev).add(sourceBed.patientCode!));
+        setIsolatedPatients(prev => { const next = new Map(prev); next.set(sourceBed.patientCode!, isoType ?? IsolationType.CONTACTO); return next; });
         authFetch('/api/isolations', {
           method: 'POST',
           body: JSON.stringify({
             patientCode: sourceBed.patientCode,
             patientName: sourceBed.patientName || data.patientName || '',
             userName: currentUser?.name || '',
+            tipo: isoType ?? IsolationType.CONTACTO,
           }),
         }).catch(() => {});
       }
@@ -640,6 +650,18 @@ export const useHospitalState = () => {
 
   const _createTicket = async (data: Partial<Ticket>) => {
     if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) return;
+
+    // Block duplicate: no two active transfers for the same origin bed
+    const existingActive = tickets.find(t =>
+      t.origin === data.origin &&
+      t.status !== TicketStatus.COMPLETED &&
+      t.status !== TicketStatus.REJECTED
+    );
+    if (existingActive) {
+      alert(`Ya existe un traslado activo para esta cama (${existingActive.id}). Debe finalizar o cancelarse antes de crear otro.`);
+      return;
+    }
+
     const sourceBed = beds.find(b => b.label === data.origin);
     const targetBed = beds.find(b => b.label === data.destination);
     if (!sourceBed || sourceBed.status !== BedStatus.OCCUPIED) { alert('Error: La cama de origen debe estar OCUPADA.'); return; }
@@ -709,7 +731,7 @@ export const useHospitalState = () => {
       originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
       destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
     });
-    if (ticket.spItemId) spUpdate(ticket.spItemId, updates);
+    if (ticket.spItemId) spUpdate(ticket.spItemId, updates, ticket);
     spLogEvent(ticket.id, 'Habitacion Preparada');
   };
 
@@ -725,7 +747,7 @@ export const useHospitalState = () => {
       originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
       destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
     });
-    if (ticket.spItemId) spUpdate(ticket.spItemId, updates);
+    if (ticket.spItemId) spUpdate(ticket.spItemId, updates, ticket);
     spLogEvent(ticket.id, 'Inicio Traslado');
   };
 
@@ -742,7 +764,7 @@ export const useHospitalState = () => {
       originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
       destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
     });
-    if (ticket.spItemId) spUpdate(ticket.spItemId, updates);
+    if (ticket.spItemId) spUpdate(ticket.spItemId, updates, ticket);
     spLogEvent(ticket.id, 'Paciente Recibido');
   };
 
@@ -761,7 +783,7 @@ export const useHospitalState = () => {
       originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
       destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
     });
-    if (ticket.spItemId) await spUpdate(ticket.spItemId, updates);
+    if (ticket.spItemId) await spUpdate(ticket.spItemId, updates, ticket);
     spLogEvent(ticket.id, 'Consolidado Progal');
     // Refresh beds immediately + again after a few seconds (Gamma/PROGAL may take a moment)
     fetchBeds();
@@ -784,7 +806,7 @@ export const useHospitalState = () => {
       originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
       destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
     });
-    if (ticket.spItemId) await spUpdate(ticket.spItemId, updates);
+    if (ticket.spItemId) await spUpdate(ticket.spItemId, updates, ticket);
     spLogEvent(ticket.id, `Cancelado: ${reason}`);
   };
 
@@ -792,37 +814,43 @@ export const useHospitalState = () => {
     if (!currentUser) return;
     const updatedUser = { ...currentUser, assignedAreas: areas };
     setCurrentUser(updatedUser);
-    sessionStorage.setItem(USER_KEY, JSON.stringify(updatedUser));
+    localStorage.setItem(USER_KEY, JSON.stringify(updatedUser));
   };
 
   // ── Isolation toggle (Admission/Admin only) ────────────────────────────────
-  const toggleIsolation = (bedLabel: string) => {
+  const toggleIsolation = (bedLabel: string, isolationType?: IsolationType) => {
     if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) return;
     const bed = beds.find(b => b.label === bedLabel);
     if (!bed?.patientCode) return;
-    const code = bed.patientCode;
+    const code = bed.patientCode.trim();
     const isActive = isolatedPatients.has(code);
 
     // Optimistic update
     setIsolatedPatients(prev => {
-      const next = new Set(prev);
-      isActive ? next.delete(code) : next.add(code);
+      const next = new Map(prev);
+      if (isActive && !isolationType) {
+        next.delete(code);
+      } else {
+        next.set(code, isolationType ?? IsolationType.CONTACTO);
+      }
       return next;
     });
 
     // Persist to SharePoint
     authFetch('/api/isolations', {
-      method: isActive ? 'DELETE' : 'POST',
+      method: isActive && !isolationType ? 'DELETE' : 'POST',
       body: JSON.stringify({
         patientCode: code,
         patientName: bed.patientName || '',
         userName: currentUser?.name || '',
+        tipo: isolationType ?? (isActive ? undefined : IsolationType.CONTACTO),
       }),
     }).catch(() => {
       // Rollback on error
       setIsolatedPatients(prev => {
-        const next = new Set(prev);
-        isActive ? next.add(code) : next.delete(code);
+        const next = new Map(prev);
+        if (isActive) next.set(code, IsolationType.CONTACTO);
+        else next.delete(code);
         return next;
       });
     });
@@ -834,14 +862,58 @@ export const useHospitalState = () => {
       const res = await authFetch('/api/isolations');
       if (!res.ok) return;
       const data = await res.json();
-      const codes = new Set<string>((data.isolations ?? []).map((i: any) => i.patientCode));
-      setIsolatedPatients(codes);
+      const map = new Map<string, IsolationType>();
+      for (const i of (data.isolations ?? [])) {
+        const tipo = Object.values(IsolationType).includes(i.tipo as IsolationType) ? (i.tipo as IsolationType) : undefined;
+        map.set(String(i.patientCode).trim(), tipo as any);
+      }
+      setIsolatedPatients(map);
     } catch { /* silent */ }
   };
 
-  const handleMarkNotificationRead      = (id: string) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
-  const handleMarkAllNotificationsRead  = ()            => setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+  const handleMarkNotificationRead = (id: string) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+    // Also mark as read in SP (non-blocking)
+    authFetch('/api/notifications', {
+      method: 'PATCH',
+      body: JSON.stringify({ notificationId: id }),
+    }).catch(() => {});
+  };
+  const handleMarkAllNotificationsRead = () => {
+    const unread = notifications.filter(n => !n.isRead);
+    setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+    // Mark all unread in SP (non-blocking)
+    for (const n of unread) {
+      authFetch('/api/notifications', {
+        method: 'PATCH',
+        body: JSON.stringify({ notificationId: n.id }),
+      }).catch(() => {});
+    }
+  };
   const handleDismissToast              = (id: string) => setToasts(prev => prev.filter(t => t.id !== id));
+
+  // ── Unread SP notifications check (for banner) ────────────────────────────
+  const [unreadSpNotifications, setUnreadSpNotifications] = useState<{ id: string; title: string; message: string; fecha: string }[]>([]);
+
+  useEffect(() => {
+    if (!token || !currentUser) return;
+    // Fetch unread notifications from SP every 30 seconds
+    const check = async () => {
+      try {
+        const r = await authFetch('/api/notifications');
+        if (!r.ok) return;
+        const data = await r.json();
+        const unread = (data.notifications ?? []).filter((n: any) => n.status === 'Enviada');
+        // Only show banner for notifications older than 5 minutes
+        const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+        const old = unread.filter((n: any) => new Date(n.fecha).getTime() < fiveMinAgo);
+        setUnreadSpNotifications(old);
+      } catch { /* silent */ }
+    };
+    check();
+    const interval = setInterval(check, 30_000);
+    return () => clearInterval(interval);
+  }, [token, currentUser, authFetch]);
 
   return {
     state: {
@@ -853,6 +925,7 @@ export const useHospitalState = () => {
       tokenExpirySoon, tokenMinutesLeft,
       isolatedBeds,
       isolatedPatients,
+      unreadSpNotifications,
     },
     actions: {
       setCurrentUser, setCurrentView, setActiveRole, setSortConfig, setRequestsSearchTerm,

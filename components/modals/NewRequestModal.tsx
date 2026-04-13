@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { Bed, BedStatus, WorkflowType } from '../../types';
+import { Bed, BedStatus, WorkflowType, IsolationType } from '../../types';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -14,10 +14,10 @@ interface NewRequestModalProps {
   onOpenChange: (open: boolean) => void;
   onCreate: (data: { patientName: string; origin: string; destination: string; workflow: WorkflowType; reason?: string; itrSource?: string; observations?: string; isolation?: boolean }) => void;
   beds: Bed[];
-  isolatedPatients?: Set<string>;
+  isolatedPatients?: Map<string, IsolationType>;
 }
 
-export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenChange, onCreate, beds, isolatedPatients = new Set() }) => {
+export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenChange, onCreate, beds, isolatedPatients = new Map() }) => {
   const [workflow, setWorkflow] = useState<WorkflowType>(WorkflowType.INTERNAL);
   const [patientName, setPatientName] = useState('');
   const [origin, setOrigin] = useState('');
@@ -26,6 +26,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
   const [itrSource, setItrSource] = useState('');
   const [observations, setObservations] = useState('');
   const [isolation, setIsolation] = useState(false);
+  const [isolationType, setIsolationType] = useState<IsolationType | ''>('');
 
   React.useEffect(() => {
     if (!open) {
@@ -37,6 +38,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
       setItrSource('');
       setObservations('');
       setIsolation(false);
+      setIsolationType('');
     }
   }, [open]);
 
@@ -58,6 +60,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
       itrSource: workflow === WorkflowType.ITR_TO_FLOOR ? itrSource : undefined,
       observations: observations.trim() !== '' ? observations : undefined,
       isolation,
+      isolationType: isolationType || undefined,
     });
     
     // Reset form
@@ -103,7 +106,10 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
                 const bed = beds.find(b => b.label === val);
                 if (bed?.patientName) setPatientName(bed.patientName);
                 if (bed?.institution) setItrSource(bed.institution);
-                if (bed?.patientCode && isolatedPatients.has(bed.patientCode)) setIsolation(true);
+                if (bed?.patientCode && isolatedPatients.has(bed.patientCode)) {
+                  setIsolation(true);
+                  setIsolationType(isolatedPatients.get(bed.patientCode) || '');
+                }
               }}
               options={availableOrigins.map(bed => ({
                 label: `${bed.label} (${bed.patientName || 'Sin Nombre'})`,
@@ -153,13 +159,29 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
             </div>
           )}
 
-          <label className="flex items-center gap-2.5 px-3 py-2 rounded-xl border border-violet-200 bg-violet-50/50 cursor-pointer hover:bg-violet-50 transition-colors">
-            <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors ${isolation ? 'bg-violet-600 border-violet-600' : 'border-slate-300 bg-white'}`}>
-              {isolation && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
-            </div>
-            <span className="text-sm font-bold text-violet-800">Requiere Aislamiento</span>
-            <input type="checkbox" className="sr-only" checked={isolation} onChange={e => setIsolation(e.target.checked)} />
-          </label>
+          <div className="grid gap-1.5">
+            <label className="flex items-center gap-2.5 px-3 py-2 rounded-xl border border-violet-200 bg-violet-50/50 cursor-pointer hover:bg-violet-50 transition-colors">
+              <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors ${isolation ? 'bg-violet-600 border-violet-600' : 'border-slate-300 bg-white'}`}>
+                {isolation && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
+              </div>
+              <span className="text-sm font-bold text-violet-800">Requiere Aislamiento</span>
+              <input type="checkbox" className="sr-only" checked={isolation} onChange={e => { setIsolation(e.target.checked); if (!e.target.checked) setIsolationType(''); }} />
+            </label>
+            {isolation && (
+              <div className="grid grid-cols-4 gap-1 px-1">
+                {Object.values(IsolationType).map(t => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setIsolationType(t)}
+                    className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[9px] font-bold transition-all ${isolationType === t ? 'border-violet-400 bg-violet-50 text-violet-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           <div className="grid gap-2">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Observaciones (Opcional)</Label>

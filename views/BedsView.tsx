@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
-import { Bed, BedStatus, Ticket, TicketStatus, User, Role, Area } from '../types';
+import { Bed, BedStatus, Ticket, TicketStatus, User, Role, Area, IsolationType } from '../types';
 import { Input } from '../components/ui/input';
 import { cn } from '../lib/utils';
 import { BedDouble, User as UserIcon, Info, Search, X, Download, ChevronDown, Check, AlertTriangle, CheckCircle2, ShieldAlert } from 'lucide-react';
@@ -36,13 +36,34 @@ interface BedsViewProps {
   bedsLoading?: boolean;
   bedsError?: string | null;
   isolatedBeds?: Set<string>;
-  onToggleIsolation?: (bedLabel: string) => void;
+  isolatedPatients?: Map<string, IsolationType>;
+  onToggleIsolation?: (bedLabel: string, isolationType?: IsolationType) => void;
 }
 
-export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onToggleIsolation }) => {
+// Color map for isolation types
+const ISOLATION_COLORS: Record<string, { ring: string; bg: string; text: string; dot: string }> = {
+  [IsolationType.NEUTROPENICO]:  { ring: 'ring-pink-400',   bg: 'bg-pink-500',   text: 'text-pink-700',   dot: 'bg-pink-500' },
+  [IsolationType.TRASPLANTE]:    { ring: 'ring-slate-400',  bg: 'bg-slate-500',  text: 'text-slate-700',  dot: 'bg-slate-500' },
+  [IsolationType.RESPIRATORIO]:  { ring: 'ring-green-400',  bg: 'bg-green-500',  text: 'text-green-700',  dot: 'bg-green-500' },
+  [IsolationType.GOTAS]:         { ring: 'ring-blue-400',   bg: 'bg-blue-500',   text: 'text-blue-700',   dot: 'bg-blue-500' },
+  [IsolationType.COVID]:         { ring: 'ring-yellow-400', bg: 'bg-yellow-500', text: 'text-yellow-700', dot: 'bg-yellow-500' },
+  [IsolationType.ENTOMOLOGICO]:  { ring: 'ring-violet-400', bg: 'bg-violet-500', text: 'text-violet-700', dot: 'bg-violet-500' },
+  [IsolationType.CONTACTO]:      { ring: 'ring-orange-400', bg: 'bg-orange-500', text: 'text-orange-700', dot: 'bg-orange-500' },
+  [IsolationType.CD]:            { ring: 'ring-amber-700',  bg: 'bg-amber-800',  text: 'text-amber-800',  dot: 'bg-amber-800' },
+};
+const DEFAULT_ISO_COLOR = { ring: 'ring-violet-400', bg: 'bg-violet-500', text: 'text-violet-700', dot: 'bg-violet-500' };
+
+export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), isolatedPatients = new Map(), onToggleIsolation }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
 
   const canEditIsolation = currentUser?.role === Role.ADMISSION || currentUser?.role === Role.ADMIN;
+
+  // Get isolation color for a bed (by patientCode → type → color)
+  const getIsolationColor = (bed: Bed) => {
+    if (!bed.patientCode) return DEFAULT_ISO_COLOR;
+    const tipo = isolatedPatients.get(bed.patientCode);
+    return tipo ? (ISOLATION_COLORS[tipo] ?? DEFAULT_ISO_COLOR) : DEFAULT_ISO_COLOR;
+  };
 
   // Rooms that have an isolated patient — other beds in same room are blocked
   const blockedByIsolation = useMemo(() => {
@@ -95,6 +116,16 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     return all;
   });
   const [statusFilters, setStatusFilters] = useState<Set<string>>(new Set());
+  const [showIsolatedOnly, setShowIsolatedOnly] = useState(false);
+  const [financierFilters, setFinancierFilters] = useState<Set<string>>(new Set());
+  const [physicianFilters, setPhysicianFilters] = useState<Set<string>>(new Set());
+  const [financierSearch, setFinancierSearch] = useState('');
+  const [physicianSearch, setPhysicianSearch] = useState('');
+
+
+  // Derive unique financiers and physicians from occupied beds
+  const uniqueFinanciers = useMemo(() => [...new Set(beds.filter((b: Bed) => b.institution).map((b: Bed) => b.institution!))].sort(), [beds]);
+  const uniquePhysicians = useMemo(() => [...new Set(beds.filter((b: Bed) => b.prescribingPhysician || b.attendingPhysician).map((b: Bed) => (b.prescribingPhysician || b.attendingPhysician)!))].sort(), [beds]);
 
   const toggleArea = (area: string) => {
     setAreaFilters((prev: Set<string>) => {
@@ -154,9 +185,21 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     if (statusFilters.size > 0) {
       result = result.filter(bed => statusFilters.has(bed.status));
     }
+    if (showIsolatedOnly) {
+      result = result.filter(bed => isolatedBeds.has(bed.label));
+    }
+    if (financierFilters.size > 0) {
+      result = result.filter(bed => bed.institution && financierFilters.has(bed.institution));
+    }
+    if (physicianFilters.size > 0) {
+      result = result.filter(bed => {
+        const prof = bed.prescribingPhysician || bed.attendingPhysician;
+        return prof && physicianFilters.has(prof);
+      });
+    }
 
     return result;
-  }, [beds, currentUser, searchFilter, areaFilters, statusFilters, allAreas.length, bedTicketMap]);
+  }, [beds, currentUser, searchFilter, areaFilters, statusFilters, allAreas.length, bedTicketMap, showIsolatedOnly, isolatedBeds, financierFilters, physicianFilters]);
 
   // Group beds by Area, ordered with HIT first
   const bedsByArea: Record<string, Bed[]> = {};
@@ -262,9 +305,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     };
 
     // ── Column layout ────────────────────────────────────────────────────────
-    // Columns: Hab.(14) | Cama(10) | Estado(22) | Paciente(55) | DNI(22) | Edad(10) | Sexo(10) | Profesional(40) | Financiador(40)
-    const colWidths = [14, 10, 22, 55, 22, 10, 10, 40, 40];
-    const colHeaders = ['Hab.', 'Cama', 'Estado', 'Paciente', 'DNI', 'Edad', 'Sexo', 'Profesional', 'Financiador'];
+    // Columns: Hab.(14) | Cama(10) | Estado(22) | Paciente(45) | DNI(22) | Edad(10) | Sexo(10) | Profesional(40) | Diagnóstico(45) | Financiador(39)
+    const colWidths = [14, 10, 22, 45, 22, 10, 10, 40, 45, 39];
+    const colHeaders = ['Hab.', 'Cama', 'Estado', 'Paciente', 'DNI', 'Edad', 'Sexo', 'Profesional', 'Diagnóstico', 'Financiador'];
     const rowH = 6;
     const tableWidth = colWidths.reduce((s, w) => s + w, 0);
 
@@ -379,9 +422,6 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
           const sex = isOccupied
             ? (bed.sex === 'M' ? 'M' : bed.sex === 'F' ? 'F' : '')
             : '';
-          const physician = isOccupied
-            ? (bed.attendingPhysician ?? '')
-            : '';
           const financier = isOccupied
             ? (bed.institution ?? '')
             : (ticket?.financier ?? '');
@@ -399,13 +439,19 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
           // Col 6: Sexo
           doc.text(sex, colX[6] + 1.5, textY);
 
-          // Col 7: Profesional
+          // Col 7: Profesional (prescriptor from event, fallback to attending)
+          const prof = isOccupied ? (bed.prescribingPhysician ?? bed.attendingPhysician ?? '') : '';
           const maxPhysChars = Math.floor(colWidths[7] / 1.6);
-          doc.text(physician.substring(0, maxPhysChars), colX[7] + 1.5, textY);
+          doc.text(prof.substring(0, maxPhysChars), colX[7] + 1.5, textY);
 
-          // Col 8: Financiador
-          const maxFinChars = Math.floor(colWidths[8] / 1.6);
-          doc.text(financier.substring(0, maxFinChars), colX[8] + 1.5, textY);
+          // Col 8: Diagnóstico
+          const diagnosis = isOccupied ? (bed.diagnosis ?? '') : '';
+          const maxDiagChars = Math.floor(colWidths[8] / 1.6);
+          doc.text(diagnosis.substring(0, maxDiagChars), colX[8] + 1.5, textY);
+
+          // Col 9: Financiador
+          const maxFinChars = Math.floor(colWidths[9] / 1.6);
+          doc.text(financier.substring(0, maxFinChars), colX[9] + 1.5, textY);
         } else {
           // Non-occupied: just show bed code in patient column (dimmed)
           doc.setTextColor(148, 163, 184);
@@ -487,9 +533,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       doc.line(margin, 19, pageW - margin, 19);
     };
 
-    // Columns: Paciente(55) | Hab.(14) | Cama(10) | Sector(22) | Estado(22) | DNI(22) | Edad(10) | Sexo(10) | Profesional(40) | Financiador(40)
-    const colWidths = [55, 14, 10, 22, 22, 22, 10, 10, 40, 40];
-    const colHeaders = ['Paciente', 'Hab.', 'Cama', 'Sector', 'Estado', 'DNI', 'Edad', 'Sexo', 'Profesional', 'Financiador'];
+    // Columns: Paciente(45) | Hab.(14) | Cama(10) | Sector(22) | Estado(22) | DNI(22) | Edad(10) | Sexo(10) | Profesional(38) | Diagnóstico(42) | Financiador(38)
+    const colWidths = [45, 14, 10, 22, 22, 22, 10, 10, 38, 42, 38];
+    const colHeaders = ['Paciente', 'Hab.', 'Cama', 'Sector', 'Estado', 'DNI', 'Edad', 'Sexo', 'Profesional', 'Diagnóstico', 'Financiador'];
     const rowH = 6;
     const tableWidth = colWidths.reduce((s, w) => s + w, 0);
     const colX: number[] = [];
@@ -533,6 +579,8 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
           age: isOccupied ? (bed.age != null ? String(bed.age) : '') : '',
           sex: isOccupied ? (bed.sex === 'M' ? 'M' : bed.sex === 'F' ? 'F' : '') : '',
           physician: isOccupied ? (bed.attendingPhysician ?? '') : '',
+          prescriptor: isOccupied ? (bed.prescribingPhysician ?? '') : '',
+          diagnosis: isOccupied ? (bed.diagnosis ?? '') : '',
           financier: isOccupied ? (bed.institution ?? '') : (ticket?.financier ?? ''),
         };
       })
@@ -576,10 +624,13 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       doc.text(row.age, colX[6] + 1.5, textY);
       // Sexo
       doc.text(row.sex, colX[7] + 1.5, textY);
-      // Profesional
-      doc.text(row.physician.substring(0, Math.floor(colWidths[8] / 1.6)), colX[8] + 1.5, textY);
+      // Profesional (prescriptor from event, fallback to attending)
+      const prof = row.prescriptor || row.physician;
+      doc.text(prof.substring(0, Math.floor(colWidths[8] / 1.6)), colX[8] + 1.5, textY);
+      // Diagnóstico
+      doc.text(row.diagnosis.substring(0, Math.floor(colWidths[9] / 1.6)), colX[9] + 1.5, textY);
       // Financiador
-      doc.text(row.financier.substring(0, Math.floor(colWidths[9] / 1.6)), colX[9] + 1.5, textY);
+      doc.text(row.financier.substring(0, Math.floor(colWidths[10] / 1.6)), colX[10] + 1.5, textY);
 
       curY += rowH;
     });
@@ -722,6 +773,113 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
               </button>
             );
           })}
+          {isolatedBeds.size > 0 && (
+            <button
+              onClick={() => setShowIsolatedOnly(v => !v)}
+              className={cn(
+                "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
+                showIsolatedOnly
+                  ? "bg-violet-600 text-white border-violet-600 shadow-sm"
+                  : "bg-white text-violet-600 border-violet-200 hover:bg-violet-50"
+              )}
+            >
+              <ShieldAlert className="w-3 h-3" />
+              Aislamiento ({isolatedBeds.size})
+            </button>
+          )}
+
+          {/* Multi-select filters: Financiador & Profesional */}
+          {uniqueFinanciers.length > 0 && (
+            <Popover>
+              <PopoverTrigger asChild>
+                <button className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
+                  financierFilters.size > 0 ? "bg-slate-900 text-white border-slate-900 shadow-sm" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                )}>
+                  <Search className="w-2.5 h-2.5" />
+                  Financiador {financierFilters.size > 0 && `(${financierFilters.size})`}
+                  <ChevronDown className="w-2.5 h-2.5" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-64 p-2">
+                <div className="flex items-center justify-between px-2 pb-2 border-b border-slate-100 mb-1">
+                  <span className="text-[9px] font-bold uppercase text-slate-400">Financiadores</span>
+                  {financierFilters.size > 0 && (
+                    <button onClick={() => setFinancierFilters(new Set())} className="text-[9px] font-bold text-red-500">Limpiar</button>
+                  )}
+                </div>
+                <div className="relative mb-1.5">
+                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Buscar financiador..."
+                    value={financierSearch}
+                    onChange={e => setFinancierSearch(e.target.value)}
+                    className="w-full pl-7 pr-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-400"
+                  />
+                </div>
+                <div className="max-h-48 overflow-y-auto">
+                  {uniqueFinanciers.filter(f => f.toLowerCase().includes(financierSearch.toLowerCase())).map(f => (
+                    <label key={f} className={cn(
+                      "flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer text-xs transition-colors",
+                      financierFilters.has(f) ? "bg-emerald-50 text-emerald-800 font-bold" : "hover:bg-slate-50 text-slate-600"
+                    )}>
+                      <input type="checkbox" checked={financierFilters.has(f)} onChange={() => {
+                        setFinancierFilters(prev => { const next = new Set(prev); next.has(f) ? next.delete(f) : next.add(f); return next; });
+                      }} className="accent-emerald-600 w-3.5 h-3.5" />
+                      {f}
+                    </label>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
+
+          {uniquePhysicians.length > 0 && (
+            <Popover>
+              <PopoverTrigger asChild>
+                <button className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
+                  physicianFilters.size > 0 ? "bg-slate-900 text-white border-slate-900 shadow-sm" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                )}>
+                  <Search className="w-2.5 h-2.5" />
+                  Profesional {physicianFilters.size > 0 && `(${physicianFilters.size})`}
+                  <ChevronDown className="w-2.5 h-2.5" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-72 p-2">
+                <div className="flex items-center justify-between px-2 pb-2 border-b border-slate-100 mb-1">
+                  <span className="text-[9px] font-bold uppercase text-slate-400">Profesionales</span>
+                  {physicianFilters.size > 0 && (
+                    <button onClick={() => setPhysicianFilters(new Set())} className="text-[9px] font-bold text-red-500">Limpiar</button>
+                  )}
+                </div>
+                <div className="relative mb-1.5">
+                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Buscar profesional..."
+                    value={physicianSearch}
+                    onChange={e => setPhysicianSearch(e.target.value)}
+                    className="w-full pl-7 pr-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-400"
+                  />
+                </div>
+                <div className="max-h-48 overflow-y-auto">
+                  {uniquePhysicians.filter(p => p.toLowerCase().includes(physicianSearch.toLowerCase())).map(p => (
+                    <label key={p} className={cn(
+                      "flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer text-xs transition-colors",
+                      physicianFilters.has(p) ? "bg-emerald-50 text-emerald-800 font-bold" : "hover:bg-slate-50 text-slate-600"
+                    )}>
+                      <input type="checkbox" checked={physicianFilters.has(p)} onChange={() => {
+                        setPhysicianFilters(prev => { const next = new Set(prev); next.has(p) ? next.delete(p) : next.add(p); return next; });
+                      }} className="accent-emerald-600 w-3.5 h-3.5" />
+                      {p}
+                    </label>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
         </div>
       </div>
 
@@ -768,6 +926,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                 const shortCode = `${bed.roomCode}-${bed.bedCode}`;
                 const isIsolated = isolatedBeds.has(bed.label);
                 const isBlocked = blockedByIsolation.has(bed.label);
+                const isoColor = isIsolated ? getIsolationColor(bed) : DEFAULT_ISO_COLOR;
 
                 return (
                   <button
@@ -776,12 +935,12 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     className={cn(
                       "relative flex flex-col items-center justify-center aspect-square rounded-lg border transition-all duration-200 overflow-hidden group",
                       isBlocked ? "bg-violet-50 border-violet-300 opacity-60" : getStatusColor(bed.status),
-                      isIsolated && "ring-2 ring-violet-500 ring-offset-1"
+                      isIsolated && `ring-2 ${isoColor.ring} ring-offset-1`
                     )}
                   >
                     <div className={cn("absolute top-1 right-1 w-1 h-1 md:w-1.5 md:h-1.5 rounded-full shadow-sm", isBlocked ? "bg-violet-400" : getStatusDot(bed.status))} />
                     {isIsolated && (
-                      <div className="absolute top-0.5 left-0.5 w-3 h-3 md:w-3.5 md:h-3.5 bg-violet-600 rounded-full flex items-center justify-center">
+                      <div className={cn("absolute top-0.5 left-0.5 w-3 h-3 md:w-3.5 md:h-3.5 rounded-full flex items-center justify-center", isoColor.bg)}>
                         <ShieldAlert className="w-2 h-2 md:w-2.5 md:h-2.5 text-white" strokeWidth={3} />
                       </div>
                     )}
@@ -818,7 +977,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
 
       {/* Bed Details Modal */}
       <Dialog open={!!selectedBed} onOpenChange={(open) => !open && setSelectedBed(null)}>
-        <DialogContent noPadding className="sm:max-w-[400px] rounded-3xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent noPadding className="sm:max-w-[550px] rounded-3xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
           {selectedBed && (() => {
             type A = { headerBg: string; iconBg: string; icon: string; pill: string; dot: string; patientBg: string; patientBorder: string; label: string };
             const theme: Record<BedStatus, A> = {
@@ -866,7 +1025,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                         <p className="text-base font-black text-slate-900 leading-snug">{selectedBed.patientName}</p>
                       </div>
 
-                      <div className="grid grid-cols-3 gap-2.5">
+                      <div className="grid grid-cols-4 gap-2.5">
                         <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
                           <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">DNI</p>
                           <p className="text-sm font-mono font-bold text-slate-700">{selectedBed.dni || '—'}</p>
@@ -879,20 +1038,6 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                           <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Sexo</p>
                           <p className="text-sm font-bold text-slate-700">{selectedBed.sex === 'M' ? 'M' : selectedBed.sex === 'F' ? 'F' : '—'}</p>
                         </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2.5">
-                        <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                          <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Financiador</p>
-                          <p className="text-sm font-semibold text-slate-700 truncate">{selectedBed.institution || '—'}</p>
-                        </div>
-                        <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                          <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Profesional</p>
-                          <p className="text-sm font-semibold text-slate-700 truncate">{selectedBed.attendingPhysician || '—'}</p>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2.5">
                         <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
                           <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Evento</p>
                           <p className="text-sm font-mono font-bold text-slate-700">
@@ -901,11 +1046,30 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                               : '—'}
                           </p>
                         </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                          <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Financiador</p>
+                          <p className="text-sm font-semibold text-slate-700">{selectedBed.institution || '—'}</p>
+                        </div>
                         <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
                           <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">ID Paciente</p>
                           <p className="text-sm font-mono font-bold text-slate-700">{selectedBed.patientCode || '—'}</p>
                         </div>
                       </div>
+
+                      <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                        <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Profesional</p>
+                        <p className="text-sm font-semibold text-slate-700">{selectedBed.prescribingPhysician || selectedBed.attendingPhysician || '—'}</p>
+                      </div>
+
+                      {selectedBed.diagnosis && (
+                        <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                          <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Diagnóstico</p>
+                          <p className="text-sm font-semibold text-slate-700">{selectedBed.diagnosis}</p>
+                        </div>
+                      )}
                     </>
                   )}
 
@@ -961,12 +1125,31 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                   )}
 
                   {/* Isolation indicator */}
-                  {isolatedBeds.has(selectedBed.label) && (
-                    <div className="bg-violet-50 rounded-2xl p-3.5 border border-violet-200 flex items-center gap-3">
-                      <ShieldAlert className="w-5 h-5 text-violet-600 flex-shrink-0" />
-                      <p className="text-xs font-bold text-violet-800">Aislamiento — camas de la habitación bloqueadas</p>
-                    </div>
-                  )}
+                  {isolatedBeds.has(selectedBed.label) && (() => {
+                    const isoC = getIsolationColor(selectedBed);
+                    const tipo = selectedBed.patientCode ? isolatedPatients.get(selectedBed.patientCode) : undefined;
+                    return tipo ? (
+                      <div className="rounded-2xl p-3.5 border border-slate-200 flex items-center gap-3 bg-slate-50">
+                        <span className={cn("w-5 h-5 rounded-full flex items-center justify-center shrink-0", isoC.bg)}>
+                          <ShieldAlert className="w-3 h-3 text-white" strokeWidth={3} />
+                        </span>
+                        <div>
+                          <p className={cn("text-xs font-bold", isoC.text)}>Aislamiento: {tipo}</p>
+                          <p className="text-[10px] text-slate-400">Camas de la habitación bloqueadas</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl p-3.5 border-2 border-red-300 flex items-center gap-3 bg-red-50 animate-pulse">
+                        <span className="w-5 h-5 rounded-full flex items-center justify-center shrink-0 bg-red-500">
+                          <AlertTriangle className="w-3 h-3 text-white" strokeWidth={3} />
+                        </span>
+                        <div>
+                          <p className="text-xs font-bold text-red-700">Aislamiento sin tipo asignado</p>
+                          <p className="text-[10px] text-red-500">Seleccioná un tipo de aislamiento abajo</p>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {blockedByIsolation.has(selectedBed.label) && (
                     <div className="bg-violet-50 rounded-2xl p-3.5 border border-violet-200 flex items-center gap-3">
                       <ShieldAlert className="w-5 h-5 text-violet-400 flex-shrink-0" />
@@ -976,18 +1159,56 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
 
                   {/* Toggle isolation — only Admission/Admin, only occupied beds */}
                   {canEditIsolation && isOccupied && onToggleIsolation && (
-                    <button
-                      onClick={() => { onToggleIsolation(selectedBed.label); setSelectedBed({ ...selectedBed }); }}
-                      className={cn(
-                        "w-full flex items-center justify-center gap-2 p-3 rounded-2xl border-2 transition-all text-sm font-bold",
-                        isolatedBeds.has(selectedBed.label)
-                          ? "border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100"
-                          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                      )}
-                    >
-                      <ShieldAlert className="w-4 h-4" />
-                      {isolatedBeds.has(selectedBed.label) ? 'Quitar Aislamiento' : 'Marcar Aislamiento'}
-                    </button>
+                    isolatedBeds.has(selectedBed.label) ? (
+                      <div className="space-y-1.5">
+                        <p className="text-[9px] font-bold uppercase text-slate-400 tracking-widest">Cambiar tipo de aislamiento</p>
+                        <div className="grid grid-cols-4 gap-1.5">
+                          {Object.values(IsolationType).map(tipo => {
+                            const color = ISOLATION_COLORS[tipo] ?? DEFAULT_ISO_COLOR;
+                            const currentType = selectedBed.patientCode ? isolatedPatients.get(selectedBed.patientCode) : undefined;
+                            const isActive = currentType === tipo;
+                            return (
+                              <button
+                                key={tipo}
+                                onClick={() => { if (!isActive) { onToggleIsolation(selectedBed.label, tipo); setSelectedBed({ ...selectedBed }); } }}
+                                className={cn(
+                                  "flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-[9px] font-bold transition-all",
+                                  isActive ? `${color.bg} text-white border-transparent shadow-sm` : `border-slate-200 hover:shadow-sm`
+                                )}
+                              >
+                                <span className={cn("w-2.5 h-2.5 rounded-full shrink-0", isActive ? "bg-white/40" : color.dot)} />
+                                {tipo}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <button
+                          onClick={() => { onToggleIsolation(selectedBed.label); setSelectedBed({ ...selectedBed }); }}
+                          className="w-full flex items-center justify-center gap-2 p-2.5 rounded-xl border-2 border-red-200 bg-red-50 text-red-700 hover:bg-red-100 transition-all text-xs font-bold"
+                        >
+                          <X className="w-3.5 h-3.5" /> Quitar Aislamiento
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <p className="text-[9px] font-bold uppercase text-slate-400 tracking-widest">Marcar Aislamiento</p>
+                        <div className="grid grid-cols-4 gap-1.5">
+                          {Object.values(IsolationType).map(tipo => {
+                            const color = ISOLATION_COLORS[tipo] ?? DEFAULT_ISO_COLOR;
+                            return (
+                              <button
+                                key={tipo}
+                                onClick={() => { onToggleIsolation(selectedBed.label, tipo); setSelectedBed({ ...selectedBed }); }}
+                                className={cn("flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-[9px] font-bold transition-all hover:shadow-sm", `border-slate-200`)}
+                              >
+                                <span className={cn("w-2.5 h-2.5 rounded-full shrink-0", color.dot)} />
+                                {tipo}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )
                   )}
 
                 </div>

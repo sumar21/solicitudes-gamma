@@ -119,6 +119,33 @@ function calcAge(fechaNac: string): number | undefined {
   return age;
 }
 
+interface GammaEvent {
+  EVE_ORIGEN?: string;
+  EVE_NUMERO?: number;
+  EVE_PACIENTE?: string;
+  PACIENTE_NOMBRE?: string;
+  EVE_PROFESIONAL_SOLICITANTE?: string;
+  PROFESIONAL_NOMBRE?: string;
+  EVC_INSTITUCION?: string;
+  INSTITUCION_NOMBRE?: string;
+  EVE_DIAGNOSTICO?: string;
+}
+
+async function fetchEventDetails(token: string, eventOrigin: string, eventNumber: number): Promise<GammaEvent | null> {
+  try {
+    const res = await fetch(
+      `${GAMMA_BASE}/oauth_resource/obtenereventointernacion?empresa=HPR&origen=${encodeURIComponent(eventOrigin)}&numero=${encodeURIComponent(String(eventNumber))}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!res.ok) return null;
+    const data: unknown = await res.json();
+    if (data && typeof data === 'object') return data as GammaEvent;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchPatientDetails(token: string, patientCode: string): Promise<GammaPatient | null> {
   try {
     const res = await fetch(
@@ -189,11 +216,13 @@ function transformBeds(mapData: GammaSector[], occupiedData: GammaSector[]) {
           bedCode: String(bed.codigo),
           eventOrigin: origenEvento ?? undefined,
           eventNumber: numeroEvento ?? undefined,
-          patientCode: codigoPaciente ?? undefined,
+          patientCode: codigoPaciente ? String(codigoPaciente).trim() : undefined,
           institution: undefined as string | undefined,
           dni: undefined as string | undefined,
           age: undefined as number | undefined,
           sex: undefined as 'M' | 'F' | undefined,
+          diagnosis: undefined as string | undefined,
+          prescribingPhysician: undefined as string | undefined,
         });
       }
     }
@@ -214,10 +243,11 @@ async function handler(req: any, res: any) {
   }
 
   try {
-    const [tokenMap, tokenOcc, tokenPat] = await Promise.all([
+    const [tokenMap, tokenOcc, tokenPat, tokenEvt] = await Promise.all([
       getToken('obtenermapacamas'),
       getToken('obtenermapacamasocupadas'),
       getToken('consultarpacientecodigo'),
+      getToken('obtenereventointernacion'),
     ]);
 
     const [mapRes, occRes] = await Promise.all([
@@ -256,6 +286,27 @@ async function handler(req: any, res: any) {
         bed.dni = p.ENT_NUMERO_DOCUMENTO?.trim() || undefined;
         bed.age = p.PCN_FECHA_NACIMIENTO ? calcAge(p.PCN_FECHA_NACIMIENTO) : undefined;
         bed.sex = p.PCN_SEXO === 'M' || p.PCN_SEXO === 'F' ? p.PCN_SEXO : undefined;
+      });
+    }
+
+    // Enrich occupied beds with event details (diagnosis, prescribing physician)
+    const bedsWithEvent = beds.filter(b => b.eventOrigin && b.eventNumber && b.status === STATUS.OCCUPIED);
+    if (bedsWithEvent.length > 0) {
+      const eventResults = await Promise.all(
+        bedsWithEvent.map(b => fetchEventDetails(tokenEvt, b.eventOrigin!, b.eventNumber!)),
+      );
+      bedsWithEvent.forEach((bed, i) => {
+        const evt = eventResults[i];
+        if (!evt) return;
+        bed.diagnosis = evt.EVE_DIAGNOSTICO?.trim() || undefined;
+        // Use event physician as primary (more complete than patient endpoint)
+        if (evt.PROFESIONAL_NOMBRE?.trim()) {
+          bed.prescribingPhysician = evt.PROFESIONAL_NOMBRE.trim();
+        }
+        // Use event institution if patient one is empty
+        if (!bed.institution && evt.INSTITUCION_NOMBRE) {
+          bed.institution = evt.INSTITUCION_NOMBRE.trim();
+        }
       });
     }
 

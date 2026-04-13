@@ -1,4 +1,15 @@
 
+export enum IsolationType {
+  NEUTROPENICO = 'Neutropénico',
+  TRASPLANTE = 'Trasplante',
+  RESPIRATORIO = 'Respiratorio',
+  GOTAS = 'Por Gotas',
+  COVID = 'Covid',
+  ENTOMOLOGICO = 'Entomológico/Dengue',
+  CONTACTO = 'Contacto',
+  CD = 'CD',
+}
+
 export enum WorkflowType {
   INTERNAL = 'INTERNAL',
   ITR_TO_FLOOR = 'ITR_TO_FLOOR',
@@ -58,6 +69,8 @@ export interface Bed {
   dni?: string;
   age?: number;
   sex?: 'M' | 'F';
+  diagnosis?: string;
+  prescribingPhysician?: string;
 }
 
 export type ViewMode = 'HOME' | 'REQUESTS' | 'USERS' | 'HISTORY' | 'BEDS';
@@ -140,4 +153,5 @@ export interface Ticket {
   isReasonValidated: boolean;
   targetBedOriginalStatus?: BedStatus;
   observations?: string;
+  canCancel?: boolean;         // true if SP item was never modified after creation
 }

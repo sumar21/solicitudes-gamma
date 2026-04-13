@@ -27,19 +27,13 @@ interface SPUser {
   assignedFloors: string;
 }
 
-const ROLE_OPTIONS = [
+// Fallback roles (used until SP roles load)
+const DEFAULT_ROLE_OPTIONS = [
   { label: 'Admin', value: 'Admin' },
   { label: 'Admision', value: 'Admision' },
   { label: 'Azafata', value: 'Azafata' },
   { label: 'Enfermeria', value: 'Enfermeria' },
 ];
-
-const ROLE_DISPLAY: Record<string, string> = {
-  'Admin': 'Admin',
-  'Admision': 'Admision',
-  'Azafata': 'Azafata',
-  'Enfermeria': 'Enfermeria',
-};
 
 // All available areas/sectors for azafata assignment
 const AREA_OPTIONS: { label: string; value: string }[] = Object.values(Area).map(a => ({
@@ -78,6 +72,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
   const [saving, setSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<SPUser | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [roleOptions, setRoleOptions] = useState(DEFAULT_ROLE_OPTIONS);
 
   const token = sessionStorage.getItem('mediflow_token');
 
@@ -105,6 +100,18 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
   }, [authFetch]);
 
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
+
+  // Load roles from SP
+  useEffect(() => {
+    authFetch('/api/roles').then(async r => {
+      if (!r.ok) return;
+      const data = await r.json();
+      const roles = (data.roles ?? []) as { name: string }[];
+      if (roles.length > 0) {
+        setRoleOptions(roles.map(r => ({ label: r.name, value: r.name })));
+      }
+    }).catch(() => {});
+  }, [authFetch]);
 
   const showFeedback = (type: 'success' | 'error', message: string) => {
     setFeedback({ type, message });
@@ -297,7 +304,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
                   <div className="text-[10px] text-slate-400 font-mono">{u.username}</div>
                 </div>
               </div>
-              <Badge variant="outline" className="text-[9px] font-bold uppercase">{ROLE_DISPLAY[u.role] || u.role}</Badge>
+              <Badge variant="outline" className="text-[9px] font-bold uppercase">{u.role}</Badge>
             </div>
             {u.email && (
               <div className="text-[10px] text-slate-500 mb-2">{u.email}</div>
@@ -371,7 +378,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline" className="text-[10px] font-bold uppercase tracking-wide bg-slate-50 text-slate-600 border-slate-200 rounded-lg px-3 py-1">
-                      {ROLE_DISPLAY[u.role] || u.role}
+                      {u.role}
                     </Badge>
                   </TableCell>
                   <TableCell>
@@ -409,16 +416,16 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
 
       {/* Create/Edit Modal */}
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="sm:max-w-[500px] rounded-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-[700px] rounded-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-2xl pr-6">
+            <DialogTitle className="text-xl pr-6">
               {editingUser ? 'Editar Usuario' : 'Nuevo Usuario'}
             </DialogTitle>
           </DialogHeader>
-          <div className="grid gap-5 py-4">
-            {/* Nombre y Apellido */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
+          <div className="grid gap-3 py-2">
+            {/* Row 1: Nombre, Apellido */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
                 <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Nombre *</Label>
                 <Input
                   required
@@ -426,69 +433,59 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
                   value={form.firstName}
                   onChange={e => {
                     const firstName = e.target.value;
-                    setForm(f => ({
-                      ...f,
-                      firstName,
-                      username: generateUsername(firstName, f.lastName),
-                    }));
+                    setForm(f => ({ ...f, firstName, username: generateUsername(firstName, f.lastName) }));
                   }}
-                  className="h-12 rounded-xl"
+                  className="h-10 rounded-xl"
                 />
               </div>
-              <div className="grid gap-2">
+              <div className="grid gap-1.5">
                 <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Apellido</Label>
                 <Input
-                  placeholder="Apellido (opcional)"
+                  placeholder="Opcional"
                   value={form.lastName}
                   onChange={e => {
                     const lastName = e.target.value;
-                    setForm(f => ({
-                      ...f,
-                      lastName,
-                      username: generateUsername(f.firstName, lastName),
-                    }));
+                    setForm(f => ({ ...f, lastName, username: generateUsername(f.firstName, lastName) }));
                   }}
-                  className="h-12 rounded-xl"
+                  className="h-10 rounded-xl"
                 />
               </div>
             </div>
 
-            {/* Email (opcional) */}
-            <div className="grid gap-2">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Email <span className="text-slate-300">(opcional)</span></Label>
-              <Input
-                type="email"
-                placeholder="usuario@grupogamma.com"
-                value={form.email}
-                onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                className="h-12 rounded-xl"
-              />
-            </div>
-
-            {/* Usuario y Contraseña */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
+            {/* Row 2: Rol, Usuario, Contraseña */}
+            <div className="grid grid-cols-3 gap-3">
+              <div className="grid gap-1.5">
+                <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Rol / Perfil *</Label>
+                <SearchableSelect
+                  value={form.role}
+                  onValueChange={val => setForm(f => ({ ...f, role: val, assignedFloors: val !== 'Azafata' ? [] : f.assignedFloors }))}
+                  options={roleOptions}
+                  placeholder="Seleccionar rol"
+                  showSearch={false}
+                />
+              </div>
+              <div className="grid gap-1.5">
                 <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Usuario (Login)</Label>
                 <Input
                   required
-                  placeholder="se genera automáticamente"
+                  placeholder="auto"
                   value={form.username}
                   onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
-                  className="h-12 rounded-xl bg-slate-50"
+                  className="h-10 rounded-xl bg-slate-50"
                 />
               </div>
-              <div className="grid gap-2">
+              <div className="grid gap-1.5">
                 <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">
-                  {editingUser ? 'Nueva Contraseña (opcional)' : 'Contraseña *'}
+                  {editingUser ? 'Contraseña' : 'Contraseña *'}
                 </Label>
                 <div className="relative">
                   <Input
                     required={!editingUser}
                     type={showPassword ? 'text' : 'password'}
-                    placeholder={editingUser ? 'Dejar vacío para no cambiar' : '••••••••'}
+                    placeholder={editingUser ? 'Vacío = sin cambio' : '••••••••'}
                     value={form.password}
                     onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                    className="h-12 rounded-xl pr-10"
+                    className="h-10 rounded-xl pr-10"
                   />
                   <button
                     type="button"
@@ -501,67 +498,67 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
               </div>
             </div>
 
-            {/* Rol */}
-            <div className="grid gap-2">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Rol / Perfil *</Label>
-              <SearchableSelect
-                value={form.role}
-                onValueChange={val => setForm(f => ({ ...f, role: val, assignedFloors: val !== 'Azafata' ? [] : f.assignedFloors }))}
-                options={ROLE_OPTIONS}
-                placeholder="Seleccionar rol"
-                showSearch={false}
+            {/* Row 3: Email */}
+            <div className="grid gap-1.5">
+              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Email</Label>
+              <Input
+                type="email"
+                placeholder="usuario@grupogamma.com"
+                value={form.email}
+                onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                className="h-10 rounded-xl"
               />
             </div>
 
-            {/* Sectores — solo si rol es Azafata */}
+            {/* Row 4: Sectores — solo si Azafata */}
             {form.role === 'Azafata' && (
-              <div className="grid gap-2">
-                <div className="flex items-center justify-between">
-                  <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Sectores Asignados</Label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const allSelected = AREA_OPTIONS.every(o => form.assignedFloors.includes(o.value));
-                      setForm(f => ({ ...f, assignedFloors: allSelected ? [] : AREA_OPTIONS.map(o => o.value) }));
-                    }}
-                    className="text-[10px] font-bold text-emerald-600 hover:text-emerald-800 transition-colors"
-                  >
-                    {AREA_OPTIONS.every(o => form.assignedFloors.includes(o.value)) ? 'Deseleccionar todo' : 'Seleccionar todo'}
-                  </button>
-                </div>
-                <div className="border border-slate-200 rounded-xl p-3 space-y-2 max-h-[200px] overflow-y-auto">
-                  {AREA_OPTIONS.map(opt => (
-                    <label
-                      key={opt.value}
-                      className={cn(
-                        "flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors text-sm",
-                        form.assignedFloors.includes(opt.value)
-                          ? 'bg-emerald-50 border border-emerald-200 text-emerald-800 font-bold'
-                          : 'hover:bg-slate-50 text-slate-600'
-                      )}
+                <div className="grid gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Sectores Asignados</Label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const allSelected = AREA_OPTIONS.every(o => form.assignedFloors.includes(o.value));
+                        setForm(f => ({ ...f, assignedFloors: allSelected ? [] : AREA_OPTIONS.map(o => o.value) }));
+                      }}
+                      className="text-[10px] font-bold text-emerald-600 hover:text-emerald-800 transition-colors"
                     >
-                      <input
-                        type="checkbox"
-                        checked={form.assignedFloors.includes(opt.value)}
-                        onChange={() => toggleFloor(opt.value)}
-                        className="accent-emerald-600 w-4 h-4"
-                      />
-                      {opt.label.replace(' HPR', '')}
-                    </label>
-                  ))}
+                      {AREA_OPTIONS.every(o => form.assignedFloors.includes(o.value)) ? 'Deseleccionar todo' : 'Seleccionar todo'}
+                    </button>
+                  </div>
+                  <div className="border border-slate-200 rounded-xl p-2 grid grid-cols-2 gap-1.5">
+                    {AREA_OPTIONS.map(opt => (
+                      <label
+                        key={opt.value}
+                        className={cn(
+                          "flex items-center gap-2 px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors text-xs",
+                          form.assignedFloors.includes(opt.value)
+                            ? 'bg-emerald-50 border border-emerald-200 text-emerald-800 font-bold'
+                            : 'hover:bg-slate-50 text-slate-600'
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={form.assignedFloors.includes(opt.value)}
+                          onChange={() => toggleFloor(opt.value)}
+                          className="accent-emerald-600 w-3.5 h-3.5"
+                        />
+                        {opt.label.replace(' HPR', '')}
+                      </label>
+                    ))}
+                  </div>
+                  {form.assignedFloors.length > 0 && (
+                    <p className="text-[10px] text-slate-400 font-bold">{form.assignedFloors.length} de {AREA_OPTIONS.length} sectores</p>
+                  )}
                 </div>
-                {form.assignedFloors.length > 0 && (
-                  <p className="text-[10px] text-slate-400 font-bold mt-1">{form.assignedFloors.length} de {AREA_OPTIONS.length} sectores seleccionados</p>
-                )}
-              </div>
-            )}
+              )}
           </div>
           <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setModalOpen(false)} className="rounded-xl h-12 px-6">Cancelar</Button>
+            <Button variant="outline" onClick={() => setModalOpen(false)} className="rounded-xl h-10 px-6">Cancelar</Button>
             <Button
               onClick={handleSave}
               disabled={saving || !form.firstName || !form.role || (!editingUser && !form.password)}
-              className="bg-emerald-950 text-white rounded-xl h-12 px-8 disabled:opacity-50"
+              className="bg-emerald-950 text-white rounded-xl h-10 px-8 disabled:opacity-50"
             >
               {saving ? 'Guardando...' : editingUser ? 'Guardar Cambios' : 'Crear Usuario'}
             </Button>
