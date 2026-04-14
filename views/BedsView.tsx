@@ -58,6 +58,8 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
   const [enrichedBed, setEnrichedBed] = useState<Bed | null>(null);
   const [enrichLoading, setEnrichLoading] = useState(false);
+  const [pdfExporting, setPdfExporting] = useState<'normal' | 'alpha' | false>(false);
+  const [pdfProgress, setPdfProgress] = useState({ done: 0, total: 0 });
 
   // On-demand enrichment when user clicks an occupied bed
   React.useEffect(() => {
@@ -233,8 +235,50 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
   });
 
+  // ── Batch enrich for PDF export (concurrency limited) ──────────────────────
+  const enrichBedsForPdf = useCallback(async (bedsToExport: Bed[], type: 'normal' | 'alpha' = 'normal'): Promise<Bed[]> => {
+    if (!onEnrichBed) return bedsToExport;
+    const occupied = bedsToExport.filter(b => b.status === BedStatus.OCCUPIED && b.patientCode && !b.dni);
+    if (occupied.length === 0) return bedsToExport;
+
+    setPdfExporting(type);
+    setPdfProgress({ done: 0, total: occupied.length });
+
+    const enrichedMap = new Map<string, Bed>();
+    const queue = [...occupied];
+    let done = 0;
+
+    // 3 concurrent workers
+    const workers = Array.from({ length: 3 }, async () => {
+      while (queue.length > 0) {
+        const bed = queue.shift()!;
+        try {
+          const enriched = await onEnrichBed(bed);
+          enrichedMap.set(bed.id, enriched);
+        } catch { /* skip this bed */ }
+        done++;
+        setPdfProgress({ done, total: occupied.length });
+      }
+    });
+    await Promise.all(workers);
+
+    setPdfExporting(false);
+    return bedsToExport.map(b => enrichedMap.get(b.id) ?? b);
+  }, [onEnrichBed]);
+
   // ── PDF Export ─────────────────────────────────────────────────────────────
   const exportPDF = useCallback(async () => {
+    // Enrich all occupied beds before generating PDF
+    const enrichedBeds = await enrichBedsForPdf(filteredBeds, 'normal');
+    const enrichedByArea: Record<string, Bed[]> = {};
+    enrichedBeds.forEach((bed: Bed) => {
+      if (!enrichedByArea[bed.area]) enrichedByArea[bed.area] = [];
+      enrichedByArea[bed.area].push(bed);
+    });
+    const enrichedAreaEntries = AREA_ORDER
+      .filter(a => enrichedByArea[a])
+      .map(a => [a, enrichedByArea[a]] as [string, Bed[]]);
+
     // Inline helper: rasterise the SVG logo to a PNG data-URL
     const svgToLogoPng = (): Promise<string | null> => {
       return new Promise((resolve) => {
@@ -368,7 +412,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     // ── Rows ─────────────────────────────────────────────────────────────────
     let globalRowIndex = 0; // for alternating background across all areas
 
-    for (const [areaKey, areaBeds] of sortedAreaEntries) {
+    for (const [areaKey, areaBeds] of enrichedAreaEntries) {
       const areaLabel = AREA_LABELS[areaKey] ?? areaKey;
 
       // Area shaded header row
@@ -482,10 +526,13 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     }
 
     doc.save(`mapa-camas-${new Date().toISOString().slice(0, 10)}.pdf`);
-  }, [filteredBeds, sortedAreaEntries, bedTicketMap, currentUser]);
+  }, [filteredBeds, sortedAreaEntries, bedTicketMap, currentUser, enrichBedsForPdf]);
 
   // ── PDF Export (alphabetical by patient) ──────────────────────────────────
   const exportPDFAlpha = useCallback(async () => {
+    // Enrich all occupied beds before generating PDF
+    const enrichedBeds = await enrichBedsForPdf(filteredBeds, 'alpha');
+
     const svgToLogoPng = (): Promise<string | null> => {
       return new Promise((resolve) => {
         try {
@@ -576,7 +623,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     drawTableHeader();
 
     // Build flat list of beds with patient data, sorted alphabetically
-    const patientBeds = filteredBeds
+    const patientBeds = enrichedBeds
       .map(bed => {
         const ticket = bedTicketMap.get(bed.label);
         const isOccupied = bed.status === BedStatus.OCCUPIED;
@@ -648,7 +695,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     });
 
     doc.save(`pacientes-alfa-${new Date().toISOString().slice(0, 10)}.pdf`);
-  }, [filteredBeds, bedTicketMap, currentUser]);
+  }, [filteredBeds, bedTicketMap, currentUser, enrichBedsForPdf]);
 
   // ── Status helpers ────────────────────────────────────────────────────────
   const getStatusColor = (status: BedStatus) => {
@@ -753,13 +800,13 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                 <span className="hidden sm:inline">PROGAL</span>
               </div>
             ))}
-            <Button variant="outline" size="sm" onClick={exportPDF} className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50">
-              <Download className="h-3 w-3" />
-              <span className="hidden sm:inline">PDF</span>
+            <Button variant="outline" size="sm" onClick={exportPDF} disabled={!!pdfExporting} className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50 disabled:opacity-50">
+              {pdfExporting === 'normal' ? <span className="inline-block w-3 h-3 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : <Download className="h-3 w-3" />}
+              <span className="hidden sm:inline">{pdfExporting === 'normal' ? `${pdfProgress.done}/${pdfProgress.total}` : 'PDF'}</span>
             </Button>
-            <Button variant="outline" size="sm" onClick={exportPDFAlpha} className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50">
-              <Download className="h-3 w-3" />
-              <span className="hidden sm:inline">PDF A-Z</span>
+            <Button variant="outline" size="sm" onClick={exportPDFAlpha} disabled={!!pdfExporting} className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50 disabled:opacity-50">
+              {pdfExporting === 'alpha' ? <span className="inline-block w-3 h-3 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : <Download className="h-3 w-3" />}
+              <span className="hidden sm:inline">{pdfExporting === 'alpha' ? `${pdfProgress.done}/${pdfProgress.total}` : 'PDF A-Z'}</span>
             </Button>
           </div>
         </div>

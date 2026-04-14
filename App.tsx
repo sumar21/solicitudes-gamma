@@ -397,11 +397,11 @@ export default function App() {
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shrink-0" />
               <p className="text-xs font-semibold text-red-800">
-                Tenés <span className="font-black">{state.unreadSpNotifications.length}</span> notificación{state.unreadSpNotifications.length > 1 ? 'es' : ''} sin confirmar hace más de 5 minutos
+                Tenés <span className="font-black">{state.unreadSpNotifications.length}</span> notificación{state.unreadSpNotifications.length > 1 ? 'es' : ''} sin confirmar hace más de 20 minutos
               </p>
             </div>
             <button
-              onClick={() => setIsUnreadModalOpen(true)}
+              onClick={() => { console.log('[App] Opening unread modal, count:', state.unreadSpNotifications?.length); setIsUnreadModalOpen(true); }}
               className="text-[10px] font-black uppercase tracking-widest text-red-700 hover:text-red-900 border border-red-300 rounded-lg px-2 py-1 hover:bg-red-100 transition-colors shrink-0"
             >
               Ver pendientes

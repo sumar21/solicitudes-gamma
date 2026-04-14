@@ -908,49 +908,56 @@ export const useHospitalState = () => {
     } catch { /* silent */ }
   };
 
+  const checkUnreadNotifications = useCallback(async () => {
+    try {
+      const r = await authFetch('/api/notifications');
+      if (!r.ok) return;
+      const data = await r.json();
+      const unread = (data.notifications ?? []).filter((n: any) => n.status === 'Enviada');
+      const twentyMinAgo = Date.now() - 20 * 60 * 1000;
+      const old = unread.filter((n: any) => new Date(n.fecha).getTime() < twentyMinAgo);
+      setUnreadSpNotifications(old);
+    } catch { /* silent */ }
+  }, [authFetch]);
+
   const handleMarkNotificationRead = (id: string) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
-    // Also mark as read in SP (non-blocking)
+    // Mark as read in SP, then refetch to verify
     authFetch('/api/notifications', {
       method: 'PATCH',
       body: JSON.stringify({ notificationId: id }),
-    }).catch(() => {});
+    }).then(() => checkUnreadNotifications()).catch(() => {});
   };
   const handleMarkAllNotificationsRead = () => {
-    const unread = notifications.filter(n => !n.isRead);
     setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
-    // Mark all unread in SP (non-blocking)
-    for (const n of unread) {
-      authFetch('/api/notifications', {
-        method: 'PATCH',
-        body: JSON.stringify({ notificationId: n.id }),
-      }).catch(() => {});
-    }
+    // Mark all in SP, then refetch
+    Promise.all(
+      unreadSpNotifications.map(n =>
+        authFetch('/api/notifications', {
+          method: 'PATCH',
+          body: JSON.stringify({ notificationId: n.id }),
+        }).catch(() => {})
+      )
+    ).then(() => checkUnreadNotifications());
   };
-  const handleDismissToast              = (id: string) => setToasts(prev => prev.filter(t => t.id !== id));
+  const handleDismissToast = (id: string) => {
+    // Find the notification associated with this toast and mark it as read
+    const toast = toasts.find(t => t.id === id);
+    if (toast?.notification) {
+      handleMarkNotificationRead(toast.notification.id);
+    }
+    setToasts(prev => prev.filter(t => t.id !== id));
+  };
 
   // ── Unread SP notifications check (for banner) ────────────────────────────
   const [unreadSpNotifications, setUnreadSpNotifications] = useState<{ id: string; title: string; message: string; fecha: string }[]>([]);
 
   useEffect(() => {
     if (!token || !currentUser) return;
-    // Fetch unread notifications from SP every 30 seconds
-    const check = async () => {
-      try {
-        const r = await authFetch('/api/notifications');
-        if (!r.ok) return;
-        const data = await r.json();
-        const unread = (data.notifications ?? []).filter((n: any) => n.status === 'Enviada');
-        // Only show banner for notifications older than 5 minutes
-        const fiveMinAgo = Date.now() - 5 * 60 * 1000;
-        const old = unread.filter((n: any) => new Date(n.fecha).getTime() < fiveMinAgo);
-        setUnreadSpNotifications(old);
-      } catch { /* silent */ }
-    };
-    check();
-    const interval = setInterval(check, 30_000);
+    checkUnreadNotifications();
+    const interval = setInterval(checkUnreadNotifications, 30_000);
     return () => clearInterval(interval);
-  }, [token, currentUser, authFetch]);
+  }, [token, currentUser, checkUnreadNotifications]);
 
   return {
     state: {
