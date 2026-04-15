@@ -142,6 +142,7 @@ export async function sendPushToSubscribers(params: PushParams): Promise<void> {
         await webpush.sendNotification(
           { endpoint: sub.endpoint, keys: sub.keys },
           payload,
+          { urgency: 'high', TTL: 60 * 60 }, // high priority = heads-up on Android
         );
       } catch (err: any) {
         if (err?.statusCode === 404 || err?.statusCode === 410) {

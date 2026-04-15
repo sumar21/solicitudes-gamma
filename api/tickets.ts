@@ -219,6 +219,7 @@ async function handler(req: any, res: any) {
           [TicketStatus.IN_TRANSPORT]: 'Traslado en Curso',
           [TicketStatus.WAITING_CONSOLIDATION]: 'Recepción Confirmada',
           [TicketStatus.COMPLETED]: 'Traslado Finalizado',
+          [TicketStatus.REJECTED]: 'Traslado Cancelado',
         };
         const label = statusLabels[updates.status];
         if (label) {

@@ -27,7 +27,7 @@ export default defineConfig({
         short_name: 'MediFlow',
         description: 'Sistema de gestión de traslados hospitalarios',
         theme_color: '#022C22',
-        background_color: '#f8fafc',
+        background_color: '#022C22',
         display: 'standalone',
         start_url: '/',
         icons: [

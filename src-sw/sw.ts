@@ -11,13 +11,15 @@ self.addEventListener('push', (event) => {
   const data = event.data?.json() ?? {};
   const { title, body, ticketId, type } = data;
 
-  const options: NotificationOptions & { vibrate?: number[] } = {
+  const options: NotificationOptions & { vibrate?: number[]; renotify?: boolean; requireInteraction?: boolean } = {
     body: body ?? '',
     icon: '/logo.svg',
     badge: '/logo.svg',
     tag: ticketId ?? `notif-${Date.now()}`,
     data: { ticketId, type },
     vibrate: [200, 100, 200],
+    renotify: true,           // show heads-up even if same tag exists
+    requireInteraction: true,  // don't auto-dismiss on Android
   };
 
   event.waitUntil(
