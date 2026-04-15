@@ -359,6 +359,7 @@ Las suscripciones expiradas (HTTP 404/410) se limpian automáticamente.
 - El manifest configura la app como `standalone` con nombre "Grupo Gamma - Gestión de Traslados".
 - El SW precachea assets estáticos y excluye `/api/` del fallback de navegación.
 - `vercel.json` configura el header `Service-Worker-Allowed: /` para el SW.
+- **Instalación en Android:** el sidebar mobile muestra un botón "Instalar App" (solo en Android) que captura el evento `beforeinstallprompt` del browser y dispara el prompt de instalación nativo. Desaparece tras instalar o si la app ya está instalada.
 
 ---
 
