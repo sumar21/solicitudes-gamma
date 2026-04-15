@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   LayoutDashboard, Home as HomeIcon, LogOut, History, Menu, Info,
-  Mail, Lock, Eye, EyeOff, User, Settings, ChevronDown, ChevronUp, Users
+  Mail, Lock, Eye, EyeOff, User, Settings, ChevronDown, ChevronUp, Users, Download
 } from './components/Icons';
 import { GammaLogo } from './components/GammaLogo';
 import { Button } from "./components/ui/button";
@@ -45,6 +45,19 @@ export default function App() {
     const total = completed.reduce((acc, t) => acc + calculateTicketMetrics(t).totalCycleTime, 0);
     return Math.round(total / completed.length);
   }, [state.tickets]);
+
+  // PWA install prompt
+  const [installPrompt, setInstallPrompt] = useState<any>(null);
+  React.useEffect(() => {
+    const handler = (e: any) => { e.preventDefault(); setInstallPrompt(e); };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+  const handleInstallApp = () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    installPrompt.userChoice.then(() => setInstallPrompt(null));
+  };
 
   // UI State local (para control de modales)
   const [isNewRequestOpen, setIsNewRequestOpen] = useState(false);
@@ -338,7 +351,10 @@ export default function App() {
                 </div>
               )}
             </nav>
-            <div className="p-3 border-t border-white/10">
+            <div className="p-3 border-t border-white/10 space-y-1">
+              {installPrompt && /android/i.test(navigator.userAgent) && (
+                <Button variant="ghost" className="w-full justify-start gap-3 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/20" onClick={() => { handleInstallApp(); setIsMobileMenuOpen(false); }}><Download className="w-4 h-4" /> Instalar App</Button>
+              )}
               <Button variant="ghost" className="w-full justify-start gap-3 text-red-400 hover:text-red-300 hover:bg-red-950/20" onClick={() => { actions.handleLogout(); setIsMobileMenuOpen(false); }}><LogOut className="w-4 h-4" /> Salir</Button>
             </div>
           </div>
