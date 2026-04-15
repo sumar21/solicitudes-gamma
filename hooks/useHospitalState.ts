@@ -926,11 +926,12 @@ export const useHospitalState = () => {
     authFetch('/api/notifications', {
       method: 'PATCH',
       body: JSON.stringify({ notificationId: id }),
-    }).then(() => checkUnreadNotifications()).catch(() => {});
+    }).then(() => setTimeout(checkUnreadNotifications, 1500)).catch(() => {});
   };
   const handleMarkAllNotificationsRead = () => {
     setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
-    // Mark all in SP, then refetch
+    setUnreadSpNotifications([]); // clear immediately for instant UI feedback
+    // Mark all in SP, then verify after delay
     Promise.all(
       unreadSpNotifications.map(n =>
         authFetch('/api/notifications', {
@@ -938,7 +939,7 @@ export const useHospitalState = () => {
           body: JSON.stringify({ notificationId: n.id }),
         }).catch(() => {})
       )
-    ).then(() => checkUnreadNotifications());
+    ).then(() => setTimeout(checkUnreadNotifications, 1500));
   };
   const handleDismissToast = (id: string) => {
     // Find the notification associated with this toast and mark it as read

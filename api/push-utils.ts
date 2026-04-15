@@ -161,7 +161,7 @@ export async function sendPushToSubscribers(params: PushParams): Promise<void> {
   // Save notification records in 10.Notificaciones (non-blocking)
   if (SITE_ID && NOTIF_LIST_ID) {
     const notifPath = `/sites/${SITE_ID}/lists/${NOTIF_LIST_ID}/items`;
-    const now = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(); // UTC-3 (Argentina)
+    const now = new Date().toISOString();
     Promise.allSettled(
       relevant.map(async (sub) => {
         try {

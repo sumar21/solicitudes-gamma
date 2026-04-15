@@ -11,10 +11,14 @@
             "id": "039511b34dbd78e8",
             "type": "leaf",
             "state": {
-              "type": "graph",
-              "state": {},
-              "icon": "lucide-git-fork",
-              "title": "Vista gráfica"
+              "type": "markdown",
+              "state": {
+                "file": "CLAUDE.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "CLAUDE"
             }
           }
         ]
@@ -178,6 +182,8 @@
   },
   "active": "039511b34dbd78e8",
   "lastOpenFiles": [
+    "hooks/useHospitalState.ts.tmp.3132.1776195099019",
+    "docs/Grupo Gamma - APIv30 (3).pdf",
     "views/BedsView.tsx.tmp.3132.1776194243459",
     "views/BedsView.tsx.tmp.3132.1776194230945",
     "views/BedsView.tsx.tmp.3132.1776194221566",
@@ -187,8 +193,6 @@
     "views/BedsView.tsx.tmp.3132.1776193882102",
     "views/BedsView.tsx.tmp.3132.1776193844009",
     "views/BedsView.tsx.tmp.3132.1776193826191",
-    "views/BedsView.tsx.tmp.3132.1776193798715",
-    "views/BedsView.tsx.tmp.3132.1776193780324",
     "CLAUDE.md",
     "CLAUDE.MD",
     "docs/decisiones.md",
