@@ -500,3 +500,77 @@ Registro de decisiones técnicas inferidas del código fuente. Cada entrada docu
 **Qué:** En vez de un `alert()` nativo cuando hay traslado activo para la misma cama, se muestra un warning inline amber debajo del selector de origen y se deshabilita el botón "Generar Ticket".
 
 **Por qué:** El `alert()` era feo y bloqueante. El warning inline es visible antes de intentar crear el ticket.
+
+---
+
+## 12. Decisiones recientes (2026-04-22)
+
+### 12.1. Aislamientos multi-tipo almacenados en un único campo SP con separador `;`
+
+**Qué:** La columna `Tipo_A` de `08.Aislamientos` guarda los tipos de aislamiento activos por paciente concatenados con `;` (ej: `"Covid;Contacto;Neutropénico"`). En el frontend se modela como `Map<string, IsolationType[]>` (key = `patientCode`).
+
+**Por qué:**
+- **Alternativa descartada 1: multi-choice de SharePoint.** Las columnas de tipo Choice multi-valor en SP devuelven arrays en Graph API pero el editor y la API son frágiles (orden inestable, chequeos adicionales). La lectura vía `$expand=fields` a veces serializa inconsistentemente.
+- **Alternativa descartada 2: una fila por (paciente, tipo).** Requería `Promise.all` para crear/borrar varias filas en cada toggle y manejar parcialmente el fracaso de alguna. Además romper el esquema "un paciente = un registro" complicaba la UI de ABM.
+- **Ventaja del string con `;`:** cambios atómicos (un solo PATCH), backward-compat (los valores viejos con un solo tipo se parsean como array de uno), fácil de inspeccionar desde SP directamente.
+
+**Impacto:** toda la cadena (modal de nueva solicitud, modal de edición, mapa de camas, operativa) se actualizó para trabajar con arrays. El mapa sigue eligiendo el primer tipo del array para pintar el color del ring de la cama.
+
+### 12.2. `IntervinoAzafata_T` reemplaza la heurística de timestamps para `canCancel`
+
+**Qué:** La lógica anterior determinaba `canCancel` comparando `createdDateTime` vs `lastModifiedDateTime` del item de SP con margen de 2 segundos. Se reemplazó por una columna explícita `IntervinoAzafata_T` que pasa de `"NO"` a `"SI"` en la primera acción de azafata.
+
+**Por qué:**
+- La heurística de timestamps era frágil: cualquier PATCH (ej: actualizar observaciones desde SP directo, renombrar) rompía el check aunque nadie del flujo hubiera intervenido.
+- Una columna dedicada hace el contrato explícito y auditablemente correcto.
+- El bloqueo aplica no solo a cancelar sino también a editar (feature nuevo), manteniendo una sola fuente de verdad.
+
+### 12.3. `requireInteraction: false` en push (Android)
+
+**Qué:** Se quitó `requireInteraction: true` del `showNotification()` del Service Worker.
+
+**Por qué (contraintuitivo):** la flag estaba puesta para que la notif no se auto-descarte hasta que el usuario interactúe. **Pero** varias versiones de Chrome Android interpretan `requireInteraction: true` como "notif persistente/ongoing" y **saltan el heads-up banner**, enviando la notif directo al centro de notificaciones sin mostrar toast. Causó que el cliente reportara "suena y llega al centro pero no sale el toast".
+
+**Trade-off aceptado:** la notif se auto-descarta tras ~5-10s, pero sí aparece el heads-up. Prioriza que el personal vea el alerta en el momento.
+
+**Refuerzos adicionales combinados:** `silent: false` explícito (algunos builds lo asumen silent si falta), vibración más agresiva `[300, 120, 300, 120, 300]`, y acción `[{ action: 'open', title: 'Ver' }]` (Android bumpea la importance de notifs con acciones).
+
+### 12.4. Tag único por evento en push para evitar colapso silencioso
+
+**Qué:** El payload del push ahora incluye `tag = ${ticketId}-${type}-${Date.now()}` en vez de solo `ticketId`. El SW lo usa al crear la notif.
+
+**Por qué:** con un `tag` fijo por ticket, Chrome Android colapsaba las notifs consecutivas (crear → status update → modificación) reemplazando la anterior **sin mostrar heads-up**, aunque `renotify: true` debería forzarlo (varios builds lo ignoran). Un tag único por evento hace que cada notif sea "nueva" desde la óptica del sistema y siempre dispare el banner.
+
+### 12.5. Cache `/api/beds` fail-open con staleness flag ante 504 del proxy Gamma
+
+**Qué:** Si `obtenermapacamas` u `obtenermapacamasocupadas` devuelven algo que no sea JSON array válido con status 2xx (típicamente el proxy nginx responde 504 HTML), el handler **no sobrescribe el caché** y sirve el último snapshot bueno con header `X-Beds-Stale: 1` y body `{ stale: true }`. Si no hay caché, responde 503 explícito.
+
+**Por qué:** la versión anterior tenía una función `safeJson` que devolvía `[]` cuando el parse fallaba, y el handler seguía como si hubiera sido exitoso. Resultado: durante un 504 de `obtenermapacamasocupadas` se guardaba un array vacío como `occData` y **las camas ocupadas se mostraban como disponibles** — riesgo operativo real (admin podía asignar una cama que ya tenía paciente). Ahora la falla es visible y los datos viejos se conservan hasta que Gamma vuelva.
+
+### 12.6. Supresión de notif de status change al editar destino
+
+**Qué:** El change-detection del polling solo emite la notif de "status cambió" (ej: "Habitación Lista") **cuando NO hubo cambio de destino en la misma actualización**. Si cambió el destino, solo emite las tres notifs de modificación (cancelación destino viejo / nueva destino nuevo / modificación origen).
+
+**Por qué:** al editar destino, el status del ticket se recalcula automáticamente (WAITING_ROOM ↔ IN_TRANSIT según si la nueva cama estaba AVAILABLE o PREPARATION). Eso disparaba un "Habitación Lista" inesperado en los clientes, confuso porque ninguna azafata había marcado nada — era consecuencia técnica de la edición. Las notifs de modificación ya cubren el evento real.
+
+### 12.7. Radio GPS a 200m + prefix matching de IP con longitud arbitraria
+
+**Qué:**
+- `GEO_RADIUS_METERS` subió de 100 m a 200 m en `validate-location.ts`.
+- La comparación de IP dejó de asumir prefijo /24 exacto; ahora usa `startsWith` con separador `.` de seguridad, aceptando prefijos de 1, 2, 3 u 4 octetos (y IPs completas).
+
+**Por qué:**
+- 100 m no cubría un hospital multi-pabellón con una sola coordenada configurada. Subirlo a 200 m evita falsos negativos por estar en la punta opuesta del edificio. Si 200 m sigue siendo chico para un caso particular, el sistema ya soporta agregar varias coords por sede en `99.ABM_GeoIPS`.
+- Para IP: si el admin configuraba algo que no fuera exactamente un prefijo de 3 octetos (ej: `"192.168"` queriendo /16, o una IP completa), nada matcheaba. Era bug silencioso. Ahora acepta cualquier longitud con el truco del `.` al final para evitar falsos positivos entre `"192.168.1"` y `"192.168.10.5"`.
+
+### 12.8. Mensajes de error específicos por tipo de rechazo de ubicación
+
+**Qué:** El endpoint `validate-location` ahora devuelve `method: 'ip_no_match' | 'geo_no_match' | 'geo_unavailable' | 'no_ip'` en los rechazos con `reason` accionable ("Permití la geolocalización...", "Estás fuera del área autorizada para la sede X (radio 200m)", etc.).
+
+**Por qué:** antes todos los rechazos devolvían el mismo string genérico ("Ubicación o red no autorizada"). El user no sabía si el problema era su red, el GPS denegado por el browser, o estar fuera del rango. El mensaje específico guía al usuario a la acción correcta (permitir GPS, usar wifi del hospital, etc.).
+
+### 12.9. `localStorage` como única fuente del token (no `sessionStorage`)
+
+**Qué:** Corregido el bug en `UserManagementView`, `RoleManagementView` y `AuditModal` que leían el token de `sessionStorage` cuando el login lo guarda en `localStorage`.
+
+**Por qué:** era inconsistencia histórica — el resto de la app siempre usó `localStorage` (clave `TOKEN_KEY = 'mediflow_token'`). Los tres archivos afectados hacían fetch directo en vez de usar el `authFetch` centralizado y copiaron mal la lectura del token. Efecto: esos tres componentes recibían `null` → mandaban `Authorization: Bearer null` → SP respondía 401 → el endpoint de roles convertía 401 en 200 con array vacío → la UI mostraba "sin resultados" silenciosamente. El fix es un cambio de una palabra por archivo. **Convención reforzada:** siempre `localStorage.getItem('mediflow_token')`; idealmente, usar el `authFetch` del hook y evitar duplicar la lectura.

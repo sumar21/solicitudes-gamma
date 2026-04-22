@@ -266,13 +266,20 @@ Responsabilidades:
 
 **Acciones que expone:**
 - `handleLogin`, `handleLogout` — autenticación.
-- `handleCreateTicket`, `handleValidateTicket`, `handleAssignBedAction`, `handleHousekeepingAction`, `handleStartTransport`, `handleCompleteTransport`, `handleRoomReady`, `handleConfirmReception`, `handleConsolidate`, `handleRejectTicket` — ciclo de vida del ticket.
-- `fetchBeds`, `fetchTickets` — fetch manual.
-- `toggleIsolation` — aislamientos.
+- `handleCreateTicket`, `handleEditTicket`, `handleValidateTicket`, `handleAssignBedAction`, `handleHousekeepingAction`, `handleStartTransport`, `handleCompleteTransport`, `handleRoomReady`, `handleConfirmReception`, `handleConsolidate`, `handleRejectTicket` — ciclo de vida del ticket.
+- `fetchBeds`, `fetchTickets`, `refreshAll` — fetch manual (este último invalida ETags y trae camas + tickets + aislamientos en paralelo; se dispara desde el botón "Refrescar" del mapa).
+- `toggleIsolation(bedLabel, nextTypes?)` — aislamientos multi-tipo (`nextTypes` es array; `undefined` o `[]` borra todos los tipos del paciente).
 - `handleUpdateUserAreas` — áreas de azafata.
 - Setters: `setCurrentView`, `setActiveRole`, `setLoginEmail`, etc.
 
 **Merge de camas:** la función `mergeBeds()` combina los datos reales de Gamma con el estado de los tickets activos para reflejar camas asignadas, en preparación u ocupadas por un traslado en curso.
+
+**Edición de ticket (`handleEditTicket`):** admite cambiar workflow, destino, motivo de cambio, financiador ITR, observaciones y aislamiento (este último afecta al paciente globalmente, no solo al ticket). Valida que la nueva cama destino siga `AVAILABLE` o `PREPARATION` al momento del guardado (protege contra race conditions con otros admins), recalcula `status` y `targetBedOriginalStatus` según el estado Gamma de la nueva cama, y registra un único evento `"Modificacion - {cambios} - Motivo: {motivo}"` en `08.DetalleTraslados` con los cambios concatenados por ` | `. La liberación de la cama vieja es **implícita** gracias a `mergeBeds`: al dejar de apuntar a ella, el overlay se retira y la cama vuelve a mostrar su estado Gamma original (respeta AVAILABLE vs PREPARATION).
+
+**Polling:**
+- `tickets`: cada 8 s.
+- `beds`: cada 60 s.
+- `isolations`: cada 30 s (antes solo se cargaba al login, lo que causaba que cambios de aislamiento no se propagaran a otros dispositivos hasta re-loguear).
 
 ### 5.3. Vistas
 
@@ -376,6 +383,10 @@ Las suscripciones expiradas (HTTP 404/410) se limpian automáticamente.
 | `99.ABMRoles_Traslados` | `68836bbe-18c5-4cb2-8cc6-e21ecae96710` | Roles y permisos |
 | `99.ABM_GeoIPS` | `c30a13f0-070a-45bf-9ff2-415b36325af5` | IPs y geolocalizaciones permitidas |
 
+**Columnas nuevas (2026-04-22):**
+- `07.Traslados.IntervinoAzafata_T` (Text): `"NO"` al crear el ticket, pasa a `"SI"` en la primera acción de azafata (`handleRoomReady`, `handleStartTransport`, `handleConfirmReception`). Gatekeepa la cancelación y edición: solo se permite mientras esté en `"NO"`.
+- `08.Aislamientos.Tipo_A` (Text): almacena uno o varios tipos de aislamiento activos por paciente, separados por `;` (ej: `"Covid;Contacto"`). Backward-compatible: los registros con un solo tipo se leen como array de un elemento.
+
 ---
 
 ## 10. Patrones y decisiones de diseño
@@ -397,6 +408,20 @@ Si la validación de IP/geo falla técnicamente, se permite el acceso. En un con
 
 ### PWA para dispositivos compartidos
 La app funciona como PWA instalable. Las Azafatas usan tablets compartidas con tokens de larga duración (~10 años) para evitar re-login constante.
+
+### Cache fail-open en `/api/beds` ante fallo parcial de Gamma
+El proxy Gamma puede responder 504 (Gateway Timeout) en uno de los dos endpoints consumidos (`obtenermapacamas` u `obtenermapacamasocupadas`). En ese caso el handler NO sobrescribe el caché con datos parciales (que haría aparecer camas ocupadas como disponibles — riesgo operativo de doble asignación), sino que devuelve el último snapshot válido con `X-Beds-Stale: 1` y `{ stale: true }` en el body. Si no hay caché previo, responde 503 para que el frontend conserve su estado actual en lugar de limpiar el mapa.
+
+### Notificaciones de modificación de traslado
+Cuando Admisión edita el destino de un ticket, se emiten tres notificaciones distinguidas por área:
+- Área destino **viejo**: "Traslado Cancelado" (el paciente ya no va a llegar)
+- Área destino **nuevo**: "Nueva Solicitud de Traslado"
+- Área de **origen**: "Modificación de Solicitud"
+
+El change-detection del polling (`useEffect` en `useHospitalState`) compara snapshots `${status}|${destination}` para detectar cambios de destino además de status. El editor pre-semilla su propio snapshot antes del `setTickets` para evitar duplicar las notifs en su propia sesión.
+
+### Tag único por evento en Web Push
+Cada payload de push incluye `tag: ticketId-type-timestamp`. Esto evita que Chrome Android colapse silenciosamente notifs consecutivas del mismo ticket (cuando el tag se repite, varios builds ignoran `renotify: true` y no muestran heads-up). El SW usa ese tag al llamar `showNotification()`.
 
 ---
 

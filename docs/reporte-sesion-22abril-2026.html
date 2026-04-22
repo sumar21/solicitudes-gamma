@@ -5,11 +5,16 @@
 <title>MediFlow · Reporte de Sesión · 22 abril 2026</title>
 <style>
   :root {
-    --brand:        #022C22;
-    --brand-light:  #064e3b;
-    --amber:        #fbbf24;
-    --amber-soft:   #fef3c7;
-    --amber-bg:     #fffbeb;
+    /* Paleta oficial del Grupo Gamma (tailwind.config.js → gamma.*) */
+    --brand:        #034334; /* gamma-500 — verde principal del brand */
+    --brand-dark:   #022C22; /* gamma-600/700 — verde muy oscuro, solo para acentos puntuales */
+    --brand-50:     #f0fdf4; /* gamma-50 */
+    --brand-100:    #dcfce7; /* gamma-100 */
+    --brand-200:    #bbf7d0; /* gamma-200 */
+    --brand-500:    #079271; /* gamma-300 — verde vibrante para acentos */
+    --brand-600:    #059669; /* gamma-400 */
+    --brand-700:    #034334; /* gamma-500 */
+    --gamma-yellow: #fbbf24;
     --slate-900:    #0f172a;
     --slate-700:    #334155;
     --slate-500:    #64748b;
@@ -18,12 +23,8 @@
     --slate-200:    #e2e8f0;
     --slate-100:    #f1f5f9;
     --slate-50:     #f8fafc;
-    --green:        #10b981;
-    --green-bg:     #d1fae5;
-    --red:          #dc2626;
-    --red-bg:       #fee2e2;
-    --orange:       #ea580c;
-    --orange-bg:    #ffedd5;
+    --blue-100:     #dbeafe;
+    --blue-700:     #1d4ed8;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -64,7 +65,7 @@
     gap: 32px;
     margin-bottom: 36px;
     padding-bottom: 20px;
-    border-bottom: 3px solid var(--slate-100);
+    border-bottom: 3px solid var(--brand-100);
   }
   .brand-left {
     display: flex;
@@ -100,7 +101,7 @@
     color: var(--slate-500);
     font-weight: 500;
   }
-  .brand-title .subtitle strong { color: var(--slate-700); }
+  .brand-title .subtitle strong { color: var(--brand-700); }
   .brand-right {
     text-align: right;
     font-size: 10pt;
@@ -114,8 +115,6 @@
     letter-spacing: -0.3px;
   }
   .brand-right .time { color: var(--slate-400); }
-  .brand-right .lead { margin-top: 4px; }
-  .brand-right .lead strong { color: var(--slate-700); }
 
   /* ── Section heading ────────────────────────────────────────── */
   h2.section {
@@ -133,14 +132,14 @@
     width: 9px;
     height: 9px;
     border-radius: 50%;
-    background: var(--amber);
+    background: var(--brand-500);
     flex-shrink: 0;
   }
 
   /* ── Summary callout box ────────────────────────────────────── */
   .summary {
-    background: var(--amber-bg);
-    border-left: 4px solid var(--amber);
+    background: var(--brand-50);
+    border-left: 4px solid var(--brand-500);
     padding: 18px 22px;
     border-radius: 6px;
     margin-bottom: 8px;
@@ -160,7 +159,7 @@
     content: '•';
     position: absolute;
     left: 4px;
-    color: var(--amber);
+    color: var(--brand-500);
     font-weight: 900;
   }
   .summary ul li strong { color: var(--slate-900); }
@@ -176,12 +175,12 @@
     text-align: left;
     padding: 10px 12px;
     font-weight: 700;
-    color: var(--slate-500);
+    color: var(--brand-700);
     font-size: 8.5pt;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    border-bottom: 2px solid var(--slate-200);
-    background: var(--slate-50);
+    border-bottom: 2px solid var(--brand-200);
+    background: var(--brand-50);
   }
   table.items tbody td {
     padding: 12px;
@@ -203,16 +202,15 @@
     text-transform: uppercase;
     letter-spacing: 0.3px;
   }
-  .status-badge.done  { background: var(--green-bg);  color: #047857; }
-  .status-badge.plus  { background: #dbeafe;          color: #1d4ed8; }
-  .status-badge.pend  { background: var(--orange-bg); color: var(--orange); }
+  .status-badge.done  { background: var(--brand-100); color: var(--brand-700); }
+  .status-badge.plus  { background: var(--brand-50);  color: var(--brand-600); border: 1px solid var(--brand-200); }
 
   .item-name { font-weight: 700; color: var(--slate-900); font-size: 10pt; }
   .item-desc { color: var(--slate-500); font-size: 9pt; margin-top: 3px; line-height: 1.4; }
 
   /* ── Tag col ───────────────────────────────────────────────── */
   .col-num {
-    color: var(--slate-400);
+    color: var(--brand-500);
     font-family: 'SF Mono', 'Consolas', monospace;
     font-size: 8.5pt;
     font-weight: 700;
@@ -220,44 +218,11 @@
   }
   .col-status { width: 80px; }
 
-  /* ── Pending box ────────────────────────────────────────────── */
-  .pending {
-    background: #fff7ed;
-    border: 1px solid #fed7aa;
-    border-radius: 8px;
-    padding: 16px 20px;
-    margin-top: 6px;
-  }
-  .pending-title {
-    font-size: 9.5pt;
-    font-weight: 800;
-    color: var(--orange);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 10px;
-  }
-  .pending ul { list-style: none; }
-  .pending ul li {
-    padding-left: 18px;
-    position: relative;
-    margin-bottom: 8px;
-    font-size: 10pt;
-    color: var(--slate-700);
-    line-height: 1.5;
-  }
-  .pending ul li::before {
-    content: '◻';
-    position: absolute;
-    left: 0;
-    color: var(--orange);
-  }
-  .pending ul li strong { color: var(--slate-900); }
-
   /* ── Footer ─────────────────────────────────────────────────── */
   .page-footer {
     margin-top: 40px;
     padding-top: 18px;
-    border-top: 1px solid var(--slate-100);
+    border-top: 1px solid var(--brand-100);
     font-size: 8.5pt;
     color: var(--slate-400);
     display: flex;
@@ -291,12 +256,12 @@
     <div class="brand-left">
       <div class="brand-logo">
         <svg viewBox="0 0 299 300" xmlns="http://www.w3.org/2000/svg" fill="none">
-          <path d="M177.763 209.923C175.477 205.948 171.246 203.498 166.673 203.498H132.327C127.75 203.498 123.523 205.948 121.236 209.923L104.063 239.768C101.776 243.743 101.776 248.643 104.063 252.618L121.236 282.462C123.523 286.437 127.753 288.887 132.327 288.887H166.676C171.252 288.887 175.479 286.437 177.766 282.462L194.939 252.618C197.226 248.643 197.226 243.743 194.939 239.768L177.763 209.923Z" fill="#fbbf24"/>
-          <path d="M121.236 90.078C123.523 94.053 127.753 96.503 132.327 96.503H166.676C171.252 96.503 175.479 94.053 177.766 90.078L194.939 60.2336C197.226 56.2586 197.226 51.3586 194.939 47.3836L177.763 17.5363C175.477 13.5613 171.249 11.1113 166.673 11.1113H132.327C127.75 11.1113 123.523 13.5613 121.236 17.5363L104.063 47.3808C101.776 51.3558 101.776 56.2558 104.063 60.2308L121.236 90.078Z" fill="#fbbf24"/>
-          <path d="M277.967 191.673L260.794 161.825C258.507 157.85 254.276 155.4 249.703 155.4H215.354C210.778 155.4 206.55 157.85 204.263 161.825L187.09 191.67C184.803 195.645 184.803 200.545 187.09 204.52L204.263 234.364C206.55 238.339 210.78 240.789 215.354 240.789H249.703C254.279 240.789 258.507 238.339 260.794 234.364L277.967 204.52C280.254 200.548 280.254 195.648 277.967 191.673Z" fill="#fbbf24"/>
-          <path d="M38.2046 138.175C40.4914 142.15 44.7217 144.6 49.2953 144.6H83.6443C88.2207 144.6 92.4482 142.15 94.735 138.175L111.908 108.33C114.195 104.355 114.195 99.4554 111.908 95.4804L94.735 65.6359C92.4482 61.6609 88.2179 59.2109 83.6443 59.2109H49.2981C44.7217 59.2109 40.4942 61.6609 38.2074 65.6359L21.0315 95.4776C18.7447 99.4526 18.7447 104.353 21.0315 108.328L38.2046 138.175Z" fill="#fbbf24"/>
-          <path d="M111.911 191.672L94.7378 161.827C92.451 157.852 88.2207 155.402 83.6471 155.402H49.2981C44.7217 155.402 40.4942 157.852 38.2074 161.827L21.0315 191.672C18.7447 195.647 18.7447 200.547 21.0315 204.522L38.2046 234.366C40.4914 238.341 44.7217 240.791 49.2953 240.791H83.6443C88.2207 240.791 92.4482 238.341 94.735 234.366L111.908 204.522C114.198 200.547 114.198 195.647 111.911 191.672Z" fill="#fbbf24"/>
-          <path d="M187.087 108.328L202.187 134.567H183.43C179.142 127.098 173.821 117.831 173.821 117.831C171.863 114.428 168.242 112.331 164.327 112.331H134.926C131.008 112.331 127.39 114.428 125.433 117.831L110.732 143.379C108.774 146.781 108.774 150.976 110.732 154.379L125.433 179.926C127.39 183.329 131.008 185.426 134.926 185.426H164.327C168.245 185.426 171.863 183.329 173.821 179.926L184.305 161.704H148.89V143.829H177.536H188.737H211.054C212.417 144.317 213.859 144.601 215.348 144.601H249.697C254.274 144.601 258.501 142.151 260.788 138.176L277.961 108.331C280.248 104.356 280.248 99.4563 277.961 95.4813L260.794 65.634C258.507 61.659 254.277 59.209 249.703 59.209H215.354C210.778 59.209 206.55 61.659 204.263 65.634L187.09 95.4785C184.801 99.4535 184.801 104.353 187.087 108.328Z" fill="#fbbf24"/>
+          <path d="M177.763 209.923C175.477 205.948 171.246 203.498 166.673 203.498H132.327C127.75 203.498 123.523 205.948 121.236 209.923L104.063 239.768C101.776 243.743 101.776 248.643 104.063 252.618L121.236 282.462C123.523 286.437 127.753 288.887 132.327 288.887H166.676C171.252 288.887 175.479 286.437 177.766 282.462L194.939 252.618C197.226 248.643 197.226 243.743 194.939 239.768L177.763 209.923Z" fill="#ffffff"/>
+          <path d="M121.236 90.078C123.523 94.053 127.753 96.503 132.327 96.503H166.676C171.252 96.503 175.479 94.053 177.766 90.078L194.939 60.2336C197.226 56.2586 197.226 51.3586 194.939 47.3836L177.763 17.5363C175.477 13.5613 171.249 11.1113 166.673 11.1113H132.327C127.75 11.1113 123.523 13.5613 121.236 17.5363L104.063 47.3808C101.776 51.3558 101.776 56.2558 104.063 60.2308L121.236 90.078Z" fill="#ffffff"/>
+          <path d="M277.967 191.673L260.794 161.825C258.507 157.85 254.276 155.4 249.703 155.4H215.354C210.778 155.4 206.55 157.85 204.263 161.825L187.09 191.67C184.803 195.645 184.803 200.545 187.09 204.52L204.263 234.364C206.55 238.339 210.78 240.789 215.354 240.789H249.703C254.279 240.789 258.507 238.339 260.794 234.364L277.967 204.52C280.254 200.548 280.254 195.648 277.967 191.673Z" fill="#ffffff"/>
+          <path d="M38.2046 138.175C40.4914 142.15 44.7217 144.6 49.2953 144.6H83.6443C88.2207 144.6 92.4482 142.15 94.735 138.175L111.908 108.33C114.195 104.355 114.195 99.4554 111.908 95.4804L94.735 65.6359C92.4482 61.6609 88.2179 59.2109 83.6443 59.2109H49.2981C44.7217 59.2109 40.4942 61.6609 38.2074 65.6359L21.0315 95.4776C18.7447 99.4526 18.7447 104.353 21.0315 108.328L38.2046 138.175Z" fill="#ffffff"/>
+          <path d="M111.911 191.672L94.7378 161.827C92.451 157.852 88.2207 155.402 83.6471 155.402H49.2981C44.7217 155.402 40.4942 157.852 38.2074 161.827L21.0315 191.672C18.7447 195.647 18.7447 200.547 21.0315 204.522L38.2046 234.366C40.4914 238.341 44.7217 240.791 49.2953 240.791H83.6443C88.2207 240.791 92.4482 238.341 94.735 234.366L111.908 204.522C114.198 200.547 114.198 195.647 111.911 191.672Z" fill="#ffffff"/>
+          <path d="M187.087 108.328L202.187 134.567H183.43C179.142 127.098 173.821 117.831 173.821 117.831C171.863 114.428 168.242 112.331 164.327 112.331H134.926C131.008 112.331 127.39 114.428 125.433 117.831L110.732 143.379C108.774 146.781 108.774 150.976 110.732 154.379L125.433 179.926C127.39 183.329 131.008 185.426 134.926 185.426H164.327C168.245 185.426 171.863 183.329 173.821 179.926L184.305 161.704H148.89V143.829H177.536H188.737H211.054C212.417 144.317 213.859 144.601 215.348 144.601H249.697C254.274 144.601 258.501 142.151 260.788 138.176L277.961 108.331C280.248 104.356 280.248 99.4563 277.961 95.4813L260.794 65.634C258.507 61.659 254.277 59.209 249.703 59.209H215.354C210.778 59.209 206.55 61.659 204.263 65.634L187.09 95.4785C184.801 99.4535 184.801 104.353 187.087 108.328Z" fill="#ffffff"/>
         </svg>
       </div>
       <div class="brand-title">
@@ -314,25 +279,24 @@
   <h2 class="section">Resumen de la sesión</h2>
   <div class="summary">
     <p>
-      Sesión centrada en el <strong>feedback operativo del cliente</strong> sobre el flujo de traslados,
-      más una auditoría de módulos críticos (push notifications, ABMs, validación por ubicación).
-      Se cerraron los 12 items del listado entregado por el cliente y se implementó un <strong>nuevo
-      feature de edición de traslados</strong> con trazabilidad completa.
+      Sesión centrada en el <strong>feedback operativo del cliente</strong> sobre el flujo diario de
+      traslados, más una revisión general de módulos importantes como notificaciones móviles,
+      carga de usuarios y validación de ubicación al ingresar a la app.
     </p>
     <ul>
-      <li><strong>Editar traslados</strong>: modal de edición con campos condicionales por workflow,
-          motivo obligatorio, notificaciones distinguidas por área (cancelación/nueva/modificación)
-          y registro en historial de auditoría.</li>
-      <li><strong>Aislamientos multi-tipo</strong>: un paciente puede tener varios tipos simultáneos.
-          Refactor completo (SP, hook, UI de mapa, operativa y nueva solicitud).</li>
-      <li><strong>IntervinoAzafata_T</strong>: columna SP que bloquea cancelación/edición una vez que
-          la azafata realizó cualquier acción del workflow.</li>
-      <li><strong>Push Android</strong>: corrección de causa raíz por la que no aparecía el toast
-          heads-up (combinación de tag único por evento y eliminación de <code>requireInteraction</code>).</li>
-      <li><strong>Excel con trazabilidad completa</strong>: dos hojas (Tickets / Movimientos) con
-          motivo de cancelación, modificaciones, usuarios y timestamps por hito.</li>
-      <li><strong>Fix crítico de caché</strong> en <code>/api/beds</code> que ocultaba camas ocupadas
-          cuando el proxy Gamma devolvía 504.</li>
+      <li><strong>Edición de traslados</strong>: se puede modificar un traslado ya creado (destino,
+          observaciones, aislamiento y más) siempre que la azafata aún no haya intervenido.
+          Cada modificación queda registrada con fecha, usuario y motivo.</li>
+      <li><strong>Varios aislamientos a la vez</strong>: un paciente ahora puede tener más de un
+          tipo de aislamiento activo simultáneamente (por ejemplo Covid + Contacto).</li>
+      <li><strong>Control de intervención de azafata</strong>: el sistema ahora sabe si la azafata
+          ya arrancó a trabajar sobre un traslado. Si ya lo hizo, no se puede cancelar ni editar
+          (evita dejar tareas "a medias" en limpio).</li>
+      <li><strong>Notificaciones en Android</strong>: se corrigió el motivo por el que no aparecía
+          el aviso en pantalla (toast); ahora el personal sí lo ve cuando llega la notificación.</li>
+      <li><strong>Exportaciones enriquecidas</strong>: el Excel del historial trae el motivo de
+          cancelación, los usuarios que intervinieron y una segunda hoja con todos los movimientos
+          del traslado (creación, limpieza, inicio, recepción, consolidación y modificaciones).</li>
     </ul>
   </div>
 
@@ -351,8 +315,8 @@
         <td class="col-num">1</td>
         <td>
           <div class="item-name">Aislamientos múltiples</div>
-          <div class="item-desc">Un paciente puede tener varios tipos de aislamiento simultáneos.
-            SP guarda los tipos separados por ";". Multi-select en nueva solicitud, edición y mapa de camas.</div>
+          <div class="item-desc">Un paciente puede tener varios tipos de aislamiento al mismo tiempo.
+            Se pueden seleccionar desde el alta, desde la edición del traslado y desde el mapa de camas.</div>
         </td>
         <td><span class="status-badge done">✓ Hecho</span></td>
       </tr>
@@ -360,68 +324,74 @@
         <td class="col-num">2</td>
         <td>
           <div class="item-name">Exportación de traslados cancelados con motivo</div>
-          <div class="item-desc">El Excel ahora incluye columnas "Motivo Cancelación",
-            "Cancelado por" y "Observaciones" para los tickets rechazados.</div>
+          <div class="item-desc">El Excel ahora suma las columnas "Motivo Cancelación", "Cancelado por"
+            y "Observaciones" para los traslados rechazados.</div>
         </td>
         <td><span class="status-badge done">✓ Hecho</span></td>
       </tr>
       <tr>
         <td class="col-num">3</td>
         <td>
-          <div class="item-name">Exportación de traslados completos con detalle de auditoría (08.DetalleTraslados)</div>
-          <div class="item-desc">Nueva hoja "Movimientos" en el Excel con cada hito del traslado:
-            creación, habitación preparada, inicio traslado, paciente recibido, consolidación,
-            más modificaciones y cancelaciones. Con fecha, usuario y detalle de cada evento.</div>
+          <div class="item-name">Exportación de traslados con detalle completo de auditoría</div>
+          <div class="item-desc">El Excel ahora trae una segunda hoja llamada "Movimientos" con el
+            paso a paso de cada traslado: creación, habitación preparada, inicio, paciente recibido,
+            consolidación, cancelaciones y modificaciones. Cada movimiento muestra fecha, usuario
+            que lo hizo y detalle.</div>
         </td>
         <td><span class="status-badge done">✓ Hecho</span></td>
       </tr>
       <tr>
         <td class="col-num">4</td>
         <td>
-          <div class="item-name">Impedir que la azafata cancele aislamientos</div>
-          <div class="item-desc">Validado: <code>toggleIsolation</code> ya tenía la guarda por rol.
-            Las azafatas nunca ven los controles de aislamiento en el modal del mapa.</div>
+          <div class="item-name">La azafata no puede cancelar aislamientos</div>
+          <div class="item-desc">Se validó: el sistema ya bloqueaba esta acción por rol.
+            Las azafatas no ven los controles de aislamiento dentro del mapa de camas.</div>
         </td>
         <td><span class="status-badge done">✓ Ya estaba</span></td>
       </tr>
       <tr>
         <td class="col-num">5</td>
         <td>
-          <div class="item-name">Toast de notificaciones no aparecía en Android</div>
-          <div class="item-desc">Causa raíz: <code>requireInteraction: true</code> hacía que Android
-            tratara la notif como "ongoing" y saltara el heads-up. Fix: se cambió a false,
-            se agregó tag único por evento, <code>silent: false</code> explícito, vibración más agresiva
-            y botón de acción "Ver".</div>
+          <div class="item-name">Las notificaciones no mostraban el aviso en pantalla en Android</div>
+          <div class="item-desc">Se identificó la causa (una configuración que hacía que Android
+            mandara la notificación directo al centro de notificaciones sin mostrarla en pantalla)
+            y se ajustó. Ahora el personal ve el aviso flotante al recibir una notificación,
+            además del sonido y la entrada en el centro.</div>
         </td>
         <td><span class="status-badge done">✓ Hecho</span></td>
       </tr>
       <tr>
         <td class="col-num">6</td>
         <td>
-          <div class="item-name">Anular solicitud sin intervención de azafata + notificaciones de cancelación</div>
-          <div class="item-desc">Nueva columna <code>IntervinoAzafata_T</code> en SP: queda en "NO"
-            al crear y pasa a "SI" en la primera acción de azafata. La cancelación solo se permite
-            mientras esté en "NO". Las notifs de cancelación ya funcionaban y se mantienen.</div>
+          <div class="item-name">Cancelar una solicitud antes de que la azafata intervenga (con avisos)</div>
+          <div class="item-desc">El sistema marca un traslado como "la azafata ya intervino" apenas
+            se realiza la primera acción (limpiar, iniciar traslado, confirmar recepción). Mientras
+            no haya intervenido, admisión puede cancelar la solicitud. Los avisos de cancelación
+            siguen llegando a los sectores involucrados.</div>
         </td>
         <td><span class="status-badge done">✓ Hecho</span></td>
       </tr>
       <tr>
         <td class="col-num">7</td>
         <td>
-          <div class="item-name">Editar traslado (cambiar destino y otros datos + reiniciar la tarjeta)</div>
-          <div class="item-desc">Nuevo modal de edición con campos condicionales por workflow.
-            Reset del estado del ticket: si la nueva cama está disponible → IN_TRANSIT;
-            si está en preparación → WAITING_ROOM. Liberación implícita de la cama vieja.
-            Motivo de modificación obligatorio, registrado en auditoría.</div>
+          <div class="item-name">Editar un traslado (cambiar destino y otros datos) reinicia la tarjeta</div>
+          <div class="item-desc">Al editar, el traslado vuelve al paso inicial correspondiente según
+            cómo esté la cama nueva: si la cama ya está disponible, queda en "habitación lista";
+            si está en preparación, queda esperando que la azafata confirme la limpieza.
+            Requiere un motivo de modificación que queda registrado en el historial de auditoría.
+            Las notificaciones se mandan distinguidas: "cancelación" al destino anterior,
+            "nueva solicitud" al destino nuevo y "modificación" al origen.</div>
         </td>
         <td><span class="status-badge done">✓ Hecho</span></td>
       </tr>
       <tr>
         <td class="col-num">8</td>
         <td>
-          <div class="item-name">Aislamientos no se refresheaban entre usuarios</div>
-          <div class="item-desc">Bug encontrado: <code>fetchIsolations</code> solo corría al login.
-            Los cambios no llegaban a otros dispositivos hasta re-loguear. Fix: polling cada 30 segundos.</div>
+          <div class="item-name">Los aislamientos no se actualizaban en otros dispositivos</div>
+          <div class="item-desc">Antes, cuando un admin marcaba o cambiaba un aislamiento, los demás
+            usuarios solo lo veían reflejado si cerraban sesión y volvían a entrar.
+            Ahora los aislamientos se sincronizan automáticamente cada 30 segundos
+            en todos los dispositivos conectados.</div>
         </td>
         <td><span class="status-badge done">✓ Hecho</span></td>
       </tr>
@@ -429,44 +399,43 @@
         <td class="col-num">9</td>
         <td>
           <div class="item-name">Camas de ITR al principio de los desplegables</div>
-          <div class="item-desc">Ordenamiento por AREA_ORDER aplicado a Origen y Destino en el modal
-            de Nueva Solicitud. Las camas 7777-N de ITR aparecen primero, luego los pisos 4-8,
-            y al final UCO/UTI/URP/Sueño.</div>
+          <div class="item-desc">En el alta de traslados, las camas de ITR aparecen primero en las
+            listas de Origen y Destino, seguidas por los pisos 4 a 8 y al final las áreas críticas
+            (Unidad Coronaria, Terapia Intensiva, Recuperación, Sueño).</div>
         </td>
         <td><span class="status-badge done">✓ Hecho</span></td>
       </tr>
       <tr>
         <td class="col-num">10</td>
         <td>
-          <div class="item-name">En operativa se ve el tipo de aislamiento (no solo el ícono)</div>
-          <div class="item-desc">Badge violeta con el nombre del tipo (ej: "Covid", "Por Gotas") junto
-            al nombre del paciente, tanto en vista mobile (cards) como desktop (tabla).
-            Si hay múltiples tipos, muestra uno por cada uno.</div>
+          <div class="item-name">En operativa se ve qué tipo de aislamiento tiene el paciente</div>
+          <div class="item-desc">Antes solo aparecía un ícono genérico. Ahora, al lado del nombre del
+            paciente, se ve el tipo específico: "Covid", "Por Gotas", "Neutropénico", etc.
+            Si el paciente tiene varios tipos al mismo tiempo, se muestran todos.</div>
         </td>
         <td><span class="status-badge done">✓ Hecho</span></td>
       </tr>
       <tr>
         <td class="col-num">11</td>
         <td>
-          <div class="item-name">ABM de Usuarios y Roles no cargaba</div>
-          <div class="item-desc">Bug crítico: <code>UserManagementView</code>, <code>RoleManagementView</code>
-            y <code>AuditModal</code> leían el token de <code>sessionStorage</code>, pero el login
-            lo guarda en <code>localStorage</code>. Corregido en los 3 archivos.</div>
+          <div class="item-name">El ABM de Usuarios y Roles no cargaba</div>
+          <div class="item-desc">Las pantallas de administración de usuarios y roles estaban vacías
+            y no permitían crear nuevos registros. Se solucionó el problema de fondo, que era que
+            esas pantallas buscaban la sesión del usuario en un lugar distinto al que usaba el
+            resto de la aplicación. Ahora cargan los datos correctamente y permiten dar de alta.</div>
         </td>
         <td><span class="status-badge done">✓ Hecho</span></td>
       </tr>
       <tr>
         <td class="col-num">12</td>
         <td>
-          <div class="item-name">Bloqueo por IP o Georreferencia — auditoría y fixes</div>
-          <div class="item-desc">Detección y corrección de 4 bugs latentes:
-            (a) comparación de IP rota para prefijos distintos a /24 →
-            ahora acepta <code>192.168</code>, <code>192.168.1</code>, IP completa con <code>startsWith</code> seguro;
-            (b) match de sede demasiado permisivo → ahora exige word-boundary tras el nombre;
-            (c) IPv4-mapeadas (<code>::ffff:</code>) no se normalizaban → ahora sí;
-            (d) radio GPS subido de 100m a 200m para cubrir hospital multi-pabellón.
-            Además: mensajes de error específicos al rechazar, timeout GPS 10s → 15s,
-            log claro de fail-opens en Vercel.</div>
+          <div class="item-name">Bloqueo por IP y por ubicación (GPS) — revisión y mejoras</div>
+          <div class="item-desc">Se auditó todo el sistema de validación de ubicación y se mejoraron
+            varios puntos: el área permitida por GPS pasó de 100 a 200 metros (para cubrir un
+            hospital con varios pabellones), la validación de IP ahora acepta diferentes formatos
+            (no solo los tradicionales), y los mensajes de rechazo ahora explican qué falló
+            exactamente (si es la red, si falta permitir el GPS del navegador, si el usuario
+            está fuera del área, etc.) así el personal sabe cómo solucionarlo.</div>
         </td>
         <td><span class="status-badge done">✓ Hecho</span></td>
       </tr>
@@ -487,18 +456,19 @@
       <tr>
         <td class="col-num">13</td>
         <td>
-          <div class="item-name">Filtro por estado en Historial (Todos / Consolidados / Cancelados)</div>
-          <div class="item-desc">Tres botones toggle que filtran la vista y el Excel respeta
-            el filtro activo. Nombre del archivo incluye el filtro aplicado.</div>
+          <div class="item-name">Filtro por estado en el Historial</div>
+          <div class="item-desc">Se sumaron tres botones "Todos / Consolidados / Cancelados" para
+            filtrar rápidamente. El Excel exportado respeta el filtro que esté activo y el nombre
+            del archivo lo indica.</div>
         </td>
         <td><span class="status-badge plus">+ Extra</span></td>
       </tr>
       <tr>
         <td class="col-num">14</td>
         <td>
-          <div class="item-name">Botón "Refrescar" en Mapa de Camas</div>
-          <div class="item-desc">Forzar actualización manual (invalida ETag y trae camas, tickets
-            y aislamientos en paralelo) para casos donde el polling no trae los últimos cambios.</div>
+          <div class="item-name">Botón "Refrescar" en el Mapa de Camas</div>
+          <div class="item-desc">Permite forzar la actualización manual del mapa cuando se quiere
+            tener la foto más reciente sin esperar al refresco automático.</div>
         </td>
         <td><span class="status-badge plus">+ Extra</span></td>
       </tr>
@@ -506,73 +476,55 @@
         <td class="col-num">15</td>
         <td>
           <div class="item-name">Campo "Paciente" en modo solo lectura en Nueva Solicitud</div>
-          <div class="item-desc">Se llena automáticamente al seleccionar la cama de origen y
-            no permite edición manual — evita inconsistencias entre lo cargado y los datos de Gamma.</div>
+          <div class="item-desc">Al seleccionar la cama de origen, el nombre del paciente se carga
+            automáticamente y ya no se puede modificar manualmente — evita errores de tipeo o
+            inconsistencias con los datos reales del sistema PROGAL.</div>
         </td>
         <td><span class="status-badge plus">+ Extra</span></td>
       </tr>
       <tr>
         <td class="col-num">16</td>
         <td>
-          <div class="item-name">"Asignada a [Paciente]" en camas destino del mapa</div>
-          <div class="item-desc">Las camas reservadas a un paciente con traslado pendiente ahora
-            muestran "→ NOMBRE PACIENTE" en cursiva, no solo el número de cama.</div>
+          <div class="item-name">"Asignada a [Paciente]" en las camas destino del mapa</div>
+          <div class="item-desc">Cuando una cama está reservada para un paciente con un traslado
+            en curso, ahora se ve el nombre del paciente en la cama destino (antes solo se veía
+            el número de cama, sin contexto).</div>
         </td>
         <td><span class="status-badge plus">+ Extra</span></td>
       </tr>
       <tr>
         <td class="col-num">17</td>
         <td>
-          <div class="item-name">Fix crítico: caché vacío en /api/beds durante 504 del proxy Gamma</div>
-          <div class="item-desc">Bug operativo riesgoso: cuando <code>obtenermapacamasocupadas</code>
-            devolvía 504 Gateway Timeout, el endpoint sobrescribía el caché con datos vacíos y
-            las camas ocupadas se mostraban como disponibles. Ahora detecta el fallo y sirve
-            el último snapshot válido con flag <code>stale</code>.</div>
+          <div class="item-name">Camas ocupadas dejaron de aparecer como disponibles ante cortes de PROGAL</div>
+          <div class="item-desc">Se corrigió un problema riesgoso: cuando el sistema del hospital
+            (PROGAL) tardaba mucho en responder, el mapa de camas podía aparecer con camas ocupadas
+            mostrándose como disponibles, lo que podía llevar a asignar una cama que ya tenía
+            un paciente. Ahora, ante una caída parcial, el mapa se queda con los últimos datos
+            buenos hasta que PROGAL vuelva a responder.</div>
         </td>
         <td><span class="status-badge plus">+ Extra</span></td>
       </tr>
       <tr>
         <td class="col-num">18</td>
         <td>
-          <div class="item-name">Fix: PATCH 400 en /api/notifications</div>
-          <div class="item-desc">Las notificaciones locales (generadas client-side) tenían IDs
-            con prefijo "NOTIF-" que SharePoint rechazaba con 400 al intentar marcarlas como leídas.
-            Ahora se filtran por origen antes de llamar al endpoint.</div>
+          <div class="item-name">Arreglo de errores al marcar notificaciones como leídas</div>
+          <div class="item-desc">Algunas notificaciones nuevas generaban errores al intentar marcarlas
+            como leídas. Se detectó y corrigió. Ahora el proceso es silencioso y correcto.</div>
         </td>
         <td><span class="status-badge plus">+ Extra</span></td>
       </tr>
       <tr>
         <td class="col-num">19</td>
         <td>
-          <div class="item-name">Modal de Auditoría compactado + footer sticky</div>
-          <div class="item-desc">Reducción de padding, tipografía y espacio entre hitos para que
-            entre en zoom 100-125% sin scroll. El botón "Cerrar Auditoría" queda siempre visible abajo.</div>
+          <div class="item-name">Modal de Auditoría más compacto</div>
+          <div class="item-desc">El detalle de auditoría de cada traslado ahora entra sin necesidad
+            de scroll en resoluciones normales (100-125% de zoom). El botón "Cerrar Auditoría"
+            siempre queda visible, sin importar el zoom del usuario.</div>
         </td>
         <td><span class="status-badge plus">+ Extra</span></td>
       </tr>
     </tbody>
   </table>
-
-  <!-- Pending -->
-  <h2 class="section">Pendientes declarados (fuera del alcance de esta sesión)</h2>
-  <div class="pending">
-    <div class="pending-title">En stand-by por definición pendiente con cliente / Gamma</div>
-    <ul>
-      <li>
-        <strong>Circuito de Ingresos externos</strong> — Flujo: Admisión asigna cama →
-        azafata busca al paciente → azafata presiona "CAMA OCUPADA". Feature nuevo.
-        Quedaron definidas 5 preguntas de diseño a confirmar (¿fusionar con ITR_TO_FLOOR?,
-        ¿buscar paciente en Gamma por documento?, etc.).
-      </li>
-      <li>
-        <strong>Integración con Gamma para fecha de ingreso, tipo de internación y días de estadía</strong> —
-        Identificamos que el método actual <code>obtenereventointernacion</code> no devuelve esos campos.
-        El método más completo (<code>obtenerinformacioneventos</code>) sí trae FECHA y PRESENTACION.
-        Pendiente: decidir cómo mapear el tipo clínico (C/Q/T/K/H/O) desde PRESENTACION
-        (heurística por órdenes vs mapeo manual vs solicitud de campo explícito a Gamma).
-      </li>
-    </ul>
-  </div>
 
   <!-- Footer -->
   <div class="page-footer">

@@ -1048,3 +1048,166 @@ if (Date.now() - appStartTimeRef.current < 15_000) {
   return;
 }
 ```
+
+---
+
+## Nuevos patrones (2026-04-22)
+
+### Snapshot compuesto para detectar múltiples cambios en polling
+
+El snapshot del change-detection pasó de `Map<ticketId, status>` a `Map<ticketId, "${status}|${destination}">`. Esto permite detectar cambios de destino (edición) además de cambios de status, y disparar notifs distintas para cada caso.
+
+```ts
+const snapKey = (t: Ticket) => `${t.status}|${t.destination ?? ''}`;
+const next = new Map(tickets.map(t => [t.id, snapKey(t)]));
+
+// Dentro del loop por ticket:
+if (prevKey !== snapKey(t)) {
+  const [prevStatus, prevDestRaw] = prevKey.split('|');
+  const destChanged   = (prevDestRaw ?? '') !== (t.destination ?? '');
+  const statusChanged = prevStatus !== t.status;
+  // ... emitir notifs según qué cambió
+}
+```
+
+**Regla:** si `destChanged && statusChanged`, NO emitir la notif de status (es consecuencia técnica de la edición; las tres notifs distinguidas de destino ya cubren el evento).
+
+### Pre-seed del snapshot antes del `setTickets` optimistic
+
+Cuando una acción del usuario actualiza un ticket de forma optimistic y queremos que el change-detector NO vea el cambio como novedad (para no emitir notifs al editor), pre-semillamos el ref **antes** del setState:
+
+```ts
+// ── Optimistic update + persist ───────────────────────────────
+writingRef.current = true;
+
+// Pre-seed snapshot BEFORE the state update so the change-detection useEffect
+// never sees a transient diff when it runs for the optimistic update.
+const postKey = `${updates.status ?? ticket.status}|${updates.destination ?? ticket.destination ?? ''}`;
+prevTicketSnapshotRef.current.set(ticket.id, postKey);
+
+setTickets(prev => prev.map(t => t.id === ticket.id ? { ...t, ...updates } : t));
+```
+
+**Por qué antes del setState y no después:** React puede ejecutar el useEffect de change-detection entre el `setState` y la próxima línea del handler. Si el ref está desactualizado en ese momento, el detector ve cambio y notifica falsamente.
+
+### Multi-select de enums via toggle en Set/Array
+
+Para campos multi-valor (como tipos de aislamiento):
+
+```ts
+const [isolationTypes, setIsolationTypes] = useState<IsolationType[]>([]);
+
+const toggleType = (t: IsolationType) => {
+  setIsolationTypes(prev =>
+    prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]
+  );
+};
+```
+
+**UI:** botones con `aria-pressed={selected}` y background condicional. Cuando `aria-pressed` no alcanza (por accesibilidad en producción), agregar también `checkbox hidden` detrás.
+
+### Serializar lista en campo SP de texto con separador `;`
+
+Para listas cortas y finitas (como tipos de aislamiento):
+
+```ts
+// Backend: serializar al escribir
+const tipoStr = tipos.join(';'); // e.g. "Covid;Contacto"
+
+// Backend: parsear al leer, filtrando valores inválidos
+const parseTipos = (raw: unknown): string[] =>
+  String(raw ?? '').split(';').map(s => s.trim()).filter(Boolean);
+
+// Validar contra el enum antes de exponer al frontend:
+const validTypes = Object.values(IsolationType);
+const filtered = parsed.filter((t): t is IsolationType =>
+  validTypes.includes(t as IsolationType)
+);
+```
+
+**Backward-compat:** los registros viejos con un solo valor se leen como array de un elemento sin cambios.
+
+### Header `X-Beds-Stale` para indicar datos cacheados
+
+Cuando `/api/beds` no puede validar el estado actual en Gamma (upstream 504, etc.) pero tiene caché previo, devuelve ese caché con:
+
+```ts
+res.setHeader('X-Beds-Stale', '1');
+return res.status(200).json({ beds: bedsCache.beds, stale: true });
+```
+
+**Nombre del header:** `X-Beds-Stale`. Convención interna del proyecto.
+
+**Alternativa a 503:** si no hay caché previo, sí devolver 503 para que el frontend conserve su estado actual sin sobrescribir.
+
+### Fetch en tandas para no saturar SharePoint
+
+Cuando hay que traer datos de N items con endpoints que aceptan solo uno a la vez (ej: eventos de auditoría por ticket en el export de Excel):
+
+```ts
+const BATCH_SIZE = 10;
+for (let i = 0; i < items.length; i += BATCH_SIZE) {
+  const batch = items.slice(i, i + BATCH_SIZE);
+  const results = await Promise.all(batch.map(item =>
+    fetch(`/api/...?id=${item.id}`).then(r => r.json()).catch(() => null)
+  ));
+  // process results
+}
+```
+
+**Por qué 10:** balance entre latencia total y presión sobre SP. SP aguanta bien 10 en paralelo; 50+ empieza a lanzar throttling.
+
+### Tag de push único por evento
+
+```ts
+// Backend (api/push-utils.ts)
+const uniqueTag = `${ticketId ?? 'nt'}-${type ?? 'evt'}-${Date.now()}`;
+const payload = JSON.stringify({ title, body, ticketId, type, tag: uniqueTag, timestamp: Date.now() });
+```
+
+```ts
+// Service Worker (src-sw/sw.ts)
+const notifTag = data.tag ?? `${data.ticketId}-${data.type}-${Date.now()}`;
+self.registration.showNotification(title, { tag: notifTag, /* ... */ });
+```
+
+**Por qué no reusar `ticketId`:** Android colapsa silenciosamente notifs con tag repetido, aunque `renotify: true` debería forzarlo. Un tag único por evento garantiza heads-up en cada notif.
+
+### Convención: nunca usar `sessionStorage` para el token
+
+El token JWT SIEMPRE se lee de `localStorage` bajo la clave `'mediflow_token'`:
+
+```ts
+// ✓ correcto
+const token = localStorage.getItem('mediflow_token');
+
+// ✗ error — el login nunca escribe acá
+const token = sessionStorage.getItem('mediflow_token');
+```
+
+**Ideal:** usar el `authFetch` del hook `useHospitalState` en vez de armar headers manualmente. Duplicar la lectura del token en múltiples archivos es fuente conocida de bugs (pasó con `UserManagementView`, `RoleManagementView` y `AuditModal` en la sesión 2026-04-22).
+
+### Formato del evento de modificación en `08.DetalleTraslados`
+
+Los eventos de edición de traslado se persisten como un único `TicketEvent` con `tipo` serializado:
+
+```
+Modificacion - {cambio1} | {cambio2} | ... - Motivo: {motivo del usuario}
+```
+
+Ejemplo: `"Modificacion - Destino: Cama 401 → Cama 509 | Aislamiento: — → Covid, CD - Motivo: Paciente no subió a la cama"`
+
+**Parser en el frontend** (`AuditModal.tsx`):
+
+```ts
+function parseModification(tipo: string): { changes: string[]; motivo: string } | null {
+  if (!tipo.startsWith('Modificacion')) return null;
+  const content = tipo.replace(/^Modificacion\s*-\s*/, '');
+  const motivoIdx = content.lastIndexOf(' - Motivo:');
+  const changesStr = motivoIdx >= 0 ? content.slice(0, motivoIdx) : content;
+  const motivo     = motivoIdx >= 0 ? content.slice(motivoIdx + ' - Motivo:'.length).trim() : '';
+  return { changes: changesStr.split(' | ').map(s => s.trim()).filter(Boolean), motivo };
+}
+```
+
+**Por qué un único registro y no uno por campo cambiado:** una edición humana es una decisión unitaria con un motivo único. Más prolijo en la auditoría y sigue permitiendo ver qué cambió (lista de changes).
