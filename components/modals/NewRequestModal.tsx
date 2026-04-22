@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { Bed, BedStatus, WorkflowType, IsolationType } from '../../types';
+import { Area, Bed, BedStatus, WorkflowType, IsolationType } from '../../types';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -9,12 +9,29 @@ import { SearchableSelect } from '../ui/searchable-select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { ITR_SOURCES, ROOM_CHANGE_REASONS } from '../../lib/constants';
 
+// Same ordering used in BedsView: ITR first, then floors, then critical units
+const AREA_ORDER: Area[] = [
+  Area.HIT,
+  Area.PISO_4, Area.PISO_5, Area.PISO_6, Area.PISO_7, Area.PISO_8,
+  Area.HUC, Area.HUT, Area.HUQ, Area.HSS,
+];
+const areaRank = (a?: Area | string) => {
+  const idx = AREA_ORDER.indexOf(a as Area);
+  return idx === -1 ? AREA_ORDER.length : idx;
+};
+const sortByAreaThenLabel = (a: Bed, b: Bed) => {
+  const ra = areaRank(a.area);
+  const rb = areaRank(b.area);
+  if (ra !== rb) return ra - rb;
+  return a.label.localeCompare(b.label, 'es', { numeric: true });
+};
+
 interface NewRequestModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreate: (data: { patientName: string; origin: string; destination: string; workflow: WorkflowType; reason?: string; itrSource?: string; observations?: string; isolation?: boolean }) => void;
+  onCreate: (data: { patientName: string; origin: string; destination: string; workflow: WorkflowType; reason?: string; itrSource?: string; observations?: string; isolation?: boolean; isolationTypes?: IsolationType[] }) => void;
   beds: Bed[];
-  isolatedPatients?: Map<string, IsolationType>;
+  isolatedPatients?: Map<string, IsolationType[]>;
   activeTransferOrigins?: Set<string>;
 }
 
@@ -27,7 +44,11 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
   const [itrSource, setItrSource] = useState('');
   const [observations, setObservations] = useState('');
   const [isolation, setIsolation] = useState(false);
-  const [isolationType, setIsolationType] = useState<IsolationType | ''>('');
+  const [isolationTypes, setIsolationTypes] = useState<IsolationType[]>([]);
+
+  const toggleType = (t: IsolationType) => {
+    setIsolationTypes(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]);
+  };
 
   React.useEffect(() => {
     if (!open) {
@@ -39,7 +60,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
       setItrSource('');
       setObservations('');
       setIsolation(false);
-      setIsolationType('');
+      setIsolationTypes([]);
     }
   }, [open]);
 
@@ -61,7 +82,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
       itrSource: workflow === WorkflowType.ITR_TO_FLOOR ? itrSource : undefined,
       observations: observations.trim() !== '' ? observations : undefined,
       isolation,
-      isolationType: isolationType || undefined,
+      isolationTypes: isolation && isolationTypes.length ? isolationTypes : undefined,
     });
     
     // Reset form
@@ -75,8 +96,12 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
     onOpenChange(false);
   };
 
-  const availableOrigins = beds.filter(b => b.status === BedStatus.OCCUPIED);
-  const availableDestinations = beds.filter(b => b.status === BedStatus.AVAILABLE || b.status === BedStatus.PREPARATION);
+  const availableOrigins = beds
+    .filter(b => b.status === BedStatus.OCCUPIED)
+    .sort(sortByAreaThenLabel);
+  const availableDestinations = beds
+    .filter(b => b.status === BedStatus.AVAILABLE || b.status === BedStatus.PREPARATION)
+    .sort(sortByAreaThenLabel);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -109,7 +134,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
                 if (bed?.institution) setItrSource(bed.institution);
                 if (bed?.patientCode && isolatedPatients.has(bed.patientCode)) {
                   setIsolation(true);
-                  setIsolationType(isolatedPatients.get(bed.patientCode) || '');
+                  setIsolationTypes(isolatedPatients.get(bed.patientCode) ?? []);
                 }
               }}
               options={availableOrigins.map(bed => ({
@@ -129,7 +154,14 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
 
           <div className="grid gap-2">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Paciente</Label>
-            <Input required placeholder="Nombre completo" value={patientName} onChange={e => setPatientName(e.target.value)} className="h-10 rounded-xl" />
+            <Input
+              required
+              readOnly
+              tabIndex={-1}
+              placeholder={origin ? 'Sin nombre registrado' : 'Seleccione una cama de origen'}
+              value={patientName}
+              className="h-10 rounded-xl bg-slate-50 text-slate-700 cursor-not-allowed focus-visible:ring-0 focus-visible:ring-offset-0"
+            />
           </div>
 
           <div className="grid gap-2">
@@ -172,21 +204,28 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
                 {isolation && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
               </div>
               <span className="text-sm font-bold text-violet-800">Requiere Aislamiento</span>
-              <input type="checkbox" className="sr-only" checked={isolation} onChange={e => { setIsolation(e.target.checked); if (!e.target.checked) setIsolationType(''); }} />
+              <input type="checkbox" className="sr-only" checked={isolation} onChange={e => { setIsolation(e.target.checked); if (!e.target.checked) setIsolationTypes([]); }} />
             </label>
             {isolation && (
-              <div className="flex flex-wrap gap-1 px-1">
-                {Object.values(IsolationType).map(t => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setIsolationType(t)}
-                    className={`px-2 py-0.5 rounded-full border text-[8px] font-bold transition-all ${isolationType === t ? 'border-violet-400 bg-violet-500 text-white' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </div>
+              <>
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide px-1">Tocá para agregar/quitar uno o más tipos</p>
+                <div className="flex flex-wrap gap-1 px-1">
+                  {Object.values(IsolationType).map(t => {
+                    const selected = isolationTypes.includes(t);
+                    return (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => toggleType(t)}
+                        aria-pressed={selected}
+                        className={`px-2 py-0.5 rounded-full border text-[8px] font-bold transition-all ${selected ? 'border-violet-400 bg-violet-500 text-white' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+                      >
+                        {t}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
             )}
           </div>
 

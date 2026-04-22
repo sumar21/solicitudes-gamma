@@ -49,10 +49,11 @@ function simpleHash(str: string): string {
 function spToTicket(item: Record<string, unknown>): Ticket {
   const f = item.fields as Record<string, unknown>;
 
-  // SP item-level timestamps — if created ≈ modified (within 2s), nobody interacted → can cancel
-  const createdDT  = item.createdDateTime  ? new Date(String(item.createdDateTime)).getTime()  : 0;
-  const modifiedDT = item.lastModifiedDateTime ? new Date(String(item.lastModifiedDateTime)).getTime() : 0;
-  const canCancel  = createdDT > 0 && modifiedDT > 0 && Math.abs(modifiedDT - createdDT) < 2000;
+  // Cancellation is allowed until a hostess has intervened.
+  // IntervinoAzafata_T is "NO" at creation and flips to "SI" on the first hostess action.
+  const intervenedRaw = f.IntervinoAzafata_T ? String(f.IntervinoAzafata_T).trim().toUpperCase() : '';
+  const intervenedByHostess: 'SI' | 'NO' = intervenedRaw === 'SI' ? 'SI' : 'NO';
+  const canCancel = intervenedByHostess === 'NO';
 
   return {
     spItemId:               String(item.id),
@@ -80,6 +81,7 @@ function spToTicket(item: Record<string, unknown>): Ticket {
     rejectionReason:        f.MotivoCancelacion_T ? String(f.MotivoCancelacion_T) : undefined,
     observations:           f.ObservacionesTraslado_T ? String(f.ObservacionesTraslado_T) : undefined,
     targetBedOriginalStatus: f.StatusCamaD_T ? (f.StatusCamaD_T as BedStatus) : undefined,
+    intervenedByHostess,
     canCancel,
   };
 }
@@ -106,6 +108,7 @@ function ticketToFields(t: Partial<Ticket>): Record<string, unknown> {
     ['changeReason',           'MotivoCambio_T'],
     ['rejectionReason',        'MotivoCancelacion_T'],
     ['observations',           'ObservacionesTraslado_T'],
+    ['intervenedByHostess',    'IntervinoAzafata_T'],
   ];
 
   const fields = Object.fromEntries(
@@ -155,7 +158,7 @@ async function handler(req: any, res: any) {
       const tickets = (data.value ?? []).map(spToTicket);
 
       // ETag: simple hash of ids + statuses so client can skip unchanged data
-      const etag = `"${simpleHash(tickets.map(t => `${t.id}:${t.status}:${t.destinationBedStatus ?? ''}`).join('|'))}"`;
+      const etag = `"${simpleHash(tickets.map(t => `${t.id}:${t.status}:${t.destinationBedStatus ?? ''}:${t.intervenedByHostess ?? ''}`).join('|'))}"`;
       res.setHeader('ETag', etag);
 
       const clientEtag = req.headers?.['if-none-match'];

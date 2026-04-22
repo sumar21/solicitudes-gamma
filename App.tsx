@@ -29,6 +29,7 @@ import { Bell } from './components/Icons';
 
 // Modals
 import { NewRequestModal } from './components/modals/NewRequestModal';
+import { EditRequestModal, EditRequestPayload } from './components/modals/EditRequestModal';
 import { AssignBedModal } from './components/modals/AssignBedModal';
 import { AreaSelectionModal } from './components/modals/AreaSelectionModal';
 import { RejectionModal } from './components/modals/RejectionModal';
@@ -66,6 +67,7 @@ export default function App() {
   const [isRejectOpen, setIsRejectOpen] = useState(false);
   const [isUnreadModalOpen, setIsUnreadModalOpen] = useState(false);
   const [rejectTicketId, setRejectTicketId] = useState<string | null>(null);
+  const [editTicketId, setEditTicketId] = useState<string | null>(null);
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -462,6 +464,7 @@ export default function App() {
               onConfirmReception={actions.handleConfirmReception}
               onConsolidate={actions.handleConsolidate}
               onReject={(id) => { setRejectTicketId(id); setIsRejectOpen(true); }}
+              onEdit={(id) => setEditTicketId(id)}
               currentUser={state.currentUser}
               beds={state.beds}
               isolatedPatients={state.isolatedPatients}
@@ -474,7 +477,7 @@ export default function App() {
           {/* Roles — solo Admin */}
           {isAdmin && (state.currentView as string) === 'ROLES' && <RoleManagementView currentUser={state.currentUser} />}
           {/* Mapa de Camas — todos los roles, o fallback si el rol no tiene otra vista */}
-          {(state.currentView === 'BEDS' || (!hasFullAccess && !hasAzafataAccess)) && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} isolatedPatients={state.isolatedPatients} onToggleIsolation={actions.toggleIsolation} onEnrichBed={actions.enrichBed} />}
+          {(state.currentView === 'BEDS' || (!hasFullAccess && !hasAzafataAccess)) && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} isolatedPatients={state.isolatedPatients} onToggleIsolation={actions.toggleIsolation} onEnrichBed={actions.enrichBed} onRefresh={actions.refreshAll} />}
         </main>
       </div>
 
@@ -486,6 +489,17 @@ export default function App() {
         beds={state.beds}
         isolatedPatients={state.isolatedPatients}
         activeTransferOrigins={new Set(state.tickets.filter(t => t.status !== 'Consolidado' && t.status !== 'Cancelado').map(t => t.origin))}
+      />
+      <EditRequestModal
+        open={!!editTicketId}
+        onOpenChange={(open) => { if (!open) setEditTicketId(null); }}
+        ticket={editTicketId ? (state.tickets.find(t => t.id === editTicketId) ?? null) : null}
+        beds={state.beds}
+        isolatedPatients={state.isolatedPatients}
+        onSave={(payload: EditRequestPayload) => {
+          actions.handleEditTicket(payload);
+          setEditTicketId(null);
+        }}
       />
       <AssignBedModal open={isAssignBedOpen} onOpenChange={setIsAssignBedOpen} onConfirm={onConfirmBed} />
       <RejectionModal

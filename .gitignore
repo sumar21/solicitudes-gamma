@@ -8,3 +8,7 @@ npm-debug.log*
 .DS_Store
 
 .vercel
+.obsidian/
+
+# Reportes de sesión generados (el HTML fuente sí se versiona)
+reporte-sesion-*.pdf

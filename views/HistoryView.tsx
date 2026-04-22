@@ -58,7 +58,9 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
   const [startDate, setStartDate] = useState(todayISO);
   const [endDate, setEndDate] = useState(todayISO);
   const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'cancelled'>('all');
   const [selectedTicketForAudit, setSelectedTicketForAudit] = useState<Ticket | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const [openStart, setOpenStart] = useState(false);
   const [openEnd, setOpenEnd] = useState(false);
@@ -66,6 +68,11 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
   const filteredHistory = useMemo(() => {
     return tickets
       .filter(t => t.status === TicketStatus.COMPLETED || t.status === TicketStatus.REJECTED)
+      .filter(t => {
+        if (statusFilter === 'completed') return t.status === TicketStatus.COMPLETED;
+        if (statusFilter === 'cancelled') return t.status === TicketStatus.REJECTED;
+        return true;
+      })
       .filter(t => {
         const matchesSearch = searchTerm
           ? t.patientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -79,34 +86,153 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
         return matchesStart && matchesEnd;
       })
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-  }, [tickets, startDate, endDate, searchTerm]);
+  }, [tickets, startDate, endDate, searchTerm, statusFilter]);
 
-  const hasFilters = startDate !== todayISO || endDate !== todayISO || !!searchTerm;
+  const hasFilters = startDate !== todayISO || endDate !== todayISO || !!searchTerm || statusFilter !== 'all';
 
   const clearFilters = () => {
     setStartDate(todayISO);
     setEndDate(todayISO);
     setSearchTerm('');
+    setStatusFilter('all');
   };
 
-  const handleExportExcel = () => {
-    const dataToExport = filteredHistory.map(t => ({
-      "Fecha": t.date,
-      "ID Ticket": t.id,
-      "Paciente": t.patientName,
-      "Tipo Workflow": WORKFLOW_LABELS[t.workflow],
-      "Origen": t.origin,
-      "Destino": t.destination || 'N/A',
-      "Resultado": t.status === TicketStatus.REJECTED ? 'CANCELADO' : 'CONSOLIDADO',
-      "Tiempo Total (min)": calculateTicketMetrics(t).totalCycleTime
-    }));
+  const handleExportExcel = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      // Fetch audit events from 08.DetalleTraslados for each filtered ticket, in batches
+      // of 10 concurrent requests to avoid saturating SharePoint.
+      const token = localStorage.getItem('mediflow_token');
+      const eventsPerTicket = new Map<string, { tipo: string; fecha: string; usuario: string }[]>();
+      const BATCH_SIZE = 10;
+      for (let i = 0; i < filteredHistory.length; i += BATCH_SIZE) {
+        const batch = filteredHistory.slice(i, i + BATCH_SIZE);
+        const results = await Promise.all(batch.map(t =>
+          fetch(`/api/ticket-events?ticketId=${encodeURIComponent(t.id)}`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          })
+            .then(r => r.ok ? r.json() : { events: [] })
+            .then((d: { events?: { tipo: string; fecha: string; usuario: string }[] }) =>
+              [t.id, d.events ?? []] as const
+            )
+            .catch(() => [t.id, [] as { tipo: string; fecha: string; usuario: string }[]] as const)
+        ));
+        for (const [tid, evts] of results) eventsPerTicket.set(tid, evts);
+      }
 
-    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Historial Operativo");
-    
-    const fileName = `mediflow_reporte_${new Date().toISOString().split('T')[0]}.xlsx`;
-    XLSX.writeFile(workbook, fileName);
+      const fmt = (iso: string) => {
+        if (!iso) return '';
+        try {
+          const d = new Date(iso);
+          return d.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'medium' });
+        } catch { return iso; }
+      };
+
+      const movementLabel = (tipo: string): { label: string; detail: string } => {
+        if (!tipo) return { label: '', detail: '' };
+        if (tipo === 'Solicitud Creada')     return { label: 'Creación',               detail: '' };
+        if (tipo === 'Habitacion Preparada') return { label: 'Habitación Preparada',   detail: '' };
+        if (tipo === 'Inicio Traslado')      return { label: 'Inicio Traslado',        detail: '' };
+        if (tipo === 'Paciente Recibido')    return { label: 'Paciente Recibido',      detail: '' };
+        if (tipo === 'Consolidado Progal')   return { label: 'Consolidado en PROGAL',  detail: '' };
+        if (tipo.startsWith('Cancelado:')) {
+          return { label: 'Cancelación', detail: tipo.replace(/^Cancelado:\s*/, '').trim() };
+        }
+        if (tipo.startsWith('Modificacion')) {
+          const detail = tipo
+            .replace(/^Modificacion\s*-\s*/, '')
+            .replace(/\s+-\s+Motivo:\s+/, ' — Motivo: ');
+          return { label: 'Modificación', detail };
+        }
+        return { label: tipo, detail: '' };
+      };
+
+      // ── Hoja 1: Tickets (una fila por traslado, auto-contenida) ──────────
+      type TicketRow = Record<string, string | number>;
+      const ticketsSheet: TicketRow[] = filteredHistory.map(t => {
+        const events = eventsPerTicket.get(t.id) ?? [];
+        const modCount = events.filter(e => e.tipo.startsWith('Modificacion')).length;
+        return {
+          "Fecha": fmt(t.createdAt),
+          "ID Ticket": t.id,
+          "Paciente": t.patientName,
+          "Workflow": WORKFLOW_LABELS[t.workflow],
+          "Origen": t.origin,
+          "Destino": t.destination || 'N/A',
+          "Resultado": t.status === TicketStatus.REJECTED ? 'CANCELADO' : 'CONSOLIDADO',
+          "Motivo Cancelación": t.status === TicketStatus.REJECTED ? (t.rejectionReason ?? '') : '',
+          "Creado por": t.createdBy ?? '',
+          "Observaciones": t.observations ?? '',
+          "Modificaciones": modCount,
+          "Movimientos registrados": events.length,
+          "Tiempo Total (min)": calculateTicketMetrics(t).totalCycleTime,
+        };
+      });
+
+      // ── Hoja 2: Movimientos (una fila por evento, con ID y paciente para cruzar) ─
+      type EventRow = Record<string, string>;
+      const eventsSheet: EventRow[] = [];
+      for (const t of filteredHistory) {
+        const events = eventsPerTicket.get(t.id) ?? [];
+        for (const evt of events) {
+          const { label, detail } = movementLabel(evt.tipo);
+          eventsSheet.push({
+            "Fecha/Hora": fmt(evt.fecha),
+            "ID Ticket": t.id,
+            "Paciente": t.patientName,
+            "Movimiento": label,
+            "Detalle": detail,
+            "Usuario": evt.usuario ?? '',
+          });
+        }
+      }
+
+      const workbook = XLSX.utils.book_new();
+
+      const ws1 = XLSX.utils.json_to_sheet(ticketsSheet);
+      ws1['!cols'] = [
+        { wch: 20 }, // Fecha
+        { wch: 24 }, // ID Ticket
+        { wch: 28 }, // Paciente
+        { wch: 14 }, // Workflow
+        { wch: 28 }, // Origen
+        { wch: 28 }, // Destino
+        { wch: 13 }, // Resultado
+        { wch: 32 }, // Motivo Cancelación
+        { wch: 20 }, // Creado por
+        { wch: 30 }, // Observaciones
+        { wch: 14 }, // Modificaciones
+        { wch: 18 }, // Movimientos
+        { wch: 16 }, // Tiempo Total
+      ];
+      ws1['!freeze'] = { xSplit: 0, ySplit: 1 }; // freeze header row
+      ws1['!autofilter'] = { ref: `A1:M${ticketsSheet.length + 1}` };
+      XLSX.utils.book_append_sheet(workbook, ws1, "Tickets");
+
+      if (eventsSheet.length > 0) {
+        const ws2 = XLSX.utils.json_to_sheet(eventsSheet);
+        ws2['!cols'] = [
+          { wch: 20 }, // Fecha/Hora
+          { wch: 24 }, // ID Ticket
+          { wch: 28 }, // Paciente
+          { wch: 22 }, // Movimiento
+          { wch: 60 }, // Detalle
+          { wch: 22 }, // Usuario
+        ];
+        ws2['!freeze'] = { xSplit: 0, ySplit: 1 };
+        ws2['!autofilter'] = { ref: `A1:F${eventsSheet.length + 1}` };
+        XLSX.utils.book_append_sheet(workbook, ws2, "Movimientos");
+      }
+
+      const statusSuffix = statusFilter === 'completed' ? '_consolidados'
+                          : statusFilter === 'cancelled' ? '_cancelados'
+                          : '';
+      const fileName = `mediflow_reporte${statusSuffix}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      XLSX.writeFile(workbook, fileName);
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -150,6 +276,32 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
           </Popover>
         </div>
 
+        {/* Status filter */}
+        <div className="flex items-center bg-white border border-slate-200 rounded-xl overflow-hidden h-9 p-0.5">
+          {([
+            { key: 'all',        label: 'Todos' },
+            { key: 'completed',  label: 'Consolidados' },
+            { key: 'cancelled',  label: 'Cancelados' },
+          ] as const).map(opt => (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => setStatusFilter(opt.key)}
+              aria-pressed={statusFilter === opt.key}
+              className={cn(
+                "px-3 h-full text-[10px] font-bold uppercase tracking-wide rounded-lg transition-colors",
+                statusFilter === opt.key
+                  ? opt.key === 'completed' ? "bg-emerald-50 text-emerald-700"
+                  : opt.key === 'cancelled' ? "bg-red-50 text-red-600"
+                  : "bg-slate-100 text-slate-700"
+                  : "text-slate-400 hover:text-slate-600"
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+
         {/* Actions */}
         <div className="flex items-center gap-1.5 ml-auto">
           {hasFilters && (
@@ -161,10 +313,20 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
             variant="outline"
             size="sm"
             onClick={handleExportExcel}
-            className="h-8 gap-1.5 bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 font-bold text-[10px] rounded-lg"
+            disabled={exporting || filteredHistory.length === 0}
+            className="h-8 gap-1.5 bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 font-bold text-[10px] rounded-lg disabled:opacity-60"
           >
-            <Download className="w-3 h-3" />
-            Excel
+            {exporting ? (
+              <>
+                <span className="inline-block w-3 h-3 border-2 border-emerald-200 border-t-emerald-700 rounded-full animate-spin" />
+                Generando...
+              </>
+            ) : (
+              <>
+                <Download className="w-3 h-3" />
+                Excel
+              </>
+            )}
           </Button>
         </div>
       </div>

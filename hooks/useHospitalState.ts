@@ -83,6 +83,7 @@ function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[]): Bed[] {
 
 const POLL_TICKETS_MS     = 8_000;   // tickets: poll every 8s
 const POLL_BEDS_MS        = 60_000;  // beds: poll every 60s
+const POLL_ISOLATIONS_MS  = 30_000;  // isolations: poll every 30s (SP write → other clients see change)
 
 /** Human-readable labels for status transitions (for poll-based notifications) */
 function statusChangeLabel(_from: string, to: string): { title: string } | null {
@@ -176,7 +177,8 @@ export const useHospitalState = () => {
   const [rawBeds, setRawBeds]                      = useState<Bed[]>([]);
   const [tickets, setTickets]                      = useState<Ticket[]>(MOCK_TICKETS);
   // Isolation: stored by patientCode, derived to bed labels via beds data
-  const [isolatedPatients, setIsolatedPatients]    = useState<Map<string, IsolationType>>(new Map()); // patientCode → isolation type
+  // A patient may have multiple isolation types active at once (e.g. Covid + Contacto).
+  const [isolatedPatients, setIsolatedPatients]    = useState<Map<string, IsolationType[]>>(new Map()); // patientCode → isolation types
 
   const beds = useMemo(() => {
     const active = tickets.filter(t => t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED);
@@ -206,12 +208,12 @@ export const useHospitalState = () => {
   }, [beds, rawBeds, tickets, isolatedPatients]);
 
   // ── Data fetchers ─────────────────────────────────────────────────────────────
-  const fetchBeds = useCallback(async () => {
+  const fetchBeds = useCallback(async (force = false) => {
     setBedsLoading(true);
     setBedsError(null);
     try {
       const headers: Record<string, string> = {};
-      if (bedsEtagRef.current) headers['If-None-Match'] = bedsEtagRef.current;
+      if (!force && bedsEtagRef.current) headers['If-None-Match'] = bedsEtagRef.current;
 
       const r = await authFetch('/api/beds', { headers });
       if (r.status === 401) { handleLogout(); return; }
@@ -286,17 +288,25 @@ export const useHospitalState = () => {
     fetchBeds();
     fetchTickets();
     fetchIsolations();
-    const ticketPoll = setInterval(fetchTickets, POLL_TICKETS_MS);
-    const bedPoll    = setInterval(fetchBeds, POLL_BEDS_MS);
-    return () => { clearInterval(ticketPoll); clearInterval(bedPoll); };
+    const ticketPoll    = setInterval(fetchTickets, POLL_TICKETS_MS);
+    const bedPoll       = setInterval(fetchBeds, POLL_BEDS_MS);
+    const isolationPoll = setInterval(fetchIsolations, POLL_ISOLATIONS_MS);
+    return () => {
+      clearInterval(ticketPoll);
+      clearInterval(bedPoll);
+      clearInterval(isolationPoll);
+    };
   }, [token, fetchBeds, fetchTickets]);
 
   // ── Change detection — generate notifications from polling updates ───────────
   useEffect(() => {
     if (!currentUser || writingRef.current) return;
 
+    // Snapshot key captures both status and destination so edits to destination
+    // (without a status change) are detected and surfaced as "Modificación".
+    const snapKey = (t: Ticket) => `${t.status}|${t.destination ?? ''}`;
     const prev = prevTicketSnapshotRef.current;
-    const next = new Map(tickets.map(t => [t.id, t.status]));
+    const next = new Map(tickets.map(t => [t.id, snapKey(t)]));
 
     // Skip first load + suppress notifications for first 15 seconds after app start
     if (!initialLoadDoneRef.current || (Date.now() - appStartTimeRef.current < 15_000)) {
@@ -319,7 +329,7 @@ export const useHospitalState = () => {
     const newNotifs: Notification[] = [];
 
     for (const t of tickets) {
-      const prevStatus = prev.get(t.id);
+      const prevKey = prev.get(t.id);
 
       // Skip tickets the current user created (they already got a local notification)
       if (t.createdById && String(t.createdById) === String(currentUser.id)) continue;
@@ -330,7 +340,7 @@ export const useHospitalState = () => {
       const originArea = areaOf(t.origin);
       const destArea   = areaOf(t.destination);
 
-      if (prevStatus === undefined) {
+      if (prevKey === undefined) {
         // ── New ticket appeared ─────────────────────────────────────────
         const notif: Notification = {
           id: `NOTIF-POLL-${t.id}`, isRead: false,
@@ -342,20 +352,71 @@ export const useHospitalState = () => {
           originArea, destinationArea: destArea,
         };
         newNotifs.push(notif);
-      } else if (prevStatus !== t.status) {
-        // ── Status changed ──────────────────────────────────────────────
-        const label = statusChangeLabel(prevStatus, t.status);
-        if (label) {
-          const notif: Notification = {
-            id: `NOTIF-POLL-${t.id}-${t.status}`, isRead: false,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            type: NotificationType.STATUS_UPDATE,
-            title: label.title,
-            message: `${t.patientName}: ${t.origin} → ${t.destination ?? '?'}`,
-            ticketId: t.id, sede: t.sede,
-            originArea, destinationArea: destArea,
-          };
-          newNotifs.push(notif);
+      } else if (prevKey !== snapKey(t)) {
+        const [prevStatus, prevDestRaw] = prevKey.split('|');
+        const prevDest = prevDestRaw || null;
+        const destChanged = (prevDest ?? '') !== (t.destination ?? '');
+        const statusChanged = prevStatus !== t.status;
+
+        // A destination change always causes a status recalculation (WAITING_ROOM
+        // ↔ IN_TRANSIT depending on whether the new bed was AVAILABLE or PREPARATION).
+        // In that case the status-change notif ("Habitacion Lista", etc.) is misleading —
+        // the real event is the edit, which is covered by the destination-change notifs
+        // below. So: only emit a status-change notif when ONLY the status moved.
+        if (statusChanged && !destChanged) {
+          const label = statusChangeLabel(prevStatus, t.status);
+          if (label) {
+            newNotifs.push({
+              id: `NOTIF-POLL-${t.id}-${t.status}`, isRead: false,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              type: NotificationType.STATUS_UPDATE,
+              title: label.title,
+              message: `${t.patientName}: ${t.origin} → ${t.destination ?? '?'}`,
+              ticketId: t.id, sede: t.sede,
+              originArea, destinationArea: destArea,
+            });
+          }
+        }
+
+        if (destChanged) {
+          // ── Destination edited (admin/admision modified the ticket) ──
+          const prevDestArea = areaOf(prevDest);
+          // Old destination area: traslado no viene más
+          if (prevDestArea && prevDestArea !== destArea) {
+            newNotifs.push({
+              id: `NOTIF-POLL-${t.id}-CANCEL-${prevDest}`, isRead: false,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              type: NotificationType.STATUS_UPDATE,
+              title: 'Traslado Cancelado',
+              message: `${t.patientName}: el traslado hacia ${prevDest} fue cancelado (destino modificado).`,
+              ticketId: t.id, sede: t.sede,
+              originArea: prevDestArea, destinationArea: prevDestArea,
+            });
+          }
+          // New destination area: nueva solicitud llega
+          if (destArea && destArea !== prevDestArea) {
+            newNotifs.push({
+              id: `NOTIF-POLL-${t.id}-NEW-${t.destination}`, isRead: false,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              type: NotificationType.NEW_TICKET,
+              title: 'Nueva Solicitud de Traslado',
+              message: `${t.patientName}: ${t.origin} → ${t.destination ?? '?'}`,
+              ticketId: t.id, sede: t.sede,
+              originArea, destinationArea: destArea,
+            });
+          }
+          // Origin area: modificación de una solicitud existente
+          if (originArea) {
+            newNotifs.push({
+              id: `NOTIF-POLL-${t.id}-MOD-${t.destination}`, isRead: false,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              type: NotificationType.STATUS_UPDATE,
+              title: 'Modificación de Solicitud',
+              message: `${t.patientName}: destino cambiado a ${t.destination ?? '?'}.`,
+              ticketId: t.id, sede: t.sede,
+              originArea, destinationArea: destArea,
+            });
+          }
         }
       }
     }
@@ -488,7 +549,9 @@ export const useHospitalState = () => {
             navigator.geolocation.getCurrentPosition(
               (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
               () => resolve(null),
-              { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 },
+              // 15s gives users enough time to accept the browser's permission prompt
+              // without timing out when they're actually on-site.
+              { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 },
             );
           });
           if (coords) { userLat = coords.lat; userLng = coords.lng; }
@@ -651,23 +714,29 @@ export const useHospitalState = () => {
     setTicketActionLoading(true);
     writingRef.current = true;
 
-    // If isolation requested, activate or update type
+    // If isolation requested, activate or update types
     if (data.isolation) {
       const sourceBed = beds.find(b => b.label === data.origin);
-      const isoType = (data as any).isolationType as IsolationType | undefined;
+      const payloadTypes = (data as any).isolationTypes as IsolationType[] | undefined;
+      const payloadType  = (data as any).isolationType  as IsolationType | undefined;
+      const requested: IsolationType[] = payloadTypes?.length
+        ? payloadTypes
+        : payloadType ? [payloadType] : [];
       if (sourceBed?.patientCode) {
-        const currentType = isolatedPatients.get(sourceBed.patientCode.trim());
-        const newType = isoType ?? IsolationType.CONTACTO;
-        // Create or update if type changed
-        if (!currentType || currentType !== newType) {
-          setIsolatedPatients(prev => { const next = new Map(prev); next.set(sourceBed.patientCode!.trim(), newType); return next; });
+        const code = sourceBed.patientCode.trim();
+        const current = isolatedPatients.get(code) ?? [];
+        const newTypes = requested.length ? requested : [IsolationType.CONTACTO];
+        const changed = current.length !== newTypes.length ||
+          current.some((t: IsolationType, i: number) => t !== newTypes[i]);
+        if (changed) {
+          setIsolatedPatients(prev => { const next = new Map(prev); next.set(code, newTypes); return next; });
           authFetch('/api/isolations', {
             method: 'POST',
             body: JSON.stringify({
               patientCode: sourceBed.patientCode,
               patientName: sourceBed.patientName || data.patientName || '',
               userName: currentUser?.name || '',
-              tipo: newType,
+              tipos: newTypes,
             }),
           }).catch(() => {});
         }
@@ -737,6 +806,7 @@ export const useHospitalState = () => {
       itrSource:               data.itrSource,
       changeReason:            data.changeReason,
       observations:            data.observations,
+      intervenedByHostess:     'NO',
     };
 
     setTickets(prev => [newTicket, ...prev]);
@@ -760,7 +830,7 @@ export const useHospitalState = () => {
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket?.destination || ticket.status === TicketStatus.IN_TRANSIT) return;
     const now     = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const updates = { status: TicketStatus.IN_TRANSIT, cleaningDoneAt: now, destinationBedStatus: BedStatus.ASSIGNED } as const;
+    const updates = { status: TicketStatus.IN_TRANSIT, cleaningDoneAt: now, destinationBedStatus: BedStatus.ASSIGNED, intervenedByHostess: 'SI' } as const;
     setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
     addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Habitación Lista',
       message: `La habitación ${ticket.destination} está lista. ${ticket.patientName} puede ser trasladado.`,
@@ -776,7 +846,7 @@ export const useHospitalState = () => {
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket || ticket.status === TicketStatus.IN_TRANSPORT) return;
     const now     = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const updates = { status: TicketStatus.IN_TRANSPORT, transportStartedAt: now } as const;
+    const updates = { status: TicketStatus.IN_TRANSPORT, transportStartedAt: now, intervenedByHostess: 'SI' } as const;
     setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
     addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Traslado en Curso',
       message: `${ticket.patientName} está en camino hacia ${ticket.destination}.`,
@@ -793,7 +863,7 @@ export const useHospitalState = () => {
     if (!ticket?.destination) return;
     if (ticket.status !== TicketStatus.IN_TRANSPORT && ticket.status !== TicketStatus.IN_TRANSIT) return;
     const now     = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const updates = { status: TicketStatus.WAITING_CONSOLIDATION, receptionConfirmedAt: now, destinationBedStatus: BedStatus.OCCUPIED } as const;
+    const updates = { status: TicketStatus.WAITING_CONSOLIDATION, receptionConfirmedAt: now, destinationBedStatus: BedStatus.OCCUPIED, intervenedByHostess: 'SI' } as const;
     setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
     addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Recepción Confirmada',
       message: `${ticket.patientName} ha sido recibido en ${ticket.destination}. Pendiente consolidar en PROGAL.`,
@@ -847,6 +917,195 @@ export const useHospitalState = () => {
     spLogEvent(ticket.id, `Cancelado: ${reason}`);
   };
 
+  // ── Edit ticket (Admission/Admin, only while no hostess intervention) ───────
+  //
+  // Bed liberation is implicit: `mergeBeds()` rebuilds bed state from active tickets
+  // every render, so removing a ticket's overlay from the old destination automatically
+  // returns that bed to its Gamma-level status (AVAILABLE or PREPARATION).
+  //
+  // Notifications:
+  //   · If destination changed across areas:
+  //       old-dest area → "Traslado Cancelado" (the ticket is no longer coming)
+  //       new-dest area → "Nueva Solicitud"
+  //       origin area   → "Modificación de Solicitud"
+  //   · Otherwise, a single "Modificación de Solicitud" goes to origin + destination areas.
+  const handleEditTicket = async (payload: {
+    ticketId: string;
+    destination: string;
+    workflow: WorkflowType;
+    reason?: string;
+    itrSource?: string;
+    observations?: string;
+    isolation: boolean;
+    isolationTypes: IsolationType[];
+    modificationReason: string;
+  }) => {
+    if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) {
+      alert('Solo Admisión o Admin pueden editar traslados.'); return;
+    }
+    const ticket = tickets.find((t: Ticket) => t.id === payload.ticketId);
+    if (!ticket) return;
+    if (ticket.canCancel === false) {
+      alert('No se puede editar: la azafata ya intervino en este traslado.'); return;
+    }
+    if (!payload.modificationReason.trim()) {
+      alert('El motivo de la modificación es obligatorio.'); return;
+    }
+
+    const changes: string[] = [];
+    const updates: Partial<Ticket> = {};
+
+    // ── Workflow ────────────────────────────────────────────────────────────
+    if (payload.workflow !== ticket.workflow) {
+      changes.push(`Escenario: ${ticket.workflow} → ${payload.workflow}`);
+      updates.workflow = payload.workflow;
+    }
+
+    // ── ROOM_CHANGE reason (only applies if workflow is ROOM_CHANGE) ────────
+    const normalizedReason = payload.workflow === WorkflowType.ROOM_CHANGE ? (payload.reason ?? '') : '';
+    if ((ticket.changeReason ?? '') !== normalizedReason) {
+      changes.push(`Motivo cambio habitación: "${ticket.changeReason ?? '—'}" → "${normalizedReason || '—'}"`);
+      updates.changeReason = normalizedReason;
+    }
+
+    // ── ITR source / financier (only applies if workflow is ITR_TO_FLOOR) ───
+    const normalizedItr = payload.workflow === WorkflowType.ITR_TO_FLOOR ? (payload.itrSource ?? '') : '';
+    if ((ticket.itrSource ?? '') !== normalizedItr) {
+      changes.push(`Financiador: "${ticket.itrSource ?? '—'}" → "${normalizedItr || '—'}"`);
+      updates.itrSource = normalizedItr;
+      updates.financier = normalizedItr || ticket.financier;
+    }
+
+    // ── Observations ────────────────────────────────────────────────────────
+    const normalizedObs = payload.observations ?? '';
+    if ((ticket.observations ?? '') !== normalizedObs) {
+      changes.push(`Observaciones: "${ticket.observations ?? '—'}" → "${normalizedObs || '—'}"`);
+      updates.observations = normalizedObs;
+    }
+
+    // ── Destination (most complex — bed state inferred from rawBeds) ────────
+    const destChanged = payload.destination !== (ticket.destination ?? '');
+    let newDestArea: Area | undefined;
+    const oldDestArea: Area | undefined = ticket.destination
+      ? (rawBeds.find((b: Bed) => b.label === ticket.destination)?.area as Area | undefined)
+      : undefined;
+
+    if (destChanged) {
+      // Validate against merged beds (excludes beds assigned to other active tickets)
+      const newDestBed = beds.find((b: Bed) => b.label === payload.destination);
+      if (!newDestBed) {
+        alert(`La cama ${payload.destination} no existe.`); return;
+      }
+      if (newDestBed.status !== BedStatus.AVAILABLE && newDestBed.status !== BedStatus.PREPARATION) {
+        alert(`La cama ${payload.destination} ya no está disponible (estado: ${newDestBed.status}).`); return;
+      }
+
+      // Gamma-level status (without overlay) drives the new ticket status
+      const rawDest = rawBeds.find((b: Bed) => b.label === payload.destination);
+      const rawStatus = (rawDest?.status ?? newDestBed.status) as BedStatus;
+      const isDestAvailable = rawStatus === BedStatus.AVAILABLE;
+
+      updates.destination            = payload.destination;
+      updates.destinationBedCode     = newDestBed.bedCode;
+      updates.destinationBedStatus   = isDestAvailable ? BedStatus.ASSIGNED : BedStatus.PREPARATION;
+      updates.targetBedOriginalStatus = rawStatus;
+      updates.status                 = isDestAvailable ? TicketStatus.IN_TRANSIT : TicketStatus.WAITING_ROOM;
+
+      newDestArea = newDestBed.area as Area | undefined;
+      changes.push(`Destino: ${ticket.destination ?? '—'} → ${payload.destination}`);
+    }
+
+    // ── Isolation (applies globally to the patient, not just this ticket) ──
+    const patientCode = ticket.patientCode?.trim();
+    const currentIsoTypes = patientCode ? (isolatedPatients.get(patientCode) ?? []) : [];
+    const nextIsoTypes   = payload.isolation ? payload.isolationTypes : [];
+    const sortedCur  = [...currentIsoTypes].sort();
+    const sortedNext = [...nextIsoTypes].sort();
+    const isoChanged = sortedCur.length !== sortedNext.length
+      || sortedCur.some((t: IsolationType, i: number) => t !== sortedNext[i]);
+    if (isoChanged) {
+      changes.push(`Aislamiento: ${currentIsoTypes.join(', ') || '—'} → ${nextIsoTypes.join(', ') || '—'}`);
+      if (patientCode) {
+        setIsolatedPatients((prev: Map<string, IsolationType[]>) => {
+          const next = new Map(prev);
+          if (nextIsoTypes.length === 0) next.delete(patientCode);
+          else next.set(patientCode, nextIsoTypes);
+          return next;
+        });
+        authFetch('/api/isolations', {
+          method: nextIsoTypes.length === 0 ? 'DELETE' : 'POST',
+          body: JSON.stringify({
+            patientCode,
+            patientName: ticket.patientName,
+            userName: currentUser?.name || '',
+            tipos: nextIsoTypes,
+          }),
+        }).catch(() => {});
+      }
+    }
+
+    if (changes.length === 0) {
+      alert('No hay cambios para guardar.'); return;
+    }
+
+    // ── Optimistic update + persist ─────────────────────────────────────────
+    writingRef.current = true;
+
+    // Pre-seed snapshot BEFORE the state update so the change-detection useEffect
+    // never sees a transient diff when it runs for the optimistic update.
+    const postKey = `${updates.status ?? ticket.status}|${updates.destination ?? ticket.destination ?? ''}`;
+    prevTicketSnapshotRef.current.set(ticket.id, postKey);
+
+    setTickets(prev => prev.map(t => t.id === ticket.id ? { ...t, ...updates } : t));
+
+    // ── Local notifications for the editor ──────────────────────────────────
+    const originArea = rawBeds.find((b: Bed) => b.label === ticket.origin)?.area as Area | undefined;
+
+    if (destChanged && oldDestArea && oldDestArea !== newDestArea) {
+      addNotification({
+        type: NotificationType.STATUS_UPDATE, title: 'Traslado Cancelado',
+        message: `${ticket.patientName}: el traslado hacia ${ticket.destination} fue cancelado (destino modificado).`,
+        ticketId: ticket.id, sede: ticket.sede,
+        originArea: oldDestArea, destinationArea: oldDestArea,
+      });
+    }
+    if (destChanged && newDestArea && newDestArea !== oldDestArea) {
+      addNotification({
+        type: NotificationType.NEW_TICKET, title: 'Nueva Solicitud de Traslado',
+        message: `${ticket.patientName}: ${ticket.origin} → ${payload.destination}`,
+        ticketId: ticket.id, sede: ticket.sede,
+        originArea, destinationArea: newDestArea,
+      });
+    }
+    addNotification({
+      type: NotificationType.STATUS_UPDATE, title: 'Modificación de Solicitud',
+      message: `${ticket.patientName}: ${changes.join(' · ')}`,
+      ticketId: ticket.id, sede: ticket.sede,
+      originArea, destinationArea: newDestArea ?? oldDestArea,
+    });
+
+    // Persist ticket changes to SP
+    if (ticket.spItemId) {
+      try {
+        await spUpdate(ticket.spItemId, updates, ticket);
+      } finally {
+        setTimeout(() => {
+          writingRef.current = false;
+          ticketsEtagRef.current = null;
+          fetchTickets();
+        }, 1000);
+      }
+    } else {
+      writingRef.current = false;
+    }
+
+    // Log a single audit event summarising all changes + the user-entered reason
+    spLogEvent(
+      ticket.id,
+      `Modificacion - ${changes.join(' | ')} - Motivo: ${payload.modificationReason}`,
+    );
+  };
+
   const handleUpdateUserAreas = (areas: Area[]) => {
     if (!currentUser) return;
     const updatedUser = { ...currentUser, assignedAreas: areas };
@@ -855,38 +1114,39 @@ export const useHospitalState = () => {
   };
 
   // ── Isolation toggle (Admission/Admin only) ────────────────────────────────
-  const toggleIsolation = (bedLabel: string, isolationType?: IsolationType) => {
+  // nextTypes:
+  //   undefined / [] → remove isolation entirely
+  //   [t1, t2, ...]  → set the active isolation types (replaces previous set)
+  const toggleIsolation = (bedLabel: string, nextTypes?: IsolationType[]) => {
     if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) return;
     const bed = beds.find(b => b.label === bedLabel);
     if (!bed?.patientCode) return;
     const code = bed.patientCode.trim();
-    const isActive = isolatedPatients.has(code);
+    const prevTypes = isolatedPatients.get(code) ?? [];
+    const shouldClear = !nextTypes || nextTypes.length === 0;
 
     // Optimistic update
     setIsolatedPatients(prev => {
       const next = new Map(prev);
-      if (isActive && !isolationType) {
-        next.delete(code);
-      } else {
-        next.set(code, isolationType ?? IsolationType.CONTACTO);
-      }
+      if (shouldClear) next.delete(code);
+      else next.set(code, nextTypes!);
       return next;
     });
 
     // Persist to SharePoint
     authFetch('/api/isolations', {
-      method: isActive && !isolationType ? 'DELETE' : 'POST',
+      method: shouldClear ? 'DELETE' : 'POST',
       body: JSON.stringify({
         patientCode: code,
         patientName: bed.patientName || '',
         userName: currentUser?.name || '',
-        tipo: isolationType ?? (isActive ? undefined : IsolationType.CONTACTO),
+        tipos: shouldClear ? [] : nextTypes,
       }),
     }).catch(() => {
       // Rollback on error
       setIsolatedPatients(prev => {
         const next = new Map(prev);
-        if (isActive) next.set(code, IsolationType.CONTACTO);
+        if (prevTypes.length) next.set(code, prevTypes);
         else next.delete(code);
         return next;
       });
@@ -899,14 +1159,28 @@ export const useHospitalState = () => {
       const res = await authFetch('/api/isolations');
       if (!res.ok) return;
       const data = await res.json();
-      const map = new Map<string, IsolationType>();
+      const validTypes = Object.values(IsolationType) as IsolationType[];
+      const map = new Map<string, IsolationType[]>();
       for (const i of (data.isolations ?? [])) {
-        const tipo = Object.values(IsolationType).includes(i.tipo as IsolationType) ? (i.tipo as IsolationType) : undefined;
-        map.set(String(i.patientCode).trim(), tipo as any);
+        const raw: string[] = Array.isArray(i.tipos)
+          ? i.tipos
+          : String(i.tipo ?? '').split(';');
+        const tipos = raw
+          .map((t: string) => String(t).trim())
+          .filter((t: string): t is IsolationType => validTypes.includes(t as IsolationType));
+        if (tipos.length) map.set(String(i.patientCode).trim(), tipos as IsolationType[]);
       }
       setIsolatedPatients(map);
     } catch { /* silent */ }
   };
+
+  // Manual full refresh — invalidates caches and refetches everything.
+  const refreshAll = useCallback(async () => {
+    bedsEtagRef.current = null;
+    ticketsEtagRef.current = null;
+    await Promise.all([fetchBeds(true), fetchTickets(), fetchIsolations()]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchBeds, fetchTickets]);
 
   const checkUnreadNotifications = useCallback(async () => {
     try {
@@ -920,9 +1194,14 @@ export const useHospitalState = () => {
     } catch { /* silent */ }
   }, [authFetch]);
 
+  // Local notification IDs are prefixed with "NOTIF-" (generated client-side).
+  // SharePoint notifications carry the SP item ID (numeric string).
+  // Only SP IDs should hit the PATCH endpoint; local-only ones just flip state.
+  const isSpNotificationId = (id: string) => !!id && !id.startsWith('NOTIF-');
+
   const handleMarkNotificationRead = (id: string) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
-    // Mark as read in SP, then refetch to verify
+    if (!isSpNotificationId(id)) return; // local-only notification — nothing to persist
     authFetch('/api/notifications', {
       method: 'PATCH',
       body: JSON.stringify({ notificationId: id }),
@@ -933,12 +1212,14 @@ export const useHospitalState = () => {
     setUnreadSpNotifications([]); // clear immediately for instant UI feedback
     // Mark all in SP, then verify after delay
     Promise.all(
-      unreadSpNotifications.map(n =>
-        authFetch('/api/notifications', {
-          method: 'PATCH',
-          body: JSON.stringify({ notificationId: n.id }),
-        }).catch(() => {})
-      )
+      unreadSpNotifications
+        .filter((n: { id: string }) => isSpNotificationId(n.id))
+        .map((n: { id: string }) =>
+          authFetch('/api/notifications', {
+            method: 'PATCH',
+            body: JSON.stringify({ notificationId: n.id }),
+          }).catch(() => {})
+        )
     ).then(() => setTimeout(checkUnreadNotifications, 1500));
   };
   const handleDismissToast = (id: string) => {
@@ -977,10 +1258,11 @@ export const useHospitalState = () => {
       setLoginEmail, setLoginPass,
       handleLogin, handleLogout,
       handleCreateTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
-      fetchBeds, enrichBed,
+      fetchBeds, enrichBed, refreshAll,
       handleUpdateUserAreas, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleDismissToast,
       handleStartTransport,
       handleRejectTicket,
+      handleEditTicket,
       toggleIsolation,
       handleValidateTicket:    (_id: string) => {},
       handleAssignBedAction:   (_id: string, _bed: string) => {},

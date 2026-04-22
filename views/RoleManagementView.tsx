@@ -47,7 +47,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const authFetch = useCallback((url: string, options?: RequestInit) => {
-    const token = sessionStorage.getItem('mediflow_token');
+    const token = localStorage.getItem('mediflow_token');
     return fetch(url, {
       ...options,
       headers: {

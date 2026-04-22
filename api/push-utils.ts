@@ -129,11 +129,18 @@ export async function sendPushToSubscribers(params: PushParams): Promise<void> {
 
   console.log(`[push-utils] Sending push to ${relevant.length} subscriber(s) for: ${params.title}`);
 
+  // Unique tag per event so consecutive notifications for the same ticket
+  // (e.g. NEW_TICKET → STATUS_UPDATE) don't collapse silently on Android —
+  // each one triggers its own heads-up banner.
+  const uniqueTag = `${params.ticketId ?? 'nt'}-${params.type ?? 'evt'}-${Date.now()}`;
+
   const payload = JSON.stringify({
     title: params.title,
     body: params.body,
     ticketId: params.ticketId,
     type: params.type,
+    tag: uniqueTag,
+    timestamp: Date.now(),
   });
 
   const results = await Promise.allSettled(

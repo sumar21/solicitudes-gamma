@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { Ticket, WorkflowType, TicketStatus, BedStatus } from '../types';
 import {
-  X, MapPin, Plus, TrendingUp, Activity, CheckCircle2, Calendar, Info, SprayCan, Hash, XCircle, ArrowRightLeft
+  X, MapPin, Plus, TrendingUp, Activity, CheckCircle2, Calendar, Info, SprayCan, Hash, XCircle, ArrowRightLeft, Pencil
 } from './Icons';
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
 import { Badge } from './ui/badge';
@@ -33,6 +33,22 @@ const EVENT_CONFIG: Record<string, { label: string; sublabel: string; icon: Reac
   'Consolidado Progal':    { label: 'Consolidado en PROGAL',            sublabel: 'Admisión',          icon: CheckCircle2 },
 };
 
+// Parse a modification audit event. Stored format:
+//   "Modificacion - {change} | {change} | ... - Motivo: {reason}"
+function parseModification(tipo: string): { changes: string[]; motivo: string } | null {
+  if (!tipo || !tipo.startsWith('Modificacion')) return null;
+  const content = tipo.replace(/^Modificacion\s*-\s*/, '');
+  const motivoIdx = content.lastIndexOf(' - Motivo:');
+  let changesStr = content;
+  let motivo = '';
+  if (motivoIdx >= 0) {
+    changesStr = content.slice(0, motivoIdx);
+    motivo = content.slice(motivoIdx + ' - Motivo:'.length).trim();
+  }
+  const changes = changesStr.split(' | ').map(s => s.trim()).filter(Boolean);
+  return { changes, motivo };
+}
+
 function diffMinutes(a: string, b: string): string {
   const ta = new Date(a).getTime();
   const tb = new Date(b).getTime();
@@ -54,7 +70,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
   useEffect(() => {
     if (!isOpen || !ticket) { setEvents([]); return; }
     setLoading(true);
-    const token = sessionStorage.getItem('mediflow_token');
+    const token = localStorage.getItem('mediflow_token');
     fetch(`/api/ticket-events?ticketId=${encodeURIComponent(ticket.id)}`, {
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     })
@@ -92,10 +108,10 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-[1000px] w-[94vw] md:w-full p-0 overflow-hidden border border-slate-200 shadow-2xl rounded-2xl md:rounded-3xl bg-white [&>button]:hidden">
-        <div className="flex flex-col max-h-[90vh]">
+        <div className="flex flex-col max-h-[90vh] min-h-0">
 
           {/* HEADER */}
-          <div className="bg-white px-5 py-5 md:px-8 md:py-6 flex flex-col border-b border-slate-100 shrink-0">
+          <div className="bg-white px-5 py-3 md:px-6 md:py-4 flex flex-col border-b border-slate-100 shrink-0">
             <div className="flex items-start justify-between">
               <div className="space-y-1 min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -137,20 +153,20 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
             </div>
           </div>
 
-          <div className="flex flex-col md:flex-row overflow-hidden">
+          <div className="flex flex-col md:flex-row overflow-hidden flex-1 min-h-0">
 
             {/* SIDEBAR DESKTOP */}
-            <div className="hidden md:block md:w-[320px] bg-slate-50/50 border-r border-slate-100 p-8 space-y-8 overflow-y-auto shrink-0">
+            <div className="hidden md:block md:w-[300px] bg-slate-50/50 border-r border-slate-100 p-5 space-y-5 overflow-y-auto shrink-0">
               <div>
-                <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest block mb-3">Tiempo Total en Sistema</span>
+                <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest block mb-2">Tiempo Total en Sistema</span>
                 <div className="flex items-baseline gap-2">
-                  <span className={cn("text-5xl font-light tracking-tighter tabular-nums leading-none", isRejected ? "text-red-600" : "text-emerald-950")}>
+                  <span className={cn("text-4xl font-light tracking-tighter tabular-nums leading-none", isRejected ? "text-red-600" : "text-emerald-950")}>
                     {loading ? '...' : totalCycleTime}
                   </span>
                 </div>
               </div>
 
-              <div className="space-y-5 pt-6 border-t border-slate-100">
+              <div className="space-y-4 pt-4 border-t border-slate-100">
                 <div className="flex gap-4">
                   <div className="mt-1 shrink-0"><MapPin className="w-4 h-4 text-slate-300" /></div>
                   <div>
@@ -179,12 +195,12 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
               </div>
 
               {!isRejected && (
-                <div className="space-y-4 pt-6 border-t border-slate-100">
+                <div className="space-y-2 pt-4 border-t border-slate-100">
                   <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Tiempos por Servicio</p>
                   {loading ? (
                     <p className="text-xs text-slate-400">Cargando...</p>
                   ) : (
-                    <div className="space-y-3">
+                    <div className="space-y-1.5">
                       <div className="flex justify-between items-center text-xs">
                         <span className="text-slate-500 font-medium">Asignación (Admisión)</span>
                         <span className="font-semibold text-slate-900 tabular-nums">{waitAdmission}</span>
@@ -210,10 +226,10 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
             </div>
 
             {/* CONTENIDO PRINCIPAL (TIMELINE) */}
-            <div className="flex-1 bg-white p-5 md:p-12 overflow-y-auto">
+            <div className="flex-1 bg-white p-5 md:p-6 overflow-y-auto min-h-0">
 
               {/* SOLO MÓVIL: MÉTRICAS */}
-              <div className="md:hidden grid grid-cols-2 gap-3 mb-8">
+              <div className="md:hidden grid grid-cols-2 gap-3 mb-6">
                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
                     <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1">Tiempo Total</span>
                     <span className={cn("text-2xl font-bold tabular-nums", isRejected ? "text-red-600" : "text-slate-900")}>{loading ? '...' : totalCycleTime}</span>
@@ -231,7 +247,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                  )}
               </div>
 
-              <h4 className="text-[10px] uppercase font-bold text-emerald-950 tracking-[0.2em] mb-10 flex items-center gap-2">
+              <h4 className="text-[10px] uppercase font-bold text-emerald-950 tracking-[0.2em] mb-5 flex items-center gap-2">
                 <TrendingUp className="w-4 h-4 opacity-30" /> Trazabilidad de Hitos
               </h4>
 
@@ -242,9 +258,13 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
               ) : events.length === 0 ? (
                 <p className="text-sm text-slate-400 text-center py-12">Sin movimientos registrados</p>
               ) : (
-                <div className="relative pl-8 space-y-12 before:content-[''] before:absolute before:left-[11px] before:top-2 before:bottom-2 before:w-[1px] before:bg-slate-100">
+                <div className="relative pl-8 space-y-5 before:content-[''] before:absolute before:left-[11px] before:top-2 before:bottom-2 before:w-[1px] before:bg-slate-100">
                   {events.map((evt, i) => {
-                    const config = EVENT_CONFIG[evt.tipo] ?? { label: evt.tipo, sublabel: evt.usuario, icon: Plus };
+                    const modification = parseModification(evt.tipo);
+                    const isModification = !!modification;
+                    const config = isModification
+                      ? { label: 'Modificación de Traslado', sublabel: 'Admisión', icon: Pencil }
+                      : (EVENT_CONFIG[evt.tipo] ?? { label: evt.tipo, sublabel: evt.usuario, icon: Plus });
                     const Icon = config.icon;
                     const isLast = i === events.length - 1;
                     const isFinal = evt.tipo === 'Consolidado Progal';
@@ -253,21 +273,37 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                       <div key={evt.id} className="relative">
                         <div className={cn(
                           "absolute -top-0.5 flex items-center justify-center z-10",
-                          isFinal ? "-left-[36px] w-8 h-8 rounded-full bg-emerald-950 shadow-lg" : "-left-[32px] w-6 h-6 rounded-full bg-white border border-slate-200"
+                          isFinal ? "-left-[36px] w-8 h-8 rounded-full bg-emerald-950 shadow-lg"
+                          : isModification ? "-left-[34px] w-7 h-7 rounded-full bg-amber-500 shadow-sm"
+                          : "-left-[32px] w-6 h-6 rounded-full bg-white border border-slate-200"
                         )}>
-                          <Icon className={cn("w-3.5 h-3.5", isFinal ? "text-white" : "text-slate-400")} />
+                          <Icon className={cn("w-3.5 h-3.5", isFinal || isModification ? "text-white" : "text-slate-400")} />
                         </div>
                         <div className="flex justify-between items-start">
-                          <div>
-                            <p className={cn("text-sm font-semibold", isFinal ? "text-emerald-950" : "text-slate-900")}>{config.label}</p>
+                          <div className="flex-1 min-w-0 pr-3">
+                            <p className={cn("text-sm font-semibold", isFinal ? "text-emerald-950" : isModification ? "text-amber-700" : "text-slate-900")}>{config.label}</p>
                             <p className="text-xs text-slate-400 font-medium">{evt.usuario || config.sublabel}</p>
+                            {modification && (
+                              <div className="mt-2 p-3 bg-amber-50/70 border border-amber-100 rounded-lg space-y-1">
+                                {modification.changes.map((c, ix) => (
+                                  <p key={ix} className="text-xs text-slate-700 font-medium leading-snug">
+                                    <span className="text-amber-600 font-bold">·</span> {c}
+                                  </p>
+                                ))}
+                                {modification.motivo && (
+                                  <p className="text-[11px] text-amber-800 font-semibold italic mt-2 pt-2 border-t border-amber-100/80">
+                                    Motivo: {modification.motivo}
+                                  </p>
+                                )}
+                              </div>
+                            )}
                           </div>
                           {isFinal ? (
-                            <Badge className="bg-emerald-950 text-white font-mono font-medium px-2 py-0.5 rounded-md tabular-nums border-none text-[11px]">
+                            <Badge className="bg-emerald-950 text-white font-mono font-medium px-2 py-0.5 rounded-md tabular-nums border-none text-[11px] shrink-0">
                               {formatTime(evt.fecha)}
                             </Badge>
                           ) : (
-                            <span className="text-xs font-medium text-slate-400 tabular-nums">{formatTime(evt.fecha)}</span>
+                            <span className={cn("text-xs font-medium tabular-nums shrink-0", isModification ? "text-amber-600" : "text-slate-400")}>{formatTime(evt.fecha)}</span>
                           )}
                         </div>
                       </div>
@@ -278,8 +314,8 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
             </div>
           </div>
 
-          <div className="bg-slate-50/80 px-4 py-3 flex items-center justify-center md:justify-end border-t border-slate-100 shrink-0">
-             <Button onClick={onClose} variant="outline" className="w-full md:w-auto h-9 px-6 rounded-xl font-semibold text-xs uppercase tracking-widest bg-white hover:bg-slate-50 border-slate-200 text-slate-600 transition-all">
+          <div className="bg-slate-50/80 px-4 py-2.5 flex items-center justify-center md:justify-end border-t border-slate-100 shrink-0">
+             <Button onClick={onClose} variant="outline" className="w-full md:w-auto h-8 px-5 rounded-xl font-semibold text-xs uppercase tracking-widest bg-white hover:bg-slate-50 border-slate-200 text-slate-600 transition-all">
                Cerrar Auditoría
              </Button>
           </div>

@@ -74,7 +74,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [roleOptions, setRoleOptions] = useState(DEFAULT_ROLE_OPTIONS);
 
-  const token = sessionStorage.getItem('mediflow_token');
+  const token = localStorage.getItem('mediflow_token');
 
   const authFetch = useCallback(async (url: string, opts: RequestInit = {}) => {
     return fetch(url, {

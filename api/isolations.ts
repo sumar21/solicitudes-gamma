@@ -2,8 +2,12 @@
  * Vercel serverless — CRUD for "08.Aislamientos" SharePoint list.
  *
  * GET    /api/isolations          → all active isolations
- * POST   /api/isolations          → create/activate { patientCode, patientName }
+ * POST   /api/isolations          → create/activate { patientCode, patientName, tipos[] }
  * DELETE /api/isolations          → deactivate       { patientCode }
+ *
+ * SharePoint `Tipo_A` stores multiple isolation types joined by ';'
+ * (e.g. "Neutropénico;Por Gotas"). Legacy single values are still
+ * readable — they parse to a single-element array.
  */
 
 import { graphFetch }  from './graph.js';
@@ -11,6 +15,18 @@ import { requireAuth } from './jwt.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = '0a36e3e2-1ca2-4951-86f9-afd288465022'; // 08.Aislamientos
+
+const parseTipos = (raw: unknown): string[] =>
+  String(raw ?? '')
+    .split(';')
+    .map(s => s.trim())
+    .filter(Boolean);
+
+const normalizeTiposPayload = (body: any): string[] => {
+  if (Array.isArray(body?.tipos)) return body.tipos.map((t: any) => String(t).trim()).filter(Boolean);
+  if (body?.tipo) return parseTipos(body.tipo);
+  return [];
+};
 
 async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -37,11 +53,13 @@ async function handler(req: any, res: any) {
       const data = (await spRes.json()) as { value: Record<string, unknown>[] };
       const isolations = (data.value ?? []).map((item: any) => {
         const f = item.fields as Record<string, unknown>;
+        const tipos = parseTipos(f.Tipo_A);
         return {
           spItemId: String(item.id),
           patientCode: String(f.CodigoPaciente_A ?? ''),
           patientName: String(f.NombrePaciente_A ?? ''),
-          tipo: String(f.Tipo_A ?? ''),
+          tipos,
+          tipo: tipos[0] ?? '',
           createdBy: String(f.Usuario_A ?? ''),
           createdAt: String(f.Fecha_A ?? ''),
         };
@@ -55,8 +73,10 @@ async function handler(req: any, res: any) {
 
   // ── POST — create or reactivate isolation ─────────────────────────────────
   if (req.method === 'POST') {
-    const { patientCode, patientName, userName, tipo } = req.body ?? {};
+    const { patientCode, patientName, userName } = req.body ?? {};
     if (!patientCode) return res.status(400).json({ error: 'patientCode is required' });
+    const tipos = normalizeTiposPayload(req.body);
+    const tipoStr = tipos.join(';');
 
     try {
       // Check if there's already a record for this patient
@@ -78,11 +98,11 @@ async function handler(req: any, res: any) {
               Usuario_A: userName || '',
               Fecha_A: new Date().toISOString(),
               NombrePaciente_A: patientName || '',
-              Tipo_A: tipo || '',
+              Tipo_A: tipoStr,
             }),
           });
-          console.log(`[isolations] Reactivated isolation for patient ${patientCode}`);
-          return res.status(200).json({ ok: true, spItemId: itemId });
+          console.log(`[isolations] Reactivated isolation for patient ${patientCode} — tipos: ${tipoStr}`);
+          return res.status(200).json({ ok: true, spItemId: itemId, tipos });
         }
       }
 
@@ -96,7 +116,7 @@ async function handler(req: any, res: any) {
             Status_A: 'Activo',
             Usuario_A: String(userName || ''),
             Fecha_A: new Date().toISOString(),
-            Tipo_A: String(tipo || ''),
+            Tipo_A: tipoStr,
           },
         }),
       });
@@ -108,8 +128,8 @@ async function handler(req: any, res: any) {
       }
 
       const created = (await spRes.json()) as { id: string };
-      console.log(`[isolations] Created isolation for patient ${patientCode}`);
-      return res.status(200).json({ ok: true, spItemId: String(created.id) });
+      console.log(`[isolations] Created isolation for patient ${patientCode} — tipos: ${tipoStr}`);
+      return res.status(200).json({ ok: true, spItemId: String(created.id), tipos });
     } catch (err: any) {
       console.error('[isolations] POST error:', err);
       return res.status(500).json({ error: err.message });

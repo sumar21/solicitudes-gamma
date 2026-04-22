@@ -153,5 +153,6 @@ export interface Ticket {
   isReasonValidated: boolean;
   targetBedOriginalStatus?: BedStatus;
   observations?: string;
-  canCancel?: boolean;         // true if SP item was never modified after creation
+  canCancel?: boolean;          // true while no hostess action has touched this ticket
+  intervenedByHostess?: 'SI' | 'NO'; // IntervinoAzafata_T in SP — "NO" at creation, "SI" after first hostess action
 }

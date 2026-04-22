@@ -1,9 +1,9 @@
 
 import React, { useMemo } from 'react';
-import { Ticket, Role, TicketStatus, SortConfig, SortKey, WorkflowType, User, Bed, BedStatus, Area } from '../types';
+import { Ticket, Role, TicketStatus, SortConfig, SortKey, WorkflowType, User, Bed, BedStatus, Area, IsolationType } from '../types';
 import {
   Search, Plus, Timer, Clock, ArrowRightLeft,
-  ChevronUp, ChevronDown, CheckCircle2, BedDouble, Users, ClipboardCheck, AlertCircle, X, XCircle, Info, MapPin
+  ChevronUp, ChevronDown, CheckCircle2, BedDouble, Users, ClipboardCheck, AlertCircle, X, XCircle, Info, MapPin, Pencil
 } from '../components/Icons';
 import { ShieldAlert } from 'lucide-react';
 import { Button } from '../components/ui/button';
@@ -35,9 +35,10 @@ interface RequestsViewProps {
   onConfirmReception: (id: string) => void;
   onConsolidate: (id: string) => void;
   onReject?: (id: string) => void;
+  onEdit?: (id: string) => void;
   currentUser: User | null;
   beds: Bed[];
-  isolatedPatients?: Map<string, any>;
+  isolatedPatients?: Map<string, IsolationType[]>;
 }
 
 const ROLE_LABELS: Partial<Record<Role, string>> = {
@@ -57,17 +58,19 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   searchTerm, setSearchTerm, sortConfig, onSort,
   onNewRequest, onValidateReason, onAssignBed,
   onHousekeepingAction, onStartTransport, onCompleteTransport,
-  onRoomReady, onConfirmReception, onConsolidate, onReject, currentUser, beds, isolatedPatients
+  onRoomReady, onConfirmReception, onConsolidate, onReject, onEdit, currentUser, beds, isolatedPatients
 }) => {
 
-  const isTicketIsolated = (ticket: Ticket): boolean => {
-    if (!isolatedPatients?.size) return false;
-    // Check by patientCode from bed data
+  const getTicketIsolationTypes = (ticket: Ticket): IsolationType[] => {
+    if (!isolatedPatients?.size) return [];
     const originBed = beds.find(b => b.label === ticket.origin);
-    if (originBed?.patientCode && isolatedPatients.has(originBed.patientCode)) return true;
-    // Fallback: check by patientCode from ticket itself
-    if (ticket.patientCode && isolatedPatients.has(ticket.patientCode)) return true;
-    return false;
+    if (originBed?.patientCode && isolatedPatients.has(originBed.patientCode)) {
+      return isolatedPatients.get(originBed.patientCode) ?? [];
+    }
+    if (ticket.patientCode && isolatedPatients.has(ticket.patientCode)) {
+      return isolatedPatients.get(ticket.patientCode) ?? [];
+    }
+    return [];
   };
 
   const sortedTickets = useMemo(() => {
@@ -180,7 +183,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
 
     // ── ADMISIÓN / ADMIN ─────────────────────────────────────────────────────
     if (activeRole === Role.ADMISSION || activeRole === Role.ADMIN) {
-      const canCancel = ticket.status !== TicketStatus.COMPLETED && ticket.status !== TicketStatus.REJECTED && ticket.canCancel !== false;
+      const canMutate = ticket.status !== TicketStatus.COMPLETED && ticket.status !== TicketStatus.REJECTED && ticket.canCancel !== false;
       return (
         <div className={cn("flex gap-1.5", isMobile ? "flex-col" : "flex-row")}>
           {ticket.status === TicketStatus.WAITING_CONSOLIDATION && (
@@ -188,7 +191,12 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
               <BedDouble className="w-3.5 h-3.5 mr-2" /> Consolidar PROGAL
             </Button>
           )}
-          {canCancel && onReject && (
+          {canMutate && onEdit && (
+            <Button size={size} variant="outline" className={cn(btnClass, "border-amber-200 text-amber-700 hover:bg-amber-50")} onClick={() => onEdit(ticket.id)}>
+              <Pencil className="w-3.5 h-3.5 mr-2" /> Editar
+            </Button>
+          )}
+          {canMutate && onReject && (
             <Button size={size} variant="outline" className={cn(btnClass, "border-red-200 text-red-600 hover:bg-red-50")} onClick={() => onReject(ticket.id)}>
               <XCircle className="w-3.5 h-3.5 mr-2" /> Cancelar
             </Button>
@@ -282,13 +290,18 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                     <StatusBadge status={ticket.status} />
                     <span className="text-[9px] font-black font-mono text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100">{ticket.id}</span>
                   </div>
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 flex-wrap">
                     <h3 className="font-black text-slate-950 text-base leading-tight tracking-tight uppercase">{ticket.patientName}</h3>
-                    {isTicketIsolated(ticket) && (
-                      <span className="w-5 h-5 rounded-full bg-violet-500 flex items-center justify-center shrink-0" title="Paciente en aislamiento">
-                        <ShieldAlert className="w-3 h-3 text-white" strokeWidth={3} />
+                    {getTicketIsolationTypes(ticket).map((iso: IsolationType) => (
+                      <span
+                        key={iso}
+                        className="inline-flex items-center gap-1 rounded-full bg-violet-500 px-1.5 py-0.5 text-white shrink-0"
+                        title={`Aislamiento: ${iso}`}
+                      >
+                        <ShieldAlert className="w-3 h-3" strokeWidth={3} />
+                        <span className="text-[9px] font-black uppercase tracking-wide leading-none">{iso}</span>
                       </span>
-                    )}
+                    ))}
                   </div>
                 </div>
                 <div className="flex flex-col items-end gap-1">
@@ -416,13 +429,18 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="font-black text-slate-950 text-base uppercase tracking-tight">{ticket.patientName}</span>
-                        {isTicketIsolated(ticket) && (
-                          <span className="w-5 h-5 rounded-full bg-violet-500 flex items-center justify-center shrink-0" title="Paciente en aislamiento">
-                            <ShieldAlert className="w-3 h-3 text-white" strokeWidth={3} />
+                        {getTicketIsolationTypes(ticket).map((iso: IsolationType) => (
+                          <span
+                            key={iso}
+                            className="inline-flex items-center gap-1 rounded-full bg-violet-500 px-1.5 py-0.5 text-white shrink-0"
+                            title={`Aislamiento: ${iso}`}
+                          >
+                            <ShieldAlert className="w-3 h-3" strokeWidth={3} />
+                            <span className="text-[9px] font-black uppercase tracking-wide leading-none">{iso}</span>
                           </span>
-                        )}
+                        ))}
                       </div>
                       <div className="text-[11px] text-slate-400 font-mono mt-0.5 uppercase">{ticket.id}</div>
                     </TableCell>

@@ -28,19 +28,30 @@ function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number)
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// Normalize IPv4-mapped IPv6 addresses (e.g. "::ffff:192.168.1.50" → "192.168.1.50").
+// Node/Vercel can surface either form depending on the upstream proxy config.
+function normalizeIp(ip: string): string {
+  if (!ip) return '';
+  return ip.replace(/^::ffff:/i, '').trim();
+}
+
 // ── Extract client IP from request ──────────────────────────────────────────
 function getClientIp(req: any): string {
   // Vercel / proxied environments
   const forwarded = req.headers?.['x-forwarded-for'];
   if (forwarded) {
     const first = String(forwarded).split(',')[0].trim();
-    if (first) return first;
+    if (first) return normalizeIp(first);
   }
   // Direct connection
-  return req.socket?.remoteAddress ?? req.connection?.remoteAddress ?? '';
+  const raw = req.socket?.remoteAddress ?? req.connection?.remoteAddress ?? '';
+  return normalizeIp(raw);
 }
 
-const GEO_RADIUS_METERS = 100;
+// Radius in meters from any configured allowed geo point. 200m covers a
+// multi-pavilion hospital when only one coordinate is configured; the system
+// still supports adding more coords per sede in 99.ABM_GeoIPS if needed.
+const GEO_RADIUS_METERS = 200;
 
 async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -76,19 +87,26 @@ async function handler(req: any, res: any) {
     );
 
     if (!spRes.ok) {
-      console.error('[validate-location] SP query failed:', spRes.status);
+      console.error(`[validate-location] ⚠ FAIL-OPEN (SP ${spRes.status}) — allowing ip=${clientIp} sede=${effectiveSede}`);
       // If we can't validate, allow access (fail-open to not block hospital operations)
-      return res.status(200).json({ allowed: true, ip: clientIp, reason: 'validation_unavailable' });
+      return res.status(200).json({ allowed: true, ip: clientIp, reason: 'validation_unavailable', failOpen: true });
     }
 
     const data = (await spRes.json()) as { value: Record<string, unknown>[] };
     const items = data.value ?? [];
 
-    // Normalize sede matching: "HPR" should match "HPR - GRUPO GAMMA S.A."
+    // Normalize sede matching. We want "HPR" to match:
+    //   - "HPR"                              (exact)
+    //   - "HPR - GRUPO GAMMA S.A."           (followed by a word-boundary)
+    //   - "HPR, sede central"                (same)
+    // but NOT to match "CHPR", "SIHPRAN" (substring match would be too loose
+    // once more sedes like IG/GAM/SUMAR exist).
     const sedeNorm = effectiveSede.trim().toUpperCase();
     const matchesSede = (recordSede: string) => {
       const r = (recordSede || '').trim().toUpperCase();
-      return r.startsWith(sedeNorm) || r.includes(sedeNorm);
+      if (r === sedeNorm) return true;
+      // Next char after the sede name must be non-alphanumeric (space, dash, comma, etc.)
+      return r.startsWith(sedeNorm) && !/[A-Z0-9]/.test(r.charAt(sedeNorm.length));
     };
 
     // Separate geo and IP records for this sede
@@ -132,20 +150,26 @@ async function handler(req: any, res: any) {
     }
 
     // ── Check IP ────────────────────────────────────────────────────────────
+    // Match by prefix so the admin can configure any CIDR-like length:
+    //   prefix "192.168"          matches "192.168.1.50", "192.168.99.7", ...
+    //   prefix "192.168.1"        matches "192.168.1.50", NOT "192.168.2.5"
+    //   prefix "192.168.1.50"     matches exactly that IP
+    // We append "." to both sides so "192.168.1" doesn't accidentally match
+    // "192.168.10.5" (the naive startsWith would pass).
     let ipValid = false;
     if (clientIp && ipPrefixes.length > 0) {
-      const clientParts = clientIp.split('.');
-      const clientSubnet = clientParts.slice(0, 3).join('.');
-      console.log(`[validate-location] Client subnet: ${clientSubnet} (full IP: ${clientIp})`);
+      const clientIpDotted = clientIp + '.';
+      console.log(`[validate-location] Client IP: ${clientIp}`);
       for (const prefix of ipPrefixes) {
-        if (clientSubnet === prefix) {
+        const prefixDotted = prefix.replace(/\.$/, '') + '.';
+        if (clientIpDotted === prefixDotted || clientIpDotted.startsWith(prefixDotted)) {
           ipValid = true;
-          console.log(`[validate-location] ✓ IP match: ${clientSubnet} === ${prefix}`);
+          console.log(`[validate-location] ✓ IP match: ${clientIp} startsWith ${prefix}`);
           break;
         }
       }
       if (!ipValid) {
-        console.log(`[validate-location] ✗ IP no match: ${clientSubnet} not in [${ipPrefixes.join(', ')}]`);
+        console.log(`[validate-location] ✗ IP no match: ${clientIp} not in [${ipPrefixes.join(', ')}]`);
       }
     } else if (!clientIp) {
       console.log(`[validate-location] ✗ No client IP detected`);
@@ -180,17 +204,35 @@ async function handler(req: any, res: any) {
       return res.status(200).json({ allowed: true, ip: clientIp, method: 'geo' });
     }
 
-    // ── Neither matched ─────────────────────────────────────────────────────
-    console.log(`[validate-location] ✗ DENIED — neither IP nor geo matched for ${clientIp}`);
+    // ── Neither matched — classify the reason so the frontend can show a
+    //    specific message (IP out of range vs GPS unavailable vs GPS out of range).
+    const hadCoords = lat != null && lng != null && !isNaN(Number(lat)) && !isNaN(Number(lng));
+    let denialCode: 'ip_no_match' | 'geo_unavailable' | 'geo_no_match' | 'no_ip';
+    let denialMsg: string;
+    if (!clientIp) {
+      denialCode = 'no_ip';
+      denialMsg = 'No se pudo detectar tu IP. Reintentá o contactá soporte.';
+    } else if (!hadCoords && geoRecords.length > 0) {
+      denialCode = 'geo_unavailable';
+      denialMsg = 'Tu IP no está autorizada y no se pudo obtener la ubicación GPS. Permití la geolocalización del navegador e intentá de nuevo.';
+    } else if (hadCoords) {
+      denialCode = 'geo_no_match';
+      denialMsg = `Estás fuera del área autorizada para la sede ${effectiveSede} (radio ${GEO_RADIUS_METERS} m).`;
+    } else {
+      denialCode = 'ip_no_match';
+      denialMsg = `Tu red no está autorizada para la sede ${effectiveSede}.`;
+    }
+    console.log(`[validate-location] ✗ DENIED [${denialCode}] ip=${clientIp} sede=${effectiveSede} coords=${hadCoords ? `${lat},${lng}` : 'none'}`);
     return res.status(200).json({
       allowed: false,
       ip: clientIp,
-      reason: 'Ubicación o red no autorizada para esta sede',
+      method: denialCode,
+      reason: denialMsg,
     });
   } catch (err: any) {
-    console.error('[validate-location] Error:', err);
+    console.error(`[validate-location] ⚠ FAIL-OPEN (exception) — allowing ip=${clientIp} err=${err?.message ?? err}`);
     // Fail-open: don't block hospital operations if validation breaks
-    return res.status(200).json({ allowed: true, ip: clientIp, reason: 'validation_error' });
+    return res.status(200).json({ allowed: true, ip: clientIp, reason: 'validation_error', failOpen: true });
   }
 }
 
