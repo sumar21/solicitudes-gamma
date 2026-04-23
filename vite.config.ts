@@ -20,7 +20,11 @@ export default defineConfig({
       strategies: 'injectManifest',
       srcDir: 'src-sw',
       filename: 'sw.ts',
-      registerType: 'autoUpdate',
+      // "prompt" + onNeedRefresh handled in index.tsx → calls updateSW(true)
+      // to auto-apply updates without user interaction. Combined with
+      // skipWaiting/clientsClaim in sw.ts, this forces clients to update to
+      // the latest version on the next check (no manual hard refresh needed).
+      registerType: 'prompt',
       includeAssets: ['logo.svg'],
       manifest: {
         name: 'Grupo Gamma - Gestión de Traslados',

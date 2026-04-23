@@ -1,10 +1,25 @@
 /// <reference lib="webworker" />
-import { precacheAndRoute } from 'workbox-precaching';
+import { precacheAndRoute, cleanupOutdatedCaches } from 'workbox-precaching';
+import { clientsClaim } from 'workbox-core';
 
 declare const self: ServiceWorkerGlobalScope;
 
 // Workbox precaching (manifest auto-injected by vite-plugin-pwa)
 precacheAndRoute(self.__WB_MANIFEST);
+cleanupOutdatedCaches();
+
+// Take control of all open clients as soon as this SW activates.
+// Combined with the SKIP_WAITING message handler below (triggered by the frontend
+// when a new version is detected), this removes the "close all tabs to update"
+// friction — users get the new version automatically.
+clientsClaim();
+
+// Apply SKIP_WAITING when the frontend asks for it (via virtual:pwa-register)
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
 
 // ── Push notification handler ───────────────────────────────────────────────
 self.addEventListener('push', (event) => {
