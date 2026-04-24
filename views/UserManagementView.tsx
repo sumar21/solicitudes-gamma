@@ -164,7 +164,9 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
         ? `${form.lastName}, ${form.firstName}`
         : form.firstName;
 
-      const assignedFloorsStr = form.role === 'Azafata'
+      // Azafata y Catering usan sectores asignados (Catering los necesita para filtrar
+       // sus notificaciones push de recepción confirmada).
+      const assignedFloorsStr = (form.role === 'Azafata' || form.role === 'Catering')
         ? form.assignedFloors.join(';')
         : '';
 
@@ -510,8 +512,8 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
               />
             </div>
 
-            {/* Row 4: Sectores — solo si Azafata */}
-            {form.role === 'Azafata' && (
+            {/* Row 4: Sectores — Azafata y Catering (Catering recibe push al confirmar recepción filtradas por área) */}
+            {(form.role === 'Azafata' || form.role === 'Catering') && (
                 <div className="grid gap-1.5">
                   <div className="flex items-center justify-between">
                     <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Sectores Asignados</Label>

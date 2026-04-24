@@ -469,12 +469,19 @@ export const useHospitalState = () => {
 
   const spUpdate = async (spItemId: string, updates: Partial<Ticket>, ticket?: Ticket): Promise<void> => {
     try {
-      // Include ticket context so push notifications have full info
+      // Include ticket context so push notifications have full info.
+      // originArea / destinationArea are the real Gamma area names (not bed labels),
+      // used server-side for precise subscriber filtering and for composing the
+      // Catering-specific message (room + floor).
+      const originArea      = ticket?.origin      ? rawBeds.find((b: Bed) => b.label === ticket.origin)?.area      : undefined;
+      const destinationArea = ticket?.destination ? rawBeds.find((b: Bed) => b.label === ticket.destination)?.area : undefined;
       const context = ticket ? {
         id: ticket.id,
         patientName: ticket.patientName,
         origin: ticket.origin,
         destination: ticket.destination,
+        originArea,
+        destinationArea,
         sede: ticket.sede,
       } : {};
       await authFetch('/api/tickets', {
@@ -581,7 +588,15 @@ export const useHospitalState = () => {
       setToken(data.token);
       setCurrentUser(user);
       setActiveRole(user.role as Role);
-      setCurrentView(user.role === Role.HOSTESS ? 'REQUESTS' : 'HOME');
+      // Landing view depends on role.
+      //   HOSTESS        → Operativa (sus tickets activos)
+      //   CATERING / R/O → Mapa de Camas (única vista que ven)
+      //   otros          → Monitor
+      const landingView =
+        user.role === Role.HOSTESS ? 'REQUESTS'
+        : (user.role === Role.CATERING || user.role === Role.READ_ONLY) ? 'BEDS'
+        : 'HOME';
+      setCurrentView(landingView);
 
       // Pre-fetch beds + tickets so HOSTESS view has data immediately
       fetchBeds();

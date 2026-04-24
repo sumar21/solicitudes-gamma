@@ -29,7 +29,8 @@ export enum Role {
   NURSING = 'NURSING',
   ADMIN = 'ADMIN',
   HOSTESS = 'HOSTESS', // Azafata
-  READ_ONLY = 'READ_ONLY', // Mucamas, Catering, etc.
+  CATERING = 'CATERING', // Catering — mismos permisos de lectura que READ_ONLY + push al confirmar recepción
+  READ_ONLY = 'READ_ONLY', // Mucamas, etc. — solo vista, sin push
 }
 
 export enum Area {

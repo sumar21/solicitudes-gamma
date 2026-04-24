@@ -38,6 +38,7 @@ function mapRole(perfil: string): string {
   if (p.includes('admisi'))                 return 'ADMISSION';
   if (p.includes('coordinad'))              return 'COORDINATOR';
   if (p.includes('azafata') || p === 'hostess') return 'HOSTESS';
+  if (p.includes('catering'))               return 'CATERING';
   if (p.includes('housekeeping') || p.includes('mucam')) return 'HOUSEKEEPING';
   if (p.includes('enfermer') || p === 'nursing') return 'NURSING';
   return 'READ_ONLY';

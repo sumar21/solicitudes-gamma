@@ -202,7 +202,11 @@ async function handler(req: any, res: any) {
 
     // ── PATCH ──────────────────────────────────────────────────────────────
     if (req.method === 'PATCH') {
-      const { spItemId, ...updates } = req.body as Partial<Ticket> & { spItemId: string };
+      const { spItemId, originArea, destinationArea, ...updates } = req.body as Partial<Ticket> & {
+        spItemId: string;
+        originArea?: string;
+        destinationArea?: string;
+      };
       if (!spItemId) return res.status(400).json({ error: 'spItemId required' });
 
       const spRes = await graphFetch(
@@ -226,15 +230,49 @@ async function handler(req: any, res: any) {
         };
         const label = statusLabels[updates.status];
         if (label) {
+          const isReceptionConfirmed = updates.status === TicketStatus.WAITING_CONSOLIDATION;
+          // Catering-only: human-readable message "X pasó de Habitación 413 (Piso 4) a Habitación 509 (Piso 5)".
+          // Only built for WAITING_CONSOLIDATION so other status changes don't notify Catering at all.
+          let cateringBody: string | undefined;
+          if (isReceptionConfirmed) {
+            const extractRoom = (label?: string): string => {
+              if (!label) return '?';
+              const m = label.match(/Habitaci[oó]n\s+(\S+)/i);
+              if (m) return m[1];
+              const unidad = label.match(/Unidad\s+([^-]+)/i);
+              if (unidad) return unidad[1].trim();
+              return label.split(' - ')[0].trim();
+            };
+            const extractFloor = (areaName?: string): string => {
+              if (!areaName) return '';
+              const m = areaName.match(/(\d+)°?\s*Piso/i);
+              if (m) return `Piso ${m[1]}`;
+              return areaName.replace(/\s*HPR\s*$/i, '').trim();
+            };
+            const patient = updates.patientName ?? 'Paciente';
+            const roomO   = extractRoom(updates.origin);
+            const roomD   = extractRoom(updates.destination);
+            const floorO  = extractFloor(originArea);
+            const floorD  = extractFloor(destinationArea);
+            const fromPart = floorO ? `Habitación ${roomO} (${floorO})` : `Habitación ${roomO}`;
+            const toPart   = floorD ? `Habitación ${roomD} (${floorD})` : `Habitación ${roomD}`;
+            cateringBody = `${patient} pasó de ${fromPart} a ${toPart}`;
+          }
+
           sendPushToSubscribers({
             title: label,
             body: `${updates.patientName ?? 'Paciente'}: ${updates.origin ?? ''} → ${updates.destination ?? ''}`,
             ticketId: updates.id,
-            type: 'STATUS_UPDATE',
+            // 'RECEPTION_CONFIRMED' is the only event Catering listens to.
+            type: isReceptionConfirmed ? 'RECEPTION_CONFIRMED' : 'STATUS_UPDATE',
             originArea: updates.origin,
             destinationArea: updates.destination,
+            originAreaName: originArea,
+            destinationAreaName: destinationArea,
             sede: updates.sede,
             excludeUserId: (req as any).user?.id,
+            cateringTitle: isReceptionConfirmed ? 'Traslado concretado' : undefined,
+            cateringBody,
           }).catch((err: any) => console.error('[tickets] Push error:', err));
         }
       }
