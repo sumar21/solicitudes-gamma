@@ -57,6 +57,18 @@ export interface GammaEvent {
   EVC_INSTITUCION?: string;
   INSTITUCION_NOMBRE?: string;
   EVE_DIAGNOSTICO?: string;
+  // Nuevos campos (Grupo Gamma añadió en la respuesta de obtenereventointernacion):
+  EVE_TIPO_INTERNACION?: string;        // "C" (clínica), "Q" (quirúrgica), "T" (trasplante), "K" (quemados), "H" (hemodinamia), "O" (oncológica)
+  EVE_FECHA_HORA_INGRESO?: string | null;
+  EVE_FECHA_HORA_EGRESO?: string | null;
+  EVE_FECHA_PROBABLE_CIRUGIA?: string | null;
+  EVE_DIAS_AUTORIZADOS?: number | null;
+  // Listado de respuestas del formulario de dieta: cada entry tiene una condición
+  // (HCG_DESCRIPCION) y su respuesta ("Sí" / "No" / valor libre como "Liviana").
+  DIETAS?: Array<{
+    HCG_DESCRIPCION?: string;
+    EIP_RESPUESTA_VALOR?: string;
+  }>;
 }
 
 // ── Token cache (survives warm invocations) ──────────────────────────────────

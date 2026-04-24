@@ -61,6 +61,13 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   const [enrichLoading, setEnrichLoading] = useState(false);
   const [pdfExporting, setPdfExporting] = useState<'normal' | 'alpha' | false>(false);
   const [pdfProgress, setPdfProgress] = useState({ done: 0, total: 0 });
+  // Tab activa dentro del detalle de una cama ocupada (Generales / Internación / Dieta)
+  const [detailTab, setDetailTab] = useState<'general' | 'internacion' | 'dieta'>('general');
+
+  // Reset detail tab when opening a different bed
+  React.useEffect(() => {
+    setDetailTab('general');
+  }, [selectedBed?.id]);
 
   // On-demand enrichment when user clicks an occupied bed
   React.useEffect(() => {
@@ -371,9 +378,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     };
 
     // ── Column layout ────────────────────────────────────────────────────────
-    // Columns: Hab.(14) | Cama(10) | Estado(22) | Paciente(50) | DNI(22) | Edad(10) | Sexo(10) | Profesional(45) | Financiador(44)
-    const colWidths = [14, 10, 22, 50, 22, 10, 10, 45, 44];
-    const colHeaders = ['Hab.', 'Cama', 'Estado', 'Paciente', 'DNI', 'Edad', 'Sexo', 'Profesional', 'Financiador'];
+    // Columns: Hab.(13) | Cama(9) | Estado(20) | Paciente(40) | DNI(19) | Edad(9) | Sexo(8) | Tipo(11) | Ingreso(22) | Días(9) | Profesional(36) | Financiador(36)
+    const colWidths  = [13, 9, 20, 40, 19, 9, 8, 11, 22, 9, 36, 36];
+    const colHeaders = ['Hab.', 'Cama', 'Estado', 'Paciente', 'DNI', 'Edad', 'Sexo', 'Tipo', 'Ingreso', 'Días', 'Profesional', 'Financiador'];
     const rowH = 6;
     const tableWidth = colWidths.reduce((s, w) => s + w, 0);
 
@@ -491,6 +498,26 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
           const financier = isOccupied
             ? (bed.institution ?? '')
             : (ticket?.financier ?? '');
+          // Tipo, ingreso (DD/MM/YY HH:MM), días de estadía — de los datos enriquecidos
+          const admissionCode = isOccupied ? (bed.admissionTypeCode ?? '') : '';
+          const admissionDateShort = (() => {
+            if (!isOccupied || !bed.admissionDate) return '';
+            const d = new Date(bed.admissionDate);
+            if (isNaN(d.getTime())) return '';
+            const dd = String(d.getDate()).padStart(2, '0');
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const yy = String(d.getFullYear()).slice(-2);
+            const hh = String(d.getHours()).padStart(2, '0');
+            const mi = String(d.getMinutes()).padStart(2, '0');
+            return `${dd}/${mm}/${yy} ${hh}:${mi}`;
+          })();
+          const stayDays = (() => {
+            if (!isOccupied || !bed.admissionDate) return '';
+            const d = new Date(bed.admissionDate);
+            if (isNaN(d.getTime())) return '';
+            const diff = Math.max(0, Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24)));
+            return String(diff);
+          })();
 
           // Col 3: Paciente
           const maxPatientChars = Math.floor(colWidths[3] / 1.6);
@@ -505,14 +532,23 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
           // Col 6: Sexo
           doc.text(sex, colX[6] + 1.5, textY);
 
-          // Col 7: Profesional (prescriptor from event, fallback to attending)
-          const prof = isOccupied ? (bed.prescribingPhysician ?? bed.attendingPhysician ?? '') : '';
-          const maxPhysChars = Math.floor(colWidths[7] / 1.6);
-          doc.text(prof.substring(0, maxPhysChars), colX[7] + 1.5, textY);
+          // Col 7: Tipo (código corto: C, Q, T, K, H, O, R, CO)
+          doc.text(admissionCode, colX[7] + 1.5, textY);
 
-          // Col 8: Financiador
-          const maxFinChars = Math.floor(colWidths[8] / 1.6);
-          doc.text(financier.substring(0, maxFinChars), colX[8] + 1.5, textY);
+          // Col 8: Ingreso (fecha corta)
+          doc.text(admissionDateShort, colX[8] + 1.5, textY);
+
+          // Col 9: Días de estadía
+          doc.text(stayDays, colX[9] + 1.5, textY);
+
+          // Col 10: Profesional (prescriptor from event, fallback to attending)
+          const prof = isOccupied ? (bed.prescribingPhysician ?? bed.attendingPhysician ?? '') : '';
+          const maxPhysChars = Math.floor(colWidths[10] / 1.6);
+          doc.text(prof.substring(0, maxPhysChars), colX[10] + 1.5, textY);
+
+          // Col 11: Financiador
+          const maxFinChars = Math.floor(colWidths[11] / 1.6);
+          doc.text(financier.substring(0, maxFinChars), colX[11] + 1.5, textY);
         } else {
           // Non-occupied: just show bed code in patient column (dimmed)
           doc.setTextColor(148, 163, 184);
@@ -597,9 +633,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       doc.line(margin, 19, pageW - margin, 19);
     };
 
-    // Columns: Paciente(50) | Hab.(14) | Cama(10) | Sector(22) | Estado(22) | DNI(22) | Edad(10) | Sexo(10) | Profesional(42) | Financiador(42)
-    const colWidths = [50, 14, 10, 22, 22, 22, 10, 10, 42, 42];
-    const colHeaders = ['Paciente', 'Hab.', 'Cama', 'Sector', 'Estado', 'DNI', 'Edad', 'Sexo', 'Profesional', 'Financiador'];
+    // Columns: Paciente(38) | Hab.(12) | Cama(9) | Sector(20) | Estado(18) | DNI(19) | Edad(9) | Sexo(8) | Tipo(10) | Ingreso(22) | Días(9) | Profesional(35) | Financiador(32)
+    const colWidths  = [38, 12, 9, 20, 18, 19, 9, 8, 10, 22, 9, 35, 32];
+    const colHeaders = ['Paciente', 'Hab.', 'Cama', 'Sector', 'Estado', 'DNI', 'Edad', 'Sexo', 'Tipo', 'Ingreso', 'Días', 'Profesional', 'Financiador'];
     const rowH = 6;
     const tableWidth = colWidths.reduce((s, w) => s + w, 0);
     const colX: number[] = [];
@@ -633,6 +669,26 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
         if (!isOccupied && !isAssigned) return null;
         const patientName = isOccupied ? (bed.patientName ?? '') : (ticket?.patientName ?? '');
         if (!patientName) return null;
+        // Tipo (single-letter/2-letter code), admission date DD/MM/YY HH:MM, stay in days
+        const admissionCode = isOccupied ? (bed.admissionTypeCode ?? '') : '';
+        const admissionDateShort = (() => {
+          if (!isOccupied || !bed.admissionDate) return '';
+          const d = new Date(bed.admissionDate);
+          if (isNaN(d.getTime())) return '';
+          const dd = String(d.getDate()).padStart(2, '0');
+          const mm = String(d.getMonth() + 1).padStart(2, '0');
+          const yy = String(d.getFullYear()).slice(-2);
+          const hh = String(d.getHours()).padStart(2, '0');
+          const mi = String(d.getMinutes()).padStart(2, '0');
+          return `${dd}/${mm}/${yy} ${hh}:${mi}`;
+        })();
+        const stayDays = (() => {
+          if (!isOccupied || !bed.admissionDate) return '';
+          const d = new Date(bed.admissionDate);
+          if (isNaN(d.getTime())) return '';
+          const diff = Math.max(0, Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24)));
+          return String(diff);
+        })();
         return {
           patientName,
           roomCode: bed.roomCode ?? '',
@@ -642,6 +698,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
           dni: isOccupied ? (bed.dni ?? '') : '',
           age: isOccupied ? (bed.age != null ? String(bed.age) : '') : '',
           sex: isOccupied ? (bed.sex === 'M' ? 'M' : bed.sex === 'F' ? 'F' : '') : '',
+          admissionCode,
+          admissionDateShort,
+          stayDays,
           physician: isOccupied ? (bed.attendingPhysician ?? '') : '',
           prescriptor: isOccupied ? (bed.prescribingPhysician ?? '') : '',
           financier: isOccupied ? (bed.institution ?? '') : (ticket?.financier ?? ''),
@@ -687,11 +746,17 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       doc.text(row.age, colX[6] + 1.5, textY);
       // Sexo
       doc.text(row.sex, colX[7] + 1.5, textY);
+      // Tipo (código corto)
+      doc.text(row.admissionCode, colX[8] + 1.5, textY);
+      // Ingreso (DD/MM/YY)
+      doc.text(row.admissionDateShort, colX[9] + 1.5, textY);
+      // Días de estadía
+      doc.text(row.stayDays, colX[10] + 1.5, textY);
       // Profesional (prescriptor from event, fallback to attending)
       const prof = row.prescriptor || row.physician;
-      doc.text(prof.substring(0, Math.floor(colWidths[8] / 1.6)), colX[8] + 1.5, textY);
+      doc.text(prof.substring(0, Math.floor(colWidths[11] / 1.6)), colX[11] + 1.5, textY);
       // Financiador
-      doc.text(row.financier.substring(0, Math.floor(colWidths[9] / 1.6)), colX[9] + 1.5, textY);
+      doc.text(row.financier.substring(0, Math.floor(colWidths[12] / 1.6)), colX[12] + 1.5, textY);
 
       curY += rowH;
     });
@@ -1092,64 +1157,233 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                 {/* Content */}
                 <div className="p-5 space-y-3">
 
-                  {/* OCCUPIED — patient info */}
-                  {isOccupied && (
-                    <>
-                      <div className={cn("rounded-2xl p-3.5 border", t.patientBg, t.patientBorder)}>
-                        <div className="flex items-center gap-1.5 mb-1">
-                          <UserIcon className={cn("w-3.5 h-3.5", t.label)} />
-                          <span className={cn("text-[9px] font-bold uppercase tracking-widest", t.label)}>Paciente</span>
-                        </div>
-                        <p className="text-base font-black text-slate-900 leading-snug">{selectedBed.patientName}</p>
-                      </div>
+                  {/* OCCUPIED — patient info organized in tabs */}
+                  {isOccupied && (() => {
+                    const spinner = <span className="inline-block w-4 h-4 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" />;
+                    const fmtDate = (iso?: string) => {
+                      if (!iso) return '—';
+                      try {
+                        const d = new Date(iso);
+                        if (isNaN(d.getTime())) return iso;
+                        return d.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
+                      } catch { return iso; }
+                    };
+                    const fmtDateOnly = (iso?: string) => {
+                      if (!iso) return '—';
+                      try {
+                        const d = new Date(iso);
+                        if (isNaN(d.getTime())) return iso;
+                        return d.toLocaleDateString('es-AR');
+                      } catch { return iso; }
+                    };
+                    const daysSinceAdmission = (iso?: string): number | null => {
+                      if (!iso) return null;
+                      const d = new Date(iso);
+                      if (isNaN(d.getTime())) return null;
+                      const diffMs = Date.now() - d.getTime();
+                      return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+                    };
+                    const stayDays = daysSinceAdmission(displayBed?.admissionDate);
+                    const hasInternacionData =
+                      !!displayBed?.admissionType ||
+                      !!displayBed?.admissionDate ||
+                      displayBed?.authorizedDays != null ||
+                      !!displayBed?.expectedSurgeryDate;
+                    const hasDietData = !!(displayBed?.diets && displayBed.diets.length > 0);
 
-                      <div className="grid grid-cols-4 gap-2.5">
-                        <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                          <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">DNI</p>
-                          <p className="text-sm font-mono font-bold text-slate-700">{enrichLoading ? <span className="inline-block w-4 h-4 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : (displayBed?.dni || '—')}</p>
-                        </div>
-                        <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                          <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Edad</p>
-                          <p className="text-sm font-bold text-slate-700">{enrichLoading ? <span className="inline-block w-4 h-4 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : (displayBed?.age != null ? `${displayBed.age}` : '—')}</p>
-                        </div>
-                        <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                          <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Sexo</p>
-                          <p className="text-sm font-bold text-slate-700">{enrichLoading ? <span className="inline-block w-4 h-4 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : (displayBed?.sex === 'M' ? 'M' : displayBed?.sex === 'F' ? 'F' : '—')}</p>
-                        </div>
-                        <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                          <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Evento</p>
-                          <p className="text-sm font-mono font-bold text-slate-700">
-                            {selectedBed.eventOrigin && selectedBed.eventNumber
-                              ? `${selectedBed.eventOrigin}-${selectedBed.eventNumber}`
-                              : '—'}
-                          </p>
-                        </div>
-                      </div>
+                    // All tabs always navigable. If the enrich didn't return data
+                    // for a tab, the tab content renders an explicit "sin datos" line
+                    // — better UX than visually disabling it without context.
+                    const tabs: { key: 'general' | 'internacion' | 'dieta'; label: string }[] = [
+                      { key: 'general',     label: 'Generales' },
+                      { key: 'internacion', label: 'Internación' },
+                      { key: 'dieta',       label: 'Dieta' },
+                    ];
+                    const activeTab = detailTab;
 
-                      <div className="grid grid-cols-2 gap-2.5">
-                        <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                          <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Financiador</p>
-                          <p className="text-sm font-semibold text-slate-700">{enrichLoading ? <span className="inline-block w-4 h-4 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : (displayBed?.institution || '—')}</p>
+                    return (
+                      <>
+                        {/* Header paciente — siempre visible */}
+                        <div className={cn("rounded-2xl p-3.5 border", t.patientBg, t.patientBorder)}>
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <UserIcon className={cn("w-3.5 h-3.5", t.label)} />
+                            <span className={cn("text-[9px] font-bold uppercase tracking-widest", t.label)}>Paciente</span>
+                          </div>
+                          <p className="text-base font-black text-slate-900 leading-snug">{selectedBed.patientName}</p>
                         </div>
-                        <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                          <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">ID Paciente</p>
-                          <p className="text-sm font-mono font-bold text-slate-700">{selectedBed.patientCode || '—'}</p>
-                        </div>
-                      </div>
 
-                      <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                        <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Profesional</p>
-                        <p className="text-sm font-semibold text-slate-700">{enrichLoading ? <span className="inline-block w-4 h-4 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : (displayBed?.prescribingPhysician || displayBed?.attendingPhysician || '—')}</p>
-                      </div>
-
-                      {(displayBed?.diagnosis || enrichLoading) && (
-                        <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                          <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Diagnóstico</p>
-                          <p className="text-sm font-semibold text-slate-700">{enrichLoading ? <span className="inline-block w-4 h-4 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : displayBed?.diagnosis}</p>
+                        {/* Tab bar */}
+                        <div className="flex gap-1 bg-slate-100 rounded-xl p-1">
+                          {tabs.map(tab => {
+                            const isActive = tab.key === activeTab;
+                            return (
+                              <button
+                                key={tab.key}
+                                type="button"
+                                onClick={() => setDetailTab(tab.key)}
+                                className={cn(
+                                  "flex-1 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
+                                  isActive
+                                    ? "bg-white text-emerald-900 shadow-sm"
+                                    : "text-slate-500 hover:text-slate-700"
+                                )}
+                              >
+                                {tab.label}
+                              </button>
+                            );
+                          })}
                         </div>
-                      )}
-                    </>
-                  )}
+
+                        {/* Tab: Generales */}
+                        {activeTab === 'general' && (
+                          <>
+                            <div className="grid grid-cols-6 gap-2.5">
+                              <div className="col-span-2 bg-slate-50 rounded-xl p-3 border border-slate-100">
+                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">DNI</p>
+                                <p className="text-sm font-mono font-bold text-slate-700">{enrichLoading ? spinner : (displayBed?.dni || '—')}</p>
+                              </div>
+                              <div className="col-span-1 bg-slate-50 rounded-xl p-3 border border-slate-100">
+                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Edad</p>
+                                <p className="text-sm font-bold text-slate-700">{enrichLoading ? spinner : (displayBed?.age != null ? `${displayBed.age}` : '—')}</p>
+                              </div>
+                              <div className="col-span-1 bg-slate-50 rounded-xl p-3 border border-slate-100">
+                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Sexo</p>
+                                <p className="text-sm font-bold text-slate-700">{enrichLoading ? spinner : (displayBed?.sex === 'M' ? 'M' : displayBed?.sex === 'F' ? 'F' : '—')}</p>
+                              </div>
+                              <div className="col-span-2 bg-slate-50 rounded-xl p-3 border border-slate-100">
+                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Evento</p>
+                                <p className="text-sm font-mono font-bold text-slate-700 whitespace-nowrap">
+                                  {selectedBed.eventOrigin && selectedBed.eventNumber
+                                    ? `${selectedBed.eventOrigin}-${selectedBed.eventNumber}`
+                                    : '—'}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2.5">
+                              <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Financiador</p>
+                                <p className="text-sm font-semibold text-slate-700">{enrichLoading ? spinner : (displayBed?.institution || '—')}</p>
+                              </div>
+                              <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">ID Paciente</p>
+                                <p className="text-sm font-mono font-bold text-slate-700">{selectedBed.patientCode || '—'}</p>
+                              </div>
+                            </div>
+
+                            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                              <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Profesional</p>
+                              <p className="text-sm font-semibold text-slate-700">{enrichLoading ? spinner : (displayBed?.prescribingPhysician || displayBed?.attendingPhysician || '—')}</p>
+                            </div>
+
+                            {(displayBed?.diagnosis || enrichLoading) && (
+                              <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Diagnóstico</p>
+                                <p className="text-sm font-semibold text-slate-700">{enrichLoading ? spinner : displayBed?.diagnosis}</p>
+                              </div>
+                            )}
+                          </>
+                        )}
+
+                        {/* Tab: Internación */}
+                        {activeTab === 'internacion' && (
+                          <>
+                            <div className="grid grid-cols-3 gap-2.5">
+                              <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Tipo</p>
+                                <p className="text-sm font-bold text-slate-700">
+                                  {enrichLoading
+                                    ? spinner
+                                    : (displayBed?.admissionType
+                                        ? <><span>{displayBed.admissionType}</span>{displayBed.admissionTypeCode && <span className="text-[10px] font-mono text-slate-400 ml-1">({displayBed.admissionTypeCode})</span>}</>
+                                        : '—')}
+                                </p>
+                              </div>
+                              <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Ingreso</p>
+                                <p className="text-sm font-semibold text-slate-700">{enrichLoading ? spinner : fmtDate(displayBed?.admissionDate)}</p>
+                                {stayDays != null && stayDays > 0 && !enrichLoading && (
+                                  <p className="text-[10px] text-slate-400 mt-0.5">hace {stayDays} día{stayDays === 1 ? '' : 's'}</p>
+                                )}
+                              </div>
+                              <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Días Autorizados</p>
+                                <p className="text-sm font-bold text-slate-700">
+                                  {enrichLoading
+                                    ? spinner
+                                    : (displayBed?.authorizedDays != null ? displayBed.authorizedDays : '—')}
+                                </p>
+                                {displayBed?.authorizedDays != null && stayDays != null && !enrichLoading && (
+                                  <p className={cn("text-[10px] mt-0.5 font-semibold",
+                                    stayDays > displayBed.authorizedDays ? "text-red-600" :
+                                    stayDays >= displayBed.authorizedDays ? "text-amber-600" : "text-slate-400")}>
+                                    {stayDays > displayBed.authorizedDays
+                                      ? `Excede ${stayDays - displayBed.authorizedDays}`
+                                      : `${displayBed.authorizedDays - stayDays} restantes`}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                            {displayBed?.expectedSurgeryDate && (
+                              <div className="bg-blue-50 rounded-xl p-3 border border-blue-100">
+                                <p className="text-[8px] font-bold uppercase text-blue-500 mb-1">Fecha Probable de Cirugía</p>
+                                <p className="text-sm font-bold text-blue-900">{fmtDateOnly(displayBed.expectedSurgeryDate)}</p>
+                              </div>
+                            )}
+                            {!enrichLoading && !hasInternacionData && (
+                              <p className="text-xs text-slate-400 italic text-center py-2">Sin datos de internación disponibles</p>
+                            )}
+                          </>
+                        )}
+
+                        {/* Tab: Dieta */}
+                        {activeTab === 'dieta' && (
+                          <>
+                            {displayBed?.dietTags && displayBed.dietTags.length > 0 && (
+                              <div className="bg-emerald-50/60 rounded-xl p-3 border border-emerald-100">
+                                <p className="text-[8px] font-bold uppercase text-emerald-700 mb-2">Condiciones y Tipo</p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {displayBed.dietTags.map(tag => (
+                                    <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded-full bg-white border border-emerald-300 text-[10px] font-bold text-emerald-800">
+                                      {tag}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            {displayBed?.diets && displayBed.diets.length > 0 && (
+                              <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-2">Formulario completo</p>
+                                <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+                                  {displayBed.diets.map((d, idx) => {
+                                    const resp = (d.respuesta ?? '').trim();
+                                    const isNo = resp.toLowerCase() === 'no';
+                                    return (
+                                      <div key={idx} className="flex items-center justify-between gap-2 text-[11px]">
+                                        <span className="text-slate-500 truncate">{d.descripcion}</span>
+                                        <span className={cn(
+                                          "font-bold shrink-0",
+                                          isNo ? "text-slate-400" : "text-emerald-700"
+                                        )}>
+                                          {resp || '—'}
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                            {!enrichLoading && !hasDietData && (
+                              <p className="text-xs text-slate-400 italic text-center py-2">Sin datos de dieta disponibles</p>
+                            )}
+                            {enrichLoading && (
+                              <p className="text-xs text-slate-400 italic text-center py-2">Cargando...</p>
+                            )}
+                          </>
+                        )}
+                      </>
+                    );
+                  })()}
 
                   {isAssigned && (() => {
                     const assignedTicket = bedTicketMap.get(selectedBed.label);
@@ -1244,7 +1478,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                         <p className="text-[9px] font-bold uppercase text-slate-400 tracking-widest">
                           {hasAny ? 'Tipos de aislamiento (tocá para agregar/quitar)' : 'Marcar Aislamiento'}
                         </p>
-                        <div className="grid grid-cols-4 gap-1.5">
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5">
                           {Object.values(IsolationType).map(tipo => {
                             const color = ISOLATION_COLORS[tipo] ?? DEFAULT_ISO_COLOR;
                             const isActive = currentTypes.includes(tipo);
@@ -1259,13 +1493,14 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                                   setSelectedBed({ ...selectedBed });
                                 }}
                                 aria-pressed={isActive}
+                                title={tipo}
                                 className={cn(
-                                  "flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-[9px] font-bold transition-all",
+                                  "flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-[9px] font-bold transition-all min-w-0 text-left leading-tight",
                                   isActive ? `${color.bg} text-white border-transparent shadow-sm` : `border-slate-200 hover:shadow-sm`
                                 )}
                               >
                                 <span className={cn("w-2.5 h-2.5 rounded-full shrink-0", isActive ? "bg-white/40" : color.dot)} />
-                                {tipo}
+                                <span className="break-words whitespace-normal">{tipo}</span>
                               </button>
                             );
                           })}

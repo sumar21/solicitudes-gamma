@@ -476,8 +476,8 @@ export default function App() {
           {isAdmin && state.currentView === 'USERS' && <UserManagementView currentUser={state.currentUser} />}
           {/* Roles — solo Admin */}
           {isAdmin && (state.currentView as string) === 'ROLES' && <RoleManagementView currentUser={state.currentUser} />}
-          {/* Mapa de Camas — todos los roles, o fallback si el rol no tiene otra vista */}
-          {(state.currentView === 'BEDS' || (!hasFullAccess && !hasAzafataAccess)) && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} isolatedPatients={state.isolatedPatients} onToggleIsolation={actions.toggleIsolation} onEnrichBed={actions.enrichBed} onRefresh={actions.refreshAll} />}
+          {/* Mapa de Camas — visible para todos los roles cuando es la vista activa */}
+          {state.currentView === 'BEDS' && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} isolatedPatients={state.isolatedPatients} onToggleIsolation={actions.toggleIsolation} onEnrichBed={actions.enrichBed} onRefresh={actions.refreshAll} />}
         </main>
       </div>
 

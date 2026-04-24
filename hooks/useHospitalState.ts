@@ -113,6 +113,10 @@ export const useHospitalState = () => {
     if (saved) {
       const user = JSON.parse(saved);
       if (user.role === Role.HOSTESS) return 'REQUESTS';
+      // Catering y READ_ONLY solo acceden al Mapa de Camas — arrancar allí
+      // tras recargar la app con sesión persistida (si no, quedan en HOME
+      // que no les renderiza nada y verían pantalla en blanco).
+      if (user.role === Role.CATERING || user.role === Role.READ_ONLY) return 'BEDS';
     }
     return 'HOME';
   });

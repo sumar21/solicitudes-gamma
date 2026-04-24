@@ -72,6 +72,14 @@ export interface Bed {
   sex?: 'M' | 'F';
   diagnosis?: string;
   prescribingPhysician?: string;
+  // Nuevos campos enriquecidos desde Gamma (obtenereventointernacion v2):
+  admissionType?: string;        // Etiqueta humana ("Clínica", "Quirúrgica", ...)
+  admissionTypeCode?: string;    // Código crudo ("C", "Q", "T", "K", "H", "O")
+  admissionDate?: string;        // ISO string — fecha/hora de ingreso
+  expectedSurgeryDate?: string;  // ISO string — fecha probable de cirugía
+  authorizedDays?: number;       // Días autorizados por la OS
+  diets?: { descripcion: string; respuesta: string }[]; // Respuestas crudas del form de dieta
+  dietTags?: string[];           // Chips resumen (condiciones activas / tipo)
 }
 
 export type ViewMode = 'HOME' | 'REQUESTS' | 'USERS' | 'HISTORY' | 'BEDS';
