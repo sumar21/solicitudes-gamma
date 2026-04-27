@@ -184,10 +184,10 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                   </div>
                 )}
 
-                {ticket.workflow === WorkflowType.ROOM_CHANGE && ticket.changeReason && (
+                {(ticket.workflow === WorkflowType.INTERNAL || ticket.workflow === WorkflowType.ROOM_CHANGE) && ticket.changeReason && (
                   <div className="p-4 bg-amber-50 rounded-xl border border-amber-100">
                     <p className="text-[9px] uppercase font-bold text-amber-600 tracking-widest mb-1.5 flex items-center gap-1">
-                      <Info className="w-3 h-3" /> Motivo del Cambio
+                      <Info className="w-3 h-3" /> Motivo del Traslado
                     </p>
                     <p className="text-xs font-semibold text-amber-900 leading-relaxed">{ticket.changeReason}</p>
                   </div>

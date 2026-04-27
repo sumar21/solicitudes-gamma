@@ -489,6 +489,11 @@ export default function App() {
         beds={state.beds}
         isolatedPatients={state.isolatedPatients}
         activeTransferOrigins={new Set(state.tickets.filter(t => t.status !== 'Consolidado' && t.status !== 'Cancelado').map(t => t.origin))}
+        activeTransferDestinations={new Set(
+          state.tickets
+            .filter(t => t.status !== 'Consolidado' && t.status !== 'Cancelado' && t.destination)
+            .map(t => t.destination as string)
+        )}
       />
       <EditRequestModal
         open={!!editTicketId}
@@ -496,6 +501,11 @@ export default function App() {
         ticket={editTicketId ? (state.tickets.find(t => t.id === editTicketId) ?? null) : null}
         beds={state.beds}
         isolatedPatients={state.isolatedPatients}
+        activeTransferDestinations={new Set(
+          state.tickets
+            .filter(t => t.id !== editTicketId && t.status !== 'Consolidado' && t.status !== 'Cancelado' && t.destination)
+            .map(t => t.destination as string)
+        )}
         onSave={(payload: EditRequestPayload) => {
           actions.handleEditTicket(payload);
           setEditTicketId(null);

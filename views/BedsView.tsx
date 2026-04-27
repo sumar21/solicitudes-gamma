@@ -55,6 +55,7 @@ const ISOLATION_COLORS: Record<string, { ring: string; bg: string; text: string;
 };
 const DEFAULT_ISO_COLOR = { ring: 'ring-violet-400', bg: 'bg-violet-500', text: 'text-violet-700', dot: 'bg-violet-500' };
 
+
 export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), isolatedPatients = new Map(), onToggleIsolation, onEnrichBed, onRefresh }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
   const [enrichedBed, setEnrichedBed] = useState<Bed | null>(null);
@@ -98,6 +99,13 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     const tipos = isolatedPatients.get(bed.patientCode);
     const primary = tipos?.[0];
     return primary ? (ISOLATION_COLORS[primary] ?? DEFAULT_ISO_COLOR) : DEFAULT_ISO_COLOR;
+  };
+
+  // Returns the active isolation types for a bed (empty array if none).
+  // Used to render the multi-isolation tag in the bed cell corner.
+  const getIsolationTypes = (bed: Bed): IsolationType[] => {
+    if (!bed.patientCode) return [];
+    return isolatedPatients.get(bed.patientCode) ?? [];
   };
 
   // Rooms that have an isolated patient — other beds in same room are blocked
@@ -1067,14 +1075,18 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                 const isIsolated = isolatedBeds.has(bed.label);
                 const isBlocked = blockedByIsolation.has(bed.label);
                 const isoColor = isIsolated ? getIsolationColor(bed) : DEFAULT_ISO_COLOR;
+                const isoTipos = isIsolated ? getIsolationTypes(bed) : [];
+                const isMultiIso = isoTipos.length >= 2;
 
                 return (
                   <button
                     key={bed.id}
                     onClick={() => setSelectedBed(bed)}
+                    title={isMultiIso ? `Aislamientos: ${isoTipos.join(', ')}` : undefined}
                     className={cn(
                       "relative flex flex-col items-center justify-center aspect-square rounded-lg border transition-all duration-200 overflow-hidden group",
                       isBlocked ? "bg-violet-50 border-violet-300 opacity-60" : getStatusColor(bed.status),
+                      // Ring color = first isolation type (works for single AND multi cases).
                       isIsolated && `ring-2 ${isoColor.ring} ring-offset-1`
                     )}
                   >
@@ -1082,6 +1094,15 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     {isIsolated && (
                       <div className={cn("absolute top-0.5 left-0.5 w-3 h-3 md:w-3.5 md:h-3.5 rounded-full flex items-center justify-center", isoColor.bg)}>
                         <ShieldAlert className="w-2 h-2 md:w-2.5 md:h-2.5 text-white" strokeWidth={3} />
+                      </div>
+                    )}
+                    {/* Multi-isolation tag: a tiny pill in the bottom-left corner with the count
+                        and a thumbnail of the SECOND isolation color, so the user can tell at a glance
+                        that the patient has more than one precaution active. */}
+                    {isMultiIso && (
+                      <div className="absolute bottom-0.5 left-0.5 flex items-center gap-0.5 px-1 h-3 md:h-3.5 rounded-full bg-slate-900 text-white text-[7px] md:text-[8px] font-black ring-1 ring-white shadow-sm">
+                        <span className={cn("w-1.5 h-1.5 rounded-full", (ISOLATION_COLORS[isoTipos[1]] ?? DEFAULT_ISO_COLOR).bg)} />
+                        <span>{isoTipos.length}</span>
                       </div>
                     )}
                     {isBlocked && (

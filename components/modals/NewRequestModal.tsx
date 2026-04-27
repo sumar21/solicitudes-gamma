@@ -33,9 +33,10 @@ interface NewRequestModalProps {
   beds: Bed[];
   isolatedPatients?: Map<string, IsolationType[]>;
   activeTransferOrigins?: Set<string>;
+  activeTransferDestinations?: Set<string>;
 }
 
-export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenChange, onCreate, beds, isolatedPatients = new Map(), activeTransferOrigins = new Set() }) => {
+export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenChange, onCreate, beds, isolatedPatients = new Map(), activeTransferOrigins = new Set(), activeTransferDestinations = new Set() }) => {
   const [workflow, setWorkflow] = useState<WorkflowType>(WorkflowType.INTERNAL);
   const [patientName, setPatientName] = useState('');
   const [origin, setOrigin] = useState('');
@@ -67,8 +68,9 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!origin || !destination) return;
-    if (workflow === WorkflowType.ROOM_CHANGE && !reason) return;
-    
+    // Traslado Interno (que absorbió Cambio de Habitación) requiere siempre el motivo.
+    if (workflow === WorkflowType.INTERNAL && !reason) return;
+
     // Auto-fill patient name if origin is selected and has patient
     const originBed = beds.find(b => b.label === origin);
     const finalPatientName = patientName || originBed?.patientName || 'Paciente';
@@ -78,7 +80,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
       origin,
       destination,
       workflow,
-      reason: workflow === WorkflowType.ROOM_CHANGE ? reason : undefined,
+      reason: workflow === WorkflowType.INTERNAL ? reason : undefined,
       itrSource: workflow === WorkflowType.ITR_TO_FLOOR ? itrSource : undefined,
       observations: observations.trim() !== '' ? observations : undefined,
       isolation,
@@ -96,11 +98,18 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
     onOpenChange(false);
   };
 
+  // Filtros por workflow:
+  //   INTERNAL      → origen y destino son cualquier sector EXCEPTO ITR (HIT)
+  //   ITR_TO_FLOOR  → origen SOLO ITR; destino cualquier sector EXCEPTO ITR
+  const isItrFlow = workflow === WorkflowType.ITR_TO_FLOOR;
   const availableOrigins = beds
     .filter(b => b.status === BedStatus.OCCUPIED)
+    .filter(b => isItrFlow ? b.area === Area.HIT : b.area !== Area.HIT)
     .sort(sortByAreaThenLabel);
   const availableDestinations = beds
     .filter(b => b.status === BedStatus.AVAILABLE || b.status === BedStatus.PREPARATION)
+    .filter(b => b.area !== Area.HIT) // ITR nunca es destino
+    .filter(b => !activeTransferDestinations.has(b.label)) // ocultar camas ya asignadas a otro ticket activo
     .sort(sortByAreaThenLabel);
 
   return (
@@ -112,11 +121,22 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Tipo de Escenario</Label>
             <SearchableSelect
               value={workflow}
-              onValueChange={(val) => setWorkflow(val as WorkflowType)}
+              onValueChange={(val) => {
+                const next = val as WorkflowType;
+                if (next !== workflow) {
+                  // El filtro de origen depende del workflow → si el origen cargado
+                  // ya no cumple las reglas del nuevo flujo, lo limpiamos.
+                  setOrigin('');
+                  setPatientName('');
+                  setItrSource('');
+                  // Motivo solo aplica a INTERNAL — limpiar al cambiar.
+                  setReason('');
+                }
+                setWorkflow(next);
+              }}
               options={[
                 { label: "Traslado Interno", value: WorkflowType.INTERNAL },
                 { label: "Ingreso ITR", value: WorkflowType.ITR_TO_FLOOR },
-                { label: "Cambio de Habitación", value: WorkflowType.ROOM_CHANGE }
               ]}
               placeholder="Seleccione flujo"
               showSearch={false}
@@ -178,9 +198,9 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
             />
           </div>
 
-          {workflow === WorkflowType.ROOM_CHANGE && (
+          {workflow === WorkflowType.INTERNAL && (
             <div className="grid gap-2">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Motivo del Cambio <span className="text-red-500">*</span></Label>
+              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Motivo del Traslado <span className="text-red-500">*</span></Label>
               <SearchableSelect
                 value={reason}
                 onValueChange={setReason}
@@ -236,7 +256,19 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
         </form>
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} className="rounded-xl h-10 px-6">Cancelar</Button>
-          <Button type="submit" form="create-ticket-form" disabled={!!(origin && activeTransferOrigins.has(origin))} className="bg-emerald-950 text-white rounded-xl h-10 px-8 disabled:opacity-50">Generar Ticket</Button>
+          <Button
+            type="submit"
+            form="create-ticket-form"
+            disabled={
+              !origin ||
+              !destination ||
+              (workflow === WorkflowType.INTERNAL && !reason) ||
+              !!(origin && activeTransferOrigins.has(origin))
+            }
+            className="bg-emerald-950 text-white rounded-xl h-10 px-8 disabled:opacity-50"
+          >
+            Generar Ticket
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

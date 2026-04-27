@@ -462,16 +462,25 @@ export const useHospitalState = () => {
   }, [tickets]);
 
   // ── SP write helpers ──────────────────────────────────────────────────────────
-  const spCreate = async (ticket: Ticket): Promise<string | undefined> => {
+  // Both helpers can return a `conflict` when the server rejects with 409
+  // (cama destino ya tomada por otro traslado activo). Callers must rollback the
+  // optimistic update + alert in that case.
+  type SpConflict = { error: string; conflictingTicketId?: string };
+
+  const spCreate = async (ticket: Ticket): Promise<{ spItemId?: string; conflict?: SpConflict }> => {
     try {
       const r = await authFetch('/api/tickets', { method: 'POST', body: JSON.stringify(ticket) });
-      if (!r.ok) return undefined;
+      if (r.status === 409) {
+        const data = await r.json().catch(() => ({} as any));
+        return { conflict: { error: data?.error ?? 'Cama destino ya asignada.', conflictingTicketId: data?.conflictingTicketId } };
+      }
+      if (!r.ok) return {};
       const { spItemId } = await r.json();
-      return spItemId as string;
-    } catch { return undefined; }
+      return { spItemId: spItemId as string };
+    } catch { return {}; }
   };
 
-  const spUpdate = async (spItemId: string, updates: Partial<Ticket>, ticket?: Ticket): Promise<void> => {
+  const spUpdate = async (spItemId: string, updates: Partial<Ticket>, ticket?: Ticket): Promise<{ ok: boolean; conflict?: SpConflict }> => {
     try {
       // Include ticket context so push notifications have full info.
       // originArea / destinationArea are the real Gamma area names (not bed labels),
@@ -488,11 +497,16 @@ export const useHospitalState = () => {
         destinationArea,
         sede: ticket.sede,
       } : {};
-      await authFetch('/api/tickets', {
+      const r = await authFetch('/api/tickets', {
         method: 'PATCH',
         body:   JSON.stringify({ spItemId, ...context, ...updates }),
       });
-    } catch { /* next poll will reconcile */ }
+      if (r.status === 409) {
+        const data = await r.json().catch(() => ({} as any));
+        return { ok: false, conflict: { error: data?.error ?? 'Cama destino ya asignada.', conflictingTicketId: data?.conflictingTicketId } };
+      }
+      return { ok: r.ok };
+    } catch { return { ok: false }; /* next poll will reconcile */ }
   };
 
   const spLogEvent = async (ticketId: string, tipo: string): Promise<void> => {
@@ -726,9 +740,13 @@ export const useHospitalState = () => {
     }, ...prev]);
   };
 
-  const handleCreateTicket = async (data: Partial<Ticket> & { isolation?: boolean }) => {
+  const handleCreateTicket = async (data: Partial<Ticket> & { isolation?: boolean; reason?: string }) => {
     if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) {
       alert('Solo Admisión o Admin pueden crear solicitudes.'); return;
+    }
+    // Traslado Interno requiere siempre un motivo (fusión con cambio de habitación).
+    if (data.workflow === WorkflowType.INTERNAL && !(data.reason || data.changeReason)) {
+      alert('Debe seleccionar un motivo para el Traslado Interno.'); return;
     }
     setTicketActionLoading(true);
     writingRef.current = true;
@@ -823,7 +841,9 @@ export const useHospitalState = () => {
       createdBy:               currentUser?.name,
       createdById:             currentUser?.id,
       itrSource:               data.itrSource,
-      changeReason:            data.changeReason,
+      // Both NewRequestModal y EditRequestModal mandan el motivo como `reason` en el payload;
+      // aceptamos también `changeReason` por compatibilidad con llamadas internas.
+      changeReason:            (data as any).reason ?? data.changeReason,
       observations:            data.observations,
       intervenedByHostess:     'NO',
     };
@@ -840,7 +860,14 @@ export const useHospitalState = () => {
     });
     setCurrentView('REQUESTS');
 
-    const spItemId = await spCreate(newTicket);
+    const { spItemId, conflict } = await spCreate(newTicket);
+    if (conflict) {
+      // Rollback the optimistic insert — another admin grabbed the bed first.
+      setTickets((prev: Ticket[]) => prev.filter((t: Ticket) => t.id !== newTicket.id));
+      const extra = conflict.conflictingTicketId ? ` (ticket ${conflict.conflictingTicketId})` : '';
+      alert(`${conflict.error}${extra}`);
+      return;
+    }
     if (spItemId) setTickets(prev => prev.map(t => t.id === newTicket.id ? { ...t, spItemId } : t));
     spLogEvent(newTicket.id, 'Solicitud Creada');
   };
@@ -980,10 +1007,10 @@ export const useHospitalState = () => {
       updates.workflow = payload.workflow;
     }
 
-    // ── ROOM_CHANGE reason (only applies if workflow is ROOM_CHANGE) ────────
-    const normalizedReason = payload.workflow === WorkflowType.ROOM_CHANGE ? (payload.reason ?? '') : '';
+    // ── Motivo del traslado (aplica al workflow INTERNAL — fusionado con ROOM_CHANGE) ──
+    const normalizedReason = payload.workflow === WorkflowType.INTERNAL ? (payload.reason ?? '') : '';
     if ((ticket.changeReason ?? '') !== normalizedReason) {
-      changes.push(`Motivo cambio habitación: "${ticket.changeReason ?? '—'}" → "${normalizedReason || '—'}"`);
+      changes.push(`Motivo: "${ticket.changeReason ?? '—'}" → "${normalizedReason || '—'}"`);
       updates.changeReason = normalizedReason;
     }
 
@@ -1075,6 +1102,8 @@ export const useHospitalState = () => {
     const postKey = `${updates.status ?? ticket.status}|${updates.destination ?? ticket.destination ?? ''}`;
     prevTicketSnapshotRef.current.set(ticket.id, postKey);
 
+    // Snapshot the original ticket so we can rollback if the server rejects the change (409).
+    const ticketSnapshot: Ticket = { ...ticket };
     setTickets(prev => prev.map(t => t.id === ticket.id ? { ...t, ...updates } : t));
 
     // ── Local notifications for the editor ──────────────────────────────────
@@ -1106,7 +1135,18 @@ export const useHospitalState = () => {
     // Persist ticket changes to SP
     if (ticket.spItemId) {
       try {
-        await spUpdate(ticket.spItemId, updates, ticket);
+        const result = await spUpdate(ticket.spItemId, updates, ticket);
+        if (result.conflict) {
+          // Rollback the optimistic update — another admin grabbed the bed first.
+          setTickets((prev: Ticket[]) => prev.map((t: Ticket) => t.id === ticket.id ? ticketSnapshot : t));
+          prevTicketSnapshotRef.current.set(
+            ticket.id,
+            `${ticketSnapshot.status}|${ticketSnapshot.destination ?? ''}`,
+          );
+          const extra = result.conflict.conflictingTicketId ? ` (ticket ${result.conflict.conflictingTicketId})` : '';
+          alert(`${result.conflict.error}${extra}`);
+          return;
+        }
       } finally {
         setTimeout(() => {
           writingRef.current = false;

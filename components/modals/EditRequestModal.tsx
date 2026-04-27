@@ -45,10 +45,11 @@ interface EditRequestModalProps {
   ticket: Ticket | null;
   beds: Bed[];
   isolatedPatients?: Map<string, IsolationType[]>;
+  activeTransferDestinations?: Set<string>;
   onSave: (data: EditRequestPayload) => void;
 }
 
-export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpenChange, ticket, beds, isolatedPatients = new Map(), onSave }) => {
+export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpenChange, ticket, beds, isolatedPatients = new Map(), activeTransferDestinations = new Set(), onSave }) => {
   const [workflow, setWorkflow] = useState<WorkflowType>(WorkflowType.INTERNAL);
   const [destination, setDestination] = useState('');
   const [reason, setReason] = useState('');
@@ -65,7 +66,11 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
   // Prefill when ticket changes / modal opens
   React.useEffect(() => {
     if (!open || !ticket) return;
-    setWorkflow(ticket.workflow);
+    // Tickets legacy con workflow ROOM_CHANGE se editan como INTERNAL (fusionado).
+    const effectiveWorkflow = ticket.workflow === WorkflowType.ROOM_CHANGE
+      ? WorkflowType.INTERNAL
+      : ticket.workflow;
+    setWorkflow(effectiveWorkflow);
     setDestination(ticket.destination ?? '');
     setReason(ticket.changeReason ?? '');
     setItrSource(ticket.itrSource ?? '');
@@ -84,7 +89,7 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!destination) return;
-    if (workflow === WorkflowType.ROOM_CHANGE && !reason) return;
+    if (workflow === WorkflowType.INTERNAL && !reason) return;
     if (!modificationReason.trim()) return;
 
     onSave({
@@ -93,7 +98,7 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
       origin: ticket.origin,
       destination,
       workflow,
-      reason: workflow === WorkflowType.ROOM_CHANGE ? reason : undefined,
+      reason: workflow === WorkflowType.INTERNAL ? reason : undefined,
       itrSource: workflow === WorkflowType.ITR_TO_FLOOR ? itrSource : undefined,
       observations: observations.trim() !== '' ? observations : undefined,
       isolation,
@@ -105,9 +110,13 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
   };
 
   // Available destinations: free/prep beds + the ticket's current destination (so it stays visible).
+  // Excluye ITR como destino y oculta camas ya asignadas a OTROS tickets activos
+  // (la cama actual del propio ticket sí queda disponible).
   const currentDestBed = ticket.destination ? beds.find(b => b.label === ticket.destination) : null;
   const availableDestinations = beds
     .filter(b => b.status === BedStatus.AVAILABLE || b.status === BedStatus.PREPARATION || b.label === ticket.destination)
+    .filter(b => b.area !== Area.HIT || b.label === ticket.destination)
+    .filter(b => b.label === ticket.destination || !activeTransferDestinations.has(b.label))
     .sort(sortByAreaThenLabel);
 
   const destinationChanged = destination !== (ticket.destination ?? '');
@@ -124,11 +133,17 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Tipo de Escenario</Label>
             <SearchableSelect
               value={workflow}
-              onValueChange={(val) => setWorkflow(val as WorkflowType)}
+              onValueChange={(val) => {
+                const next = val as WorkflowType;
+                if (next !== workflow) {
+                  setItrSource('');
+                  setReason('');
+                }
+                setWorkflow(next);
+              }}
               options={[
                 { label: "Traslado Interno", value: WorkflowType.INTERNAL },
                 { label: "Ingreso ITR", value: WorkflowType.ITR_TO_FLOOR },
-                { label: "Cambio de Habitación", value: WorkflowType.ROOM_CHANGE }
               ]}
               placeholder="Seleccione flujo"
               showSearch={false}
@@ -185,9 +200,9 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
             )}
           </div>
 
-          {workflow === WorkflowType.ROOM_CHANGE && (
+          {workflow === WorkflowType.INTERNAL && (
             <div className="grid gap-1.5">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Motivo del Cambio <span className="text-red-500">*</span></Label>
+              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Motivo del Traslado <span className="text-red-500">*</span></Label>
               <SearchableSelect
                 value={reason}
                 onValueChange={setReason}
@@ -258,7 +273,7 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
           <Button
             type="submit"
             form="edit-ticket-form"
-            disabled={!destination || !modificationReason.trim() || (workflow === WorkflowType.ROOM_CHANGE && !reason)}
+            disabled={!destination || !modificationReason.trim() || (workflow === WorkflowType.INTERNAL && !reason)}
             className="bg-emerald-950 text-white rounded-xl h-10 px-8 disabled:opacity-50"
           >
             Guardar Cambios

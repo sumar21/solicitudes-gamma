@@ -94,6 +94,8 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
             t.status === TicketStatus.IN_TRANSIT ||
             t.status === TicketStatus.IN_TRANSPORT;
           if (!validStatus) return false;
+          // Admin viendo el tab Azafata: ve todos los tickets activos sin filtro de área.
+          if (currentUser?.role === Role.ADMIN) return validStatus;
           // Azafata only sees tickets in her assigned areas (skip if all areas or beds not loaded)
           if (currentUser?.assignedAreas?.length && beds.length > 0) {
             const allAreas = Object.values(Area);
@@ -127,17 +129,19 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
 
     // ── AZAFATA ──────────────────────────────────────────────────────────────
     if (activeRole === Role.HOSTESS) {
-      if (!currentUser?.assignedAreas) return null;
+      // Admin viendo el tab Azafata: actúa como una azafata con TODAS las áreas asignadas.
+      const isAdmin = currentUser?.role === Role.ADMIN;
+      if (!isAdmin && !currentUser?.assignedAreas) return null;
 
       const allAreas = Object.values(Area);
-      const hasAllAreas = currentUser.assignedAreas.length >= allAreas.length - 1;
+      const hasAllAreas = isAdmin || (currentUser?.assignedAreas?.length ?? 0) >= allAreas.length - 1;
 
       const originBed = beds.find(b => b.label === ticket.origin);
       const destBed = ticket.destination ? beds.find(b => b.label === ticket.destination) : null;
 
       // If azafata has all areas, she can act on everything
-      const isOriginHostess = hasAllAreas || !!(originBed && currentUser.assignedAreas.includes(originBed.area));
-      const isDestHostess = hasAllAreas || !!(destBed && currentUser.assignedAreas.includes(destBed.area));
+      const isOriginHostess = hasAllAreas || !!(originBed && currentUser?.assignedAreas?.includes(originBed.area));
+      const isDestHostess = hasAllAreas || !!(destBed && currentUser?.assignedAreas?.includes(destBed.area));
 
       // Si no es de ninguna de las dos áreas, no muestra nada
       if (!isOriginHostess && !isDestHostess) return null;
@@ -382,12 +386,12 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
             <TableHeader className="bg-slate-50/50 border-b border-slate-200">
               <TableRow>
                 <SortHeader label="Estado" sortKey="status" />
-                <TableHead>Tarea</TableHead>
+                <TableHead className="min-w-[170px]">Tarea</TableHead>
                 <SortHeader label="Paciente" sortKey="patientName" />
                 <SortHeader label="Origen" sortKey="origin" />
-                <TableHead>Destino</TableHead>
-                <TableHead>Estado Destino</TableHead>
-                <TableHead className="min-w-[180px]">Observaciones</TableHead>
+                <TableHead className="min-w-[110px] whitespace-nowrap">Destino</TableHead>
+                <TableHead className="min-w-[120px] whitespace-nowrap">Estado Destino</TableHead>
+                <TableHead className="min-w-[200px]">Observaciones</TableHead>
                 <TableHead className="text-right whitespace-nowrap">Acciones</TableHead>
               </TableRow>
             </TableHeader>
@@ -413,7 +417,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                     <TableCell>
                       <div className="flex flex-col gap-1.5 items-start">
                         <Badge variant="outline" className="text-[9px] bg-white text-slate-400 border-slate-200 font-black uppercase tracking-tight">
-                          {ticket.workflow === WorkflowType.INTERNAL ? 'Interno' : ticket.workflow === WorkflowType.ITR_TO_FLOOR ? 'Ingreso ITR' : 'Cambio Hab.'}
+                          {ticket.workflow === WorkflowType.ITR_TO_FLOOR ? 'Ingreso ITR' : 'Interno'}
                         </Badge>
                         <div className="text-[10px] text-slate-500 mt-1">
                           {ticket.status === TicketStatus.WAITING_ROOM && "Esperando habitación lista."}
@@ -445,11 +449,11 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                       <div className="text-[11px] text-slate-400 font-mono mt-0.5 uppercase">{ticket.id}</div>
                     </TableCell>
                     <TableCell>
-                      <div className="text-slate-800 text-sm font-black uppercase tracking-tight">{formatBedName(ticket.origin)}</div>
+                      <div className="text-slate-800 text-sm font-black uppercase tracking-tight leading-tight">{formatBedName(ticket.origin)}</div>
                     </TableCell>
                     <TableCell>
                       {ticket.destination ? (
-                        <div className="text-slate-800 text-sm font-black uppercase tracking-tight">{formatBedName(ticket.destination)}</div>
+                        <div className="text-slate-800 text-sm font-black uppercase tracking-tight whitespace-nowrap">{formatBedName(ticket.destination)}</div>
                       ) : (
                         <span className="text-xs text-slate-400 italic">-</span>
                       )}
@@ -457,7 +461,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                     <TableCell>
                       <div className="flex flex-col gap-1">
                         {ticket.targetBedOriginalStatus ? (
-                          <span className="text-[10px] font-bold text-slate-500 uppercase">
+                          <span className="text-[10px] font-bold text-slate-500 uppercase whitespace-nowrap">
                             {ticket.targetBedOriginalStatus}
                           </span>
                         ) : (
@@ -465,7 +469,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                             -
                           </span>
                         )}
-                        {ticket.bedAssignedAt && <Badge variant="outline" className="text-[8px] py-0 px-1 border-emerald-100 bg-emerald-50 text-emerald-600 font-black uppercase w-fit">Cama: {ticket.bedAssignedAt}</Badge>}
+                        {ticket.bedAssignedAt && <Badge variant="outline" className="text-[8px] py-0 px-1 border-emerald-100 bg-emerald-50 text-emerald-600 font-black uppercase w-fit whitespace-nowrap">Cama: {ticket.bedAssignedAt}</Badge>}
                       </div>
                     </TableCell>
                     <TableCell>

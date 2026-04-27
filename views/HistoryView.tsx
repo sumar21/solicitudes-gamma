@@ -23,7 +23,9 @@ interface HistoryViewProps {
 const WORKFLOW_LABELS: Record<WorkflowType, string> = {
   [WorkflowType.INTERNAL]: 'Traslado Interno',
   [WorkflowType.ITR_TO_FLOOR]: 'Ingreso ITR',
-  [WorkflowType.ROOM_CHANGE]: 'Cambio Habitación',
+  // Tickets legacy que se crearon como "Cambio de Habitación" se muestran ahora
+  // como "Traslado Interno" porque ambos workflows fueron fusionados.
+  [WorkflowType.ROOM_CHANGE]: 'Traslado Interno',
 };
 
 const DateRangeTrigger = React.forwardRef<

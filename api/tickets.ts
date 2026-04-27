@@ -172,6 +172,31 @@ async function handler(req: any, res: any) {
     // ── POST ───────────────────────────────────────────────────────────────
     if (req.method === 'POST') {
       const ticket = req.body as Ticket;
+
+      // Reject if destination bed is already targeted by another active ticket.
+      // Active = not Consolidado and not Cancelado. Race-condition safe since SP is the source of truth.
+      if (ticket.destination) {
+        const escaped = String(ticket.destination).replace(/'/g, "''");
+        const conflictUrl = `/sites/${SITE_ID}/lists/${LIST_ID}/items?$expand=fields&$top=5`
+          + `&$filter=fields/CamaDestino_T eq '${escaped}'`
+          + ` and fields/Status_T ne '${TicketStatus.COMPLETED}'`
+          + ` and fields/Status_T ne '${TicketStatus.REJECTED}'`;
+        const conflictRes = await graphFetch(conflictUrl, {
+          headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } as any,
+        });
+        if (conflictRes.ok) {
+          const conflictData = (await conflictRes.json()) as { value: Record<string, unknown>[] };
+          if ((conflictData.value ?? []).length > 0) {
+            const conflicting = conflictData.value[0];
+            const cf = conflicting.fields as Record<string, unknown>;
+            return res.status(409).json({
+              error: 'Cama destino ya asignada a otro traslado activo.',
+              conflictingTicketId: cf.IDUnivocoTraslado_T ? String(cf.IDUnivocoTraslado_T) : undefined,
+            });
+          }
+        }
+      }
+
       const spRes = await graphFetch(
         `/sites/${SITE_ID}/lists/${LIST_ID}/items`,
         {
@@ -208,6 +233,31 @@ async function handler(req: any, res: any) {
         destinationArea?: string;
       };
       if (!spItemId) return res.status(400).json({ error: 'spItemId required' });
+
+      // If destination is being changed (not just touched), verify no other active ticket holds that bed.
+      // We only check when `destination` is in the patch payload; status-only updates skip this.
+      if (updates.destination) {
+        const escaped = String(updates.destination).replace(/'/g, "''");
+        const conflictUrl = `/sites/${SITE_ID}/lists/${LIST_ID}/items?$expand=fields&$top=5`
+          + `&$filter=fields/CamaDestino_T eq '${escaped}'`
+          + ` and fields/Status_T ne '${TicketStatus.COMPLETED}'`
+          + ` and fields/Status_T ne '${TicketStatus.REJECTED}'`
+          + ` and id ne ${spItemId}`;
+        const conflictRes = await graphFetch(conflictUrl, {
+          headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } as any,
+        });
+        if (conflictRes.ok) {
+          const conflictData = (await conflictRes.json()) as { value: Record<string, unknown>[] };
+          if ((conflictData.value ?? []).length > 0) {
+            const conflicting = conflictData.value[0];
+            const cf = conflicting.fields as Record<string, unknown>;
+            return res.status(409).json({
+              error: 'Cama destino ya asignada a otro traslado activo.',
+              conflictingTicketId: cf.IDUnivocoTraslado_T ? String(cf.IDUnivocoTraslado_T) : undefined,
+            });
+          }
+        }
+      }
 
       const spRes = await graphFetch(
         `/sites/${SITE_ID}/lists/${LIST_ID}/items/${spItemId}`,

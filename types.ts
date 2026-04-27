@@ -13,6 +13,8 @@ export enum IsolationType {
 export enum WorkflowType {
   INTERNAL = 'INTERNAL',
   ITR_TO_FLOOR = 'ITR_TO_FLOOR',
+  /** @deprecated fusionado con INTERNAL — ya no se ofrece al crear nuevos tickets;
+   *  los tickets viejos en SP con este valor siguen leyéndose y se renderizan como "Traslado Interno". */
   ROOM_CHANGE = 'ROOM_CHANGE',
 }
 
