@@ -7,6 +7,7 @@ import { Label } from '../ui/label';
 import { SearchableSelect } from '../ui/searchable-select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { ROOM_CHANGE_REASONS } from '../../lib/constants';
+import { isHitArea } from '../../lib/utils';
 
 // Same ordering used elsewhere: ITR first, then floors, then critical units
 const AREA_ORDER: Area[] = [
@@ -115,7 +116,7 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
   const currentDestBed = ticket.destination ? beds.find(b => b.label === ticket.destination) : null;
   const availableDestinations = beds
     .filter(b => b.status === BedStatus.AVAILABLE || b.status === BedStatus.PREPARATION || b.label === ticket.destination)
-    .filter(b => b.area !== Area.HIT || b.label === ticket.destination)
+    .filter(b => !isHitArea(b.area) || b.label === ticket.destination)
     .filter(b => b.label === ticket.destination || !activeTransferDestinations.has(b.label))
     .sort(sortByAreaThenLabel);
 

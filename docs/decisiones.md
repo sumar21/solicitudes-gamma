@@ -574,3 +574,80 @@ Registro de decisiones técnicas inferidas del código fuente. Cada entrada docu
 **Qué:** Corregido el bug en `UserManagementView`, `RoleManagementView` y `AuditModal` que leían el token de `sessionStorage` cuando el login lo guarda en `localStorage`.
 
 **Por qué:** era inconsistencia histórica — el resto de la app siempre usó `localStorage` (clave `TOKEN_KEY = 'mediflow_token'`). Los tres archivos afectados hacían fetch directo en vez de usar el `authFetch` centralizado y copiaron mal la lectura del token. Efecto: esos tres componentes recibían `null` → mandaban `Authorization: Bearer null` → SP respondía 401 → el endpoint de roles convertía 401 en 200 con array vacío → la UI mostraba "sin resultados" silenciosamente. El fix es un cambio de una palabra por archivo. **Convención reforzada:** siempre `localStorage.getItem('mediflow_token')`; idealmente, usar el `authFetch` del hook y evitar duplicar la lectura.
+
+---
+
+## 13. Decisiones recientes (2026-04-27)
+
+### 13.1. Fusión `WorkflowType.ROOM_CHANGE` → `INTERNAL` sin migración de datos
+
+**Qué:** El dropdown de "Tipo de Traslado" en el modal de Nueva Solicitud se redujo de 3 opciones a 2 (`Traslado Interno`, `Ingreso ITR`). El antiguo `WorkflowType.ROOM_CHANGE` (con su motivo obligatorio) se fusionó con `INTERNAL`, que ahora también pide motivo siempre. `ROOM_CHANGE` queda como `@deprecated` en el enum pero no se borra.
+
+**Por qué:** el cliente reportó que tener "Cambio de Habitación" y "Traslado Interno" como opciones distintas confundía al cargar — funcionalmente eran lo mismo. Unificar simplifica la UX y deja el motivo como un dato siempre auditado.
+
+**Alternativas descartadas:**
+- **Migrar tickets viejos en SP** (`UPDATE Status_T='ROOM_CHANGE' SET TipoTraslado_T='INTERNAL'`): Graph API permite hacerlo en bulk, pero modifica registros históricos cerrados, perdiendo trazabilidad de qué workflow se usó originalmente. Además, sin transacciones, una falla parcial deja datos mixtos.
+- **Eliminar `ROOM_CHANGE` del enum**: rompería la lectura de tickets viejos en `07.Traslados` (TS error en runtime al castear `f.TipoTraslado_T as WorkflowType`).
+
+**Impacto:**
+- `WORKFLOW_LABELS[WorkflowType.ROOM_CHANGE]` se mapea a `'Traslado Interno'` → tickets legacy se ven idénticos a los nuevos en Historial y Operativa.
+- `EditRequestModal` auto-mapea `ROOM_CHANGE → INTERNAL` al prefilear el form: el motivo prefilled se mantiene.
+- Validación de motivo obligatorio: en `useHospitalState.handleCreateTicket` y `EditRequestModal.tsx` se valida `workflow === INTERNAL && !reason`.
+- `AuditModal` muestra el motivo para ambos workflows (`INTERNAL || ROOM_CHANGE`) preservando la auditoría histórica.
+
+### 13.2. Validación de doble asignación de cama destino — combo frontend + backend 409
+
+**Qué:** Una cama destino solo puede ser objetivo de **un** ticket activo a la vez. Hoy, dos admins simultáneos podían asignar la misma cama a dos pacientes distintos sin que la app lo detectara.
+
+**Estrategia: defensa en profundidad.**
+- **Frontend (UX preventiva):** `App.tsx` calcula `activeTransferDestinations: Set<string>` y lo pasa a ambos modales. Las camas ya tomadas se ocultan del dropdown de destino.
+- **Backend (race-condition safe):** `api/tickets.ts` POST/PATCH consultan SP antes de escribir. Si hay otro ticket activo con la misma `CamaDestino_T`, devuelven `409 { error, conflictingTicketId }`.
+- **Frontend (rollback):** ante un 409, `_createTicket` remueve el ticket optimista del state y `handleEditTicket` restaura el snapshot del ticket pre-cambio. Alert con el ID del ticket conflictivo.
+
+**Por qué esta estrategia (no solo backend):** el frontend solo no es suficiente (dos pestañas con el mismo state pueden disparar POST simultáneos antes de que llegue el primer response). El backend solo no es suficiente para UX (el dropdown debe avisar al admin antes de que intente). Combinar las dos capas resuelve UX + atomicidad.
+
+**Trade-off aceptado:** la query a SP antes de cada write agrega ~200-400ms al POST/PATCH. Aceptable porque crear/editar tickets no es operación de alta frecuencia.
+
+**Limitación conocida:** no hay locking real en SP. Entre la query de validación y el POST, otro admin puede insertar. La ventana es de ~200ms. Para el volumen del HPR (5-15 traslados activos en simultáneo, 1-2 admins) es suficiente; si fuera necesario eliminar la ventana, habría que migrar a una DB con `INSERT ... WHERE NOT EXISTS`.
+
+### 13.3. Admin actúa como Azafata sin filtro de áreas
+
+**Qué:** El admin, al elegir el tab "Azafata" en Operativa, ve TODOS los tickets activos en estados `WAITING_ROOM/IN_TRANSIT/IN_TRANSPORT` y puede ejecutar las acciones operativas (Habitación Lista, Iniciar Traslado, Recepción OK) sin filtro de áreas asignadas.
+
+**Por qué:** cuando una azafata está ausente o un ticket queda atascado, el admin necesitaba poder destrabarlo. Antes solo podía cancelar y rehacer, lo cual perdía trazabilidad.
+
+**Alternativas descartadas:**
+- **Botones de azafata en el tab "Admin":** mezcla las dos UIs y satura visualmente el tab del admin. Confunde porque las acciones de azafata son contextuales por status, no por permisos.
+- **Asignar todas las áreas al admin en `00.Usuarios`:** funcional pero acopla el rol con la configuración de áreas. Frágil si alguien edita el usuario admin.
+
+**Impacto:**
+- Cambio mínimo en código: bypass de `assignedAreas` en `RequestsView.tsx` cuando `currentUser.role === Role.ADMIN`.
+- Los handlers (`handleRoomReady`, etc.) no validan rol y siguen funcionando — siempre confiaron en la UI para gatekeeping.
+- Cuando el admin actúa, el flag `intervenedByHostess` pasa a `'SI'`. Decisión consciente: el contrato de "una vez intervenida la azafata, no se edita" se respeta aunque haya sido el admin.
+
+### 13.4. Indicador visual de aislamiento múltiple — tag con contador, no gradient
+
+**Qué:** Cuando un paciente tiene 2+ aislamientos activos, además del color del primer aislamiento (ring sólido) se muestra un tag negro con un dot del color del segundo aislamiento + el número total (ej. `● 2`) en la esquina inferior izquierda de la tarjeta de cama.
+
+**Alternativas descartadas:**
+- **Borde con bandas multicolor (linear-gradient):** se intentó primero pero no se renderizaba: el span con `-z-10` quedaba detrás del fondo del grid. Hubiera requerido cambiar la estructura DOM (wrapper extra) y romper el layout aspect-square.
+- **Cambiar icono shield → layers:** sutil pero requiere conocer el código. El cliente prefería un indicador explícito.
+- **Badge solo numérico:** funcional pero menos visual; el dot del segundo color "ata" el tag al concepto de aislamiento secundario.
+
+**Impacto:** sin cambios en estructura DOM ni stacking context. Solo se agrega un `div` absolute en la esquina libre. Tooltip en desktop con la lista completa.
+
+### 13.5. Push de Catering acotado a `RECEPTION_CONFIRMED` con mensaje formateado
+
+**Qué:** El rol Catering recibe **una sola notificación push** por traslado: cuando se confirma la recepción del paciente. El mensaje es human-readable: `"{Paciente} pasó de Habitación {N} ({Piso X}) a Habitación {M} ({Piso Y})"`.
+
+**Por qué:** el equipo de cocina no necesita saber del flujo intermedio (creación, asignación, en tránsito) — solo cuándo coordinar la próxima entrega de comida. Inundarlos con notifs de cada cambio de status sería ruido. La forma del mensaje los abstrae de los códigos internos (cama labels) y los habla en términos de habitación + piso, que es como ellos navegan el hospital.
+
+**Implementación:** `api/push-utils.ts` recibe `cateringTitle` y `cateringBody` opcionales en `sendPushToSubscribers`. Si el subscriber tiene `Role = 'CATERING'`, usa esos campos en lugar del título/cuerpo normales. Si no se pasa `cateringBody`, los suscriptores Catering no reciben push (filtrado natural por rol + opcional).
+
+### 13.6. PWA auto-update sin prompt al usuario
+
+**Qué:** `vite-plugin-pwa` está en modo `registerType: 'autoUpdate'` con `skipWaiting: true` y `clientsClaim: true`. Cuando se despliega una nueva versión, los SW activos detectan la actualización, la activan y refrescan la página automáticamente. No hay banner ni prompt.
+
+**Por qué:** el cliente reportó que su personal (azafatas, admisión, enfermería) no tiene cómo refrescar manualmente y no entiende mensajes técnicos tipo "hay una nueva versión, click acá". La actualización tiene que ser invisible.
+
+**Trade-off aceptado:** un usuario que esté completando un formulario al momento del deploy puede perder estado si la página se recarga. Mitigación: los modales modales (`NewRequestModal`, `EditRequestModal`) son cortos y se completan en segundos. Decisión documentada para no agregar complejidad de "guardar estado pre-update".

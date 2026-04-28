@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>MediFlow · Reporte de Sesión · 27 abril 2026</title>
+<style>
+  :root {
+    /* Paleta oficial del Grupo Gamma (tailwind.config.js → gamma.*) */
+    --brand:        #034334; /* gamma-500 — verde principal del brand */
+    --brand-dark:   #022C22; /* gamma-600/700 — verde muy oscuro, solo para acentos puntuales */
+    --brand-50:     #f0fdf4; /* gamma-50 */
+    --brand-100:    #dcfce7; /* gamma-100 */
+    --brand-200:    #bbf7d0; /* gamma-200 */
+    --brand-500:    #079271; /* gamma-300 — verde vibrante para acentos */
+    --brand-600:    #059669; /* gamma-400 */
+    --brand-700:    #034334; /* gamma-500 */
+    --gamma-yellow: #fbbf24;
+    --slate-900:    #0f172a;
+    --slate-700:    #334155;
+    --slate-500:    #64748b;
+    --slate-400:    #94a3b8;
+    --slate-300:    #cbd5e1;
+    --slate-200:    #e2e8f0;
+    --slate-100:    #f1f5f9;
+    --slate-50:     #f8fafc;
+    --blue-100:     #dbeafe;
+    --blue-700:     #1d4ed8;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    color: var(--slate-900);
+    background: #fff;
+    line-height: 1.5;
+    font-size: 11pt;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .page {
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 40px 50px 60px;
+  }
+
+  /* ── Header print strip ─────────────────────────────────────── */
+  .print-strip {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 8pt;
+    color: var(--slate-400);
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--slate-100);
+    margin-bottom: 30px;
+  }
+
+  /* ── Brand header ───────────────────────────────────────────── */
+  .brand-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 32px;
+    margin-bottom: 36px;
+    padding-bottom: 20px;
+    border-bottom: 3px solid var(--brand-100);
+  }
+  .brand-left {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+  }
+  .brand-logo {
+    width: 80px;
+    height: 80px;
+    background: var(--brand);
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    padding: 12px;
+  }
+  .brand-logo svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  .brand-title h1 {
+    font-size: 22pt;
+    font-weight: 800;
+    color: var(--slate-900);
+    line-height: 1.15;
+    letter-spacing: -0.5px;
+    margin-bottom: 2px;
+  }
+  .brand-title .subtitle {
+    font-size: 10pt;
+    color: var(--slate-500);
+    font-weight: 500;
+  }
+  .brand-title .subtitle strong { color: var(--brand-700); }
+  .brand-right {
+    text-align: right;
+    font-size: 10pt;
+    color: var(--slate-500);
+    line-height: 1.5;
+  }
+  .brand-right .date {
+    font-size: 13pt;
+    font-weight: 700;
+    color: var(--slate-900);
+    letter-spacing: -0.3px;
+  }
+  .brand-right .time { color: var(--slate-400); }
+
+  /* ── Section heading ────────────────────────────────────────── */
+  h2.section {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13pt;
+    font-weight: 800;
+    color: var(--slate-900);
+    margin: 34px 0 16px;
+    letter-spacing: -0.3px;
+  }
+  h2.section::before {
+    content: '';
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--brand-500);
+    flex-shrink: 0;
+  }
+
+  /* ── Summary callout box ────────────────────────────────────── */
+  .summary {
+    background: var(--brand-50);
+    border-left: 4px solid var(--brand-500);
+    padding: 18px 22px;
+    border-radius: 6px;
+    margin-bottom: 8px;
+  }
+  .summary p { margin-bottom: 10px; font-size: 10.5pt; color: var(--slate-700); }
+  .summary p:last-child { margin-bottom: 0; }
+  .summary ul { list-style: none; margin-top: 8px; }
+  .summary ul li {
+    font-size: 10pt;
+    color: var(--slate-700);
+    padding-left: 18px;
+    position: relative;
+    margin-bottom: 6px;
+    line-height: 1.5;
+  }
+  .summary ul li::before {
+    content: '•';
+    position: absolute;
+    left: 4px;
+    color: var(--brand-500);
+    font-weight: 900;
+  }
+  .summary ul li strong { color: var(--slate-900); }
+
+  /* ── Items table ─────────────────────────────────────────────── */
+  table.items {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 6px;
+    font-size: 10pt;
+  }
+  table.items thead th {
+    text-align: left;
+    padding: 10px 12px;
+    font-weight: 700;
+    color: var(--brand-700);
+    font-size: 8.5pt;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 2px solid var(--brand-200);
+    background: var(--brand-50);
+  }
+  table.items tbody td {
+    padding: 12px;
+    border-bottom: 1px solid var(--slate-100);
+    vertical-align: top;
+  }
+  table.items tbody tr:last-child td { border-bottom: none; }
+  table.items tbody tr:nth-child(even) td { background: #fafbfc; }
+
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 8pt;
+    font-weight: 700;
+    white-space: nowrap;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .status-badge.done  { background: var(--brand-100); color: var(--brand-700); }
+  .status-badge.plus  { background: var(--brand-50);  color: var(--brand-600); border: 1px solid var(--brand-200); }
+
+  .item-name { font-weight: 700; color: var(--slate-900); font-size: 10pt; }
+  .item-desc { color: var(--slate-500); font-size: 9pt; margin-top: 3px; line-height: 1.4; }
+
+  /* ── Tag col ───────────────────────────────────────────────── */
+  .col-num {
+    color: var(--brand-500);
+    font-family: 'SF Mono', 'Consolas', monospace;
+    font-size: 8.5pt;
+    font-weight: 700;
+    width: 30px;
+  }
+  .col-status { width: 80px; }
+
+  /* ── Footer ─────────────────────────────────────────────────── */
+  .page-footer {
+    margin-top: 40px;
+    padding-top: 18px;
+    border-top: 1px solid var(--brand-100);
+    font-size: 8.5pt;
+    color: var(--slate-400);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  @media print {
+    body { font-size: 10.5pt; }
+    .page { padding: 30px 40px; }
+    table.items tbody tr { page-break-inside: avoid; }
+    .summary { page-break-inside: avoid; }
+  }
+
+  @page {
+    size: A4;
+    margin: 15mm;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- print strip -->
+  <div class="print-strip">
+    <span>27/4/26, 14:30 hs</span>
+    <span>Reporte de Sesión · 27 de abril de 2026</span>
+  </div>
+
+  <!-- brand header -->
+  <div class="brand-header">
+    <div class="brand-left">
+      <div class="brand-logo">
+        <svg viewBox="0 0 299 300" xmlns="http://www.w3.org/2000/svg" fill="none">
+          <path d="M177.763 209.923C175.477 205.948 171.246 203.498 166.673 203.498H132.327C127.75 203.498 123.523 205.948 121.236 209.923L104.063 239.768C101.776 243.743 101.776 248.643 104.063 252.618L121.236 282.462C123.523 286.437 127.753 288.887 132.327 288.887H166.676C171.252 288.887 175.479 286.437 177.766 282.462L194.939 252.618C197.226 248.643 197.226 243.743 194.939 239.768L177.763 209.923Z" fill="#ffffff"/>
+          <path d="M121.236 90.078C123.523 94.053 127.753 96.503 132.327 96.503H166.676C171.252 96.503 175.479 94.053 177.766 90.078L194.939 60.2336C197.226 56.2586 197.226 51.3586 194.939 47.3836L177.763 17.5363C175.477 13.5613 171.249 11.1113 166.673 11.1113H132.327C127.75 11.1113 123.523 13.5613 121.236 17.5363L104.063 47.3808C101.776 51.3558 101.776 56.2558 104.063 60.2308L121.236 90.078Z" fill="#ffffff"/>
+          <path d="M277.967 191.673L260.794 161.825C258.507 157.85 254.276 155.4 249.703 155.4H215.354C210.778 155.4 206.55 157.85 204.263 161.825L187.09 191.67C184.803 195.645 184.803 200.545 187.09 204.52L204.263 234.364C206.55 238.339 210.78 240.789 215.354 240.789H249.703C254.279 240.789 258.507 238.339 260.794 234.364L277.967 204.52C280.254 200.548 280.254 195.648 277.967 191.673Z" fill="#ffffff"/>
+          <path d="M38.2046 138.175C40.4914 142.15 44.7217 144.6 49.2953 144.6H83.6443C88.2207 144.6 92.4482 142.15 94.735 138.175L111.908 108.33C114.195 104.355 114.195 99.4554 111.908 95.4804L94.735 65.6359C92.4482 61.6609 88.2179 59.2109 83.6443 59.2109H49.2981C44.7217 59.2109 40.4942 61.6609 38.2074 65.6359L21.0315 95.4776C18.7447 99.4526 18.7447 104.353 21.0315 108.328L38.2046 138.175Z" fill="#ffffff"/>
+          <path d="M111.911 191.672L94.7378 161.827C92.451 157.852 88.2207 155.402 83.6471 155.402H49.2981C44.7217 155.402 40.4942 157.852 38.2074 161.827L21.0315 191.672C18.7447 195.647 18.7447 200.547 21.0315 204.522L38.2046 234.366C40.4914 238.341 44.7217 240.791 49.2953 240.791H83.6443C88.2207 240.791 92.4482 238.341 94.735 234.366L111.908 204.522C114.198 200.547 114.198 195.647 111.911 191.672Z" fill="#ffffff"/>
+          <path d="M187.087 108.328L202.187 134.567H183.43C179.142 127.098 173.821 117.831 173.821 117.831C171.863 114.428 168.242 112.331 164.327 112.331H134.926C131.008 112.331 127.39 114.428 125.433 117.831L110.732 143.379C108.774 146.781 108.774 150.976 110.732 154.379L125.433 179.926C127.39 183.329 131.008 185.426 134.926 185.426H164.327C168.245 185.426 171.863 183.329 173.821 179.926L184.305 161.704H148.89V143.829H177.536H188.737H211.054C212.417 144.317 213.859 144.601 215.348 144.601H249.697C254.274 144.601 258.501 142.151 260.788 138.176L277.961 108.331C280.248 104.356 280.248 99.4563 277.961 95.4813L260.794 65.634C258.507 61.659 254.277 59.209 249.703 59.209H215.354C210.778 59.209 206.55 61.659 204.263 65.634L187.09 95.4785C184.801 99.4535 184.801 104.353 187.087 108.328Z" fill="#ffffff"/>
+        </svg>
+      </div>
+      <div class="brand-title">
+        <h1>Items desarrollados</h1>
+        <div class="subtitle"><strong>Grupo Gamma</strong> · MediFlow</div>
+      </div>
+    </div>
+    <div class="brand-right">
+      <div class="date">27 de abril de 2026</div>
+      <div class="time">Reporte de sesión</div>
+    </div>
+  </div>
+
+  <!-- Summary -->
+  <h2 class="section">Resumen de la sesión</h2>
+  <div class="summary">
+    <p>
+      Sesión enfocada en <strong>simplificar el alta de traslados</strong>, prevenir errores
+      operativos comunes y darle más herramientas al rol Admin para destrabar tickets cuando
+      una azafata no está disponible. También se mejoraron varios detalles visuales que el
+      cliente había venido marcando en el día a día.
+    </p>
+    <ul>
+      <li><strong>Tipos de traslado más simples</strong>: en el modal de Nueva Solicitud quedan
+          solo dos opciones: "Traslado Interno" e "Ingreso ITR". Se eliminó la opción
+          "Cambio de Habitación", que era funcionalmente lo mismo que el traslado interno
+          y generaba duda al cargar.</li>
+      <li><strong>Motivo siempre obligatorio en Traslado Interno</strong>: cualquier traslado
+          interno pide un motivo del listado (igual que antes pedía el cambio de habitación).
+          Queda registrado en la auditoría del ticket.</li>
+      <li><strong>No se puede asignar la misma cama destino a dos traslados</strong>: si dos
+          admisiones intentan crear traslados al mismo destino al mismo tiempo, el sistema
+          rechaza el segundo con un mensaje claro. Las camas ya tomadas se ocultan del
+          desplegable de destino.</li>
+      <li><strong>El Admin puede ejecutar acciones de Azafata</strong>: cuando una azafata no
+          está disponible o un ticket queda atascado, el admin puede entrar al tab "Azafata"
+          y ejecutar las acciones (Habitación Lista, Iniciar Traslado, Recepción OK) sobre
+          cualquier piso, sin restricción de áreas.</li>
+      <li><strong>Indicador visual de aislamiento múltiple</strong>: en el mapa de camas, los
+          pacientes con dos o más aislamientos ahora muestran un tag con el contador y el
+          color del segundo aislamiento. Antes solo se veía el color del primero, sin
+          forma de saber si tenía otros.</li>
+      <li><strong>Mejoras de layout en Operativa</strong>: la tabla de operativa se ajustó
+          para que las columnas "Destino" y "Estado Destino" no queden apretadas y los
+          códigos de cama no se rompan en dos líneas.</li>
+    </ul>
+  </div>
+
+  <!-- Items principales -->
+  <h2 class="section">Items del listado del cliente</h2>
+  <table class="items">
+    <thead>
+      <tr>
+        <th class="col-num">#</th>
+        <th>Item</th>
+        <th class="col-status">Estado</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="col-num">1</td>
+        <td>
+          <div class="item-name">Fusión de "Cambio de Habitación" y "Traslado Interno"</div>
+          <div class="item-desc">Se unificaron las dos opciones del desplegable de Tipo de Traslado.
+            Ahora hay una sola opción "Traslado Interno" que pide motivo del listado siempre
+            (los mismos motivos que antes pedía el Cambio de Habitación). Los traslados viejos
+            cargados como "Cambio de Habitación" se siguen viendo correctamente en el historial,
+            renombrados como "Traslado Interno" para que no haya inconsistencia visual.</div>
+        </td>
+        <td><span class="status-badge done">✓ Hecho</span></td>
+      </tr>
+      <tr>
+        <td class="col-num">2</td>
+        <td>
+          <div class="item-name">Filtro de origen y destino por tipo de traslado</div>
+          <div class="item-desc">En Nueva Solicitud y Edición:
+            <strong>Traslado Interno</strong> ahora solo permite origen y destino fuera de
+            ITR (cualquier piso del hospital). <strong>Ingreso ITR</strong> exige origen en
+            ITR y destino fuera de ITR. Si el usuario cambia el tipo después de elegir cama,
+            los campos se reinician para evitar combinaciones inválidas.</div>
+        </td>
+        <td><span class="status-badge done">✓ Hecho</span></td>
+      </tr>
+      <tr>
+        <td class="col-num">3</td>
+        <td>
+          <div class="item-name">Validación de doble asignación de cama destino</div>
+          <div class="item-desc">Antes era posible que dos admisiones diferentes asignaran la
+            misma cama destino al mismo tiempo a dos pacientes distintos. Ahora hay tres
+            capas de protección: (1) las camas que ya son destino de un traslado activo no
+            aparecen en el desplegable; (2) si igual se intenta crear, el servidor rechaza
+            con un mensaje "Cama destino ya asignada al ticket TSL-XX"; (3) el ticket
+            recién creado se elimina del listado local automáticamente.</div>
+        </td>
+        <td><span class="status-badge done">✓ Hecho</span></td>
+      </tr>
+      <tr>
+        <td class="col-num">4</td>
+        <td>
+          <div class="item-name">Admin puede ejecutar acciones de Azafata</div>
+          <div class="item-desc">El rol Admin ahora puede entrar al tab "Azafata" en
+            Operativa y ver TODOS los tickets activos sin restricción de áreas. Puede
+            ejecutar las acciones contextuales según el estado del ticket: marcar
+            "Habitación Lista", "Iniciar Traslado" y "Recepción OK". Cuando lo hace,
+            el sistema marca al ticket como "intervenida la azafata" igual que si
+            la hubiera intervenido una azafata real (ya no se puede editar ni cancelar).</div>
+        </td>
+        <td><span class="status-badge done">✓ Hecho</span></td>
+      </tr>
+      <tr>
+        <td class="col-num">5</td>
+        <td>
+          <div class="item-name">Indicador de aislamiento múltiple en el mapa de camas</div>
+          <div class="item-desc">Antes, un paciente con dos o más aislamientos se veía igual
+            que uno con un solo aislamiento (el borde tomaba el color del primero, los demás
+            no se notaban). Ahora la tarjeta de cama muestra un tag negro en la esquina
+            inferior izquierda con el contador y un punto del color del segundo aislamiento.
+            En desktop, al pasar el mouse sobre la cama se ve el listado completo de
+            aislamientos del paciente.</div>
+        </td>
+        <td><span class="status-badge done">✓ Hecho</span></td>
+      </tr>
+      <tr>
+        <td class="col-num">6</td>
+        <td>
+          <div class="item-name">Layout de tabla de Operativa más limpio</div>
+          <div class="item-desc">Las columnas "Destino" y "Estado Destino" se veían apretadas
+            entre sí y los códigos como "821 - 01" se rompían en dos líneas. Se ajustaron
+            los anchos mínimos y se forzó que el contenido se mantenga en una sola línea.
+            Las observaciones del traslado tienen un poco más de espacio para verse cómodas.</div>
+        </td>
+        <td><span class="status-badge done">✓ Hecho</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- Pendientes / diferidos -->
+  <h2 class="section">Pendientes diferidos (en stand-by)</h2>
+  <table class="items">
+    <thead>
+      <tr>
+        <th class="col-num">#</th>
+        <th>Item</th>
+        <th class="col-status">Estado</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="col-num">7</td>
+        <td>
+          <div class="item-name">Circuito de Ingreso a Internación</div>
+          <div class="item-desc">El cliente pidió un nuevo flujo para registrar el ingreso de un
+            paciente externo (que no estaba previamente en el mapa). Quedó en stand-by hasta que
+            Gamma confirme: si el paciente externo aparece pre-cargado en el mapa de camas o
+            si llega "fresco" al sistema, y si hay endpoint para buscar/crear paciente al
+            momento del ingreso. Se retomará cuando estén las definiciones.</div>
+        </td>
+        <td><span class="status-badge plus">En stand-by</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- Footer -->
+  <div class="page-footer">
+    <span>Grupo Gamma · MediFlow — Sistema de Gestión de Traslados Hospitalarios</span>
+    <span>Sesión del 27/04/2026</span>
+  </div>
+
+</div>
+</body>
+</html>

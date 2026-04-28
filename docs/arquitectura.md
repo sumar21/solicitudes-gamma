@@ -448,3 +448,65 @@ Variables de entorno necesarias en `.env.local`:
 - `JWT_SECRET` — Secreto para firmar tokens
 - `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` — Web Push
 - `VITE_VAPID_PUBLIC_KEY` — Clave pública VAPID expuesta al frontend
+
+---
+
+## 12. Cambios estructurales recientes (2026-04-27)
+
+### 12.1. Rol CATERING agregado al sistema
+
+Se incorpora un sexto rol al portafolio de roles, exclusivo para el equipo de cocina/dieta:
+
+| Rol | Acceso | Push notifications |
+|-----|--------|-------------------|
+| **Catering** | Mapa de Camas | Solo eventos `RECEPTION_CONFIRMED` (paciente recibido en destino) |
+
+A diferencia de los demás roles, Catering **no recibe** notificaciones de creación, status updates ni modificaciones — solo le interesa saber cuando un paciente efectivamente llegó a su nueva ubicación, para coordinar la entrega de comida. El backend (`api/push-utils.ts`) compone un mensaje específico para este rol: `"{Paciente} pasó de Habitación {origen} ({piso}) a Habitación {destino} ({piso})"`.
+
+Para soportar esto, el endpoint `PATCH /api/tickets` recibe ahora `originAreaName` y `destinationAreaName` (nombres legibles del área Gamma, no labels de cama) en el contexto de actualización de status. Esto permite componer el mensaje human-readable sin que el SW tenga que resolver labels.
+
+### 12.2. Validación server-side de doble asignación de cama destino
+
+`api/tickets.ts` agregó dos checks de unicidad de destino, gateways anti-race-condition:
+
+- **POST**: antes de crear el ticket, query a SP filtrando `CamaDestino_T eq '{destination}' and Status_T ne 'Consolidado' and Status_T ne 'Cancelado'`. Si hay match → `409 { error, conflictingTicketId }`.
+- **PATCH**: solo si los `updates` incluyen `destination`, misma query excluyendo el `id` actual con `id ne {spItemId}`.
+
+El frontend (`hooks/useHospitalState.ts`) maneja el 409 haciendo rollback del optimistic update (remueve el ticket recién agregado en `_createTicket`, o restaura el snapshot del ticket original en `handleEditTicket`) y muestra un alert con el ID del ticket conflictivo.
+
+Complementariamente, `App.tsx` calcula `activeTransferDestinations: Set<string>` de los tickets activos y lo pasa a `NewRequestModal`/`EditRequestModal` para ocultar de los dropdowns las camas ya tomadas por otros traslados activos. El modal de edición preserva el destino actual del propio ticket en la lista (se muestra como opción seleccionable).
+
+### 12.3. Tabs internos en el detalle de cama (BedsView)
+
+El modal de detalle de paciente (`BedsView.tsx`) ahora tiene tres tabs:
+- **Generales**: DNI, edad, sexo, financiador, profesional, diagnóstico (datos enriquecidos via `/api/bed-enrich`).
+- **Internación**: tipo de internación (mapeado desde códigos C/CO/H/K/O/Q/R/T), fecha/hora de ingreso, profesional prescriptor.
+- **Dieta**: información de dieta del paciente.
+
+Estado: `useState<'general' | 'internacion' | 'dieta'>('general')` con reset por `useEffect` al cambiar `selectedBed?.id`.
+
+### 12.4. Auto-update de PWA sin intervención del usuario
+
+`vite-plugin-pwa` se configuró con auto-actualización: el SW detecta una nueva versión, la activa y refresca la página automáticamente sin mostrar prompt al usuario. Decisión motivada por el perfil del usuario hospitalario (sin conocimiento técnico).
+
+---
+
+## 13. Workflow types — fusión de `ROOM_CHANGE` con `INTERNAL`
+
+`WorkflowType.ROOM_CHANGE` quedó marcado como `@deprecated` pero **no se removió del enum**: tickets viejos en `07.Traslados` con `TipoTraslado_T = 'ROOM_CHANGE'` deben seguir leyéndose. La UI los renderiza como "Traslado Interno" (mismo label que `INTERNAL`) y al editarlos se auto-mapean a `INTERNAL`.
+
+Reglas de filtrado de origen/destino por workflow en los modales:
+- `INTERNAL`: origen y destino no pueden ser ITR (`bed.area !== Area.HIT`).
+- `ITR_TO_FLOOR`: origen debe ser ITR (`bed.area === Area.HIT`), destino no.
+
+`INTERNAL` siempre requiere un motivo del dropdown `ROOM_CHANGE_REASONS` (validado en frontend y backend).
+
+---
+
+## 14. Operativa: Admin puede ejecutar acciones de Azafata
+
+El tab switcher de `RequestsView.tsx` (`Admin / Admisión / Azafata`) hoy permite que un Admin elija el tab "Azafata" y vea/ejecute las acciones operativas (Habitación Lista, Iniciar Traslado, Recepción OK) **sin filtro de áreas**. Implementado como bypass en dos puntos:
+- Filtro `sortedTickets`: si `currentUser.role === Role.ADMIN`, se saltea el filtro de `assignedAreas`.
+- `renderActionButtons` (HOSTESS branch): un admin se trata como `hasAllAreas = true`.
+
+Los handlers de azafata (`handleRoomReady`, `handleStartTransport`, `handleConfirmReception`) no validan rol — la restricción siempre fue de UI. Cuando un admin ejecuta estas acciones, el flag `intervenedByHostess` también pasa a `'SI'`, bloqueando edición/cancelación posterior (mismo contrato que con una azafata real).

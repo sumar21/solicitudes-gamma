@@ -1211,3 +1211,246 @@ function parseModification(tipo: string): { changes: string[]; motivo: string } 
 ```
 
 **Por qué un único registro y no uno por campo cambiado:** una edición humana es una decisión unitaria con un motivo único. Más prolijo en la auditoría y sigue permitiendo ver qué cambió (lista de changes).
+
+---
+
+## Nuevos patrones (2026-04-27)
+
+### Helpers SP-write con resultado tipado para detectar 409
+
+Cuando un endpoint de escritura puede rechazar por conflicto operacional (no error técnico), los helpers de write retornan un objeto en vez de un valor escalar:
+
+```ts
+type SpConflict = { error: string; conflictingTicketId?: string };
+
+const spCreate = async (ticket: Ticket): Promise<{ spItemId?: string; conflict?: SpConflict }> => {
+  try {
+    const r = await authFetch('/api/tickets', { method: 'POST', body: JSON.stringify(ticket) });
+    if (r.status === 409) {
+      const data = await r.json().catch(() => ({} as any));
+      return { conflict: { error: data?.error ?? '...', conflictingTicketId: data?.conflictingTicketId } };
+    }
+    if (!r.ok) return {};
+    const { spItemId } = await r.json();
+    return { spItemId };
+  } catch { return {}; }
+};
+
+const spUpdate = async (...): Promise<{ ok: boolean; conflict?: SpConflict }> => { ... };
+```
+
+**Por qué objeto y no `string | null`:** permite distinguir 3 estados (éxito, fallo silencioso, conflicto operacional con info) sin overload de tipos primitivos.
+
+### Rollback de optimistic update ante 409
+
+Pre-snapshot del ticket antes del `setTickets` optimistic, para poder restaurarlo si el server rechaza el cambio:
+
+```ts
+// En handleEditTicket
+const ticketSnapshot: Ticket = { ...ticket };
+setTickets(prev => prev.map(t => t.id === ticket.id ? { ...t, ...updates } : t));
+
+// Persist
+const result = await spUpdate(ticket.spItemId, updates, ticket);
+if (result.conflict) {
+  // Rollback al snapshot pre-cambio
+  setTickets(prev => prev.map(t => t.id === ticket.id ? ticketSnapshot : t));
+  prevTicketSnapshotRef.current.set(ticket.id, `${ticketSnapshot.status}|${ticketSnapshot.destination ?? ''}`);
+  alert(`${result.conflict.error}${conflictingTicketId ? ` (ticket ${conflictingTicketId})` : ''}`);
+  return;
+}
+```
+
+**Para POST optimistic:** el rollback es remover el ticket recién agregado:
+
+```ts
+if (conflict) {
+  setTickets((prev: Ticket[]) => prev.filter((t: Ticket) => t.id !== newTicket.id));
+  alert(...);
+  return;
+}
+```
+
+**Importante:** restaurar también `prevTicketSnapshotRef` para que el change-detector no vea el rollback como un cambio nuevo y dispare notificación falsa.
+
+### Validación de unicidad server-side antes de write
+
+Patrón en `api/tickets.ts` para chequear que no haya conflicto antes del POST/PATCH:
+
+```ts
+// POST: chequear duplicado de destino
+if (ticket.destination) {
+  const escaped = String(ticket.destination).replace(/'/g, "''");
+  const conflictUrl = `/sites/${SITE_ID}/lists/${LIST_ID}/items?$expand=fields&$top=5`
+    + `&$filter=fields/CamaDestino_T eq '${escaped}'`
+    + ` and fields/Status_T ne '${TicketStatus.COMPLETED}'`
+    + ` and fields/Status_T ne '${TicketStatus.REJECTED}'`;
+  const conflictRes = await graphFetch(conflictUrl, {
+    headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } as any,
+  });
+  if (conflictRes.ok) {
+    const data = await conflictRes.json();
+    if ((data.value ?? []).length > 0) {
+      const cf = data.value[0].fields;
+      return res.status(409).json({
+        error: 'Cama destino ya asignada a otro traslado activo.',
+        conflictingTicketId: cf.IDUnivocoTraslado_T ? String(cf.IDUnivocoTraslado_T) : undefined,
+      });
+    }
+  }
+}
+
+// PATCH: misma query + ` and id ne ${spItemId}` para excluir el ticket actual
+```
+
+**Reglas:**
+- Escapar las comillas simples del valor con `'` → `''` antes de meterlo en `$filter`.
+- Siempre incluir el header `Prefer: HonorNonIndexedQueriesWarningMayFailRandomly` en queries no indexadas.
+- Si la query falla (no entra al `if (conflictRes.ok)`), se sigue adelante con el write — fail-open en validaciones que no son de seguridad sino operativas.
+
+### Filtros condicionales por workflow en modales de ticket
+
+Cuando un dropdown depende del valor de otro select (ej: filtrar camas por workflow), construir el filtro como composición de `.filter()` y resetear el campo dependiente al cambiar el padre:
+
+```tsx
+const isItrFlow = workflow === WorkflowType.ITR_TO_FLOOR;
+
+const availableOrigins = beds
+  .filter(b => b.status === BedStatus.OCCUPIED)
+  .filter(b => isItrFlow ? b.area === Area.HIT : b.area !== Area.HIT)
+  .sort(sortByAreaThenLabel);
+
+const availableDestinations = beds
+  .filter(b => b.status === BedStatus.AVAILABLE || b.status === BedStatus.PREPARATION)
+  .filter(b => b.area !== Area.HIT)
+  .filter(b => !activeTransferDestinations.has(b.label))
+  .sort(sortByAreaThenLabel);
+
+// Reset al cambiar workflow
+const handleWorkflowChange = (next: WorkflowType) => {
+  setWorkflow(next);
+  setOrigin('');
+  setReason('');
+  // ...
+};
+```
+
+**En EditRequestModal**, además de filtrar por `activeTransferDestinations`, preservar el destino actual del propio ticket en la lista (el ticket que estamos editando ya está en el set, pero su destino debe seguir siendo válido):
+
+```tsx
+.filter(b => b.label === ticket.destination || !activeTransferDestinations.has(b.label))
+```
+
+### Tabs internos en modal con `useState` + reset al abrir distinto item
+
+Cuando un modal de detalle muestra varias secciones de info, organizar con tabs locales:
+
+```tsx
+const [detailTab, setDetailTab] = useState<'general' | 'internacion' | 'dieta'>('general');
+
+// Reset al abrir un item distinto
+React.useEffect(() => {
+  setDetailTab('general');
+}, [selectedBed?.id]);
+
+// Render
+<button onClick={() => setDetailTab('general')} className={cn(...)}>GENERALES</button>
+<button onClick={() => setDetailTab('internacion')} className={cn(...)}>INTERNACIÓN</button>
+<button onClick={() => setDetailTab('dieta')} className={cn(...)}>DIETA</button>
+{detailTab === 'general' && <GeneralFields .../>}
+{detailTab === 'internacion' && <InternacionFields .../>}
+{detailTab === 'dieta' && <DietaFields .../>}
+```
+
+**Regla de UX:** siempre resetear a la primera tab al cambiar de item (no quedar en "Dieta" cuando se abre la cama siguiente).
+
+### Marcar enums deprecated sin removerlos
+
+Cuando un valor de enum deja de usarse pero existen registros viejos en SP que lo contienen, mantenerlo con JSDoc `@deprecated`:
+
+```ts
+export enum WorkflowType {
+  INTERNAL = 'INTERNAL',
+  ITR_TO_FLOOR = 'ITR_TO_FLOOR',
+  /** @deprecated fusionado con INTERNAL — ya no se ofrece al crear nuevos tickets;
+   *  los tickets viejos en SP con este valor siguen leyéndose y se renderizan como "Traslado Interno". */
+  ROOM_CHANGE = 'ROOM_CHANGE',
+}
+```
+
+**Regla:** nunca borrar valores de enum si hay datos históricos en SP que los contienen — el `as TipoEnum` cast no falla pero la app trata el valor como `undefined` en runtime, rompiendo render. Mejor `@deprecated` + label de UI mapeado a un valor activo.
+
+### Tag de multi-aislamiento como pill en esquina libre
+
+Para destacar un dato secundario sobre una tarjeta sin romper el ring/border principal:
+
+```tsx
+{isMultiIso && (
+  <div className="absolute bottom-0.5 left-0.5 flex items-center gap-0.5 px-1 h-3 md:h-3.5 rounded-full bg-slate-900 text-white text-[7px] md:text-[8px] font-black ring-1 ring-white shadow-sm">
+    <span className={cn("w-1.5 h-1.5 rounded-full", (ISOLATION_COLORS[isoTipos[1]] ?? DEFAULT_ISO_COLOR).bg)} />
+    <span>{isoTipos.length}</span>
+  </div>
+)}
+```
+
+**Reglas:**
+- Esquina libre (no chocar con el indicador primario en `top-left` ni con el dot de status en `top-right`).
+- `ring-1 ring-white` para que el badge destaque sobre cualquier color de fondo.
+- Tamaños responsive (`w-1.5 h-1.5`, `text-[7px] md:text-[8px]`) para no romper layouts compactos en mobile.
+
+### Anchos mínimos en columnas cortas de tablas para evitar squeeze
+
+Cuando una tabla tiene columnas con contenido corto (como "OCUPADA", "821-01") junto a columnas con contenido largo (Origen ITR completo, Observaciones), el layout `auto` del browser estrecha las cortas hasta romperlas en dos líneas. Solución:
+
+```tsx
+<TableHead className="min-w-[110px] whitespace-nowrap">Destino</TableHead>
+<TableHead className="min-w-[120px] whitespace-nowrap">Estado Destino</TableHead>
+```
+
+Y en las celdas, replicar el `whitespace-nowrap` en el contenido si es propenso a wrap forzoso (ej. códigos con guiones):
+
+```tsx
+<div className="text-slate-800 text-sm font-black uppercase tracking-tight whitespace-nowrap">
+  {formatBedName(ticket.destination)}
+</div>
+```
+
+**Regla:** aplicar `min-w-*` solo a las columnas cortas. Las largas se ajustan al contenido restante. `whitespace-nowrap` en el header **y** en la celda — solo en uno no alcanza si el contenido tiene espacios o guiones.
+
+### Push notifications por rol con payload diferenciado
+
+Cuando un rol específico necesita un mensaje human-readable distinto al estándar, agregar campos opcionales al payload de push y resolverlos server-side:
+
+```ts
+// api/push-utils.ts
+sendPushToSubscribers({
+  title: 'Recepción Confirmada',           // título estándar
+  body: `${patient}: ${origin} → ${dest}`,  // body estándar
+  cateringTitle: 'Traslado concretado',    // override para Catering
+  cateringBody: `${patient} pasó de Habitación 401 (Piso 4) a Habitación 509 (Piso 5)`,
+  // ...
+});
+
+// Server-side al iterar suscriptores
+const isCatering = sub.role === 'CATERING';
+const payloadTitle = isCatering && cateringTitle ? cateringTitle : title;
+const payloadBody  = isCatering && cateringBody  ? cateringBody  : body;
+```
+
+**Filtrado natural:** si Catering no debería recibir el evento, simplemente no pasar `cateringBody`. La lógica server-side puede skipear suscriptores Catering cuando ese campo es undefined.
+
+### Campos de contexto adicionales en PATCH para el push
+
+`spUpdate` enriquece el payload con `originArea` / `destinationArea` (nombre legible del área Gamma, no label de cama) para que el server pueda construir mensajes formateados sin tener que resolver labels:
+
+```ts
+const originArea      = ticket?.origin      ? rawBeds.find((b: Bed) => b.label === ticket.origin)?.area      : undefined;
+const destinationArea = ticket?.destination ? rawBeds.find((b: Bed) => b.label === ticket.destination)?.area : undefined;
+const context = ticket ? { id, patientName, origin, destination, originArea, destinationArea, sede } : {};
+await authFetch('/api/tickets', {
+  method: 'PATCH',
+  body: JSON.stringify({ spItemId, ...context, ...updates }),
+});
+```
+
+**Regla:** los campos de contexto van como spread antes que `updates`, para que cualquier campo de updates pise al contexto si hay overlap (el caso de `destination` cambiando).

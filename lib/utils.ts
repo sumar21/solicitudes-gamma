@@ -8,6 +8,19 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
+ * Devuelve true si el `area` corresponde a Internación Transitoria HPR (ITR).
+ *
+ * Comparación tolerante: el string que envía Gamma puede variar en tildes,
+ * mayúsculas o espaciado respecto al enum `Area.HIT` ("Internación Transitoria HPR").
+ * Matchear por substring "transitoria" (normalizado) cubre cualquier variante razonable.
+ */
+export function isHitArea(area?: string | null): boolean {
+  if (!area) return false;
+  const normalized = area.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return normalized.includes('transitoria');
+}
+
+/**
  * Formatea una fecha ISO (YYYY-MM-DD o full ISO datetime) a formato legible
  */
 export function formatDateReadable(isoDate: string | undefined): string {
