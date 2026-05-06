@@ -8,11 +8,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { SearchableSelect } from '../ui/searchable-select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { ITR_SOURCES, ROOM_CHANGE_REASONS } from '../../lib/constants';
-import { isHitArea } from '../../lib/utils';
+import { isHitArea, isHraArea } from '../../lib/utils';
 
-// Same ordering used in BedsView: ITR first, then floors, then critical units
+// Same ordering used in BedsView: pre-internación (HRA, HIT) first, then floors, then critical units
 const AREA_ORDER: Area[] = [
-  Area.HIT,
+  Area.HRA, Area.HIT,
   Area.PISO_4, Area.PISO_5, Area.PISO_6, Area.PISO_7, Area.PISO_8,
   Area.HUC, Area.HUT, Area.HUQ, Area.HSS,
 ];
@@ -100,18 +100,20 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
   };
 
   // Filtros por workflow:
-  //   INTERNAL      → origen y destino son cualquier sector EXCEPTO ITR (HIT)
-  //   ITR_TO_FLOOR  → origen SOLO ITR; destino cualquier sector EXCEPTO ITR
-  // Usamos isHitArea() en vez de === Area.HIT porque el string que llega de Gamma
-  // puede diferir en tildes/casing (ej: "Internacion Transitoria HPR" sin tilde).
+  //   INTERNAL      → origen cualquier sector EXCEPTO HRA (sala de espera no es origen interno);
+  //                   destino cualquier sector EXCEPTO HRA y HIT.
+  //   ITR_TO_FLOOR  → origen SOLO HRA (sillones de sala de espera con paciente registrado);
+  //                   destino cualquier sector EXCEPTO HRA y HIT.
+  // Usamos isHitArea/isHraArea en vez de === Area.X porque Gamma puede devolver
+  // variaciones de string (tildes, casing).
   const isItrFlow = workflow === WorkflowType.ITR_TO_FLOOR;
   const availableOrigins = beds
     .filter(b => b.status === BedStatus.OCCUPIED)
-    .filter(b => isItrFlow ? isHitArea(b.area) : !isHitArea(b.area))
+    .filter(b => isItrFlow ? isHraArea(b.area) : !isHraArea(b.area))
     .sort(sortByAreaThenLabel);
   const availableDestinations = beds
     .filter(b => b.status === BedStatus.AVAILABLE || b.status === BedStatus.PREPARATION)
-    .filter(b => !isHitArea(b.area)) // ITR nunca es destino
+    .filter(b => !isHitArea(b.area) && !isHraArea(b.area)) // ITR/Sala Espera nunca son destino
     .filter(b => !activeTransferDestinations.has(b.label)) // ocultar camas ya asignadas a otro ticket activo
     .sort(sortByAreaThenLabel);
 
@@ -217,7 +219,13 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
           {workflow === WorkflowType.ITR_TO_FLOOR && (
             <div className="grid gap-2">
               <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Origen ITR / Financiador</Label>
-              <Input placeholder="Financiador / Obra Social" value={itrSource} onChange={e => setItrSource(e.target.value)} className="h-10 rounded-xl" />
+              <Input
+                readOnly
+                tabIndex={-1}
+                placeholder={origin ? 'Sin financiador registrado' : 'Seleccione una cama de origen'}
+                value={itrSource}
+                className="h-10 rounded-xl bg-slate-50 text-slate-700 cursor-not-allowed focus-visible:ring-0 focus-visible:ring-offset-0"
+              />
             </div>
           )}
 

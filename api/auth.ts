@@ -9,6 +9,7 @@
 
 import { graphFetch } from './graph.js';
 import { signToken }  from './jwt.js';
+import { checkRateLimit, recordFailure, resetRateLimit, buildAuthKey } from './rate-limit.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = 'e623ad06-ff62-441f-b67d-666224af5805'; // 00.Usuarios
@@ -58,6 +59,26 @@ export default async function handler(req: any, res: any) {
     return res.status(400).json({ error: 'username y password requeridos' });
   }
 
+  // ── Rate limit (anti brute-force) ──────────────────────────────────────────
+  // Combina username + IP del cliente para que el bloqueo no sea por IP entera
+  // (cada usuario legítimo conserva sus propios slots) ni por username solo
+  // (dos atacantes desde IPs distintas comparten cuota).
+  const clientIp = String(
+    (req.headers?.['x-forwarded-for'] ?? '').split(',')[0].trim() ||
+    req.headers?.['x-real-ip'] ||
+    req.socket?.remoteAddress ||
+    'unknown',
+  );
+  const rateKey = buildAuthKey(String(username), clientIp);
+  const gate    = await checkRateLimit(rateKey);
+  if (!gate.allowed) {
+    res.setHeader('Retry-After', String(gate.retryAfter ?? 900));
+    return res.status(429).json({
+      error: 'Demasiados intentos fallidos. Esperá unos minutos antes de reintentar.',
+      retryAfterSeconds: gate.retryAfter ?? 900,
+    });
+  }
+
   try {
     // Buscar usuario activo (internal field names from SP list)
     const filter = [
@@ -78,6 +99,7 @@ export default async function handler(req: any, res: any) {
     const items  = data.value ?? [];
 
     if (items.length === 0) {
+      await recordFailure(rateKey);
       return res.status(401).json({ error: 'Usuario no encontrado o inactivo' });
     }
 
@@ -86,8 +108,12 @@ export default async function handler(req: any, res: any) {
 
     // Verificar contraseña
     if (String(fields.Password_Usr ?? '') !== password) {
+      await recordFailure(rateKey);
       return res.status(401).json({ error: 'Contraseña incorrecta' });
     }
+
+    // Login exitoso → reset del contador
+    await resetRateLimit(rateKey);
 
     // Construir objeto User (internal SP field names)
     const user = {

@@ -510,3 +510,95 @@ El tab switcher de `RequestsView.tsx` (`Admin / Admisión / Azafata`) hoy permit
 - `renderActionButtons` (HOSTESS branch): un admin se trata como `hasAllAreas = true`.
 
 Los handlers de azafata (`handleRoomReady`, `handleStartTransport`, `handleConfirmReception`) no validan rol — la restricción siempre fue de UI. Cuando un admin ejecuta estas acciones, el flag `intervenedByHostess` también pasa a `'SI'`, bloqueando edición/cancelación posterior (mismo contrato que con una azafata real).
+
+---
+
+## 15. Sector HRA (sala de espera de Recepción Admisión)
+
+Sumado al portafolio de áreas como **`Area.HRA = 'Recepción Admision y Altas de Internacion HPR'`** ([types.ts:46](types.ts#L46)). Es un sector "ficticio" — sus "camas" son sillones donde Admisión registra pacientes que están a la espera de habitación de internación.
+
+### Pipeline operativo
+1. **PROGAL**: Admisión registra al paciente en un sillón HRA. El sistema externo persiste la ocupación.
+2. **Gamma → MediFlow**: el sillón aparece como `OCCUPIED` en el response de `obtenermapacamasocupadas`.
+3. **MediFlow**: el sillón es seleccionable como **origen** del workflow `Ingreso ITR` (y solo de ese workflow).
+4. **Azafata destino**: hace todo el flujo (ver §16).
+5. **PROGAL**: al consolidar, el sillón se libera.
+
+### Reglas de visibilidad y filtros
+- `AREA_LABELS[Area.HRA] = 'Sala Espera'` (label corto en el mapa).
+- `AREA_ORDER`: HRA va **primero**, antes de HIT, porque conceptualmente es pre-internación.
+- `CRITICAL_AREAS_NO_BLOCK` incluye HRA: si un paciente tiene aislamiento en un sillón, los demás sillones siguen libres (cada uno es físicamente independiente).
+- HRA es **origen exclusivo** del workflow `Ingreso ITR` — nunca es destino de ningún ticket.
+- HRA es **seleccionable** como área asignable en `AreaSelectionModal` y `UserManagementView` (Catering puede tener HRA en su lista de áreas).
+
+### Helper de detección
+- [lib/utils.ts](lib/utils.ts) expone `isHraArea(area)` y `isHitArea(area)`. Ambos hacen matching tolerante (case-insensitive, sin diacríticos) por substring clave (`recepcion`+`admision` y `transitoria` respectivamente). Usar estos helpers en lugar de `b.area === Area.HRA` para evitar mismatches por strings ligeramente distintos que pueda enviar Gamma.
+
+---
+
+## 16. Flujo simplificado de azafata para `Ingreso ITR`
+
+Cuando el origen es HRA (sillón de sala de espera), no hay azafata estable de origen. Para que el ticket avance, la azafata **destino** ejecuta los 3 pasos en secuencia.
+
+[views/RequestsView.tsx:131-189](views/RequestsView.tsx#L131): variable `isIngresoFlow = ticket.workflow === ITR_TO_FLOOR` controla el routing de botones:
+
+| Status | Internal (Traslado Interno) | Ingreso ITR |
+|--------|------------------------------|-------------|
+| `WAITING_ROOM` | Azafata destino marca "Habitación Lista" | Azafata destino marca "Habitación Lista" |
+| `IN_TRANSIT` | Azafata **origen** marca "Iniciar Traslado" | Azafata **destino** marca "Iniciar Traslado" |
+| `IN_TRANSPORT` | Azafata destino marca "Recepción OK" | Azafata destino marca "Recepción OK" |
+
+En Ingreso ITR la azafata origen no recibe badges de espera ("Esperando preparación destino", "Traslado en curso...") porque no hay azafata HRA real. El admin actuando como azafata sigue funcionando igual (`hasAllAreas = true` cubre ambos roles).
+
+---
+
+## 17. Plan médico del paciente
+
+Gamma incorporó dos fuentes para el plan médico:
+
+1. **`obtenermapacamasocupadas`** (en cada poll, sin enrich): los campos `plan_codigo` y `plan` vienen dentro de cada `cama[]`.
+2. **`obtenereventointernacion`** (al click, vía enrich): `IPM_PLAN_MEDICO` (código) e `IPM_DESCRIPCION` (descripción legible).
+
+El backend mapea ambas fuentes a 3 campos del modelo `Bed`:
+- `medicalPlanCode` — código corto (ej. `'A1'`).
+- `medicalPlan` — texto del plan (ej. `'AMBULATORIO'`).
+- `medicalPlanDescription` — descripción larga (solo del enrich).
+
+El render en el modal de detalle ([BedsView.tsx:1328-1338](views/BedsView.tsx#L1328)) muestra el plan como **subtítulo dentro de la card Financiador** (no como card separada): financiador en negrita arriba + `Plan: A1 · AMBULATORIO` en gris claro abajo. El plan rápido viene del poll; la descripción se completa al expandir el modal cuando termina el enrich.
+
+---
+
+## 18. Observaciones de cama inhabilitada
+
+Gamma sumó el campo `observaciones` al array `camas[]` de `obtenermapacamas`. Sirve para que el equipo sepa **por qué** una cama está fuera de servicio (mantenimiento, equipamiento, etc.).
+
+Mapeado a `Bed.disabledReason` en [api/beds.ts:80](api/beds.ts#L80). Render dual:
+- **Tooltip nativo** en el grid: `<button title="Inhabilitada — {motivo}">` ([BedsView.tsx:1085-1089](views/BedsView.tsx#L1085)).
+- **Panel ámbar destacado** en el modal cuando se hace click ([BedsView.tsx:1471-1480](views/BedsView.tsx#L1471)) — solo aparece si hay `disabledReason`, no se muestra placeholder vacío.
+
+---
+
+## 19. Rate limiting del login (anti brute-force)
+
+[api/auth.ts](api/auth.ts) ahora consulta [api/rate-limit.ts](api/rate-limit.ts) antes de validar credenciales. Reglas: **5 intentos fallidos en 5 min → 15 min de bloqueo**. Login exitoso resetea el contador.
+
+### Capa de almacenamiento dual (Upstash + memoria)
+
+- **Si `UPSTASH_REDIS_REST_URL` y `UPSTASH_REDIS_REST_TOKEN` están en envs** → contador en Upstash Redis (compartido entre instancias Vercel, sobrevive cold-starts).
+- **Si no están** → fallback automático a `Map<key, ...>` in-memory por instancia.
+
+### Circuit breaker (3 fallos / 5 min de cooldown)
+
+Si Upstash falla 3 veces consecutivas (timeout, cuota agotada, error de red), el módulo lo deshabilita por **5 minutos** y enruta todo al fallback in-memory. Reintenta al expirar el cooldown. Estado en memoria del módulo: `breakerFailures` + `breakerOpenUntil`.
+
+### Doble escritura best-effort
+
+`recordFailure()` y `resetRateLimit()` siempre escriben primero en memoria, después intentan Upstash. Esto preserva continuidad del contador si el breaker se abre justo entre dos intentos del mismo atacante.
+
+### Key del rate limit
+
+`username:ip` combinado. Un atacante no puede agotar la cuota de un usuario legítimo desde otra IP, ni dos IPs distintas comparten cuota.
+
+### Frontend
+
+[hooks/useHospitalState.ts:553-562](hooks/useHospitalState.ts#L553) detecta `res.status === 429`, lee `retryAfterSeconds` y muestra: `"Cuenta bloqueada por seguridad tras varios intentos fallidos. Probá de nuevo en X minutos."`

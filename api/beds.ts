@@ -56,6 +56,11 @@ function transformBeds(mapData: GammaSector[], occupiedData: GammaSector[]) {
         const codigoPaciente = bed.codigo_paciente ?? occ?.codigo_paciente;
         const profesional = bed.profesional ?? occ?.profesional;
         const institucion = bed.institucion ?? occ?.institucion;
+        // Plan médico — viene en el array de camas ocupadas (no en el general).
+        const planCodigo = occ?.plan_codigo ?? bed.plan_codigo;
+        const plan = occ?.plan ?? bed.plan;
+        // Observaciones — vienen en el array general (motivo de inhabilitación).
+        const observaciones = bed.observaciones ?? occ?.observaciones;
 
         beds.push({
           id: `BED-${id++}`,
@@ -70,6 +75,9 @@ function transformBeds(mapData: GammaSector[], occupiedData: GammaSector[]) {
           patientCode: codigoPaciente ? String(codigoPaciente).trim() : undefined,
           institution: institucion?.trim() || undefined,
           prescribingPhysician: profesional?.trim() || undefined,
+          medicalPlanCode: planCodigo != null ? String(planCodigo).trim() || undefined : undefined,
+          medicalPlan:     plan != null ? String(plan).trim() || undefined : undefined,
+          disabledReason:  observaciones != null ? String(observaciones).trim() || undefined : undefined,
         });
       }
     }

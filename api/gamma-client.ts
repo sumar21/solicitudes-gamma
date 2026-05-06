@@ -21,6 +21,11 @@ export interface GammaBed {
   profesional?: string;
   codigo_institucion?: string;
   institucion?: string;
+  // Plan médico — viene en obtenermapacamasocupadas dentro de cada cama.
+  plan_codigo?: string;
+  plan?: string;
+  // Observaciones — viene en obtenermapacamas (motivo de inhabilitación principalmente).
+  observaciones?: string;
 }
 
 export interface GammaPatient {
@@ -63,6 +68,9 @@ export interface GammaEvent {
   EVE_FECHA_HORA_EGRESO?: string | null;
   EVE_FECHA_PROBABLE_CIRUGIA?: string | null;
   EVE_DIAS_AUTORIZADOS?: number | null;
+  // Plan médico del paciente (Grupo Gamma sumó IPM_* en obtenereventointernacion).
+  IPM_PLAN_MEDICO?: string;
+  IPM_DESCRIPCION?: string;
   // Listado de respuestas del formulario de dieta: cada entry tiene una condición
   // (HCG_DESCRIPCION) y su respuesta ("Sí" / "No" / valor libre como "Liviana").
   DIETAS?: Array<{

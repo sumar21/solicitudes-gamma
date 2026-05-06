@@ -42,6 +42,7 @@ export enum Area {
   PISO_7 = 'Internacion 7° Piso HPR',
   PISO_8 = 'Internacion 8° Piso HPR',
   HIT = 'Internación Transitoria HPR',
+  HRA = 'Recepción Admision y Altas de Internacion HPR', // Sala de espera con sillones — origen exclusivo del workflow Ingreso ITR
   HSS = 'Servicio de Neurofisiologia (Sueño) HPR',
   HUC = 'Unidad Coronaria HPR',
   HUQ = 'Unidad Recuperaciòn Postquirùrgica',
@@ -80,6 +81,13 @@ export interface Bed {
   admissionDate?: string;        // ISO string — fecha/hora de ingreso
   expectedSurgeryDate?: string;  // ISO string — fecha probable de cirugía
   authorizedDays?: number;       // Días autorizados por la OS
+  // Plan médico del paciente. `medicalPlanCode` y `medicalPlan` vienen en cada poll
+  // (camas ocupadas), `medicalPlanDescription` solo tras el enrich (IPM_DESCRIPCION).
+  medicalPlan?: string;
+  medicalPlanCode?: string;
+  medicalPlanDescription?: string;
+  // Motivo de inhabilitación de la cama (campo `observaciones` en obtenermapacamas).
+  disabledReason?: string;
   diets?: { descripcion: string; respuesta: string }[]; // Respuestas crudas del form de dieta
   dietTags?: string[];           // Chips resumen (condiciones activas / tipo)
 }
@@ -101,7 +109,7 @@ export interface User {
   sede: SedeType;
   avatar: string;
   lastLogin: string;
-  assignedAreas?: Area[]; // For Hostesses
+  assignedAreas?: Area[]; // For Hostesses and Catering
 }
 
 export enum NotificationType {

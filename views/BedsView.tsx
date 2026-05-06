@@ -15,6 +15,7 @@ const AREA_LABELS: Record<string, string> = {
   [Area.PISO_7]: 'Piso 7',
   [Area.PISO_8]: 'Piso 8',
   [Area.HIT]:    'ITR',
+  [Area.HRA]:    'Sala Espera',
   [Area.HSS]:    'Sueño',
   [Area.HUC]:    'UCO',
   [Area.HUQ]:    'URP',
@@ -22,6 +23,7 @@ const AREA_LABELS: Record<string, string> = {
 };
 
 const AREA_ORDER: Area[] = [
+  Area.HRA, // Pre-internación: pacientes en sillones esperando cama
   Area.HIT,
   Area.PISO_4, Area.PISO_5, Area.PISO_6, Area.PISO_7, Area.PISO_8,
   Area.HUC, Area.HUT, Area.HUQ, Area.HSS,
@@ -108,7 +110,10 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     return isolatedPatients.get(bed.patientCode) ?? [];
   };
 
-  // Rooms that have an isolated patient — other beds in same room are blocked
+  // Rooms that have an isolated patient — other beds in same room are blocked.
+  // Excepción: áreas con cubículos/lugares físicamente independientes (UCO, UTI, ITR, HRA)
+  // no se bloquean entre sí cuando un paciente está aislado.
+  const CRITICAL_AREAS_NO_BLOCK: Area[] = [Area.HUC, Area.HUT, Area.HIT, Area.HRA];
   const blockedByIsolation = useMemo(() => {
     const blocked = new Set<string>();
     // Group beds by roomCode
@@ -120,6 +125,10 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     }
     // For each room, if any bed is isolated, block the others
     for (const [, roomBeds] of roomMap) {
+      // Si CUALQUIER cama de la habitación está en un sector crítico, todo el cuarto se exime.
+      // (Una habitación vive entera en un solo sector, pero el check es defensivo.)
+      const inCriticalArea = roomBeds.some(b => CRITICAL_AREAS_NO_BLOCK.includes(b.area));
+      if (inCriticalArea) continue;
       const hasIsolated = roomBeds.some(b => isolatedBeds.has(b.label));
       if (hasIsolated) {
         for (const b of roomBeds) {
@@ -148,8 +157,10 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   void isAdmission; // used implicitly via role checks below
 
   const [areaFilters, setAreaFilters] = useState<Set<string>>(() => {
-    // Azafata starts with her assigned areas only
-    if (currentUser?.role === Role.HOSTESS && currentUser.assignedAreas?.length > 0) {
+    // Roles operativos con áreas asignadas (Azafata, Catering) arrancan filtrados a sus pisos.
+    // El usuario puede destildar/agregar otros sectores manualmente desde el filtro.
+    const ROLES_WITH_AREA_FILTER: Role[] = [Role.HOSTESS, Role.CATERING];
+    if (currentUser && ROLES_WITH_AREA_FILTER.includes(currentUser.role) && currentUser.assignedAreas?.length > 0) {
       return new Set<string>(currentUser.assignedAreas);
     }
     const all = new Set<string>(Object.values(Area));
@@ -386,9 +397,10 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     };
 
     // ── Column layout ────────────────────────────────────────────────────────
-    // Columns: Hab.(13) | Cama(9) | Estado(20) | Paciente(40) | DNI(19) | Edad(9) | Sexo(8) | Tipo(11) | Ingreso(22) | Días(9) | Profesional(36) | Financiador(36)
-    const colWidths  = [13, 9, 20, 40, 19, 9, 8, 11, 22, 9, 36, 36];
-    const colHeaders = ['Hab.', 'Cama', 'Estado', 'Paciente', 'DNI', 'Edad', 'Sexo', 'Tipo', 'Ingreso', 'Días', 'Profesional', 'Financiador'];
+    // Total = 268mm; A4 landscape with 10mm margins leaves 277mm useful → cabe.
+    // Hab.(13) | Cama(9) | Estado(20) | Paciente(40) | DNI(19) | Edad(9) | Sexo(8) | Tipo(11) | Ingreso(22) | Días(9) | Cirugía(18) | Evento(18) | Profesional(36) | Financiador(36)
+    const colWidths  = [13, 9, 20, 40, 19, 9, 8, 11, 22, 9, 18, 18, 36, 36];
+    const colHeaders = ['Hab.', 'Cama', 'Estado', 'Paciente', 'DNI', 'Edad', 'Sexo', 'Tipo', 'Ingreso', 'Días', 'Cirugía', 'Evento', 'Profesional', 'Financiador'];
     const rowH = 6;
     const tableWidth = colWidths.reduce((s, w) => s + w, 0);
 
@@ -549,14 +561,32 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
           // Col 9: Días de estadía
           doc.text(stayDays, colX[9] + 1.5, textY);
 
-          // Col 10: Profesional (prescriptor from event, fallback to attending)
-          const prof = isOccupied ? (bed.prescribingPhysician ?? bed.attendingPhysician ?? '') : '';
-          const maxPhysChars = Math.floor(colWidths[10] / 1.6);
-          doc.text(prof.substring(0, maxPhysChars), colX[10] + 1.5, textY);
+          // Col 10: Fecha probable de cirugía (corta DD/MM/YY) — viene del enrich
+          const cirugiaShort = (() => {
+            if (!isOccupied || !bed.expectedSurgeryDate) return '';
+            const d = new Date(bed.expectedSurgeryDate);
+            if (isNaN(d.getTime())) return '';
+            const dd = String(d.getDate()).padStart(2, '0');
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const yy = String(d.getFullYear()).slice(-2);
+            return `${dd}/${mm}/${yy}`;
+          })();
+          doc.text(cirugiaShort, colX[10] + 1.5, textY);
 
-          // Col 11: Financiador
-          const maxFinChars = Math.floor(colWidths[11] / 1.6);
-          doc.text(financier.substring(0, maxFinChars), colX[11] + 1.5, textY);
+          // Col 11: Número de evento de internación (HIN-58213)
+          const eventoStr = isOccupied && bed.eventOrigin && bed.eventNumber
+            ? `${bed.eventOrigin}-${bed.eventNumber}`
+            : '';
+          doc.text(eventoStr, colX[11] + 1.5, textY);
+
+          // Col 12: Profesional (prescriptor from event, fallback to attending)
+          const prof = isOccupied ? (bed.prescribingPhysician ?? bed.attendingPhysician ?? '') : '';
+          const maxPhysChars = Math.floor(colWidths[12] / 1.6);
+          doc.text(prof.substring(0, maxPhysChars), colX[12] + 1.5, textY);
+
+          // Col 13: Financiador
+          const maxFinChars = Math.floor(colWidths[13] / 1.6);
+          doc.text(financier.substring(0, maxFinChars), colX[13] + 1.5, textY);
         } else {
           // Non-occupied: just show bed code in patient column (dimmed)
           doc.setTextColor(148, 163, 184);
@@ -641,9 +671,10 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       doc.line(margin, 19, pageW - margin, 19);
     };
 
-    // Columns: Paciente(38) | Hab.(12) | Cama(9) | Sector(20) | Estado(18) | DNI(19) | Edad(9) | Sexo(8) | Tipo(10) | Ingreso(22) | Días(9) | Profesional(35) | Financiador(32)
-    const colWidths  = [38, 12, 9, 20, 18, 19, 9, 8, 10, 22, 9, 35, 32];
-    const colHeaders = ['Paciente', 'Hab.', 'Cama', 'Sector', 'Estado', 'DNI', 'Edad', 'Sexo', 'Tipo', 'Ingreso', 'Días', 'Profesional', 'Financiador'];
+    // Total = 269mm; A4 landscape with 10mm margins leaves 277mm useful → cabe con margen.
+    // Paciente(38) | Hab.(12) | Cama(9) | Sector(20) | Estado(18) | DNI(19) | Edad(9) | Sexo(8) | Tipo(10) | Ingreso(22) | Días(9) | Cirugía(18) | Evento(18) | Profesional(32) | Financiador(27)
+    const colWidths  = [38, 12, 9, 20, 18, 19, 9, 8, 10, 22, 9, 18, 18, 32, 27];
+    const colHeaders = ['Paciente', 'Hab.', 'Cama', 'Sector', 'Estado', 'DNI', 'Edad', 'Sexo', 'Tipo', 'Ingreso', 'Días', 'Cirugía', 'Evento', 'Profesional', 'Financiador'];
     const rowH = 6;
     const tableWidth = colWidths.reduce((s, w) => s + w, 0);
     const colX: number[] = [];
@@ -697,6 +728,20 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
           const diff = Math.max(0, Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24)));
           return String(diff);
         })();
+        // Fecha probable de cirugía corta (DD/MM/YY) — solo si vino del enrich
+        const cirugiaShort = (() => {
+          if (!isOccupied || !bed.expectedSurgeryDate) return '';
+          const d = new Date(bed.expectedSurgeryDate);
+          if (isNaN(d.getTime())) return '';
+          const dd = String(d.getDate()).padStart(2, '0');
+          const mm = String(d.getMonth() + 1).padStart(2, '0');
+          const yy = String(d.getFullYear()).slice(-2);
+          return `${dd}/${mm}/${yy}`;
+        })();
+        // Número de evento de internación (HIN-58213)
+        const eventoStr = isOccupied && bed.eventOrigin && bed.eventNumber
+          ? `${bed.eventOrigin}-${bed.eventNumber}`
+          : '';
         return {
           patientName,
           roomCode: bed.roomCode ?? '',
@@ -709,6 +754,8 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
           admissionCode,
           admissionDateShort,
           stayDays,
+          cirugiaShort,
+          eventoStr,
           physician: isOccupied ? (bed.attendingPhysician ?? '') : '',
           prescriptor: isOccupied ? (bed.prescribingPhysician ?? '') : '',
           financier: isOccupied ? (bed.institution ?? '') : (ticket?.financier ?? ''),
@@ -760,11 +807,15 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       doc.text(row.admissionDateShort, colX[9] + 1.5, textY);
       // Días de estadía
       doc.text(row.stayDays, colX[10] + 1.5, textY);
+      // Cirugía (DD/MM/YY)
+      doc.text(row.cirugiaShort, colX[11] + 1.5, textY);
+      // Evento (HIN-58213)
+      doc.text(row.eventoStr, colX[12] + 1.5, textY);
       // Profesional (prescriptor from event, fallback to attending)
       const prof = row.prescriptor || row.physician;
-      doc.text(prof.substring(0, Math.floor(colWidths[11] / 1.6)), colX[11] + 1.5, textY);
+      doc.text(prof.substring(0, Math.floor(colWidths[13] / 1.6)), colX[13] + 1.5, textY);
       // Financiador
-      doc.text(row.financier.substring(0, Math.floor(colWidths[12] / 1.6)), colX[12] + 1.5, textY);
+      doc.text(row.financier.substring(0, Math.floor(colWidths[14] / 1.6)), colX[14] + 1.5, textY);
 
       curY += rowH;
     });
@@ -1082,7 +1133,11 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                   <button
                     key={bed.id}
                     onClick={() => setSelectedBed(bed)}
-                    title={isMultiIso ? `Aislamientos: ${isoTipos.join(', ')}` : undefined}
+                    title={
+                      bed.status === BedStatus.DISABLED && bed.disabledReason
+                        ? `Inhabilitada — ${bed.disabledReason}`
+                        : isMultiIso ? `Aislamientos: ${isoTipos.join(', ')}` : undefined
+                    }
                     className={cn(
                       "relative flex flex-col items-center justify-center aspect-square rounded-lg border transition-all duration-200 overflow-hidden group",
                       isBlocked ? "bg-violet-50 border-violet-300 opacity-60" : getStatusColor(bed.status),
@@ -1285,6 +1340,12 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                               <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
                                 <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Financiador</p>
                                 <p className="text-sm font-semibold text-slate-700">{enrichLoading ? spinner : (displayBed?.institution || '—')}</p>
+                                {(displayBed?.medicalPlan || displayBed?.medicalPlanCode || displayBed?.medicalPlanDescription) && (
+                                  <p className="text-[10px] text-slate-500 mt-0.5 leading-tight">
+                                    Plan: {displayBed?.medicalPlan ?? displayBed?.medicalPlanCode}
+                                    {displayBed?.medicalPlanDescription && ` · ${displayBed.medicalPlanDescription}`}
+                                  </p>
+                                )}
                               </div>
                               <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
                                 <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">ID Paciente</p>
@@ -1454,6 +1515,16 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     <div className="bg-slate-100 rounded-xl p-3 border border-slate-200 flex items-center justify-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
                       <p className="text-xs font-semibold text-slate-500">Fuera de servicio</p>
+                    </div>
+                  )}
+
+                  {isDisabled && selectedBed.disabledReason && (
+                    <div className="bg-amber-50 rounded-xl p-3 border border-amber-200 flex items-start gap-2">
+                      <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div className="min-w-0">
+                        <p className="text-[8px] font-bold uppercase text-amber-700 mb-0.5 tracking-wide">Motivo de Inhabilitación</p>
+                        <p className="text-sm font-medium text-amber-900 leading-snug break-words">{selectedBed.disabledReason}</p>
+                      </div>
                     </div>
                   )}
 

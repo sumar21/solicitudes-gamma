@@ -7,11 +7,11 @@ import { Label } from '../ui/label';
 import { SearchableSelect } from '../ui/searchable-select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { ROOM_CHANGE_REASONS } from '../../lib/constants';
-import { isHitArea } from '../../lib/utils';
+import { isHitArea, isHraArea } from '../../lib/utils';
 
-// Same ordering used elsewhere: ITR first, then floors, then critical units
+// Same ordering used elsewhere: pre-internación (HRA, HIT) first, then floors, then critical units
 const AREA_ORDER: Area[] = [
-  Area.HIT,
+  Area.HRA, Area.HIT,
   Area.PISO_4, Area.PISO_5, Area.PISO_6, Area.PISO_7, Area.PISO_8,
   Area.HUC, Area.HUT, Area.HUQ, Area.HSS,
 ];
@@ -116,7 +116,7 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
   const currentDestBed = ticket.destination ? beds.find(b => b.label === ticket.destination) : null;
   const availableDestinations = beds
     .filter(b => b.status === BedStatus.AVAILABLE || b.status === BedStatus.PREPARATION || b.label === ticket.destination)
-    .filter(b => !isHitArea(b.area) || b.label === ticket.destination)
+    .filter(b => (!isHitArea(b.area) && !isHraArea(b.area)) || b.label === ticket.destination)
     .filter(b => b.label === ticket.destination || !activeTransferDestinations.has(b.label))
     .sort(sortByAreaThenLabel);
 
@@ -217,7 +217,13 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
           {workflow === WorkflowType.ITR_TO_FLOOR && (
             <div className="grid gap-1.5">
               <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Origen ITR / Financiador</Label>
-              <Input placeholder="Financiador / Obra Social" value={itrSource} onChange={e => setItrSource(e.target.value)} className="h-10 rounded-xl" />
+              <Input
+                readOnly
+                tabIndex={-1}
+                placeholder="Sin financiador registrado"
+                value={itrSource}
+                className="h-10 rounded-xl bg-slate-50 text-slate-700 cursor-not-allowed focus-visible:ring-0 focus-visible:ring-offset-0"
+              />
             </div>
           )}
 

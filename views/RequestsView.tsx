@@ -146,6 +146,10 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       // Si no es de ninguna de las dos áreas, no muestra nada
       if (!isOriginHostess && !isDestHostess) return null;
 
+      // Ingreso ITR (HRA → piso): el origen son sillones de sala de espera, no hay azafata estable ahí.
+      // Toda la operativa la hace la azafata DESTINO: limpiar (si aplica), iniciar traslado y confirmar recepción.
+      const isIngresoFlow = ticket.workflow === WorkflowType.ITR_TO_FLOOR;
+
       // Estado 1: WAITING_ROOM — La azafata DESTINO debe confirmar habitación lista
       if (ticket.status === TicketStatus.WAITING_ROOM) {
         if (isDestHostess)
@@ -154,19 +158,23 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
               <ClipboardCheck className="w-3.5 h-3.5 mr-2" /> Habitación Lista
             </Button>
           );
-        if (isOriginHostess)
+        if (isOriginHostess && !isIngresoFlow)
           return <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50">Esperando preparación destino</Badge>;
       }
 
-      // Estado 2: IN_TRANSIT (Habitación Lista) — azafata ORIGEN debe iniciar traslado
+      // Estado 2: IN_TRANSIT (Habitación Lista) — quién inicia el traslado:
+      //   · Internal: la azafata ORIGEN.
+      //   · Ingreso ITR: la azafata DESTINO (porque el origen es la sala de espera HRA).
       if (ticket.status === TicketStatus.IN_TRANSIT) {
-        if (isOriginHostess)
+        const canStart = isIngresoFlow ? isDestHostess : isOriginHostess;
+        const showWaiting = isIngresoFlow ? false : isDestHostess;
+        if (canStart)
           return (
             <Button size={size} className={cn(btnClass, "bg-emerald-600 hover:bg-emerald-700 text-white")} onClick={() => onStartTransport(ticket.id)}>
               <ArrowRightLeft className="w-3.5 h-3.5 mr-2" /> Iniciar Traslado
             </Button>
           );
-        if (isDestHostess)
+        if (showWaiting)
           return <Badge variant="outline" className="text-blue-600 border-blue-200 bg-blue-50">Esperando inicio de traslado</Badge>;
       }
 
@@ -178,7 +186,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
               <CheckCircle2 className="w-3.5 h-3.5 mr-2" /> Recepción OK
             </Button>
           );
-        if (isOriginHostess)
+        if (isOriginHostess && !isIngresoFlow)
           return <Badge variant="outline" className="text-slate-500 border-slate-200 bg-slate-50">Traslado en curso...</Badge>;
       }
 

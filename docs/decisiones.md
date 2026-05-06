@@ -651,3 +651,112 @@ Registro de decisiones técnicas inferidas del código fuente. Cada entrada docu
 **Por qué:** el cliente reportó que su personal (azafatas, admisión, enfermería) no tiene cómo refrescar manualmente y no entiende mensajes técnicos tipo "hay una nueva versión, click acá". La actualización tiene que ser invisible.
 
 **Trade-off aceptado:** un usuario que esté completando un formulario al momento del deploy puede perder estado si la página se recarga. Mitigación: los modales modales (`NewRequestModal`, `EditRequestModal`) son cortos y se completan en segundos. Decisión documentada para no agregar complejidad de "guardar estado pre-update".
+
+---
+
+## 14. Decisiones recientes (2026-05-06)
+
+### 14.1. Sector HRA reemplaza HIT como origen de "Ingreso ITR"
+
+**Qué:** El workflow `Ingreso ITR` (código interno `WorkflowType.ITR_TO_FLOOR`) cambió su origen de **HIT** (Internación Transitoria) a **HRA** (sillones de sala de espera de Recepción Admisión). El nombre visible "Ingreso ITR" se mantiene aunque ya no use HIT como origen. HIT pasó a ser un sector más, accesible como origen del workflow `Traslado Interno`.
+
+**Por qué:**
+- El cliente aclaró que el flujo real de "ingreso a internación" empieza en los sillones de espera de Admisión, no en ITR. Pacientes esperan sentados en HRA hasta que se les asigna habitación.
+- Renombrar el workflow visible a "Ingreso a Internación" se descartó: el equipo conoce "Ingreso ITR" desde hace meses y no había razón fuerte para romper el vocabulario.
+- HIT se libera para `Traslado Interno`: pacientes que estaban en ITR (sector real de internación transitoria) ahora se pueden mover a piso usando el workflow estándar.
+
+**Reglas de filtrado nuevas:**
+
+| Workflow | Origen | Destino |
+|----------|--------|---------|
+| `INTERNAL` | Cualquier sector **excepto HRA** (incluye HIT) | Cualquier sector excepto HRA y HIT |
+| `ITR_TO_FLOOR` | **Solo HRA** | Cualquier sector excepto HRA y HIT |
+
+**Impacto:** dos helpers en `lib/utils.ts` (`isHraArea`, `isHitArea`) hacen matching tolerante por substring para que el filtrado no se rompa si Gamma envía variaciones de string (con/sin tilde, casing distinto). Los tests con datos reales mostraron que el match estricto fallaba en tests previos, así que ahora todo el filtrado de origen/destino usa estos helpers.
+
+### 14.2. Una sola azafata interviene en `Ingreso ITR` (la de destino)
+
+**Qué:** El workflow `Ingreso ITR` ahora hace que **toda la operativa la ejecute la azafata destino**: marca "Habitación Lista" si aplica, "Iniciar Traslado", y "Recepción OK". La azafata "origen" no existe en este flujo.
+
+**Por qué:** los sillones HRA no tienen una azafata estable asignada (es un sector administrativo, no de internación). Mantener el handoff origen/destino del Traslado Interno ahí dejaba el ticket trabado en `IN_TRANSIT` esperando que alguien marcara "Iniciar Traslado", sin nadie operativo en HRA. La simplificación es honesta: una sola persona es responsable de mover al paciente desde el sillón.
+
+**Trade-off:** la azafata destino tiene que apretar 3 botones en lugar de 1, pero los apreta ella misma sin esperar a otro rol — más rápido en práctica.
+
+**Implementación:** `views/RequestsView.tsx` calcula `isIngresoFlow = ticket.workflow === ITR_TO_FLOOR` y, en el estado `IN_TRANSIT`, deriva el botón "Iniciar Traslado" a la azafata destino en vez de la origen.
+
+### 14.3. Plan médico desde dos fuentes (poll + enrich)
+
+**Qué:** El campo `medicalPlan` se rellena desde **dos fuentes Gamma** combinadas:
+
+1. **`obtenermapacamasocupadas`** (en cada poll de 60s, sin enrich): trae `plan_codigo` y `plan`.
+2. **`obtenereventointernacion`** (al click, dentro del enrich): trae `IPM_PLAN_MEDICO` y `IPM_DESCRIPCION`.
+
+El frontend prioriza el dato del poll (rápido, sin spinner) y el enrich agrega `medicalPlanDescription` cuando completa.
+
+**Por qué dos fuentes:** Gamma agregó el plan en ambos endpoints simultáneamente. Aprovechamos: el dato del poll asegura que el plan aparezca **inmediatamente** al abrir el modal (incluso antes del enrich), y el dato del enrich agrega la descripción larga si Gamma la envía.
+
+**Alternativas descartadas:**
+- Solo usar el enrich: el plan aparecía con un delay incómodo de 1-3s.
+- Solo usar el poll: perdíamos la descripción larga (`IPM_DESCRIPCION`).
+
+### 14.4. Observaciones de cama inhabilitada en tooltip + modal
+
+**Qué:** Cuando una cama está en estado `DISABLED` y Gamma envía `observaciones`, ese texto aparece en dos lugares:
+1. **Tooltip nativo del browser** al hover del cuadrado en el grid (desktop).
+2. **Panel ámbar destacado** dentro del modal de detalle (desktop + mobile).
+
+**Por qué dual:** el cliente reportó que necesitaba saber el motivo de inhabilitación rápido, sin necesariamente abrir el modal. El tooltip nativo no funciona bien en mobile (no hay hover), pero ahí el modal cubre el caso. Con ambos, todo dispositivo puede ver el motivo en una interacción.
+
+**Decisión técnica:** se usa el atributo `title` del `<button>` en el grid para el tooltip — sin librería extra. Compatible con el tooltip de multi-aislamiento que ya existía: la lógica condicional prioriza `disabledReason` cuando aplica.
+
+### 14.5. Catering filtrado por área — fix de pipeline
+
+**Qué:** El rol Catering venía sin filtrar áreas pese a tenerlas configuradas. La causa raíz era que `handleLogin` en `useHospitalState.ts` parseaba `assignedFloors` → `assignedAreas` **solo para HOSTESS**.
+
+**Por qué la auditoría completa:** el primer fix superficial (sumar `Role.CATERING` a `ROLES_WITH_AREA_FILTER` en BedsView) no funcionó. Ese filtro requería que `assignedAreas.length > 0`, pero el array nunca se poblaba. Auditar el pipeline completo de SP → frontend reveló el bug en `handleLogin`.
+
+**Side effect descubierto:** la suscripción Web Push de Catering también iba con `assignedAreas = []`, así que el filtro server-side no la limitaba a su piso → recibían push de todos los traslados. Se arregló automáticamente con el mismo fix del login (no requiere migración manual; el upsert al re-login sobrescribe la suscripción huérfana).
+
+**Lección:** cuando un rol nuevo se suma al sistema (Catering vino después de Hostess), los `if (role === HOSTESS)` chequear si deberían ser `if (role === HOSTESS || role === CATERING)` o más amplios. Es un patrón común de bug.
+
+### 14.6. Áreas críticas sin bloqueo por aislamiento
+
+**Qué:** Las áreas `HUC` (UCO), `HUT` (UTI), `HIT` (ITR) y `HRA` (Sala Espera) están en `CRITICAL_AREAS_NO_BLOCK`. Cuando un paciente tiene aislamiento en una de estas, **no se bloquean las demás camas del mismo sector**.
+
+**Por qué:** estas áreas tienen cubículos físicamente independientes (cada cama UTI es un box separado, los sillones HRA están separados, las camas ITR están separadas con cortinas/biombos). El bloqueo "todas las camas de la misma habitación" solo aplica a habitaciones compartidas reales (típicamente piso 4-8 con habitaciones de 2 camas).
+
+**Implementación:** lista hard-coded en `BedsView.tsx`. Si se suman más áreas con esta característica, agregar al array. La decisión de qué áreas "no bloquean" es médica/operativa, no se infiere del response Gamma.
+
+### 14.7. Rate limiting del login con Upstash + circuit breaker
+
+**Qué:** El endpoint `/api/auth` ahora chequea un rate limit antes de validar credenciales. Con **5 intentos fallidos en 5 minutos → 15 min de bloqueo**. Login exitoso resetea.
+
+**Por qué:** el hospital es un target real para brute force (datos médicos = valiosos). Las contraseñas se almacenan en plain text en SP, así que un brute force exitoso compromete cuentas inmediatamente. Sin rate limit, un atacante con un diccionario de contraseñas puede tirar miles de requests/min.
+
+**Decisión clave: Upstash Redis con fallback a memoria.**
+
+**Por qué Upstash y no solo in-memory:**
+- Vercel puede tener múltiples instancias warm en simultáneo. In-memory significa contadores fragmentados → un atacante reparte intentos entre instancias y multiplica por N el rate efectivo.
+- Cold start de Vercel resetea memoria → atacante recupera intentos cada vez que la instancia rota.
+- Upstash centraliza el contador y persiste entre cold starts.
+
+**Por qué fallback a memoria si Upstash está configurado:**
+- El plan free tiene 10k commands/día. Aunque generosos para HPR, vale el cinturón: si Upstash falla (cuota, downtime, latencia alta), no podemos dejar el login expuesto sin rate limiting.
+- Circuit breaker (3 fallos consecutivos → 5 min de cooldown) evita pagar el costo del timeout en cada login si Upstash está caído.
+
+**Por qué key = `username:ip`:**
+- Solo `username`: un atacante desde 100 IPs lo bypassea.
+- Solo `ip`: si dos usuarios legítimos están en la misma red corporativa, comparten cuota.
+- Combinado: cada par único tiene su propia cuota; un usuario legítimo no se ve afectado por intentos contra otro username desde otra IP.
+
+**Limitaciones aceptadas:**
+- No protege contra DDoS distribuido (miles de IPs distintas atacando muchas cuentas). Para eso hace falta protección a nivel infraestructura (Vercel Pro Edge, Cloudflare). Decisión: documentar y diferir hasta que sea problema real.
+- El timestamp del bloqueo no migra entre Upstash y memoria si el breaker se abre/cierra durante un ataque activo. En el peor caso, el atacante recupera 5 intentos extra en el switch. Aceptable.
+
+### 14.8. Ingreso ITR con financiador autocompletado readonly
+
+**Qué:** En `NewRequestModal` y `EditRequestModal`, cuando el workflow es `Ingreso ITR`, el campo "Origen ITR / Financiador" se autocompleta desde `bed.institution` de la cama de origen y queda **readonly** (no editable manualmente).
+
+**Por qué:** el financiador es información administrativa que ya viene de Gamma con la cama. Permitir edición manual abre la puerta a errores de tipeo o inconsistencias con PROGAL. Si por algún motivo Gamma no envió el financiador para esa cama, el campo queda con placeholder "Sin financiador registrado" — visible pero sin opción de "completarlo a mano".
+
+**Trade-off:** si el operador necesita corregir el financiador (caso muy raro), tiene que hacerlo en PROGAL primero. Aceptable por consistencia entre sistemas.

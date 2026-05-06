@@ -21,6 +21,17 @@ export function isHitArea(area?: string | null): boolean {
 }
 
 /**
+ * Devuelve true si el `area` corresponde a la sala de espera de Recepción Admisión (HRA).
+ * Tolerante a variaciones de string (tildes, casing) que pueda enviar Gamma. Matchea por
+ * substring "recepcion" + "admision" (sustantivos clave del nombre del sector).
+ */
+export function isHraArea(area?: string | null): boolean {
+  if (!area) return false;
+  const normalized = area.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return normalized.includes('recepcion') && normalized.includes('admision');
+}
+
+/**
  * Formatea una fecha ISO (YYYY-MM-DD o full ISO datetime) a formato legible
  */
 export function formatDateReadable(isoDate: string | undefined): string {

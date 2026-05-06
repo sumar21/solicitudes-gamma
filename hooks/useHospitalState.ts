@@ -550,12 +550,30 @@ export const useHospitalState = () => {
         clearTimeout(timeout);
       }
       const data = await res.json();
-      if (!res.ok) { setLoginError(data.error ?? 'Credenciales incorrectas'); return; }
+      if (!res.ok) {
+        // Rate limit (anti brute-force): el server devolvió 429 con retryAfterSeconds.
+        if (res.status === 429) {
+          const secs = Number(data?.retryAfterSeconds) || 900;
+          const wait = secs < 60
+            ? `${secs} segundo${secs === 1 ? '' : 's'}`
+            : `${Math.ceil(secs / 60)} minuto${Math.ceil(secs / 60) === 1 ? '' : 's'}`;
+          setLoginError(`Cuenta bloqueada por seguridad tras varios intentos fallidos. Probá de nuevo en ${wait}.`);
+          return;
+        }
+        setLoginError(data.error ?? 'Credenciales incorrectas');
+        return;
+      }
 
       const user: User = data.user;
 
-      // If azafata, parse assignedFloors (semicolon-separated) into assignedAreas
-      if (user.role === Role.HOSTESS && (data.user as any).assignedFloors) {
+      // Hostess y Catering tienen áreas asignadas en el campo PisosAzafata_u de SP.
+      // Convertir el string semicolon-separated a array de Area en el frontend.
+      // Sin esto, el filtro inicial de BedsView no se aplica para Catering y la
+      // suscripción push se registra sin áreas → recibiría notifs de todo el hospital.
+      if (
+        (user.role === Role.HOSTESS || user.role === Role.CATERING) &&
+        (data.user as any).assignedFloors
+      ) {
         const floorsStr = String((data.user as any).assignedFloors);
         const areaValues = Object.values(Area) as string[];
         user.assignedAreas = floorsStr

@@ -1454,3 +1454,237 @@ await authFetch('/api/tickets', {
 ```
 
 **Regla:** los campos de contexto van como spread antes que `updates`, para que cualquier campo de updates pise al contexto si hay overlap (el caso de `destination` cambiando).
+
+---
+
+## Nuevos patrones (2026-05-06)
+
+### Helpers de matching tolerante para áreas Gamma
+
+Cuando el frontend filtra/identifica un sector específico (ITR, HRA, etc.), comparar con el valor del enum Area puede fallar si Gamma envía variaciones de string (con/sin tildes, casing distinto, espacios extra). Convención: **siempre usar un helper en `lib/utils.ts` que normalice antes de comparar**.
+
+```ts
+export function isHraArea(area?: string | null): boolean {
+  if (!area) return false;
+  const normalized = area.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return normalized.includes('recepcion') && normalized.includes('admision');
+}
+```
+
+**Patrón:**
+- `toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')` quita tildes/diacríticos.
+- Matchear por **substrings clave** (ej: "transitoria" o "recepcion+admision"), no por igualdad exacta.
+- Helper en `lib/utils.ts`, nombre `is{Sector}Area`. Reutilizar en TODOS los modales y filtros.
+
+**Anti-patrón:**
+```ts
+.filter(b => b.area === Area.HRA) // ❌ frágil: rompe con cualquier variación
+```
+
+### Marcar `@deprecated` en enum sin remover el valor
+
+Cuando un workflow / status cambia su semántica pero hay datos históricos en SP que usan el valor viejo, **mantener el valor en el enum con `@deprecated`** y agregar un mapping de label en lugar de borrar:
+
+```ts
+export enum WorkflowType {
+  INTERNAL = 'INTERNAL',
+  ITR_TO_FLOOR = 'ITR_TO_FLOOR',
+  /** @deprecated fusionado con INTERNAL */
+  ROOM_CHANGE = 'ROOM_CHANGE',
+}
+```
+
+Y en el render:
+```ts
+const WORKFLOW_LABELS: Record<WorkflowType, string> = {
+  [WorkflowType.INTERNAL]: 'Traslado Interno',
+  [WorkflowType.ITR_TO_FLOOR]: 'Ingreso ITR',
+  [WorkflowType.ROOM_CHANGE]: 'Traslado Interno', // legacy → mismo label que INTERNAL
+};
+```
+
+Borrar el valor del enum rompe `as TipoEnum` casts en runtime y queda `undefined` → render rotos.
+
+### Áreas críticas con cubículos físicos: `CRITICAL_AREAS_NO_BLOCK`
+
+```ts
+const CRITICAL_AREAS_NO_BLOCK: Area[] = [Area.HUC, Area.HUT, Area.HIT, Area.HRA];
+```
+
+Patrón: para reglas que dependen de la **realidad física** del sector (cada cama es independiente vs cama compartida en habitación), mantener una lista hard-coded. No se infiere del response Gamma — es decisión médica/operativa.
+
+Cualquier área nueva que tenga cubículos físicos separados (ej. una nueva sala de aislamiento) se suma manualmente a este array.
+
+### Pipeline de `assignedFloors → assignedAreas` debe cubrir todos los roles operativos
+
+Cuando un rol operativo nuevo entra al sistema y tiene áreas asignadas (Hostess, Catering, etc.), revisar el **handler de login** para que el parseo de `assignedFloors` (string semicolon-separated del backend) a `assignedAreas` (array de `Area`) lo incluya:
+
+```ts
+// ❌ frágil: solo HOSTESS, rompe cuando se suma Catering
+if (user.role === Role.HOSTESS && data.user.assignedFloors) { ... }
+
+// ✓ explícito por rol
+if (
+  (user.role === Role.HOSTESS || user.role === Role.CATERING) &&
+  data.user.assignedFloors
+) { ... }
+```
+
+**Pista común de bug:** cualquier `if (role === HOSTESS)` debería revisar si conceptualmente debería ser `if (role === HOSTESS || role === CATERING || ...)`. El comentario `// For Hostesses` en el campo `assignedAreas` del interface User es señal de un patrón que originalmente solo pensó en azafata.
+
+### Endpoint upsert por clave única externa (no por id de SP)
+
+Patrón usado en `/api/push-subscribe`: el id de SharePoint NO es la clave de identidad — el `endpoint` del browser sí lo es. La función:
+
+1. Busca por `Endpoint_PS eq '{endpoint}'`.
+2. Si existe → PATCH sobre los campos.
+3. Si no existe → POST nuevo.
+
+```ts
+const filter = encodeURIComponent(`fields/Endpoint_PS eq '${endpoint.replace(/'/g, "''")}'`);
+const existing = await graphFetch(`${basePath}?$expand=fields&$filter=${filter}&$top=1`, { ... });
+if (existing.ok) {
+  const data = await existing.json();
+  if (data.value?.length > 0) {
+    await graphFetch(`${basePath}/${data.value[0].id}/fields`, { method: 'PATCH', body: ... });
+    return;
+  }
+}
+// fallthrough: POST
+```
+
+**Cuándo usarlo:** cuando una entidad tiene una clave externa estable (endpoint del browser, código de paciente Gamma, etc.) y no querés acumular duplicados al re-registrar.
+
+### Doble fuente para un mismo dato (poll rápido + enrich detallado)
+
+Cuando Gamma expone el mismo concepto en dos endpoints — uno barato (poll de 60s) y otro caro (enrich on-click) — mapearlos a campos separados del modelo y dejar que la UI **prioriza** el del poll mientras espera al del enrich:
+
+```ts
+// Bed model
+medicalPlanCode?: string;        // viene del poll
+medicalPlan?: string;            // viene del poll
+medicalPlanDescription?: string; // solo del enrich
+```
+
+```tsx
+{(plan || planCode || planDescription) && (
+  <p>
+    Plan: {plan ?? planCode}
+    {planDescription && ` · ${planDescription}`}
+  </p>
+)}
+```
+
+**Beneficio:** dato visible inmediatamente al abrir modal, descripción larga aparece sin spinner cuando el enrich completa. Sin parpadeo (la condición se cumple desde el primer render).
+
+### Contexto enriquecido en payloads de PUT/PATCH para que el server formatee mensajes
+
+Cuando el server necesita componer un mensaje human-readable que requiere data del cliente (ej: "X pasó de Habitación 401 (Piso 4) a Habitación 509 (Piso 5)"), pasar **el contexto enriquecido** en el body del PATCH para que el server no tenga que volver a resolver labels:
+
+```ts
+const context = ticket ? {
+  id, patientName, origin, destination,
+  originArea,      // ← nombre legible del sector (no label de cama)
+  destinationArea,
+  sede,
+} : {};
+await authFetch('/api/tickets', {
+  method: 'PATCH',
+  body: JSON.stringify({ spItemId, ...context, ...updates }),
+});
+```
+
+Server-side compone el mensaje sin tener que hacer queries adicionales:
+```ts
+const fromPart = floorO ? `Habitación ${roomO} (${floorO})` : `Habitación ${roomO}`;
+```
+
+### Filtro pre-write en endpoint con `Prefer: HonorNonIndexedQueriesWarningMayFailRandomly`
+
+Cuando el server necesita validar unicidad o duplicación antes de escribir (ej: cama destino ya tomada por otro ticket activo), usar `$filter` contra SP con el header `Prefer`:
+
+```ts
+const escaped = String(value).replace(/'/g, "''"); // escape single quotes
+const url = `${basePath}?$expand=fields&$top=5&$filter=fields/X eq '${escaped}' and ...`;
+const conflictRes = await graphFetch(url, {
+  headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } as any,
+});
+if (conflictRes.ok) {
+  const data = await conflictRes.json();
+  if (data.value?.length > 0) return res.status(409).json({ error, conflictingId: ... });
+}
+```
+
+**Reglas:**
+- Siempre escapar comillas simples del valor: `.replace(/'/g, "''")`.
+- Limitar `$top` para no traer todo el listado.
+- En PATCH, excluir el item actual con `id ne {spItemId}` para no detectar el propio ticket como conflicto.
+
+### Rate limiting con fallback dual (servicio externo → memoria)
+
+Patrón usado en `api/rate-limit.ts` para todo lo que requiera contadores compartidos sin cargar dependencia obligatoria:
+
+1. **Cliente externo (Upstash) opcional:** lazy-init solo si las envs están seteadas.
+2. **Fallback in-memory siempre disponible:** `Map<key, ...>` a nivel módulo.
+3. **Circuit breaker:** N fallos consecutivos → cooldown de M minutos durante el cual se usa solo memoria. Reintento automático al expirar.
+4. **Doble escritura best-effort:** los writes (`recordFailure`, `resetRateLimit`) tocan memoria PRIMERO, después intentan el servicio externo. Garantiza continuidad ante apertura del breaker.
+5. **Timeout corto por operación:** `withTimeout(promise, 1500ms)` para no bloquear al usuario si el servicio externo tarda.
+
+```ts
+function activeRedis(): Redis | null {
+  if (!isUpstashHealthy()) return null;  // ← circuit breaker check
+  return getRedis();
+}
+
+export async function recordFailure(key: string): Promise<void> {
+  memRecordFailure(key);                  // ← escribe memoria SIEMPRE
+  const redis = activeRedis();
+  if (!redis) return;
+  try {
+    await withTimeout(redis.incr(...), 1500, 'incr');
+    recordUpstashSuccess();
+  } catch (e) {
+    recordUpstashError(e?.message ?? 'failed');
+  }
+}
+```
+
+**Cuándo aplicarlo:** cualquier feature que dependa de un servicio externo (Redis, queue, API) donde la falla del servicio NO debe romper la UX. La key es que el fallback nunca queda detrás de un `if (servicioExterno)` — siempre se escribe a memoria primero.
+
+### Inputs autocompletados readonly (no editable a mano)
+
+Patrón para campos que vienen de fuente externa y NO debe modificarse manualmente:
+
+```tsx
+<Input
+  readOnly
+  tabIndex={-1}
+  placeholder={origin ? 'Sin valor registrado' : 'Seleccione una cama de origen'}
+  value={autoFilledValue}
+  className="h-10 rounded-xl bg-slate-50 text-slate-700 cursor-not-allowed focus-visible:ring-0 focus-visible:ring-offset-0"
+/>
+```
+
+**Reglas:**
+- `readOnly` (no `disabled`) para que el valor se envíe en el form submit pero no sea editable.
+- `tabIndex={-1}` para sacar el focus del flujo de teclado (no es un input que el usuario deba tocar).
+- Estilo gris claro (`bg-slate-50`) y `cursor-not-allowed` para señalizar visualmente que es informativo.
+- Placeholder distinto según haya o no fuente: si la fuente está pero no devuelve dato, "Sin X registrado"; si todavía no hay fuente, "Seleccione X primero".
+
+Usado en: campo Paciente y campo Financiador (Origen ITR) de `NewRequestModal.tsx` y `EditRequestModal.tsx`.
+
+### Tooltip nativo dual (multi-condición)
+
+Cuando un mismo elemento puede tener distintas razones de mostrar tooltip (ej: cama inhabilitada con motivo + paciente con multi-aislamiento), encadenar las condiciones por prioridad en un solo `title`:
+
+```tsx
+<button
+  title={
+    bed.status === BedStatus.DISABLED && bed.disabledReason
+      ? `Inhabilitada — ${bed.disabledReason}`
+      : isMultiIso ? `Aislamientos: ${isoTipos.join(', ')}` : undefined
+  }
+>
+```
+
+**Regla:** `undefined` cuando no hay nada que mostrar (no string vacío — algunos browsers muestran tooltip vacío).

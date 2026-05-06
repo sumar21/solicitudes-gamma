@@ -52,6 +52,10 @@ interface EnrichResult {
   admissionDate?: string;        // ISO string de EVE_FECHA_HORA_INGRESO
   expectedSurgeryDate?: string;  // ISO string de EVE_FECHA_PROBABLE_CIRUGIA (si aplica)
   authorizedDays?: number;       // EVE_DIAS_AUTORIZADOS
+  // Plan médico del paciente (IPM_*). El código (`medicalPlan`) ya viene también en
+  // /api/beds desde camas ocupadas; este endpoint solo agrega la `medicalPlanDescription`.
+  medicalPlan?: string;
+  medicalPlanDescription?: string;
   diets?: DietEntry[];           // Respuestas completas del formulario de dieta
   // Chips resumen para mostrar rápido en la tarjeta — ya filtrados: solo
   // condiciones con valor "Sí" (excepto "Tipo" que se guarda con su valor).
@@ -130,6 +134,14 @@ async function handler(req: any, res: any) {
 
       if (typeof event.EVE_DIAS_AUTORIZADOS === 'number') {
         data.authorizedDays = event.EVE_DIAS_AUTORIZADOS;
+      }
+
+      // Plan médico — Gamma sumó IPM_PLAN_MEDICO (código) + IPM_DESCRIPCION (legible).
+      if (event.IPM_PLAN_MEDICO) {
+        data.medicalPlan = String(event.IPM_PLAN_MEDICO).trim() || undefined;
+      }
+      if (event.IPM_DESCRIPCION) {
+        data.medicalPlanDescription = String(event.IPM_DESCRIPCION).trim() || undefined;
       }
 
       // Dietas — Gamma devuelve un array de {HCG_DESCRIPCION, EIP_RESPUESTA_VALOR}.
