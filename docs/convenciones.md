@@ -1688,3 +1688,274 @@ Cuando un mismo elemento puede tener distintas razones de mostrar tooltip (ej: c
 ```
 
 **Regla:** `undefined` cuando no hay nada que mostrar (no string vacío — algunos browsers muestran tooltip vacío).
+
+---
+
+## Nuevos patrones (2026-05-11)
+
+### Separación de entornos por columna SP (`Entorno_*`)
+
+Cada lista que debe coexistir entre producción y testing tiene una columna `Entorno_X` (sufijo según la convención de la lista: `_T`, `_A`, `_PS`, `_N`, `_DS`). El backend declara siempre:
+
+```ts
+const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
+```
+
+**Default `'TESTING'`** — fail-closed por diseño. Si la env no está cargada, el deploy no toca prod.
+
+**Patrón en GET**: el `$filter` SIEMPRE incluye `fields/Entorno_X eq '{ENTORNO}'`:
+```ts
+const filter = encodeURIComponent(
+  `fields/Status_A eq 'Activo' and fields/Entorno_A eq '${ENTORNO}'`
+);
+```
+
+**Patrón en POST nuevo**: estampar el entorno al crear:
+```ts
+const fieldsPost = { ...spFields, Entorno_T: ENTORNO };
+```
+
+**Patrón en PATCH update**: NO incluir `Entorno_X` en los campos actualizados → preserva el entorno original del item. Si el mapping `keyToSpField` no lo tiene, queda preservado automáticamente.
+
+**Patrón en upsert por clave única**: la búsqueda del "ya existe" se acota al entorno actual también:
+```ts
+// push-subscribe.ts: un mismo endpoint puede tener una sub en testing y otra en prod
+const filter = `fields/Endpoint_PS eq '${endpoint}' and fields/Entorno_PS eq '${ENTORNO}'`;
+```
+
+### Endpoint cron con shared secret (no JWT)
+
+Para endpoints disparados por GitHub Actions u otros bots, NO usar `requireAuth(handler)` (no hay usuario). Usar validación de header secret:
+
+```ts
+const CRON_SECRET = process.env.CRON_SECRET ?? '';
+
+export default async function handler(req, res) {
+  // ...
+  const provided = String(req.headers?.['x-cron-secret'] ?? '');
+  if (!CRON_SECRET || provided !== CRON_SECRET) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  // ... lógica
+}
+```
+
+**Reglas:**
+- El secret va en `process.env.CRON_SECRET` (env var, no hardcoded).
+- Si la env no está cargada (`!CRON_SECRET`), rechaza todo → fail-closed.
+- Mismo valor del secret en `.env.local`, Vercel envs y GitHub repo Secrets.
+- Header en kebab-case (`x-cron-secret`) — Node lowercase headers automáticamente al recibir.
+
+### Workflow YAML de GitHub Actions con curl
+
+Para disparar un endpoint cada N tiempo:
+
+```yaml
+on:
+  schedule:
+    - cron: '*/30 * * * *'  # cada 30 min
+  workflow_dispatch:          # disparo manual desde UI
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Call endpoint
+        run: |
+          set -e
+          response=$(curl -fsS -w "\n%{http_code}" -X POST \
+            "${{ secrets.MEDIFLOW_URL }}/api/cron-X" \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}")
+          status=$(echo "$response" | tail -n1)
+          if [ "$status" != "200" ]; then exit 1; fi
+```
+
+**Reglas:**
+- Trigger doble (`schedule` + `workflow_dispatch`) → permite disparar manual desde la UI para testing.
+- `timeout-minutes: 5` corta el job si se cuelga.
+- Capturar status code y fallar el job si no es 200 (sin esto el cron "pasa verde" aunque el endpoint responda 500).
+- Usar GitHub Secrets para `MEDIFLOW_URL` (la URL de prod) y `CRON_SECRET`.
+
+### Bootstrap silencioso en cron de detección
+
+Cuando un cron compara estado actual vs snapshot anterior, el **primer ciclo por entidad no debe disparar notificaciones**. Razón: la primera vez no hay snapshot previo, así que TODAS las entidades aparecerían como "cambio nuevo" → spam masivo.
+
+```ts
+const existing = snapshots.get(patientCode);
+if (!existing) {
+  // Primer ciclo para este paciente: crear snapshot SIN notif.
+  await upsertSnapshot({ /* ... */ });
+  stats.created++;
+  return;
+}
+// Solo a partir del segundo ciclo, comparar y notificar si difiere.
+```
+
+**Reglas:**
+- Aplica **por entidad**, no global. Cuando un paciente nuevo ingresa al hospital después del cron ya activo, también pasa por bootstrap silencioso individual.
+- El cleanup por TTL (`LastChecked` > N días) se hace en el mismo ciclo: snapshots no vistos en X días → `Status = 'Inactivo'`.
+
+### Hash estable para detección de cambios
+
+Al comparar arrays/objetos que pueden venir con orden distinto de una fuente externa (Gamma), ordenar antes de hashear:
+
+```ts
+function hashTags(tags: string[]): string {
+  return simpleHash([...tags].sort().join('|'));
+}
+```
+
+Sin esto, dos respuestas del mismo dato con orden distinto generan hashes distintos → falsos positivos de "cambió". El `simpleHash` (DJB2) ya existe en [api/gamma-client.ts](api/gamma-client.ts).
+
+### Bulk read + workers paralelos para procesar N entidades
+
+Cuando hay que procesar N items contra una API externa (Gamma) y comparar contra estado guardado (SP), patrón:
+
+```ts
+// 1) UN solo read inicial para todo el estado guardado.
+const snapshots = await fetchSnapshots(); // bulk GET con $top=500
+
+// 2) Traer la lista de entidades a procesar.
+const items = await fetchItemsFromExternal();
+
+// 3) Workers paralelos limitados (NO Promise.all sobre todo el array).
+const queue = [...items];
+const workers = Array.from({ length: 5 }, async () => {
+  while (queue.length > 0) {
+    const item = queue.shift();
+    if (!item) return;
+    try { await processOne(item, snapshots); }
+    catch (err) { stats.errors++; }
+  }
+});
+await Promise.all(workers);
+```
+
+**Reglas:**
+- Concurrencia 5 es un buen balance para Gamma (no satura, baja latencia total).
+- `Promise.all(items.map(processOne))` sin límite saturaría la API externa.
+- Errores individuales no rompen el batch — se cuentan en `stats.errors`.
+
+### Logging persistente en Service Worker vía IndexedDB
+
+El SW no tiene `localStorage`. Para registrar eventos diagnóstico que sobrevivan reload:
+
+```ts
+function openLogDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('mediflow-push-log', 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('entries')) {
+        db.createObjectStore('entries', { keyPath: 'id', autoIncrement: true });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+async function logEvent(entry: Record<string, unknown>): Promise<void> {
+  try {
+    const db = await openLogDb();
+    const tx = db.transaction('entries', 'readwrite');
+    tx.objectStore('entries').add({ ...entry, ts: Date.now() });
+    // Cleanup: TTL + cap.
+    // ...
+  } catch { /* no-op: logging nunca debe romper el flujo principal */ }
+}
+```
+
+**Reglas:**
+- Wrappear en `try/catch` vacío — el logging es accesorio, no debe romper el push handler.
+- TTL + cap de entradas (ej. 24h o 50 entries) para no crecer indefinido.
+- Documentar al final del archivo el snippet JS que el cliente puede correr en la consola del browser para leer el log.
+
+### LIST_ID hardcoded por convención
+
+Los GUIDs de listas SP se hardcodean en cada `api/*.ts` con un comentario al lado del nombre legible:
+
+```ts
+const LIST_ID = 'c7417674-9084-416d-a955-7024161a3194'; // 07.Traslados
+```
+
+**Reglas:**
+- NO leer `LIST_ID` desde env. Los GUIDs son constantes estructurales, no secretos ni configurables por entorno.
+- El `SITE_ID` SÍ es env (`SHAREPOINT_SITE_ID`) — varía según deploy.
+- Cuando se crea una lista nueva en SP, agregar el GUID hardcoded en el archivo que la consume + comentario del nombre legible.
+
+### Secret generation crypto-safe en PowerShell (Windows)
+
+Cuando `openssl` no está disponible (default en Windows), usar:
+
+```powershell
+$bytes = New-Object byte[] 32
+[System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+[Convert]::ToBase64String($bytes)
+```
+
+Equivalente a `openssl rand -base64 32`. Genera 44 caracteres base64. Usado para `CRON_SECRET`, `JWT_SECRET`, etc.
+
+### Cache split por TTL diferenciado para datos heterogéneos
+
+Cuando un endpoint cachea datos de distintas fuentes con frecuencia de cambio muy diferente, dos caches separados con TTLs apropiados:
+
+```ts
+// Datos estables (no cambian en una sesión/internación)
+const patientCache = new Map<string, { data: ...; exp: number }>();
+const PATIENT_TTL  = 10 * 60 * 1000; // 10 min
+
+// Datos volátiles (cambian en vivo desde fuente externa)
+const eventCache = new Map<string, { data: ...; exp: number }>();
+const EVENT_TTL  = 30 * 1000; // 30 segundos
+```
+
+Al fetchear: si paciente está fresh, reusarlo sin re-consultar `consultarpacientecodigo`. Si evento está stale, sí ir a `obtenereventointernacion`.
+
+**Bonus pattern: bypass on demand con query param**:
+```ts
+const fresh = url.searchParams.get('fresh') === '1';
+const eventFresh = !fresh && cachedEvent && cachedEvent.exp > now;
+```
+
+El frontend pasa `?fresh=1` solo en interacciones donde se requiere data garantizada al toque (modal abre, click). Otros consumers (PDFs, batch processing) NO lo pasan → mantienen el cache.
+
+### `isRelevant` por rol explícito (no por exclusión)
+
+Anti-patrón:
+```ts
+// ❌ Frágil — todo lo que NO sea HOSTESS pasa, incluyendo roles nuevos
+const isRelevant = (originArea, destArea) => {
+  if (currentUser.role !== Role.HOSTESS) return true;
+  // ...
+};
+```
+
+Patrón:
+```ts
+// ✓ Explícito — cada rol declara su política
+const isRelevant = (originArea, destArea) => {
+  if (currentUser.role === Role.ADMIN || currentUser.role === Role.ADMISSION) return true;
+  if (currentUser.role === Role.HOSTESS) {
+    if (!currentUser.assignedAreas?.length) return false;
+    return matchArea(originArea, destArea);
+  }
+  // Otros roles (CATERING, READ_ONLY, NURSING): nada por defecto
+  return false;
+};
+```
+
+**Por qué:** cuando se agrega un rol nuevo al sistema (CATERING en su momento, READ_ONLY antes), el "ve todo por exclusión" lo incluye silenciosamente. Cada rol nuevo debe declarar explícitamente su política — `return false` por default es fail-closed (no recibe nada hasta declararlo).
+
+**Bug histórico (2026-05-11)**: Catering recibía `new window.Notification(...)` con título "Nueva Solicitud" porque caía en la rama `!== HOSTESS → return true`. El push del server SÍ filtraba correctamente, pero el detector local del polling no. Mismo patrón debería revisarse en cualquier `if (role !== X)` para validar que es realmente lo que se quiere.
+
+### Notifs in-app vs push del server: separación de responsabilidades
+
+El frontend tiene un detector de cambios en `useHospitalState` que dispara:
+1. Toast in-app (visible solo si la tab está abierta y en foreground).
+2. `new window.Notification(title, options)` (banner del SO desde el browser, funciona en background si la tab está abierta).
+
+Esto convive con el push del server (`api/push-utils.ts`) que llega via Web Push API → SW → notif del SO.
+
+**Regla:** para roles donde el server ya cubre los eventos con filtros precisos (ej. Catering: `RECEPTION_CONFIRMED` + `DIET_CHANGE` filtrados por área), **bloquear el detector local** para evitar duplicados. Solo dejar el detector local activo en roles donde el push del server NO cubre el caso de uso (HOSTESS necesita ver cambios in-app de su piso aunque no estén modelados como push de tipo específico).

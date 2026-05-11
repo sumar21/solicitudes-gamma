@@ -325,12 +325,25 @@ export const useHospitalState = () => {
     // Helper to find bed area for a given label
     const areaOf = (label?: string | null) => label ? rawBeds.find(b => b.label === label)?.area : undefined;
 
-    // Check if this notification is relevant for the current user's assigned areas
+    // Check if this notification is relevant for the current user's assigned areas.
+    // Per rol:
+    //   · ADMIN / ADMISSION → ven todo (sin filtro)
+    //   · HOSTESS → filtra por área asignada
+    //   · CATERING → NO recibe notifs in-app del polling.
+    //     Razón: el server-side push ya le manda los 2 eventos que le importan
+    //     (RECEPTION_CONFIRMED + DIET_CHANGE filtrados por área). Sumarle notifs
+    //     locales del polling generaba duplicados (ej. "Nueva Solicitud" cuando
+    //     se crea un ticket en otro piso) que el filtro server explícitamente
+    //     había bloqueado.
+    //   · Otros roles (READ_ONLY, NURSING) → no reciben notifs.
     const isRelevant = (originArea?: Area, destArea?: Area) => {
-      if (currentUser.role !== Role.HOSTESS) return true; // admin/admission see all
-      if (!currentUser.assignedAreas?.length) return false;
-      return (originArea && currentUser.assignedAreas.includes(originArea)) ||
-             (destArea   && currentUser.assignedAreas.includes(destArea));
+      if (currentUser.role === Role.ADMIN || currentUser.role === Role.ADMISSION) return true;
+      if (currentUser.role === Role.HOSTESS) {
+        if (!currentUser.assignedAreas?.length) return false;
+        return (originArea && currentUser.assignedAreas.includes(originArea)) ||
+               (destArea   && currentUser.assignedAreas.includes(destArea));
+      }
+      return false;
     };
 
     const newNotifs: Notification[] = [];
@@ -692,14 +705,22 @@ export const useHospitalState = () => {
   }, []);
 
   // ── Filtered data ─────────────────────────────────────────────────────────────
+  // Notificaciones del dropdown (in-app). Mismo criterio que el detector de polling:
+  //   · ADMIN/ADMISSION → ven todo
+  //   · HOSTESS/CATERING → solo las de sus áreas asignadas
+  //   · Otros roles → nada
   const filteredNotifications = useMemo(() => {
     if (!currentUser) return [];
-    if (currentUser.role !== Role.HOSTESS) return notifications;
-    return notifications.filter(n => {
-      const isOrigin = n.originArea && currentUser.assignedAreas?.includes(n.originArea);
-      const isDest   = n.destinationArea && currentUser.assignedAreas?.includes(n.destinationArea);
-      return isOrigin || isDest;
-    });
+    if (currentUser.role === Role.ADMIN || currentUser.role === Role.ADMISSION) return notifications;
+    if (currentUser.role === Role.HOSTESS || currentUser.role === Role.CATERING) {
+      if (!currentUser.assignedAreas?.length) return [];
+      return notifications.filter(n => {
+        const isOrigin = n.originArea && currentUser.assignedAreas?.includes(n.originArea);
+        const isDest   = n.destinationArea && currentUser.assignedAreas?.includes(n.destinationArea);
+        return isOrigin || isDest;
+      });
+    }
+    return [];
   }, [notifications, currentUser]);
 
   const filteredTickets = useMemo(() => {

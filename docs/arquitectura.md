@@ -602,3 +602,154 @@ Si Upstash falla 3 veces consecutivas (timeout, cuota agotada, error de red), el
 ### Frontend
 
 [hooks/useHospitalState.ts:553-562](hooks/useHospitalState.ts#L553) detecta `res.status === 429`, lee `retryAfterSeconds` y muestra: `"Cuenta bloqueada por seguridad tras varios intentos fallidos. Probá de nuevo en X minutos."`
+
+---
+
+## 20. Separación de entornos por columna SP
+
+Para permitir que producción y testing convivan en las **mismas listas SharePoint** sin pisarse, se agregó un campo `Entorno` a 5 listas y una variable `ENTORNO` en backend (valores `PRODUCTIVO` / `TESTING`).
+
+| Lista | Campo | Endpoint que filtra |
+|-------|-------|---------------------|
+| `07.Traslados` | `Entorno_T` | [api/tickets.ts](api/tickets.ts) — GET activos, GET historial, conflict-check POST/PATCH |
+| `08.Aislamientos` | `Entorno_A` | [api/isolations.ts](api/isolations.ts) — GET, POST upsert, DELETE |
+| `09.PushSubscriptions` | `Entorno_PS` | [api/push-subscribe.ts](api/push-subscribe.ts) y [api/push-utils.ts](api/push-utils.ts) `fetchSubscriptions` |
+| `10.Notificaciones` | `Entorno_N` | [api/notifications.ts](api/notifications.ts) GET y POST desde push-utils |
+| `11.DietaSnapshot` | `Entorno_DS` | [api/cron-diet-changes.ts](api/cron-diet-changes.ts) bulk read y upsert |
+
+`08.DetalleTraslados` no tiene columna propia — filtrado por transitividad vía `IDUnivocoTraslado_DT` (los IDs son únicos globales y el frontend solo conoce los del entorno actual).
+
+**Contrato**:
+- Cada archivo declara `const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim()` — default seguro `TESTING` evita disparar push a usuarios reales si la env no está cargada.
+- Las **lecturas** filtran SP-side con `$filter=fields/Entorno_X eq '{ENTORNO}'`.
+- Las **escrituras** estampan el entorno en cada POST nuevo.
+- Los **PATCH/DELETE de modificación** no tocan el campo Entorno (preservan el entorno original del item).
+
+**Setup operativo**:
+- `Vercel Production` → `ENTORNO=PRODUCTIVO`
+- `Vercel Preview` / dev local → `ENTORNO=TESTING`
+
+---
+
+## 21. Cron de cambio de dieta (Catering)
+
+Detecta automáticamente cambios de dieta en PROGAL y notifica a Catering del piso correspondiente vía push, sin depender de que un usuario abra la card del paciente.
+
+### Arquitectura
+
+```
+GitHub Actions (cron */30 * * * *)
+    ↓ HTTP POST + X-Cron-Secret
+Vercel: /api/cron-diet-changes
+    ↓ bulk read snapshot                ↓ trae camas ocupadas
+SharePoint                              Gamma API
+11.DietaSnapshot                        obtenermapacamasocupadas
+                                        obtenereventointernacion
+    ↓ workers paralelos (5)
+    ↓ por cada paciente: hash de dietas vs snapshot
+    ↓ si difiere
+push-utils.sendPushToSubscribers (type: 'DIET_CHANGE')
+    ↓ filtrado server-side por rol CATERING + área + entorno
+Web Push API → device del Catering del piso
+```
+
+### Por qué GitHub Actions (no Vercel Cron)
+
+Vercel Cron en plan Hobby permite 1 job/día (insuficiente para 30 min). Pro lo permite pero es pago. **GitHub Actions cron es gratis** en repos privados (2.000 min/mes; el job tarda ~10-30s × 48 veces/día = ~24 min/día).
+
+Tradeoff: GitHub Actions cron es best-effort — puede tener delays de hasta 15 min reales.
+
+### Componentes
+
+- **[api/cron-diet-changes.ts](api/cron-diet-changes.ts)** — endpoint POST con auth por shared secret (`X-Cron-Secret` header contra `process.env.CRON_SECRET`). NO usa `requireAuth` (es un bot, no usuario). Concurrencia 5 paralelos. Bootstrap silencioso: pacientes sin snapshot previo se crean sin disparar push (evita spam masivo en el primer ciclo). Cleanup: snapshots con `LastChecked_DS > 7 días` → marcados `Inactivo`.
+
+- **[api/push-utils.ts](api/push-utils.ts:121-126)** — `isRelevant` para Catering acepta `'RECEPTION_CONFIRMED' || 'DIET_CHANGE'`. Filtra también por área asignada y entorno.
+
+- **[.github/workflows/check-diet-changes.yml](.github/workflows/check-diet-changes.yml)** — workflow YAML con `schedule: '*/30 * * * *'` + `workflow_dispatch` (manual desde la UI de Actions). El job hace un único `curl` al endpoint, falla si HTTP != 200.
+
+### Lista 11.DietaSnapshot — columnas
+
+| Campo | Tipo | Para qué |
+|-------|------|----------|
+| `Title` | Texto | `'[sumar]'` |
+| `PatientCode_DS` | Texto | Código Gamma (clave lógica) |
+| `DietHash_DS` | Texto | Hash DJB2 ordenado de tags activos |
+| `DietTags_DS` | Texto | Tags activos para mostrar en notif |
+| `EventOrigin_DS` / `EventNumber_DS` | Texto / Número | Identificador del evento de internación |
+| `PatientName_DS` / `AreaName_DS` | Texto | Para mensaje y filtrado de área |
+| `LastChecked_DS` | Fecha/hora | Última vez visto en un ciclo (cleanup TTL) |
+| `Status_DS` | Texto | `'Activo'` / `'Inactivo'` |
+| `Entorno_DS` | Texto | `'PRODUCTIVO'` / `'TESTING'` |
+
+LIST_ID hardcoded en el archivo (convención del proyecto, igual que las otras 4 listas).
+
+### Variables de entorno necesarias
+
+- `CRON_SECRET` (random ≥32 chars) → `.env.local`, Vercel envs (Production + Preview), GitHub repo Secrets.
+- `MEDIFLOW_URL` → solo GitHub repo Secrets, apunta al dominio de producción (ej: `https://mediflow.grupogamma.com`).
+
+---
+
+## 22. Cache split en bed-enrich
+
+[api/bed-enrich.ts](api/bed-enrich.ts) tiene dos caches in-memory con TTLs diferenciados:
+
+| Cache | TTL | Datos |
+|-------|-----|-------|
+| `patientCache` | 10 min | DNI, edad, sexo, financiador (no cambian en una internación) |
+| `eventCache` | 30 s | Diagnóstico, plan médico, fechas, días autorizados, **dieta** |
+
+El evento se cachea muy corto porque la dieta cambia en vivo desde PROGAL. Antes había un solo cache de 10 min para todo → cambios de dieta quedaban invisibles hasta 10 minutos.
+
+### Bypass al click (?fresh=1)
+
+El modal de detalle del paciente pasa siempre `?fresh=1` al endpoint ([hooks/useHospitalState.ts](hooks/useHospitalState.ts) `enrichBed`). El backend ignora el cache del evento en ese caso (pero mantiene el de paciente). Cada vez que se abre el modal → dato fresco garantizado, sin penalizar la latencia del primer fetch.
+
+Los PDFs (`enrichBedsForPdf` en BedsView) **NO pasan `fresh=1`** → benefician del cache de 30s al procesar muchas camas en serie.
+
+---
+
+## 23. SW push log (IndexedDB) y badge dedicado
+
+### Logging diagnóstico
+
+[src-sw/sw.ts](src-sw/sw.ts) registra cada push recibido en una IndexedDB local (`mediflow-push-log`, TTL 24h, cap 50 entradas). Si el cliente reporta que no le llegan notifs, este log distingue entre:
+- **Push no llegó al SW** (log vacío) → problema de red/sub/server.
+- **Push sí llegó pero el banner heads-up no apareció** (log con entrada del evento esperado) → config Android (channel importance / battery optimization).
+
+Cómo el cliente lo lee (snippet documentado al final del SW): abrir DevTools console del navegador y correr un script que lee la IndexedDB y muestra los entries formateados.
+
+### Badge dedicado
+
+[public/badge.svg](public/badge.svg) — SVG monocromático sin fondo, usado en `badge` del payload Web Push. Android lo trata como alpha mask en la status bar. Antes se usaba `logo.svg` con fondo color, lo que algunos builds de Chrome Android degradaban en prioridad visual.
+
+---
+
+## 24. Endpoint y script de debug para subscriptions
+
+Herramientas de auditoría para diagnosticar problemas de push:
+
+- **[api/debug-subs.ts](api/debug-subs.ts)** — `GET /api/debug-subs` (requiere JWT). Devuelve resumen por rol (cuántas subs, cuántas con áreas, cuántas sin) + listado completo (con endpoints truncados por privacidad).
+
+- **[scripts/list-catering-subs.mts](scripts/list-catering-subs.mts)** — script standalone con `tsx`. Lista TODAS las subs (sin filtrar por entorno, intencional). Con flag `--clean` borra subs huérfanas del rol Catering (areas vacías) **acotado al entorno actual** — no toca subs de otro entorno.
+
+Ambos exponen el campo `entorno` para distinguir testing de prod al auditar.
+
+---
+
+## 25. Filtrado de notificaciones in-app por rol (independiente del push server)
+
+El frontend tiene un **detector de cambios** en el polling que, además del toast in-app, dispara una **Web Notification del SO** (`new window.Notification(...)`) cuando el tab está en background. Esto es independiente del push del server.
+
+[hooks/useHospitalState.ts:328-346](hooks/useHospitalState.ts#L328) — función `isRelevant` del detector. Reglas por rol:
+
+| Rol | Toasts in-app + Web Notification |
+|-----|-----------------------------------|
+| ADMIN / ADMISSION | Todo (sin filtro) |
+| HOSTESS | Solo si `originArea` o `destArea` ∈ `assignedAreas` |
+| **CATERING** | **Nada** — solo recibe via push server-side (`RECEPTION_CONFIRMED` + `DIET_CHANGE`) |
+| Otros (READ_ONLY, NURSING) | Nada |
+
+Razón del bloqueo total para Catering: el server-side push ya filtra los 2 únicos eventos relevantes para Catering por área. Mantener el detector local activo generaba duplicados / falsos positivos (ej: "Nueva Solicitud de Traslado" del polling cuando se crea un ticket en otro piso, evento que el server explícitamente había bloqueado).
+
+[hooks/useHospitalState.ts:707-722](hooks/useHospitalState.ts#L707) — `filteredNotifications` (dropdown) sigue la misma lógica por consistencia.

@@ -760,3 +760,104 @@ El frontend prioriza el dato del poll (rápido, sin spinner) y el enrich agrega 
 **Por qué:** el financiador es información administrativa que ya viene de Gamma con la cama. Permitir edición manual abre la puerta a errores de tipeo o inconsistencias con PROGAL. Si por algún motivo Gamma no envió el financiador para esa cama, el campo queda con placeholder "Sin financiador registrado" — visible pero sin opción de "completarlo a mano".
 
 **Trade-off:** si el operador necesita corregir el financiador (caso muy raro), tiene que hacerlo en PROGAL primero. Aceptable por consistencia entre sistemas.
+
+---
+
+## 15. Decisiones recientes (2026-05-11)
+
+### 15.1. Separación testing/producción por columna en SP, no por proyecto
+
+**Qué:** En lugar de tener listas SP separadas para producción y testing, se sumó una columna `Entorno_*` (texto, valores `PRODUCTIVO` / `TESTING`) a 5 listas:`07.Traslados`, `08.Aislamientos`, `09.PushSubscriptions`, `10.Notificaciones`, `11.DietaSnapshot`. Una variable `ENTORNO` en backend filtra y estampa el valor según el deploy.
+
+**Por qué:**
+- **Alternativa descartada — duplicar listas**: requeriría crear `07.Traslados-Test`, `08.Aislamientos-Test`, etc. Multiplica configuración, requiere mantenerlas sincronizadas (cambios de columna en una se replican manualmente en la otra), y el código tiene que decidir dinámicamente qué `LIST_ID` usar.
+- **Alternativa descartada — site SP separado**: peor todavía. Site nuevo con replicación de configuración, costo operativo alto.
+- **Ventaja de la columna**: una sola lista, un solo `LIST_ID` hardcoded por archivo, mismas columnas. El filtro `Entorno_X eq 'TESTING'` es trivial. La separación es **lógica**, no física.
+
+**Default seguro `'TESTING'`**: cada `const ENTORNO = process.env.ENTORNO ?? 'TESTING'` evita que un misconfig en producción dispare push a usuarios reales sin querer. Si la env no está cargada, el deploy queda "aislado" en testing — falla cerrada.
+
+**Caveat operativo aceptado**: la separación funciona **si y solo si** cada deploy de Vercel tiene su propia env `ENTORNO` cargada correctamente. Production debe tener `PRODUCTIVO`, Preview/local debe tener `TESTING`. El default fail-closed mitiga errores humanos.
+
+**Lista exenta**: `08.DetalleTraslados` no tiene columna `Entorno_DT` — filtrado por transitividad porque los eventos se consultan por `IDUnivocoTraslado_DT` específico, y el frontend solo conoce IDs de su entorno actual (porque vinieron de un GET filtrado a `07.Traslados`).
+
+### 15.2. Cron de cambio de dieta via GitHub Actions (no Vercel Cron)
+
+**Qué:** Un cron job externo (GitHub Actions `*/30 * * * *`) llama un endpoint nuestro que detecta cambios de dieta en PROGAL y dispara push a Catering.
+
+**Por qué GitHub Actions:**
+- **Vercel Cron Hobby (free)**: solo 1 job/día. Insuficiente.
+- **Vercel Cron Pro**: 40 jobs/día, pero plan pago.
+- **GitHub Actions**: 2.000 min/mes gratis en repos privados. Cron de 30 min × 48 ejec/día × ~10-30s = ~24 min/día → cabe sobrado.
+
+**Tradeoff aceptado**: el cron de GitHub Actions es best-effort, puede tener delays de hasta ~15 min reales. Para el caso de uso (notificar cambios de dieta), una latencia de 30-45 min es aceptable.
+
+**Alternativa descartada — webhook directo desde Gamma**: lo más limpio pero Gamma no soporta webhooks de cambio. Tendría que pedir cambio en su API.
+
+### 15.3. Bootstrap silencioso del cron (anti-spam en primer ciclo)
+
+**Qué:** Cuando el cron corre por primera vez y un paciente no tiene snapshot previo en `11.DietaSnapshot`, **se crea el snapshot pero no se dispara push**. Solo a partir del segundo ciclo (cuando ya hay snapshot para comparar) se notifican cambios.
+
+**Por qué:** sin esto, el primer ciclo después del deploy detectaría 50-80 "cambios" simultáneos (todos los pacientes vs estado vacío) → spam masivo de notifs a Catering en un solo golpe. El bootstrap silencioso es por **paciente**, no global: nuevos pacientes que ingresan en el medio también pasan por bootstrap silencioso individual.
+
+### 15.4. LIST_ID hardcoded vs env var
+
+**Qué:** Los GUIDs de listas SharePoint están hardcoded en cada archivo (`const LIST_ID = 'c7417674-...';`) en lugar de leerse desde envs.
+
+**Por qué:** los `LIST_ID` son **constantes estructurales del proyecto**, no secretos ni configurables. Cambiar de lista implica cambiar también el contrato de columnas, código de mapeo, etc — no es algo que se haga por env. La inicial `11.DietaSnapshot` (último incorporado) primero se planteó como env var, pero por consistencia con las otras 4 listas se hardcodeó.
+
+**Ventaja**: una env var menos para gestionar. La estructura del proyecto vive en el código.
+
+### 15.5. Cache split en bed-enrich (paciente largo + evento corto)
+
+**Qué:** El endpoint `/api/bed-enrich` cachea por separado dos bloques: el del paciente (DNI, edad, sexo, financiador) con TTL 10 min, y el del evento (diagnóstico, plan, fechas, **dieta**) con TTL 30 segundos.
+
+**Por qué:** antes había un solo cache de 10 min para todo el response. Los cambios de dieta en PROGAL quedaban invisibles 10 minutos. Bajar el TTL a 30s para todo hubiera obligado a re-consultar `consultarpacientecodigo` cada vez sin necesidad (DNI/edad/sexo no cambian durante una internación → desperdicia carga sobre Gamma).
+
+**Solución**: dos caches independientes con TTL apropiado para cada tipo de dato. El bloque "paciente" usa el TTL largo porque es estable; el bloque "evento" usa TTL corto porque cambia en vivo.
+
+### 15.6. Bypass del cache al click del modal (?fresh=1)
+
+**Qué:** El modal de detalle del paciente pasa siempre `?fresh=1` al endpoint `/api/bed-enrich`. El backend ignora el cache del evento en ese caso, pero mantiene el de paciente.
+
+**Por qué:** queremos garantizar que cada vez que un usuario abra la card vea la dieta y diagnóstico más recientes (caso edge: cambio en PROGAL en el segundo 5 después del último request → con cache de 30s seguiríamos viendo el dato viejo durante 25s).
+
+**Trade-off aceptado:** carga extra sobre Gamma cada vez que se abre un modal (~1.5s por apertura). Como Catering típicamente abre 1-3 cards/hora, no es batch ni saturación.
+
+**Los PDFs sí mantienen el cache**: `enrichBedsForPdf` no pasa `fresh=1` porque procesa muchas camas en serie y se beneficia del cache de 30s. Casos de uso distintos → defaults distintos.
+
+### 15.7. SW push log en IndexedDB para diagnóstico
+
+**Qué:** El Service Worker registra cada push recibido en una IndexedDB local (`mediflow-push-log`, TTL 24h, cap 50 entradas) con timestamp, ticketId, type, title, body, `Notification.permission`, scope.
+
+**Por qué:** cuando el cliente reporta "no me llegan notifs", hay dos hipótesis muy distintas:
+1. **El push no llega al SW** (red, sub inválida, server) → problema en el pipeline server-side.
+2. **El push llega al SW pero el banner heads-up no aparece** (channel Android en importancia baja, battery optimization) → problema de config del dispositivo, no de código.
+
+Sin el log, no podemos distinguir. Con el log, abrimos la consola del cliente, vemos las entradas (si las hay) y diagnosticamos en segundos.
+
+**Por qué IndexedDB y no localStorage**: el SW no tiene acceso a localStorage del browser context. IndexedDB es la única opción de persistencia cross-session disponible al SW.
+
+### 15.8. Badge SVG dedicado (no logo full color)
+
+**Qué:** El payload del Web Push usa `badge: '/badge.svg'` — un SVG sin fondo, shapes en blanco sólido. Antes usaba `/logo.svg` que tiene `fill="#022C22"` como background.
+
+**Por qué:** Android trata el `badge` como **alpha mask** para el ícono pequeño de la status bar (color del sistema). Algunos builds de Chrome Android no manejan bien SVGs con fondo color o transparencias mal definidas — degradan la notif a menor prioridad visual (banner no aparece). El badge monocromático es lo que recomienda la documentación oficial.
+
+**Alternativa descartada — PNG monocromático**: lo más conservador. Se descartó por ahora porque crear un PNG correcto requiere un editor de imágenes; el SVG sin fondo cumple la misma función en la mayoría de los Chrome Android modernos. Si igualmente da problemas, se puede reemplazar con un PNG sin tocar código.
+
+### 15.9. Bloquear notifs in-app del polling para Catering (separar push del browser)
+
+**Qué:** La función `isRelevant` del detector de cambios en `useHospitalState` ahora bloquea TODAS las notifs in-app para el rol Catering. Solo reciben push via server-side (`RECEPTION_CONFIRMED` + `DIET_CHANGE`).
+
+**Por qué:** El frontend hacía doble trabajo. Por un lado, el server-side push filtraba correctamente: para Catering solo permitía `RECEPTION_CONFIRMED` (y desde el último deploy, `DIET_CHANGE`). Por otro lado, el detector local del polling tenía la lógica simplista `role !== Role.HOSTESS → return true`, que incluía Catering como "ve todo". Cuando el polling detectaba un ticket nuevo o un cambio de status, el cliente disparaba `new window.Notification(...)` — una notificación del SO desde el browser, INDEPENDIENTE del push del server.
+
+Resultado del bug: Catering recibía "Nueva Solicitud de Traslado" (NEW_TICKET) cada vez que se creaba un ticket en cualquier piso, aunque el push del server explícitamente lo bloqueaba. Los logs de Vercel confirmaron que el push server NO le mandó NEW_TICKET → la notif venía del cliente.
+
+**Alternativas consideradas:**
+- **Filtrar in-app por tipo + área (similar al server)**: más simétrico pero más código. Requeriría duplicar la lógica de `isRelevant` del server en el cliente. Frágil cuando se agregan tipos nuevos.
+- **Eliminar `new window.Notification(...)` del cliente**: rompería el caso Hostess donde sí queremos notifs locales del polling para tickets de su área.
+- **Bloqueo total para Catering (elegido)**: simple, robusto, y consistente con el modelo mental "Catering solo recibe pushes del server". La app abierta no agrega valor extra para Catering — los pushes llegan igual.
+
+**Trade-off aceptado:** si Catering tiene la app abierta y otro user marca "Recepción OK", no verá toast in-app instantáneo. El push del server llegará en ms-segundos (más confiable, y único punto de verdad). Aceptable porque Catering usa la app más como visualización que como operativa en tiempo real.
+
+**Para futuras notifs específicas de Catering**: que vengan exclusivamente del server-side via push. El cliente NO disparará nada local para este rol.
