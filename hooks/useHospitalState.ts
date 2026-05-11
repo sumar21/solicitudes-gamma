@@ -250,7 +250,10 @@ export const useHospitalState = () => {
   const enrichBed = useCallback(async (bed: Bed): Promise<Bed> => {
     if (!bed.patientCode) return bed;
     try {
-      const params = new URLSearchParams({ patientCode: bed.patientCode });
+      // fresh=1 fuerza re-fetch del evento (dieta/diagnóstico/plan) cada vez que
+      // se abre el modal de una cama. El cache de paciente (DNI/edad/sexo) sigue
+      // activo en el server (10 min) para no machacar consultas inmutables.
+      const params = new URLSearchParams({ patientCode: bed.patientCode, fresh: '1' });
       if (bed.eventOrigin) params.set('eventOrigin', bed.eventOrigin);
       if (bed.eventNumber != null) params.set('eventNumber', String(bed.eventNumber));
       const r = await authFetch(`/api/bed-enrich?${params}`);

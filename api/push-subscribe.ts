@@ -11,6 +11,11 @@ import { requireAuth } from './jwt.js';
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = '648fde7b-89d2-40ac-bc4a-63661508b50a'; // 09.PushSubscriptions
 
+// Entorno: filtra y etiqueta las subs para que prod y testing no se crucen
+// (un mismo browser puede suscribirse en ambos entornos sin colisionar).
+// Default seguro 'TESTING'.
+const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
+
 async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, DELETE, OPTIONS');
@@ -26,7 +31,11 @@ async function handler(req: any, res: any) {
     const { endpoint } = req.body ?? {};
     if (!endpoint) return res.status(400).json({ error: 'endpoint required' });
     try {
-      const filter = encodeURIComponent(`fields/Endpoint_PS eq '${endpoint.replace(/'/g, "''")}'`);
+      // Acotado al entorno actual: si el mismo browser está suscripto en otro
+      // entorno, esa sub no se toca.
+      const filter = encodeURIComponent(
+        `fields/Endpoint_PS eq '${endpoint.replace(/'/g, "''")}' and fields/Entorno_PS eq '${ENTORNO}'`
+      );
       const existing = await graphFetch(
         `${basePath}?$expand=fields&$filter=${filter}&$top=1`,
         { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
@@ -52,8 +61,12 @@ async function handler(req: any, res: any) {
   if (!endpoint || !keys) return res.status(400).json({ error: 'endpoint and keys required' });
 
   try {
-    // Check if subscription with this endpoint already exists
-    const filter = encodeURIComponent(`fields/Endpoint_PS eq '${endpoint.replace(/'/g, "''")}'`);
+    // Check if subscription with this endpoint already exists IN THIS ENTORNO.
+    // Un mismo browser puede tener una sub en testing y otra en prod simultáneamente:
+    // cada server-side filtra por su entorno, así que no hay cruce.
+    const filter = encodeURIComponent(
+      `fields/Endpoint_PS eq '${endpoint.replace(/'/g, "''")}' and fields/Entorno_PS eq '${ENTORNO}'`
+    );
     const existing = await graphFetch(
       `${basePath}?$expand=fields&$filter=${filter}&$top=1`,
       { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
@@ -66,6 +79,7 @@ async function handler(req: any, res: any) {
       UserRole_PS: String(role ?? ''),
       AssignedAreas_PS: String(assignedAreas ?? ''),
       Sede_PS: String(sede ?? 'HPR'),
+      Entorno_PS: ENTORNO,
     };
 
     if (existing.ok) {

@@ -11,6 +11,9 @@ import { requireAuth } from './jwt.js';
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = '240f00dd-715b-4c78-9661-3147b7650a0f'; // 10.Notificaciones
 
+// Entorno: separa el log de notificaciones de prod/testing. Default 'TESTING'.
+const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
+
 async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, PATCH, OPTIONS');
@@ -25,7 +28,9 @@ async function handler(req: any, res: any) {
   // ── GET — fetch user's notifications ──────────────────────────────────────
   if (req.method === 'GET') {
     try {
-      const filter = encodeURIComponent(`fields/UserId_N eq ${Number(user?.id) || 0}`);
+      const filter = encodeURIComponent(
+        `fields/UserId_N eq ${Number(user?.id) || 0} and fields/Entorno_N eq '${ENTORNO}'`
+      );
       const spRes = await graphFetch(
         `${basePath}?$expand=fields&$filter=${filter}&$top=50&$orderby=fields/Fecha_N desc`,
         { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },

@@ -72,15 +72,14 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     setDetailTab('general');
   }, [selectedBed?.id]);
 
-  // On-demand enrichment when user clicks an occupied bed
+  // On-demand enrichment when user clicks an occupied bed.
+  // Siempre re-consultamos al abrir el modal: la dieta y otros campos del evento
+  // (diagnóstico, fechas, plan médico) cambian en PROGAL en vivo y el cliente
+  // necesita ver la data fresca. El cache del servidor diferencia paciente (TTL
+  // 10min) de evento (TTL 30s) para no machacar a Gamma sin perder freshness.
   React.useEffect(() => {
     if (!selectedBed || selectedBed.status !== BedStatus.OCCUPIED || !onEnrichBed) {
       setEnrichedBed(null);
-      return;
-    }
-    // If bed already has enrichment data, use it directly
-    if (selectedBed.dni && selectedBed.diagnosis) {
-      setEnrichedBed(selectedBed);
       return;
     }
     setEnrichLoading(true);

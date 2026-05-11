@@ -21,10 +21,69 @@ self.addEventListener('message', (event) => {
   }
 });
 
+// ── Push log (IndexedDB) ────────────────────────────────────────────────────
+// Registra cada push recibido para diagnóstico. Si el cliente reporta que no le
+// llegan notifs, podemos revisar este log para distinguir entre:
+//   · el push NO llegó al SW (red, sub inválida, server) → log vacío.
+//   · el push SÍ llegó pero el banner heads-up no apareció (channel Android,
+//     battery optimization, etc.) → log con entrada para el evento esperado.
+// TTL 24h y cap de 50 entradas para no crecer indefinidamente.
+const PUSH_LOG_DB    = 'mediflow-push-log';
+const PUSH_LOG_STORE = 'entries';
+const PUSH_LOG_MAX   = 50;
+const PUSH_LOG_TTL_MS = 24 * 60 * 60 * 1000;
+
+function openPushLog(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(PUSH_LOG_DB, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(PUSH_LOG_STORE)) {
+        db.createObjectStore(PUSH_LOG_STORE, { keyPath: 'id', autoIncrement: true });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+async function logPushReceived(entry: Record<string, unknown>): Promise<void> {
+  try {
+    const db = await openPushLog();
+    const tx = db.transaction(PUSH_LOG_STORE, 'readwrite');
+    const store = tx.objectStore(PUSH_LOG_STORE);
+    store.add({ ...entry, ts: Date.now() });
+    // Cleanup: borrar entradas viejas y limitar el total.
+    const cursorReq = store.openCursor();
+    const now = Date.now();
+    let count = 0;
+    cursorReq.onsuccess = () => {
+      const cursor = cursorReq.result;
+      if (!cursor) return;
+      count++;
+      const value = cursor.value as { ts: number };
+      const tooOld = now - value.ts > PUSH_LOG_TTL_MS;
+      if (tooOld || count > PUSH_LOG_MAX) cursor.delete();
+      cursor.continue();
+    };
+    await new Promise<void>((resolve) => { tx.oncomplete = () => resolve(); tx.onerror = () => resolve(); });
+    db.close();
+  } catch { /* no-op: el logging nunca debe romper el flujo del push */ }
+}
+
 // ── Push notification handler ───────────────────────────────────────────────
 self.addEventListener('push', (event) => {
   const data = event.data?.json() ?? {};
   const { title, body, ticketId, type, tag, timestamp } = data;
+
+  // Log en IndexedDB ANTES de showNotification (no bloqueante).
+  event.waitUntil(
+    logPushReceived({
+      title, body, ticketId, type, tag, payloadTs: timestamp,
+      permission: typeof Notification !== 'undefined' ? Notification.permission : 'unknown',
+      scope: self.registration.scope,
+    })
+  );
 
   // Unique tag per event (backend sends one; fallback to a client-side unique one).
   // Using ticketId alone would make Android collapse consecutive updates silently
@@ -40,7 +99,10 @@ self.addEventListener('push', (event) => {
   } = {
     body: body ?? '',
     icon: '/logo.svg',
-    badge: '/logo.svg',
+    // Badge dedicado (sin fondo, shapes en blanco) para que Android lo trate
+    // correctamente como alpha mask en la status bar. Usar el logo full color
+    // hacía que algunos builds de Chrome degradaran la prioridad visual de la notif.
+    badge: '/badge.svg',
     tag: notifTag,
     data: { ticketId, type, tag: notifTag },
     // Stronger vibration pattern — Android treats non-silent + vibrate as high-priority.
@@ -62,6 +124,35 @@ self.addEventListener('push', (event) => {
     self.registration.showNotification(title ?? 'MediFlow', options as NotificationOptions)
   );
 });
+
+// ── Cómo leer el push-log desde el browser del cliente ─────────────────────
+// Pegá esto en DevTools → Console (estando en el dominio de la PWA):
+//
+//   (async () => {
+//     const db = await new Promise((r, rej) => {
+//       const req = indexedDB.open('mediflow-push-log', 1);
+//       req.onsuccess = () => r(req.result);
+//       req.onerror   = () => rej(req.error);
+//     });
+//     const tx = db.transaction('entries', 'readonly');
+//     const all = await new Promise((r) => {
+//       const out = []; const c = tx.objectStore('entries').openCursor();
+//       c.onsuccess = () => {
+//         const cur = c.result;
+//         if (!cur) { r(out); return; }
+//         out.push(cur.value); cur.continue();
+//       };
+//     });
+//     console.table(all.map(e => ({
+//       hora: new Date(e.ts).toLocaleString('es-AR'),
+//       title: e.title, body: e.body, type: e.type, ticketId: e.ticketId,
+//       permission: e.permission,
+//     })));
+//   })();
+//
+// Si el array está vacío → el push NO está llegando al SW (revisar sub/red/server).
+// Si el array tiene entradas pero el cliente no vio banner → es config Android
+// (channel importance + battery optimization).
 
 // ── Notification click → focus or open the app ──────────────────────────────
 // Handles both clicks on the notification body and on the "Ver" action button.

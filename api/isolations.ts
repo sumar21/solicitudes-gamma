@@ -16,6 +16,10 @@ import { requireAuth } from './jwt.js';
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = '0a36e3e2-1ca2-4951-86f9-afd288465022'; // 08.Aislamientos
 
+// Entorno: filtra y etiqueta los items para que producción y testing coexistan
+// en la misma lista sin pisarse. Default seguro 'TESTING'.
+const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
+
 const parseTipos = (raw: unknown): string[] =>
   String(raw ?? '')
     .split(';')
@@ -41,7 +45,7 @@ async function handler(req: any, res: any) {
   // ── GET — fetch active isolations ─────────────────────────────────────────
   if (req.method === 'GET') {
     try {
-      const filter = encodeURIComponent("fields/Status_A eq 'Activo'");
+      const filter = encodeURIComponent(`fields/Status_A eq 'Activo' and fields/Entorno_A eq '${ENTORNO}'`);
       const spRes = await graphFetch(
         `${basePath}?$expand=fields&$filter=${filter}&$top=500`,
         { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
@@ -79,8 +83,11 @@ async function handler(req: any, res: any) {
     const tipoStr = tipos.join(';');
 
     try {
-      // Check if there's already a record for this patient
-      const filter = encodeURIComponent(`fields/CodigoPaciente_A eq '${String(patientCode).replace(/'/g, "''")}'`);
+      // Check if there's already a record for this patient EN ESTE ENTORNO.
+      // (Un mismo paciente puede tener registros de testing y prod independientes.)
+      const filter = encodeURIComponent(
+        `fields/CodigoPaciente_A eq '${String(patientCode).replace(/'/g, "''")}' and fields/Entorno_A eq '${ENTORNO}'`
+      );
       const existing = await graphFetch(
         `${basePath}?$expand=fields&$filter=${filter}&$top=1`,
         { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
@@ -106,7 +113,7 @@ async function handler(req: any, res: any) {
         }
       }
 
-      // Create new record
+      // Create new record (con Entorno_A estampado).
       const spRes = await graphFetch(basePath, {
         method: 'POST',
         body: JSON.stringify({
@@ -117,6 +124,7 @@ async function handler(req: any, res: any) {
             Usuario_A: String(userName || ''),
             Fecha_A: new Date().toISOString(),
             Tipo_A: tipoStr,
+            Entorno_A: ENTORNO,
           },
         }),
       });
@@ -143,7 +151,7 @@ async function handler(req: any, res: any) {
 
     try {
       const filter = encodeURIComponent(
-        `fields/CodigoPaciente_A eq '${String(patientCode).replace(/'/g, "''")}' and fields/Status_A eq 'Activo'`
+        `fields/CodigoPaciente_A eq '${String(patientCode).replace(/'/g, "''")}' and fields/Status_A eq 'Activo' and fields/Entorno_A eq '${ENTORNO}'`
       );
       const existing = await graphFetch(
         `${basePath}?$expand=fields&$filter=${filter}&$top=1`,

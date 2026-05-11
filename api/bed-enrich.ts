@@ -62,9 +62,18 @@ interface EnrichResult {
   dietTags?: string[];
 }
 
-// ── Enrichment cache: patientCode → result (10 min TTL) ─────────────────────
-const enrichCache = new Map<string, { data: EnrichResult; exp: number }>();
-const ENRICH_TTL = 10 * 60 * 1000; // 10 minutes
+// ── Cache split: patient (TTL largo) vs event+dieta (TTL muy corto) ─────────
+// Razón: DNI/edad/sexo/financiador no cambian durante una internación, así que
+// 10 min es seguro. Pero el evento incluye DIAGNÓSTICO, PLAN MÉDICO, FECHA DE
+// CIRUGÍA y sobre todo la DIETA, que sí cambian (PROGAL las edita en vivo).
+// Cachear el evento mucho tiempo causaba que cambios en PROGAL no se vieran
+// hasta 10 min después. Ahora el evento sobrevive solo 30s (cubre clicks
+// consecutivos del modal sin machacar a Gamma, pero refresca rápido).
+const patientCache = new Map<string, { data: Partial<EnrichResult>; exp: number }>();
+const PATIENT_TTL  = 10 * 60 * 1000; // 10 minutos
+
+const eventCache = new Map<string, { data: Partial<EnrichResult>; exp: number }>();
+const EVENT_TTL  = 30 * 1000; // 30 segundos
 
 async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -77,71 +86,100 @@ async function handler(req: any, res: any) {
   const patientCode = url.searchParams.get('patientCode')?.trim();
   const eventOrigin = url.searchParams.get('eventOrigin');
   const eventNumber = url.searchParams.get('eventNumber');
+  // ?fresh=1 fuerza re-fetch del EVENTO (dieta, diagnóstico, plan, fechas).
+  // El cache de paciente sigue siendo válido — DNI/edad/sexo no cambian durante
+  // la internación. Lo usa el modal de detalle al hacer click; los PDFs NO lo pasan
+  // (procesan muchas camas en serie y benefician del cache de 30s).
+  const fresh = url.searchParams.get('fresh') === '1';
 
   if (!patientCode) {
     return res.status(400).json({ error: 'patientCode required' });
   }
 
-  // Check cache
-  const cached = enrichCache.get(patientCode);
-  if (cached && Date.now() < cached.exp) {
-    return res.status(200).json(cached.data);
+  const now = Date.now();
+  const eventKey = eventOrigin && eventNumber ? `${eventOrigin}-${eventNumber}` : null;
+
+  // Decidir qué hace falta fetchear según cada cache
+  const cachedPatient = patientCache.get(patientCode);
+  const patientFresh  = cachedPatient && cachedPatient.exp > now;
+
+  const cachedEvent = eventKey ? eventCache.get(eventKey) : undefined;
+  const eventFresh  = !fresh && cachedEvent && cachedEvent.exp > now;
+
+  // Si ambos están frescos, devolver merge inmediato sin tocar Gamma.
+  if (patientFresh && (!eventKey || eventFresh)) {
+    return res.status(200).json({
+      ...(cachedPatient!.data),
+      ...(eventFresh ? cachedEvent!.data : {}),
+    });
   }
 
   try {
+    // Solo pedir tokens y data de Gamma para lo que NO está cacheado.
+    const needPatient = !patientFresh;
+    const needEvent   = !!eventKey && !eventFresh;
+
     const [tokenPat, tokenEvt] = await Promise.all([
-      getToken('consultarpacientecodigo'),
-      getToken('obtenereventointernacion'),
+      needPatient ? getToken('consultarpacientecodigo') : Promise.resolve(''),
+      needEvent   ? getToken('obtenereventointernacion') : Promise.resolve(''),
     ]);
 
     const [patient, event] = await Promise.all([
-      fetchPatientDetails(tokenPat, patientCode),
-      eventOrigin && eventNumber
+      needPatient ? fetchPatientDetails(tokenPat, patientCode) : Promise.resolve(null),
+      needEvent && eventOrigin && eventNumber
         ? fetchEventDetails(tokenEvt, eventOrigin, parseInt(eventNumber))
         : Promise.resolve(null),
     ]);
 
-    const data: EnrichResult = {};
+    // Construir el bloque "paciente" (lento de cachear).
+    let patientData: Partial<EnrichResult> = patientFresh ? cachedPatient!.data : {};
     if (patient) {
-      data.institution = patient.ENT_NOMBRE_FANTASIA?.trim() || undefined;
-      data.dni = patient.ENT_NUMERO_DOCUMENTO?.trim() || undefined;
-      data.age = patient.PCN_FECHA_NACIMIENTO ? calcAge(patient.PCN_FECHA_NACIMIENTO) : undefined;
-      data.sex = patient.PCN_SEXO === 'M' || patient.PCN_SEXO === 'F' ? patient.PCN_SEXO : undefined;
+      patientData = {};
+      patientData.institution = patient.ENT_NOMBRE_FANTASIA?.trim() || undefined;
+      patientData.dni = patient.ENT_NUMERO_DOCUMENTO?.trim() || undefined;
+      patientData.age = patient.PCN_FECHA_NACIMIENTO ? calcAge(patient.PCN_FECHA_NACIMIENTO) : undefined;
+      patientData.sex = patient.PCN_SEXO === 'M' || patient.PCN_SEXO === 'F' ? patient.PCN_SEXO : undefined;
+      patientCache.set(patientCode, { data: patientData, exp: now + PATIENT_TTL });
     }
+
+    // Construir el bloque "evento" (cache corto, refresca seguido).
+    let eventData: Partial<EnrichResult> = eventFresh ? cachedEvent!.data : {};
     if (event) {
-      data.diagnosis = event.EVE_DIAGNOSTICO?.trim() || undefined;
+      eventData = {};
+      eventData.diagnosis = event.EVE_DIAGNOSTICO?.trim() || undefined;
       if (event.PROFESIONAL_NOMBRE?.trim()) {
-        data.prescribingPhysician = event.PROFESIONAL_NOMBRE.trim();
+        eventData.prescribingPhysician = event.PROFESIONAL_NOMBRE.trim();
       }
-      if (!data.institution && event.INSTITUCION_NOMBRE) {
-        data.institution = event.INSTITUCION_NOMBRE.trim();
+      // Fallback de institution si vino vacía del paciente.
+      if (!patientData.institution && event.INSTITUCION_NOMBRE) {
+        eventData.institution = event.INSTITUCION_NOMBRE.trim();
       }
 
       // Tipo de internación — guardamos el código crudo + label humano
       const typeCode = event.EVE_TIPO_INTERNACION?.trim().toUpperCase();
       if (typeCode) {
-        data.admissionTypeCode = typeCode;
-        data.admissionType = ADMISSION_TYPE_LABELS[typeCode] ?? typeCode;
+        eventData.admissionTypeCode = typeCode;
+        eventData.admissionType = ADMISSION_TYPE_LABELS[typeCode] ?? typeCode;
       }
 
       // Fechas — Gamma ya las devuelve como strings ISO; las pasamos tal cual
       if (event.EVE_FECHA_HORA_INGRESO) {
-        data.admissionDate = String(event.EVE_FECHA_HORA_INGRESO);
+        eventData.admissionDate = String(event.EVE_FECHA_HORA_INGRESO);
       }
       if (event.EVE_FECHA_PROBABLE_CIRUGIA) {
-        data.expectedSurgeryDate = String(event.EVE_FECHA_PROBABLE_CIRUGIA);
+        eventData.expectedSurgeryDate = String(event.EVE_FECHA_PROBABLE_CIRUGIA);
       }
 
       if (typeof event.EVE_DIAS_AUTORIZADOS === 'number') {
-        data.authorizedDays = event.EVE_DIAS_AUTORIZADOS;
+        eventData.authorizedDays = event.EVE_DIAS_AUTORIZADOS;
       }
 
       // Plan médico — Gamma sumó IPM_PLAN_MEDICO (código) + IPM_DESCRIPCION (legible).
       if (event.IPM_PLAN_MEDICO) {
-        data.medicalPlan = String(event.IPM_PLAN_MEDICO).trim() || undefined;
+        eventData.medicalPlan = String(event.IPM_PLAN_MEDICO).trim() || undefined;
       }
       if (event.IPM_DESCRIPCION) {
-        data.medicalPlanDescription = String(event.IPM_DESCRIPCION).trim() || undefined;
+        eventData.medicalPlanDescription = String(event.IPM_DESCRIPCION).trim() || undefined;
       }
 
       // Dietas — Gamma devuelve un array de {HCG_DESCRIPCION, EIP_RESPUESTA_VALOR}.
@@ -155,7 +193,7 @@ async function handler(req: any, res: any) {
             respuesta:   String(d.EIP_RESPUESTA_VALOR ?? '').trim(),
           }));
         if (diets.length > 0) {
-          data.diets = diets;
+          eventData.diets = diets;
           const tags: string[] = [];
           for (const d of diets) {
             const resp = d.respuesta.toLowerCase();
@@ -167,15 +205,19 @@ async function handler(req: any, res: any) {
               tags.push(d.descripcion);
             }
           }
-          if (tags.length > 0) data.dietTags = tags;
+          if (tags.length > 0) eventData.dietTags = tags;
         }
+      }
+      // Persistir el bloque evento en su propio cache (TTL corto: 30s).
+      if (eventKey) {
+        eventCache.set(eventKey, { data: eventData, exp: now + EVENT_TTL });
       }
     }
 
-    // Cache result
-    enrichCache.set(patientCode, { data, exp: Date.now() + ENRICH_TTL });
-
-    return res.status(200).json(data);
+    // Mergear paciente + evento. El evento gana en campos compartidos por si el
+    // último update de PROGAL vino vía el endpoint del evento (raro pero posible).
+    const merged: Partial<EnrichResult> = { ...patientData, ...eventData };
+    return res.status(200).json(merged);
   } catch (err: any) {
     console.error('[bed-enrich] Error:', err);
     return res.status(502).json({ error: 'Gamma enrichment failed' });

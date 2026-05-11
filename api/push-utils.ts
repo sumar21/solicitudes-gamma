@@ -10,6 +10,10 @@ const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = '648fde7b-89d2-40ac-bc4a-63661508b50a'; // 09.PushSubscriptions
 const NOTIF_LIST_ID = '240f00dd-715b-4c78-9661-3147b7650a0f'; // 10.Notificaciones
 
+// Entorno: el server-side push solo lee subs del entorno actual. Default 'TESTING'
+// para que un misconfig nunca dispare push a usuarios reales sin querer.
+const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
+
 const VAPID_PUBLIC_KEY  = process.env.VAPID_PUBLIC_KEY  ?? '';
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY ?? '';
 const VAPID_SUBJECT     = process.env.VAPID_SUBJECT     ?? 'mailto:admin@grupogamma.com';
@@ -52,8 +56,10 @@ async function fetchSubscriptions(sede?: string): Promise<Subscription[]> {
   const basePath = `/sites/${SITE_ID}/lists/${LIST_ID}/items`;
 
   try {
+    // Filtramos SP-side por entorno para no traer subs de otro entorno (y bajar payload).
+    const filter = encodeURIComponent(`fields/Entorno_PS eq '${ENTORNO}'`);
     const spRes = await graphFetch(
-      `${basePath}?$expand=fields&$top=500`,
+      `${basePath}?$expand=fields&$filter=${filter}&$top=500`,
       { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
     );
     if (!spRes.ok) return [];
@@ -118,10 +124,12 @@ function isRelevant(sub: Subscription, params: PushParams): boolean {
   // Hostess: only if ticket area intersects their assigned areas
   if (role === 'HOSTESS') return subAreaMatches(sub, params);
 
-  // Catering: ONLY when the hostess confirms reception (status → WAITING_CONSOLIDATION,
-  // type === 'RECEPTION_CONFIRMED'). Filtered by assigned areas just like HOSTESS.
+  // Catering: dos eventos relevantes
+  //   · 'RECEPTION_CONFIRMED' — la azafata confirmó recepción del paciente.
+  //   · 'DIET_CHANGE'         — cron detectó cambio de dieta en PROGAL.
+  // En ambos casos se filtra por área del paciente (igual que HOSTESS).
   if (role === 'CATERING') {
-    if (params.type !== 'RECEPTION_CONFIRMED') return false;
+    if (params.type !== 'RECEPTION_CONFIRMED' && params.type !== 'DIET_CHANGE') return false;
     return subAreaMatches(sub, params);
   }
 
@@ -231,6 +239,7 @@ export async function sendPushToSubscribers(params: PushParams): Promise<void> {
                 Type_N: params.type ?? '',
                 Status_N: 'Enviada',
                 Fecha_N: now,
+                Entorno_N: ENTORNO,
               },
             }),
           });

@@ -15,6 +15,11 @@ import { sendPushToSubscribers } from './push-utils.js';
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = 'c7417674-9084-416d-a955-7024161a3194'; // 07.Traslados
 
+// Entorno: filtra y etiqueta los items para que producción y testing coexistan
+// en la misma lista sin pisarse. Default seguro 'TESTING' — si la variable no
+// está cargada, no se toca prod por accidente.
+const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
+
 /** DJB2 string hash — fast, good distribution, no crypto needed */
 function simpleHash(str: string): string {
   let hash = 5381;
@@ -144,12 +149,16 @@ async function handler(req: any, res: any) {
     // ── GET ────────────────────────────────────────────────────────────────
     if (req.method === 'GET') {
       const fetchAll = req.query?.all === '1';
+      // Entorno: siempre filtra. Histórico (?all=1) también — solo se trae lo del entorno actual.
+      const entornoClause = `fields/Entorno_T eq '${ENTORNO}'`;
+      const statusClause  = `fields/Status_T ne '${TicketStatus.COMPLETED}' and fields/Status_T ne '${TicketStatus.REJECTED}'`;
       const filter = fetchAll
-        ? ''
-        : `&$filter=fields/Status_T ne '${TicketStatus.COMPLETED}' and fields/Status_T ne '${TicketStatus.REJECTED}'`;
+        ? `&$filter=${entornoClause}`
+        : `&$filter=${entornoClause} and ${statusClause}`;
 
       const spRes = await graphFetch(
         `/sites/${SITE_ID}/lists/${LIST_ID}/items?$expand=fields&$top=500${filter}`,
+        { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } as any },
       );
 
       if (!spRes.ok) throw new Error(`SP GET failed (${spRes.status}): ${await spRes.text()}`);
@@ -175,10 +184,12 @@ async function handler(req: any, res: any) {
 
       // Reject if destination bed is already targeted by another active ticket.
       // Active = not Consolidado and not Cancelado. Race-condition safe since SP is the source of truth.
+      // El chequeo se acota al entorno actual: testing y prod no se pisan.
       if (ticket.destination) {
         const escaped = String(ticket.destination).replace(/'/g, "''");
         const conflictUrl = `/sites/${SITE_ID}/lists/${LIST_ID}/items?$expand=fields&$top=5`
-          + `&$filter=fields/CamaDestino_T eq '${escaped}'`
+          + `&$filter=fields/Entorno_T eq '${ENTORNO}'`
+          + ` and fields/CamaDestino_T eq '${escaped}'`
           + ` and fields/Status_T ne '${TicketStatus.COMPLETED}'`
           + ` and fields/Status_T ne '${TicketStatus.REJECTED}'`;
         const conflictRes = await graphFetch(conflictUrl, {
@@ -197,11 +208,13 @@ async function handler(req: any, res: any) {
         }
       }
 
+      // Estampar el entorno en el item nuevo (solo POST — los PATCH no deben pisarlo).
+      const fieldsPost = { ...ticketToFields(ticket), Entorno_T: ENTORNO };
       const spRes = await graphFetch(
         `/sites/${SITE_ID}/lists/${LIST_ID}/items`,
         {
           method: 'POST',
-          body:   JSON.stringify({ fields: ticketToFields(ticket) }),
+          body:   JSON.stringify({ fields: fieldsPost }),
         },
       );
 
@@ -239,7 +252,8 @@ async function handler(req: any, res: any) {
       if (updates.destination) {
         const escaped = String(updates.destination).replace(/'/g, "''");
         const conflictUrl = `/sites/${SITE_ID}/lists/${LIST_ID}/items?$expand=fields&$top=5`
-          + `&$filter=fields/CamaDestino_T eq '${escaped}'`
+          + `&$filter=fields/Entorno_T eq '${ENTORNO}'`
+          + ` and fields/CamaDestino_T eq '${escaped}'`
           + ` and fields/Status_T ne '${TicketStatus.COMPLETED}'`
           + ` and fields/Status_T ne '${TicketStatus.REJECTED}'`
           + ` and id ne ${spItemId}`;
