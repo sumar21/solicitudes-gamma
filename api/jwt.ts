@@ -7,6 +7,7 @@
  */
 
 import { SignJWT, jwtVerify, type JWTPayload } from 'jose';
+import { checkRequestLocation, getClientIp } from './location-check.js';
 
 const SECRET  = new TextEncoder().encode(process.env.JWT_SECRET ?? 'dev-secret-change-in-production');
 const EXPIRY_DEFAULT  = '8h';
@@ -54,4 +55,31 @@ export function requireAuth(handler: Handler): Handler {
       return res.status(401).json({ error: 'Token inválido o expirado' });
     }
   };
+}
+
+// ── requireAuthAndLocation middleware ────────────────────────────────────────
+// Composición de requireAuth + check de ubicación por IP.
+// Pensado para endpoints que tocan data sensible: además de validar el JWT,
+// chequea que la IP del cliente esté en la whitelist 99.ABM_GeoIPS del sede
+// del usuario. Si no autoriza → 403 con `error: 'location_blocked'`.
+//
+// Performance: el check usa cache server-side (5 min TTL por sede), así que
+// el costo por request es ~0ms con cache caliente.
+//
+// Fail-open: si SP no responde, devuelve allowed=true para no bloquear el
+// hospital. Mismo criterio que el login.
+export function requireAuthAndLocation(handler: Handler): Handler {
+  return requireAuth(async (req: any, res: any) => {
+    const clientIp = getClientIp(req);
+    const sede     = String(req.user?.sede ?? 'HPR');
+    const check    = await checkRequestLocation({ sede, clientIp });
+    if (!check.allowed) {
+      return res.status(403).json({
+        error: 'location_blocked',
+        reason: check.reason ?? 'Ubicación no autorizada',
+        method: check.method,
+      });
+    }
+    return handler(req, res);
+  });
 }

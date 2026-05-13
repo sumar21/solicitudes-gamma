@@ -10,7 +10,7 @@
  * Only 2 Gamma calls per request (1 patient + 1 event).
  */
 
-import { requireAuth } from './jwt.js';
+import { requireAuthAndLocation } from './jwt.js';
 import { getToken, fetchPatientDetails, fetchEventDetails, calcAge } from './gamma-client.js';
 
 // Maps the EVE_TIPO_INTERNACION code to its human label.
@@ -224,4 +224,4 @@ async function handler(req: any, res: any) {
   }
 }
 
-export default requireAuth(handler);
+export default requireAuthAndLocation(handler);

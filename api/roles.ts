@@ -8,7 +8,7 @@
  */
 
 import { graphFetch } from './graph.js';
-import { requireAuth } from './jwt.js';
+import { requireAuthAndLocation } from './jwt.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = '68836bbe-18c5-4cb2-8cc6-e21ecae96710'; // 99.ABMRoles_Traslados
@@ -130,4 +130,4 @@ async function handler(req: any, res: any) {
   return res.status(405).json({ error: 'Method not allowed' });
 }
 
-export default requireAuth(handler);
+export default requireAuthAndLocation(handler);

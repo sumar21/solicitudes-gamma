@@ -147,9 +147,14 @@ export const useHospitalState = () => {
   }, [token]);
 
   // ── authFetch — agrega Authorization header en todos los requests ─────────────
-  const authFetch = useCallback((url: string, options?: RequestInit): Promise<Response> => {
+  // Adicionalmente intercepta 403 con `error: 'location_blocked'` (del wrapper
+  // requireAuthAndLocation server-side) y dispara logout automático con el
+  // motivo específico. Esto cierra el agujero de "usuario loguea en hospital y
+  // sigue operando desde casa porque el JWT sigue válido" — al primer fetch
+  // desde una IP no autorizada, el server responde 403 y el cliente sale.
+  const authFetch = useCallback(async (url: string, options?: RequestInit): Promise<Response> => {
     const t = localStorage.getItem(TOKEN_KEY);
-    return fetch(url, {
+    const res = await fetch(url, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
@@ -157,6 +162,24 @@ export const useHospitalState = () => {
         ...(options?.headers ?? {}),
       },
     });
+    // Detección de ubicación bloqueada server-side.
+    // Usamos res.clone() para no consumir el body original — el caller puede
+    // procesar la response normalmente después.
+    if (res.status === 403) {
+      try {
+        const cloned = res.clone();
+        const data = await cloned.json();
+        if (data?.error === 'location_blocked') {
+          setLoginError(
+            data?.reason ??
+            'Tu ubicación cambió. Volvé a ingresar desde un lugar autorizado.'
+          );
+          handleLogout();
+        }
+      } catch { /* response sin body JSON, ignorar */ }
+    }
+    return res;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── App state ─────────────────────────────────────────────────────────────────

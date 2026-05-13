@@ -6,7 +6,7 @@
  */
 
 import { graphFetch } from './graph.js';
-import { requireAuth } from './jwt.js';
+import { requireAuthAndLocation } from './jwt.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = '648fde7b-89d2-40ac-bc4a-63661508b50a'; // 09.PushSubscriptions
@@ -116,4 +116,4 @@ async function handler(req: any, res: any) {
   }
 }
 
-export default requireAuth(handler);
+export default requireAuthAndLocation(handler);

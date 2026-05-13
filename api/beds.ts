@@ -8,7 +8,7 @@
  * Server-side cache: 45s TTL. ETag support for 304 responses.
  */
 
-import { requireAuth } from './jwt.js';
+import { requireAuthAndLocation } from './jwt.js';
 import {
   getToken, GAMMA_BASE, simpleHash,
   GammaBed, GammaSector,
@@ -202,4 +202,4 @@ async function handler(req: any, res: any) {
   }
 }
 
-export default requireAuth(handler);
+export default requireAuthAndLocation(handler);
