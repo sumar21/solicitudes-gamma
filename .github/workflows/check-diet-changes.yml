@@ -26,7 +26,7 @@ jobs:
       - name: Call check-diet-changes endpoint
         run: |
           set -e
-          response=$(curl -fsS -w "\n%{http_code}" -X POST \
+          response=$(curl -fsSL -w "\n%{http_code}" -X POST \
             "${{ secrets.MEDIFLOW_URL }}/api/cron-diet-changes" \
             -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
             -H "Content-Type: application/json")
