@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useCallback } from 'react';
-import { Bed, BedStatus, Ticket, TicketStatus, User, Role, Area, IsolationType } from '../types';
+import { Bed, BedStatus, Ticket, TicketStatus, User, Area, IsolationType } from '../types';
+import { can } from '../lib/permissions';
 import { Input } from '../components/ui/input';
 import { cn } from '../lib/utils';
 import { BedDouble, User as UserIcon, Info, Search, X, Download, ChevronDown, Check, AlertTriangle, CheckCircle2, ShieldAlert, RefreshCw } from 'lucide-react';
@@ -92,7 +93,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
 
   const displayBed = enrichedBed ?? selectedBed;
 
-  const canEditIsolation = currentUser?.role === Role.ADMISSION || currentUser?.role === Role.ADMIN;
+  const canEditIsolation = can(currentUser, 'editar_aislamiento');
 
   // Get isolation color for a bed (first active type drives the color)
   const getIsolationColor = (bed: Bed) => {
@@ -152,18 +153,17 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   // Filters state
   const [searchFilter, setSearchFilter] = useState('');
 
-  const isAdmission = currentUser?.role === Role.ADMISSION || currentUser?.role === Role.ADMIN;
-  void isAdmission; // used implicitly via role checks below
-
+  // Si el rol filtra por pisos (FiltrarPisos_RT=Sí) y tiene áreas asignadas, los filtros
+  // de área arrancan limitados a esos pisos. Los demás roles arrancan con todos los
+  // sectores, ocultando los "low-impact" para admisión (URP/Sueño/...).
   const [areaFilters, setAreaFilters] = useState<Set<string>>(() => {
-    // Roles operativos con áreas asignadas (Azafata, Catering) arrancan filtrados a sus pisos.
-    // El usuario puede destildar/agregar otros sectores manualmente desde el filtro.
-    const ROLES_WITH_AREA_FILTER: Role[] = [Role.HOSTESS, Role.CATERING];
-    if (currentUser && ROLES_WITH_AREA_FILTER.includes(currentUser.role) && currentUser.assignedAreas?.length > 0) {
+    if (currentUser?.filterByFloors && currentUser.assignedAreas?.length) {
       return new Set<string>(currentUser.assignedAreas);
     }
     const all = new Set<string>(Object.values(Area));
-    if (currentUser?.role === Role.ADMISSION || currentUser?.role === Role.ADMIN) {
+    // Admisión/Admin: ocultar por defecto sectores low-impact. Detectado por permiso
+    // `editar_ticket` (Admisión + Admin lo tienen).
+    if (can(currentUser, 'editar_ticket')) {
       HIDDEN_BY_DEFAULT_ADMISSION.forEach(a => all.delete(a));
     }
     return all;

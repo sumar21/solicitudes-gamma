@@ -154,17 +154,34 @@ self.addEventListener('push', (event) => {
 // Si el array tiene entradas pero el cliente no vio banner → es config Android
 // (channel importance + battery optimization).
 
-// ── Notification click → focus or open the app ──────────────────────────────
-// Handles both clicks on the notification body and on the "Ver" action button.
+// ── Notification click → focus or open the app + propagar ticketId/type ─────
+// El SW no tiene JWT, así que no puede marcar la notif como leída por sí mismo.
+// Estrategia: delegar al cliente:
+//   · Si hay un client abierto → focus + postMessage con {ticketId, type}.
+//     El cliente escucha el message y dispara mark-by-event con su JWT.
+//   · Si no hay client → openWindow con query params, la app los lee al mount.
 self.addEventListener('notificationclick', (event) => {
+  const data: any = event.notification.data ?? {};
+  const ticketId = typeof data.ticketId === 'string' ? data.ticketId : '';
+  const type     = typeof data.type === 'string' ? data.type : '';
   event.notification.close();
+
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
       const existing = clients.find(c => c.url.includes(self.location.origin));
       if (existing) {
+        // App ya abierta: focus + mandamos los datos por postMessage.
         existing.focus();
+        try {
+          existing.postMessage({ kind: 'notification-clicked', ticketId, type });
+        } catch { /* postMessage no soportado: el cliente refrescará por polling */ }
       } else {
-        self.clients.openWindow('/');
+        // App cerrada: abrimos con query params; la app los lee al mount.
+        const params = new URLSearchParams();
+        if (ticketId) params.set('notifTicketId', ticketId);
+        if (type)     params.set('notifType', type);
+        const qs = params.toString();
+        self.clients.openWindow(qs ? `/?${qs}` : '/');
       }
     })
   );

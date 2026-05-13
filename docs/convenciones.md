@@ -1959,3 +1959,197 @@ El frontend tiene un detector de cambios en `useHospitalState` que dispara:
 Esto convive con el push del server (`api/push-utils.ts`) que llega via Web Push API → SW → notif del SO.
 
 **Regla:** para roles donde el server ya cubre los eventos con filtros precisos (ej. Catering: `RECEPTION_CONFIRMED` + `DIET_CHANGE` filtrados por área), **bloquear el detector local** para evitar duplicados. Solo dejar el detector local activo en roles donde el push del server NO cubre el caso de uso (HOSTESS necesita ver cambios in-app de su piso aunque no estén modelados como push de tipo específico).
+
+---
+
+## Nuevos patrones (2026-05-13)
+
+### Gates de acción con helper `can(user, 'permiso')` — no `role === Role.X`
+
+**Patrón:** Cualquier gate de acción (botón visible/oculto, mutación bloqueada/permitida) usa el helper `can(user, 'codigo_permiso')` de [lib/permissions.ts](lib/permissions.ts) en vez de comparar el enum `Role` directamente.
+
+```ts
+// ✗ Antes — frágil, requiere deploy para cambiar permisos
+if (currentUser?.role === Role.ADMIN || currentUser?.role === Role.ADMISSION) {
+  return <Button>Nueva Solicitud</Button>;
+}
+
+// ✓ Ahora — config desde SP, sin deploy
+import { can } from '../lib/permissions';
+if (can(currentUser, 'crear_ticket')) {
+  return <Button>Nueva Solicitud</Button>;
+}
+```
+
+**Por qué:** El catálogo de 12 permisos vive en `PERMISSIONS as const` en [types.ts](types.ts), tipado como `Permission`. Cada rol declara sus permisos en `Permisos_RT` (SP). El helper retorna `false` si `user.permissions` está undefined o vacío (safe-default = solo lectura).
+
+**Cuándo NO usar `can()`:** Para casos puntuales que no son permisos sino comportamientos (filtro por área, render de tabs de admin "actuando como"), seguir usando `user.filterByFloors` o el enum `Role`. La regla: si el comportamiento es configurable desde el ABM de Roles, usar `can()`. Si es una mecánica fija del sistema, usar `user.role` o flags específicos.
+
+**Acceso a vistas (módulos):** `hasModule(user, 'Operativa')` cumple el rol equivalente para `Acceso_RT` (qué vistas ve el rol).
+
+### Cache server-side en memoria con TTL para datos relativamente estáticos
+
+**Patrón:** Crear un módulo `*-cache.ts` por dominio. Patrón canónico en [api/role-cache.ts](api/role-cache.ts):
+
+```ts
+let cache: { data: T[]; exp: number } | null = null;
+const TTL_MS = 5 * 60 * 1000;
+
+export async function getCached(): Promise<T[]> {
+  const now = Date.now();
+  if (cache && cache.exp > now) return cache.data;
+  const data = await fetchFromSP();
+  cache = { data, exp: now + TTL_MS };
+  return data;
+}
+
+export function invalidateCache(): void {
+  cache = null;
+}
+```
+
+**Convenciones:**
+- Exportar `invalidate*Cache()` para ser llamado tras mutaciones POST/PATCH/DELETE en el endpoint correspondiente.
+- TTL típico: 5 min para datos que cambian raramente vía ABM (roles, GeoIPs). Más corto si el dato es más sensible al staleness.
+- Memoria por function instance (Vercel serverless): el cache vive en el cold start del worker. No es global. Para clientes vinculados a UN endpoint (push-utils, auth) el cache es suficiente. Si el dato lo necesitan múltiples endpoints, todos comparten siempre que el módulo se importe en cada uno.
+
+### Logout silencioso para migrar tokens viejos
+
+**Patrón:** Cuando un campo del `User` se agrega y el frontend lo necesita, agregar un useEffect en `App.tsx` (boot) que detecte la ausencia y dispare `handleLogout()`:
+
+```tsx
+useEffect(() => {
+  const u = state.currentUser;
+  if (u && (!Array.isArray(u.permissions) || !Array.isArray(u.modules))) {
+    console.log('[App] User without permissions/modules — forcing re-login to pick up role config');
+    actions.handleLogout();
+  }
+}, [state.currentUser?.id]);
+```
+
+**Por qué:** evita un estado degradado donde el user tiene token válido pero le faltan campos derivados. El re-login los sincroniza sin migration endpoint. Se justifica solo cuando agregar la migration on-the-fly sería más complejo.
+
+### `as const` arrays para catálogos cerrados con tipos derivados
+
+**Patrón:** Cuando el catálogo tiene un set conocido y cerrado (permisos, módulos), declararlo como `as const` y derivar el tipo:
+
+```ts
+export const PERMISSIONS = [
+  'crear_ticket','editar_ticket','cancelar_ticket','asignar_cama',
+  'confirmar_limpieza','iniciar_traslado','confirmar_recepcion','consolidar',
+  'editar_aislamiento',
+  'abm_usuarios','abm_roles',
+  'recibe_push',
+] as const;
+export type Permission = typeof PERMISSIONS[number];
+```
+
+**Por qué:** TypeScript narrowea cada string a su literal, y `Permission` es la unión de todos. Si agregás un permiso al array, los tipos del helper `can(user, perm: Permission)` lo aceptan automáticamente. Si tipeás mal el código en un caller (`can(user, 'crear_tikcet')`) → error de compilación.
+
+**Alternativa descartada — enum:** los enums TypeScript son más pesados (generan código JS) y menos flexibles para iterar. Para catálogos puramente declarativos, `as const` arrays + `typeof[number]` es más idiomático.
+
+### Service Worker → cliente vía `postMessage` (acción que requiere JWT desde un contexto sin JWT)
+
+**Patrón:** Cuando una acción originada en el SW (`notificationclick`, `push`, etc.) requiere autenticación, NO hacer fetch desde el SW. Delegar al cliente:
+
+```ts
+// En [src-sw/sw.ts](src-sw/sw.ts)
+self.addEventListener('notificationclick', (event) => {
+  const data = event.notification.data ?? {};
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      const existing = clients.find(c => c.url.includes(self.location.origin));
+      if (existing) {
+        existing.focus();
+        existing.postMessage({ kind: 'notification-clicked', ...data });
+      } else {
+        // App cerrada: pasar datos por query params
+        const params = new URLSearchParams();
+        if (data.ticketId) params.set('notifTicketId', data.ticketId);
+        if (data.type) params.set('notifType', data.type);
+        self.clients.openWindow(`/?${params.toString()}`);
+      }
+    })
+  );
+});
+```
+
+```ts
+// En el hook del cliente
+useEffect(() => {
+  if (!currentUser || !('serviceWorker' in navigator)) return;
+  const onMessage = (event: MessageEvent) => {
+    if (event.data?.kind !== 'notification-clicked') return;
+    // dispar el fetch autenticado acá (cliente tiene JWT)
+  };
+  navigator.serviceWorker.addEventListener('message', onMessage);
+  return () => navigator.serviceWorker.removeEventListener('message', onMessage);
+}, [currentUser, ...]);
+
+// Reader de query params al mount (caso app cerrada al momento del tap)
+useEffect(() => {
+  if (!currentUser) return;
+  const params = new URLSearchParams(window.location.search);
+  const ticketId = params.get('notifTicketId');
+  if (!ticketId) return;
+  // dispar el fetch
+  // Limpiar URL para que no se re-dispare en refresh
+  window.history.replaceState(null, '', window.location.pathname);
+}, [currentUser]);
+```
+
+**Por qué:** el SW vive en un contexto separado, sin acceso a localStorage del browser (donde está el JWT). Mandar el JWT al SW vía IndexedDB rompe el aislamiento de sesión. `postMessage` + query params delega la responsabilidad al cliente que ya tiene auth completa.
+
+### Endpoint con múltiples shapes de body (single + bulk + by-attributes)
+
+**Patrón:** Un endpoint REST puede aceptar varias formas de body que disparen distintos comportamientos:
+
+```ts
+// PATCH /api/notifications
+// 1) { notificationId: "123" }                  → single by id
+// 2) { notificationIds: ["123","456"] }         → bulk by ids
+// 3) { ticketId: "T-1", type: "STATUS_UPDATE" } → lookup + bulk by attrs
+```
+
+```ts
+if (req.method === 'PATCH') {
+  const body = req.body ?? {};
+  // Modo 3: por atributos (lookup + bulk)
+  if (body.ticketId !== undefined || body.type !== undefined) {
+    // query SP, luego PATCH a cada match
+    return res.status(200).json({ ok, updated, failed });
+  }
+  // Modos 1 y 2: por id explícito
+  const ids = Array.isArray(body.notificationIds)
+    ? body.notificationIds.map(String).filter(Boolean)
+    : body.notificationId ? [String(body.notificationId)] : [];
+  if (ids.length === 0) return res.status(400).json({ error: 'bad body' });
+  // PATCH bulk
+}
+```
+
+**Cuándo:** evita proliferar endpoints (`/api/notifications/by-id`, `/api/notifications/by-event`) que comparten 90% del código. Útil cuando los modos son del mismo dominio y la respuesta tiene el mismo shape (`{ok, updated, failed}`).
+
+**Reglas:**
+- Detectar el modo por la PRESENCIA de campos, no por un discriminador explícito (`mode: 'by-event'`) — más natural para callers.
+- Documentar las formas válidas en el JSDoc del archivo + en el cuerpo de error 400.
+- Si los modos crecen (>3) o divergen mucho en la lógica interna, conviene partir en endpoints separados.
+
+### Endpoint mark-by-event con scope server-side al user logueado
+
+**Patrón:** Para entidades que el cliente identifica por atributos de negocio (no por el SP item id), aceptar `{atributo1, atributo2}` en el body y resolver el id server-side:
+
+```ts
+// PATCH /api/notifications con { ticketId, type }:
+// 1. GET filtrado en SP: TicketId_N + Type_N + UserId_N (req.user) + Status_N=Enviada
+// 2. PATCH cada match
+// 3. Devolver { ok, updated, failed }
+```
+
+**Cuándo:** cuando el cliente NO conoce el SP item id porque:
+- La entidad fue creada server-side fire-and-forget (push notification).
+- El cliente solo tiene una referencia abstracta (un push payload, un evento de polling).
+- El SW pasa atributos por postMessage sin chance de hacer lookup.
+
+**Seguridad:** el filtro DEBE incluir `UserId_N eq ${req.user.id}` server-side para que el caller no pueda marcar entidades ajenas. Aplicar el mismo patrón para cualquier endpoint que use atributos de negocio: el server reduce el scope al user logueado.

@@ -20,7 +20,8 @@ import { RoleManagementView } from './views/RoleManagementView';
 
 // Hooks & Constants
 import { useHospitalState } from './hooks/useHospitalState';
-import { Role, TicketStatus } from './types';
+import { TicketStatus } from './types';
+import { can, hasModule } from './lib/permissions';
 
 import { NotificationsDropdown } from './components/NotificationsDropdown';
 import { Popover, PopoverTrigger, PopoverContent } from './components/ui/popover';
@@ -75,10 +76,21 @@ export default function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [isConfigOpen, setIsConfigOpen] = useState(state.currentView === 'USERS' || (state.currentView as string) === 'ROLES');
 
-  // Open Area Selection on login only if Hostess has NO areas from ABM
+  // Open Area Selection on login only if the user's role filters by floors AND has none assigned yet.
+  // Cubre HOSTESS, CATERING y cualquier rol nuevo con FiltrarPisos_RT=Sí.
   useEffect(() => {
-    if (state.currentUser?.role === Role.HOSTESS && (!state.currentUser.assignedAreas || state.currentUser.assignedAreas.length === 0)) {
+    if (state.currentUser?.filterByFloors && (!state.currentUser.assignedAreas || state.currentUser.assignedAreas.length === 0)) {
       setIsAreaSelectionOpen(true);
+    }
+  }, [state.currentUser?.id]);
+
+  // Logout silencioso una vez para usuarios que quedaron logueados pre-refactor
+  // (sin permissions / modules en localStorage). Re-loguean y reciben la config nueva.
+  useEffect(() => {
+    const u = state.currentUser;
+    if (u && (!Array.isArray(u.permissions) || !Array.isArray(u.modules))) {
+      console.log('[App] User without permissions/modules — forcing re-login to pick up role config');
+      actions.handleLogout();
     }
   }, [state.currentUser?.id]);
 
@@ -106,18 +118,23 @@ export default function App() {
     setIsNewRequestOpen(false);
   };
 
-  // Admin y Admisión: acceso completo (Monitor, Operativa, Historial, Mapa de Camas)
-  const hasFullAccess = state.currentUser?.role === Role.ADMIN ||
-    state.currentUser?.role === Role.ADMISSION;
+  // Vistas accesibles (Acceso_RT del rol). Si el back devolvió `modules`, manda eso;
+  // si no (fail-open en caso de rol no migrado), el hook ya forzó logout — acá quedan flags safe-default.
+  const canViewMonitor   = hasModule(state.currentUser, 'Home');
+  const canViewOperativa = hasModule(state.currentUser, 'Operativa');
+  const canViewHistorial = hasModule(state.currentUser, 'Historial');
+  const canViewBeds      = hasModule(state.currentUser, 'Mapa de Camas');
+  const canViewConfig    = hasModule(state.currentUser, 'Configuracion');
 
-  // Solo Admin: Configuración / Usuarios
-  const isAdmin = state.currentUser?.role === Role.ADMIN;
+  // Subsections de Configuración por permiso fino.
+  const canSeeUsers = canViewConfig && can(state.currentUser, 'abm_usuarios');
+  const canSeeRoles = canViewConfig && can(state.currentUser, 'abm_roles');
 
-  // Azafata: Operativa + Mapa de Camas
-  const hasAzafataAccess = state.currentUser?.role === Role.HOSTESS;
+  // Filtro por pisos asignados (Azafata, Catering, o cualquier rol nuevo con FiltrarPisos_RT=Sí).
+  const hasAzafataAccess = !!state.currentUser?.filterByFloors;
 
-  // Cualquier role con al menos acceso a Operativa
-  const hasOperationalAccess = hasFullAccess || hasAzafataAccess;
+  // Alias legacy — cualquier rol con vista de Operativa.
+  const hasOperationalAccess = canViewOperativa;
 
   // Force view to BEDS if read-only and trying to access other views (or default)
   // This effect could be better handled in useEffect, but for now we control rendering.
@@ -232,21 +249,25 @@ export default function App() {
         <nav className="flex-1 p-3 flex flex-col">
           <div className="space-y-1">
             <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-white/30 px-3 mb-1 block">Menú Principal</span>
-            {hasFullAccess && (
-              <>
-                <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'HOME' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('HOME')}><HomeIcon className="w-4 h-4" />Monitor</Button>
-                <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'REQUESTS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('REQUESTS')}><LayoutDashboard className="w-4 h-4" />Operativa</Button>
-              </>
+            {canViewMonitor && (
+              <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'HOME' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('HOME')}><HomeIcon className="w-4 h-4" />Monitor</Button>
             )}
-            {hasAzafataAccess && (
+            {canViewOperativa && !hasAzafataAccess && (
               <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'REQUESTS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('REQUESTS')}><LayoutDashboard className="w-4 h-4" />Operativa</Button>
             )}
-            <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'HISTORY' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('HISTORY')}><History className="w-4 h-4" />Historial</Button>
-            <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'BEDS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('BEDS')}><Menu className="w-4 h-4" />Mapa de Camas</Button>
+            {hasAzafataAccess && canViewOperativa && (
+              <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'REQUESTS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('REQUESTS')}><LayoutDashboard className="w-4 h-4" />Operativa</Button>
+            )}
+            {canViewHistorial && (
+              <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'HISTORY' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('HISTORY')}><History className="w-4 h-4" />Historial</Button>
+            )}
+            {canViewBeds && (
+              <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'BEDS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('BEDS')}><Menu className="w-4 h-4" />Mapa de Camas</Button>
+            )}
           </div>
 
-          {/* Configuración — collapsible, solo admin */}
-          {isAdmin && (
+          {/* Configuración — collapsible. Visible si el rol tiene Acceso_RT incluyendo Configuracion. */}
+          {canViewConfig && (canSeeUsers || canSeeRoles) && (
             <div className="mt-auto pt-3 border-t border-white/10">
               <button
                 onClick={() => setIsConfigOpen(v => !v)}
@@ -260,8 +281,8 @@ export default function App() {
               </button>
               {isConfigOpen && (
                 <div className="ml-4 mt-1 space-y-0.5 border-l border-white/10 pl-3">
-                  <Button variant="ghost" className={cn("w-full justify-start gap-3 h-9 rounded-lg text-sm", state.currentView === 'USERS' ? 'bg-white/15 text-white font-bold' : 'text-white/60 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('USERS')}><Users className="w-3.5 h-3.5" />Usuarios</Button>
-                  <Button variant="ghost" className={cn("w-full justify-start gap-3 h-9 rounded-lg text-sm", state.currentView === 'ROLES' as any ? 'bg-white/15 text-white font-bold' : 'text-white/60 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('ROLES' as any)}><Settings className="w-3.5 h-3.5" />Roles</Button>
+                  {canSeeUsers && <Button variant="ghost" className={cn("w-full justify-start gap-3 h-9 rounded-lg text-sm", state.currentView === 'USERS' ? 'bg-white/15 text-white font-bold' : 'text-white/60 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('USERS')}><Users className="w-3.5 h-3.5" />Usuarios</Button>}
+                  {canSeeRoles && <Button variant="ghost" className={cn("w-full justify-start gap-3 h-9 rounded-lg text-sm", state.currentView === 'ROLES' as any ? 'bg-white/15 text-white font-bold' : 'text-white/60 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('ROLES' as any)}><Settings className="w-3.5 h-3.5" />Roles</Button>}
                 </div>
               )}
             </div>
@@ -319,20 +340,24 @@ export default function App() {
             <nav className="flex-1 p-3 flex flex-col overflow-y-auto">
               <div className="space-y-1">
                 <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-white/30 px-3 mb-1 block">Menú Principal</span>
-                {hasFullAccess && (
-                  <>
-                    <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'HOME' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('HOME'); setIsMobileMenuOpen(false); }}><HomeIcon className="w-4 h-4" />Monitor</Button>
-                    <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'REQUESTS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('REQUESTS'); setIsMobileMenuOpen(false); }}><LayoutDashboard className="w-4 h-4" />Operativa</Button>
-                  </>
+                {canViewMonitor && (
+                  <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'HOME' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('HOME'); setIsMobileMenuOpen(false); }}><HomeIcon className="w-4 h-4" />Monitor</Button>
                 )}
-                {hasAzafataAccess && (
+                {canViewOperativa && !hasAzafataAccess && (
                   <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'REQUESTS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('REQUESTS'); setIsMobileMenuOpen(false); }}><LayoutDashboard className="w-4 h-4" />Operativa</Button>
                 )}
-                <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'HISTORY' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('HISTORY'); setIsMobileMenuOpen(false); }}><History className="w-4 h-4" />Historial</Button>
-                <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'BEDS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('BEDS'); setIsMobileMenuOpen(false); }}><Menu className="w-4 h-4" />Mapa de Camas</Button>
+                {hasAzafataAccess && canViewOperativa && (
+                  <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'REQUESTS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('REQUESTS'); setIsMobileMenuOpen(false); }}><LayoutDashboard className="w-4 h-4" />Operativa</Button>
+                )}
+                {canViewHistorial && (
+                  <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'HISTORY' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('HISTORY'); setIsMobileMenuOpen(false); }}><History className="w-4 h-4" />Historial</Button>
+                )}
+                {canViewBeds && (
+                  <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'BEDS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('BEDS'); setIsMobileMenuOpen(false); }}><Menu className="w-4 h-4" />Mapa de Camas</Button>
+                )}
               </div>
 
-              {isAdmin && (
+              {canViewConfig && (canSeeUsers || canSeeRoles) && (
                 <div className="mt-auto pt-3 border-t border-white/10">
                   <button
                     onClick={() => setIsConfigOpen(v => !v)}
@@ -346,8 +371,8 @@ export default function App() {
                   </button>
                   {isConfigOpen && (
                     <div className="ml-4 mt-1 space-y-0.5 border-l border-white/10 pl-3">
-                      <Button variant="ghost" className={cn("w-full justify-start gap-3 h-9 rounded-lg text-sm", state.currentView === 'USERS' ? 'bg-white/15 text-white font-bold' : 'text-white/60 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('USERS'); setIsMobileMenuOpen(false); }}><Users className="w-3.5 h-3.5" />Usuarios</Button>
-                      <Button variant="ghost" className={cn("w-full justify-start gap-3 h-9 rounded-lg text-sm", state.currentView === 'ROLES' as any ? 'bg-white/15 text-white font-bold' : 'text-white/60 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('ROLES' as any); setIsMobileMenuOpen(false); }}><Settings className="w-3.5 h-3.5" />Roles</Button>
+                      {canSeeUsers && <Button variant="ghost" className={cn("w-full justify-start gap-3 h-9 rounded-lg text-sm", state.currentView === 'USERS' ? 'bg-white/15 text-white font-bold' : 'text-white/60 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('USERS'); setIsMobileMenuOpen(false); }}><Users className="w-3.5 h-3.5" />Usuarios</Button>}
+                      {canSeeRoles && <Button variant="ghost" className={cn("w-full justify-start gap-3 h-9 rounded-lg text-sm", state.currentView === 'ROLES' as any ? 'bg-white/15 text-white font-bold' : 'text-white/60 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('ROLES' as any); setIsMobileMenuOpen(false); }}><Settings className="w-3.5 h-3.5" />Roles</Button>}
                     </div>
                   )}
                 </div>
@@ -368,7 +393,7 @@ export default function App() {
               </Button>
             )}
             <div className="flex items-center gap-1 sm:gap-3 pl-1 sm:pl-4 border-l border-slate-100">
-              {(hasFullAccess || hasAzafataAccess) && (
+              {can(state.currentUser, 'recibe_push') && (
                 <Popover open={isNotificationsOpen} onOpenChange={setIsNotificationsOpen}>
                   <PopoverTrigger asChild>
                     <Button variant="ghost" size="icon" className="relative w-10 h-10 sm:w-9 sm:h-9 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 active:bg-slate-200">
@@ -383,12 +408,13 @@ export default function App() {
                     sideOffset={-40} 
                     className="p-0 w-[calc(100vw-1.5rem)] sm:w-[380px] border-none shadow-[0_20px_50px_rgba(0,0,0,0.3)] rounded-2xl z-[9999] outline-none animate-in fade-in zoom-in-95 duration-200 origin-top-right"
                   >
-                    <NotificationsDropdown 
-                      notifications={state.filteredNotifications} 
+                    <NotificationsDropdown
+                      notifications={state.filteredNotifications}
                       onNotificationClick={(n) => {
-                        actions.handleMarkNotificationRead(n.id);
+                        // Pasamos la notif completa para que mark-by-event pueda linkear
+                        // la notif local (NOTIF-*) con su contrapartida SP por ticketId+type.
+                        actions.handleMarkNotificationRead(n);
                         setIsNotificationsOpen(false);
-                        // Optional: navigate to the ticket if needed
                       }}
                       onMarkAllAsRead={actions.handleMarkAllNotificationsRead}
                       onClose={() => setIsNotificationsOpen(false)}
@@ -396,7 +422,7 @@ export default function App() {
                   </PopoverContent>
                 </Popover>
               )}
-              {state.currentUser?.role === Role.HOSTESS && (
+              {hasAzafataAccess && (
                 <span className="h-10 sm:h-8 text-xs sm:text-[10px] font-black uppercase tracking-wider px-2 sm:px-2 rounded-xl border border-zinc-200 bg-zinc-50 shadow-sm flex items-center">
                   SECTORES: {state.currentUser.assignedAreas?.length || 0}
                 </span>
@@ -446,8 +472,8 @@ export default function App() {
         )}
 
         <main className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 bg-slate-50/50 relative overscroll-y-contain">
-          {/* Monitor — solo Admin y Admisión */}
-          {hasFullAccess && state.currentView === 'HOME' && <DashboardView tickets={state.filteredTickets} />}
+          {/* Monitor — Admin, Admisión y Dirección (lectura) */}
+          {canViewMonitor && state.currentView === 'HOME' && <DashboardView tickets={state.filteredTickets} />}
           {/* Operativa — Admin, Admisión y Azafata */}
           {hasOperationalAccess && state.currentView === 'REQUESTS' && (
             <RequestsView
@@ -470,14 +496,14 @@ export default function App() {
               isolatedPatients={state.isolatedPatients}
             />
           )}
-          {/* Historial — todos los roles */}
-          {state.currentView === 'HISTORY' && <HistoryView tickets={state.historyTickets} />}
-          {/* Usuarios — solo Admin */}
-          {isAdmin && state.currentView === 'USERS' && <UserManagementView currentUser={state.currentUser} />}
-          {/* Roles — solo Admin */}
-          {isAdmin && (state.currentView as string) === 'ROLES' && <RoleManagementView currentUser={state.currentUser} />}
-          {/* Mapa de Camas — visible para todos los roles cuando es la vista activa */}
-          {state.currentView === 'BEDS' && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} isolatedPatients={state.isolatedPatients} onToggleIsolation={actions.toggleIsolation} onEnrichBed={actions.enrichBed} onRefresh={actions.refreshAll} />}
+          {/* Historial — gateado por Acceso_RT */}
+          {canViewHistorial && state.currentView === 'HISTORY' && <HistoryView tickets={state.historyTickets} />}
+          {/* Usuarios — gateado por permiso abm_usuarios */}
+          {canSeeUsers && state.currentView === 'USERS' && <UserManagementView currentUser={state.currentUser} />}
+          {/* Roles — gateado por permiso abm_roles */}
+          {canSeeRoles && (state.currentView as string) === 'ROLES' && <RoleManagementView currentUser={state.currentUser} />}
+          {/* Mapa de Camas — gateado por Acceso_RT */}
+          {canViewBeds && state.currentView === 'BEDS' && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} isolatedPatients={state.isolatedPatients} onToggleIsolation={actions.toggleIsolation} onEnrichBed={actions.enrichBed} onRefresh={actions.refreshAll} />}
         </main>
       </div>
 
@@ -547,7 +573,7 @@ export default function App() {
                   <p className="text-[10px] text-slate-400 mt-0.5">{n.fecha ? new Date(n.fecha).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}</p>
                 </div>
                 <button
-                  onClick={() => actions.handleMarkNotificationRead(n.id)}
+                  onClick={() => actions.handleMarkNotificationRead(n)}
                   className="text-[9px] font-bold uppercase text-emerald-600 hover:text-emerald-800 border border-emerald-200 rounded-lg px-2 py-1 hover:bg-emerald-50 transition-colors shrink-0"
                 >
                   Leída
@@ -565,10 +591,8 @@ export default function App() {
             <div className="border-t border-slate-100 pt-3 flex gap-2">
               <button
                 onClick={() => {
-                  // Mark all SP notifications as read
-                  (state.unreadSpNotifications ?? []).forEach((n: any) => {
-                    actions.handleMarkNotificationRead(n.id);
-                  });
+                  // Una sola llamada: el handler usa el endpoint bulk y maneja errores
+                  // internamente. Antes acá había forEach + call all → 2N PATCH duplicados.
                   actions.handleMarkAllNotificationsRead();
                   setIsUnreadModalOpen(false);
                 }}

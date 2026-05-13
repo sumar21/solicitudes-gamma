@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { User, Role, Area } from '../types';
+import { User, Area } from '../types';
 import { Users, Plus, Search, X, Eye, EyeOff, AlertCircle, CheckCircle2, Pencil, Trash2 } from '../components/Icons';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
@@ -27,12 +27,20 @@ interface SPUser {
   assignedFloors: string;
 }
 
-// Fallback roles (used until SP roles load)
-const DEFAULT_ROLE_OPTIONS = [
-  { label: 'Admin', value: 'Admin' },
-  { label: 'Admision', value: 'Admision' },
-  { label: 'Azafata', value: 'Azafata' },
-  { label: 'Enfermeria', value: 'Enfermeria' },
+// Cada rol viene con su flag filterByFloors: si está en true, el modal pide los pisos.
+interface RoleOption {
+  label: string;
+  value: string;
+  filterByFloors: boolean;
+}
+
+// Fallback roles (used until SP roles load). Default filterByFloors=false; el server
+// lo va a corregir al cargar la lista real.
+const DEFAULT_ROLE_OPTIONS: RoleOption[] = [
+  { label: 'Admin', value: 'Admin', filterByFloors: false },
+  { label: 'Admision', value: 'Admision', filterByFloors: false },
+  { label: 'Azafata', value: 'Azafata', filterByFloors: true },
+  { label: 'Enfermeria', value: 'Enfermeria', filterByFloors: false },
 ];
 
 // All available areas/sectors for azafata assignment
@@ -72,7 +80,12 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
   const [saving, setSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<SPUser | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const [roleOptions, setRoleOptions] = useState(DEFAULT_ROLE_OPTIONS);
+  const [roleOptions, setRoleOptions] = useState<RoleOption[]>(DEFAULT_ROLE_OPTIONS);
+
+  // Devuelve true si el rol elegido por nombre filtra por pisos (lookup en roleOptions).
+  const roleFiltersByFloors = (roleName: string): boolean => {
+    return roleOptions.find(r => r.value === roleName)?.filterByFloors ?? false;
+  };
 
   const token = localStorage.getItem('mediflow_token');
 
@@ -101,14 +114,19 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
 
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
-  // Load roles from SP
+  // Load roles from SP — extender con filterByFloors para condicionar el selector de pisos
+  // en el modal de usuarios.
   useEffect(() => {
     authFetch('/api/roles').then(async r => {
       if (!r.ok) return;
       const data = await r.json();
-      const roles = (data.roles ?? []) as { name: string }[];
+      const roles = (data.roles ?? []) as { name: string; filterByFloors?: boolean }[];
       if (roles.length > 0) {
-        setRoleOptions(roles.map(r => ({ label: r.name, value: r.name })));
+        setRoleOptions(roles.map(r => ({
+          label: r.name,
+          value: r.name,
+          filterByFloors: !!r.filterByFloors,
+        })));
       }
     }).catch(() => {});
   }, [authFetch]);
@@ -164,9 +182,8 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
         ? `${form.lastName}, ${form.firstName}`
         : form.firstName;
 
-      // Azafata y Catering usan sectores asignados (Catering los necesita para filtrar
-       // sus notificaciones push de recepción confirmada).
-      const assignedFloorsStr = (form.role === 'Azafata' || form.role === 'Catering')
+      // Solo se guardan pisos para roles configurados con FiltrarPisos_RT=Sí.
+      const assignedFloorsStr = roleFiltersByFloors(form.role)
         ? form.assignedFloors.join(';')
         : '';
 
@@ -311,7 +328,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
             {u.email && (
               <div className="text-[10px] text-slate-500 mb-2">{u.email}</div>
             )}
-            {u.role === 'Azafata' && u.assignedFloors && (() => {
+            {roleFiltersByFloors(u.role) && u.assignedFloors && (() => {
               const floors = u.assignedFloors.split(';').filter(Boolean);
               const allSelected = floors.length === AREA_OPTIONS.length;
               return (
@@ -384,7 +401,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    {u.role === 'Azafata' && u.assignedFloors ? (() => {
+                    {roleFiltersByFloors(u.role) && u.assignedFloors ? (() => {
                       const floors = u.assignedFloors.split(';').filter(Boolean);
                       const allSelected = floors.length === AREA_OPTIONS.length;
                       if (allSelected) return <Badge variant="outline" className="text-[9px] bg-emerald-50 text-emerald-700 border-emerald-200">Todos los sectores</Badge>;
@@ -460,7 +477,12 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
                 <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Rol / Perfil *</Label>
                 <SearchableSelect
                   value={form.role}
-                  onValueChange={val => setForm(f => ({ ...f, role: val, assignedFloors: val !== 'Azafata' ? [] : f.assignedFloors }))}
+                  onValueChange={val => setForm(f => ({
+                    ...f,
+                    role: val,
+                    // Si el nuevo rol no filtra por pisos, limpiar la selección previa.
+                    assignedFloors: roleFiltersByFloors(val) ? f.assignedFloors : [],
+                  }))}
                   options={roleOptions}
                   placeholder="Seleccionar rol"
                   showSearch={false}
@@ -512,8 +534,9 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
               />
             </div>
 
-            {/* Row 4: Sectores — Azafata y Catering (Catering recibe push al confirmar recepción filtradas por área) */}
-            {(form.role === 'Azafata' || form.role === 'Catering') && (
+            {/* Row 4: Sectores — visible si el rol tiene FiltrarPisos_RT=Sí. Cubre Azafata,
+                Catering y cualquier rol nuevo con el flag. */}
+            {roleFiltersByFloors(form.role) && (
                 <div className="grid gap-1.5">
                   <div className="flex items-center justify-between">
                     <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Sectores Asignados</Label>

@@ -10,6 +10,7 @@
 import { graphFetch } from './graph.js';
 import { signToken }  from './jwt.js';
 import { checkRateLimit, recordFailure, resetRateLimit, buildAuthKey } from './rate-limit.js';
+import { getRoleByName } from './role-cache.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = 'e623ad06-ff62-441f-b67d-666224af5805'; // 00.Usuarios
@@ -42,6 +43,7 @@ function mapRole(perfil: string): string {
   if (p.includes('catering'))               return 'CATERING';
   if (p.includes('housekeeping') || p.includes('mucam')) return 'HOUSEKEEPING';
   if (p.includes('enfermer') || p === 'nursing') return 'NURSING';
+  if (p.includes('direcci') || p === 'direction') return 'DIRECCION';
   return 'READ_ONLY';
 }
 
@@ -115,16 +117,28 @@ export default async function handler(req: any, res: any) {
     // Login exitoso → reset del contador
     await resetRateLimit(rateKey);
 
+    // Lookup del rol en 99.ABMRoles_Traslados para hidratar permisos / módulos /
+    // filtro de pisos. Si no se encuentra (rol borrado o nuevo sin migrar), el
+    // user queda en modo solo-lectura (permissions: [], modules: []).
+    const perfilU = String(fields.Perfil_U ?? '');
+    const roleCfg = await getRoleByName(perfilU);
+
     // Construir objeto User (internal SP field names)
     const user = {
       id:        spId,
       name:      String(fields.ConcatName_Usr ?? fields.Nombre_Usr ?? fields.Title ?? username),
       email:     String(fields.Mail_U     ?? ''),
-      role:      mapRole(String(fields.Perfil_U ?? 'ADMISSION')),
+      role:      mapRole(perfilU || 'ADMISSION'),
       sede:      String(fields.Sede_U     ?? 'HPR'),
       avatar:         '',
       assignedFloors: decodeFloors(String(fields.PisosAzafata_u ?? '')),
       lastLogin:      new Date().toISOString(),
+      // Configuración runtime desde SP. Vacíos = modo seguro (sin acciones).
+      permissions:    roleCfg?.permissions ?? [],
+      modules:        roleCfg?.modules ?? [],
+      filterByFloors: roleCfg?.filterByFloors ?? false,
+      // NombreRol_RT crudo, usado para reverse-lookup desde push-utils.
+      roleName:       roleCfg?.name ?? perfilU,
     };
 
     // Firmar JWT (8h)

@@ -5,6 +5,7 @@
 
 import webpush from 'web-push';
 import { graphFetch } from './graph.js';
+import { getRoleByName, type RoleConfig } from './role-cache.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = '648fde7b-89d2-40ac-bc4a-63661508b50a'; // 09.PushSubscriptions
@@ -109,32 +110,35 @@ function subAreaMatches(sub: Subscription, params: PushParams): boolean {
   return matchesLegacy(originArea) || matchesLegacy(destinationArea);
 }
 
-function isRelevant(sub: Subscription, params: PushParams): boolean {
+// Decide si una suscripción es relevante para el push actual. Filtra por:
+//  · sede / excludeUser (no son permisos — comportamiento universal)
+//  · permiso `recibe_push` en el rol (configurable en 99.ABMRoles_Traslados)
+//  · filtro por pisos asignados si el rol tiene FiltrarPisos_RT=Sí
+//
+// Caso especial Catering: si el nombre del rol es "Catering", se restringe a
+// los eventos RECEPTION_CONFIRMED y DIET_CHANGE. Esta granularidad por tipo
+// de evento no está modelada como permiso (sería 2 permisos extra solo para
+// un rol). Si en el futuro se necesita, se modelan como recibe_recepcion /
+// recibe_dieta. TODO si crece la matriz.
+function isRelevant(sub: Subscription, params: PushParams, roleCfg: RoleConfig | null): boolean {
   // Exclude the user who triggered the action
   if (params.excludeUserId && sub.userId === params.excludeUserId) return false;
 
   // Filter by sede
   if (params.sede && sub.sede && sub.sede !== params.sede && sub.sede !== 'SUMAR') return false;
 
-  const role = sub.role.toUpperCase();
+  // Rol no configurado o sin permiso `recibe_push` → no recibe nada.
+  if (!roleCfg || !roleCfg.permissions.includes('recibe_push')) return false;
 
-  // Admin and Admission receive all notifications
-  if (role === 'ADMIN' || role === 'ADMISSION') return true;
-
-  // Hostess: only if ticket area intersects their assigned areas
-  if (role === 'HOSTESS') return subAreaMatches(sub, params);
-
-  // Catering: dos eventos relevantes
-  //   · 'RECEPTION_CONFIRMED' — la azafata confirmó recepción del paciente.
-  //   · 'DIET_CHANGE'         — cron detectó cambio de dieta en PROGAL.
-  // En ambos casos se filtra por área del paciente (igual que HOSTESS).
-  if (role === 'CATERING') {
+  // Caso especial Catering — restricción por tipo de evento.
+  if (roleCfg.name.toLowerCase() === 'catering') {
     if (params.type !== 'RECEPTION_CONFIRMED' && params.type !== 'DIET_CHANGE') return false;
-    return subAreaMatches(sub, params);
   }
 
-  // Other roles: no push notifications
-  return false;
+  // Si el rol filtra por pisos, validar que la cama del ticket caiga en las
+  // áreas asignadas del subscriber. Sin filtro → recibe todo lo del sede.
+  if (roleCfg.filterByFloors) return subAreaMatches(sub, params);
+  return true;
 }
 
 async function deleteSubscription(spItemId: string): Promise<void> {
@@ -158,7 +162,14 @@ export async function sendPushToSubscribers(params: PushParams): Promise<void> {
   console.log(`[push-utils] Found ${subs.length} total subscription(s)`);
   subs.forEach(s => console.log(`  - user=${s.userId} role=${s.role} areas=${s.assignedAreas.join(',')}`));
 
-  const relevant = subs.filter(s => isRelevant(s, params));
+  // Pre-cargar config de cada rol único de las subs (cache 5min, evita N fetches).
+  const uniqueRoles = Array.from(new Set(subs.map(s => s.role).filter(Boolean)));
+  const roleCfgByName = new Map<string, RoleConfig | null>();
+  await Promise.all(uniqueRoles.map(async r => {
+    roleCfgByName.set(r, await getRoleByName(r));
+  }));
+
+  const relevant = subs.filter(s => isRelevant(s, params, roleCfgByName.get(s.role) ?? null));
   console.log(`[push-utils] ${relevant.length} relevant after filtering`);
 
   if (relevant.length === 0) { console.log('[push-utils] No relevant subscribers, skipping'); return; }

@@ -753,3 +753,128 @@ El frontend tiene un **detector de cambios** en el polling que, además del toas
 Razón del bloqueo total para Catering: el server-side push ya filtra los 2 únicos eventos relevantes para Catering por área. Mantener el detector local activo generaba duplicados / falsos positivos (ej: "Nueva Solicitud de Traslado" del polling cuando se crea un ticket en otro piso, evento que el server explícitamente había bloqueado).
 
 [hooks/useHospitalState.ts:707-722](hooks/useHospitalState.ts#L707) — `filteredNotifications` (dropdown) sigue la misma lógica por consistencia.
+
+---
+
+## 26. Permisos configurables por rol desde SharePoint (2026-05-13)
+
+Hasta esta iteración, los permisos de acción (Crear Ticket, Editar, Cancelar, Confirmar Limpieza, etc.) estaban hardcodeados en ~15 puntos del frontend con checks tipo `role === Role.ADMIN || Role.ADMISSION`. Cambiar permisos requería deploy. Ahora se configuran desde `99.ABMRoles_Traslados` y se reflejan al re-loguear.
+
+### 26.1. Esquema en SharePoint (`99.ABMRoles_Traslados`)
+
+Tres columnas relevantes (las dos últimas son nuevas):
+
+| Campo SP | Tipo | Descripción |
+|---|---|---|
+| `NombreRol_RT` | Text | "Admin", "Admision", "Azafata", "Catering", "Enfermeria", "Direccion" |
+| `Acceso_RT` | Text | Módulos visibles, separados por `/` (ej: `Home/Operativa/Historial/Mapa de Camas`) |
+| `Permisos_RT` | Text | Permisos de acción, separados por `;` (ver catálogo abajo) |
+| `FiltrarPisos_RT` | Text/Choice | `Sí` / `No` — si filtra view por pisos asignados |
+| `Status_RT` | Text | `Activo` / `Inactivo` |
+
+### 26.2. Catálogo cerrado de 12 permisos
+
+Definido como `as const` en [types.ts](types.ts):
+
+| Módulo | Código | Acción |
+|---|---|---|
+| Operativa | `crear_ticket` | Botón "Nueva Solicitud" |
+| | `editar_ticket` | Editar ticket activo |
+| | `cancelar_ticket` | Cancelar ticket |
+| | `asignar_cama` | Asignar/cambiar cama destino |
+| | `confirmar_limpieza` | "Habitación Lista" |
+| | `iniciar_traslado` | "Iniciar Traslado" |
+| | `confirmar_recepcion` | "Recepción OK" |
+| | `consolidar` | "Consolidar PROGAL" |
+| Mapa de Camas | `editar_aislamiento` | Toggle aislamientos en modal cama |
+| Configuración | `abm_usuarios` | Vista Usuarios |
+| | `abm_roles` | Vista Roles |
+| Notif. | `recibe_push` | Recibe push + notif in-app + campana |
+
+### 26.3. Flujo de datos
+
+```
+SP 99.ABMRoles_Traslados              api/auth.ts (login)          Frontend
+─────────────────────                 ──────────────────          ──────────
+Acceso_RT: Home/Operativa/...         getRoleByName(Perfil_U)  →  user.modules: string[]
+Permisos_RT: crear_ticket;...    ─►   role-cache (TTL 5min)    ─► user.permissions: Permission[]
+FiltrarPisos_RT: Sí                   enriquece user           →  user.filterByFloors: boolean
+NombreRol_RT: Azafata                                          →  user.roleName: string
+```
+
+Helper de check en [lib/permissions.ts](lib/permissions.ts):
+- `can(user, 'crear_ticket')` — devuelve `boolean`.
+- `hasModule(user, 'Operativa')` — verifica acceso a vista.
+
+Sin permissions (token viejo pre-refactor): `App.tsx` fuerza logout silencioso en el boot para que el user re-loguee y reciba la config nueva.
+
+### 26.4. Cache server-side de roles
+
+[api/role-cache.ts](api/role-cache.ts) cachea la lista de roles activos con TTL 5 min. Se invalida tras mutaciones POST/PATCH/DELETE en `api/roles.ts`. Sin el cache, cada login y cada filtrado de push haría un fetch a SP — insostenible con polling.
+
+### 26.5. ABM de Roles (UI)
+
+[views/RoleManagementView.tsx](views/RoleManagementView.tsx) modal extendido con:
+- Sección "Permisos de Acciones" agrupada por módulo, colapsable por grupo (Operativa, Mapa de Camas, Configuración, Notificaciones).
+- Toggle radio "Filtrado por pisos asignados: Sí / No".
+- Cada grupo de permisos solo aparece si el módulo correspondiente está habilitado en "Módulos de Acceso" (excepto el grupo "Notificaciones" que es cross-module).
+- Tabla desktop incluye columnas "Permisos" (count) y "Filtra pisos".
+
+### 26.6. ABM de Usuarios (UI condicional por rol)
+
+[views/UserManagementView.tsx](views/UserManagementView.tsx) carga los roles desde `/api/roles` con el flag `filterByFloors`. El selector de pisos en el modal de alta/edición se muestra **solo si el rol elegido tiene `FiltrarPisos_RT=Sí`** (antes era hardcoded `role === 'Azafata' || 'Catering'`). Al cambiar el rol, si el nuevo no filtra → la selección de pisos se limpia.
+
+### 26.7. Filtro de tickets/camas por pisos (genérico)
+
+El filtro por pisos asignados, antes en hardcode `Role.HOSTESS` / `[HOSTESS, CATERING]`, ahora se gobierna por `user.filterByFloors`:
+- [hooks/useHospitalState.ts](hooks/useHospitalState.ts) `filteredTickets`, `filteredNotifications`, AreaSelectionModal trigger.
+- [views/RequestsView.tsx](views/RequestsView.tsx) filtro de tickets + render de botones de azafata.
+- [views/BedsView.tsx](views/BedsView.tsx) preselección inicial de `areaFilters`.
+
+Bypass implícito: cuando un Admin "actúa como" azafata (tab switcher), su `filterByFloors=false` → ve todo sin filtro de áreas.
+
+### 26.8. Push server-side respeta `recibe_push` + `filterByFloors`
+
+[api/push-utils.ts](api/push-utils.ts) `isRelevant` ahora:
+1. Lookup del rol via `getRoleByName(sub.role)` (cache).
+2. Si el rol NO tiene `recibe_push` → no recibe nada.
+3. Si tiene `filterByFloors=true` → aplica `subAreaMatches` por áreas asignadas.
+4. Si tiene `filterByFloors=false` → recibe todo del sede.
+5. **Excepción Catering** (caso especial mantenido): si `roleConfig.name === 'Catering'`, restringe a `RECEPTION_CONFIRMED` y `DIET_CHANGE` (no es permiso fino — comportamiento específico de ese rol).
+
+---
+
+## 27. Marcar notificaciones como leídas al interactuar (2026-05-13)
+
+Mejora del flujo de "leído". Antes el click en una notif del dropdown solo flipeaba el estado local (`isRead: true`) sin tocar la fila SP — el banner de "20 min sin confirmar" la volvía a mostrar. Tap en push del SO no marcaba nada.
+
+### 27.1. Endpoint `PATCH /api/notifications` extendido con `mark-by-event`
+
+Tres formas de body aceptadas en [api/notifications.ts](api/notifications.ts):
+- `{ notificationId: string }` — single (legacy)
+- `{ notificationIds: string[] }` — bulk (legacy)
+- **`{ ticketId: string, type: string }`** — NUEVO: busca en `10.Notificaciones` la(s) fila(s) que machean `TicketId_N + Type_N + UserId_N (logueado) + Status_N='Enviada' + Entorno_N`, las marca todas como `Leida`. Útil cuando el cliente solo conoce `ticketId+type` (notifs locales del polling, o tap de push desde SW).
+
+Respuesta unificada: `{ ok, updated, failed }`. 500 si TODAS fallaron, 200 si parcial.
+
+### 27.2. Click en notif del dropdown in-app
+
+[hooks/useHospitalState.ts](hooks/useHospitalState.ts) `handleMarkNotificationRead(notif)` ahora acepta el objeto Notification completo (antes solo `id`):
+- Si `id` no tiene prefijo `NOTIF-` (es SP item id) → PATCH por id (camino legacy).
+- Si es local (`NOTIF-POLL-*`) y tiene `ticketId+type` → PATCH mark-by-event → marca la fila SP que corresponde al user logueado.
+
+Callers en [App.tsx](App.tsx): dropdown + modal de pendientes pasan la notif completa (`n` no `n.id`).
+
+### 27.3. Tap en push del SO (Android/iOS)
+
+El service worker no tiene acceso al JWT, así que delega al cliente. [src-sw/sw.ts](src-sw/sw.ts) `notificationclick`:
+- App ya abierta → `existing.focus()` + `existing.postMessage({ kind: 'notification-clicked', ticketId, type })`.
+- App cerrada → `clients.openWindow('/?notifTicketId=X&notifType=Y')`.
+
+[hooks/useHospitalState.ts](hooks/useHospitalState.ts) escucha ambos paths:
+- `navigator.serviceWorker.addEventListener('message', ...)` captura el postMessage.
+- `useEffect` al mount con `currentUser` lee `window.location.search` y llama `markNotificationByEvent(ticketId, type)`. Después limpia los query params con `history.replaceState` para que no se re-dispare en refresh.
+
+### 27.4. Caso DIET_CHANGE (sin ticketId)
+
+[api/cron-diet-changes.ts](api/cron-diet-changes.ts) no incluye `ticketId` en su push (es un evento de cama, no de ticket). El endpoint mark-by-event responde `{ ok: true, updated: 0 }` y la notif queda en el banner hasta que el user la marque manualmente con "Marcar todas como leídas" del modal de pendientes. Aceptable porque DIET_CHANGE no genera notif local (solo push).

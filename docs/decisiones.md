@@ -861,3 +861,85 @@ Resultado del bug: Catering recibía "Nueva Solicitud de Traslado" (NEW_TICKET) 
 **Trade-off aceptado:** si Catering tiene la app abierta y otro user marca "Recepción OK", no verá toast in-app instantáneo. El push del server llegará en ms-segundos (más confiable, y único punto de verdad). Aceptable porque Catering usa la app más como visualización que como operativa en tiempo real.
 
 **Para futuras notifs específicas de Catering**: que vengan exclusivamente del server-side via push. El cliente NO disparará nada local para este rol.
+
+---
+
+## 16. Decisiones recientes (2026-05-13)
+
+### 16.1. Permisos por rol configurables desde SP (no hardcoded en código)
+
+**Qué:** Cada rol en `99.ABMRoles_Traslados` tiene un campo `Permisos_RT` con un catálogo cerrado de 12 permisos de acción (`crear_ticket`, `editar_ticket`, etc.). El frontend usa un helper `can(user, 'permiso')` en vez de checks `role === Role.X`. Configurable desde el ABM de Roles sin deploy.
+
+**Por qué:** El sistema venía creciendo con roles ad-hoc (CATERING, DIRECCION) y cada uno requería ~15 cambios de gates hardcodeados en el frontend. Cuando Jorge pidió "DIRECCION read-only de todo", el cambio implicó tocar App.tsx, useHospitalState, RequestsView, BedsView. Mover los permisos a SP permite que el admin agregue/modifique roles sin pedirle al equipo de desarrollo cada vez.
+
+**Alternativas descartadas:**
+- **Por-role config en `lib/constants.ts`**: más simple, pero requiere deploy ante cualquier cambio. Solo movería el problema de hardcode a un archivo central, no lo resolvía.
+- **Permisos por user, no por rol**: máxima flexibilidad pero ABM de Usuarios se complejiza (tildar 12 permisos por cada user). No hay caso real donde dos users del mismo rol deban tener permisos distintos.
+- **Permisos en el JWT**: dispara revocación complicada — si Jorge cambia los permisos de Dirección, los tokens viejos (8h-10 años) seguirían vigentes. Decidimos enriquecer el `User` object (que vive en localStorage, separado del JWT) — al cerrar+abrir sesión se refresca; un logout silencioso fuerza el ciclo cuando detecta que faltan permisos.
+
+**Trade-off aceptado:** un cambio en SP tarda hasta 5 min en propagarse (TTL del cache) + ciclo de re-login del usuario. Para una app con ~30 usuarios y cambios mensuales, aceptable.
+
+### 16.2. Cache server-side de roles con TTL 5 min
+
+**Qué:** [api/role-cache.ts](api/role-cache.ts) guarda la lista de roles activos en memoria por 5 minutos. Reutilizado por `api/auth.ts` (login) y `api/push-utils.ts` (filtrado de subscriptions).
+
+**Por qué:** Sin cache, cada login y cada filtro de push haría un fetch a SharePoint. El polling de tickets cada 8s acumula muchos triggers cuando hay updates frecuentes. SP es lento (300-800ms por query, sin indices buenos para nuestros filtros). El cache pasa de "N requests por segundo" a "1 request cada 5 min por cold start de Vercel".
+
+**Alternativas descartadas:**
+- **Sin cache**: latencia inaceptable y costo de SP.
+- **Cache más largo (1h)**: cambios en ABM de Roles tardarían 1h en reflejarse. Por debajo de 5 min ya tiene buen ratio sin sentirse "stale".
+- **Cache-stampede protection (singleflight)**: relevante solo bajo carga muy alta. Para nuestra escala el caso patológico es un cold start con 5 logins simultáneos — 5 fetches en paralelo, aceptable.
+
+**Trade-off aceptado:** después de editar un rol en el ABM, los users en sesión activa no ven el cambio hasta re-login. El cache se invalida explícitamente al hacer POST/PATCH/DELETE en `api/roles.ts` para el lado server, pero cada user mantiene su copia en localStorage del momento del login.
+
+### 16.3. Logout silencioso para tokens viejos sin `permissions`
+
+**Qué:** [App.tsx](App.tsx) tiene un useEffect que detecta si el `currentUser` (de localStorage) no tiene `permissions` o `modules` (campos nuevos del refactor) y dispara `handleLogout()` automáticamente.
+
+**Por qué:** Al desplegar el refactor de permisos, los users logueados tenían tokens válidos (JWT de 8h o 10 años para HOSTESS) pero el objeto `User` en localStorage no contenía `permissions`. Sin el logout forzado, los `can()` retornarían false en todo y el user perdería todos los botones de acción sin saber por qué. El re-login los sincroniza con la nueva config de SP.
+
+**Alternativas descartadas:**
+- **Migration on read**: detectar el user viejo y enriquecerlo on-the-fly llamando un nuevo endpoint `/api/me/refresh`. Más complejo, agrega un endpoint, requiere coordinación con el flow de auth.
+- **Esperar a que expire el JWT**: para HOSTESS con tokens de 10 años no es viable.
+
+**Trade-off aceptado:** un blip de "fui deslogueado al refrescar" la primera vez post-deploy. Mejor que botones que no funcionan sin feedback.
+
+### 16.4. Mark-by-event vs spItemId para marcar notif como leída
+
+**Qué:** El endpoint `PATCH /api/notifications` acepta `{ ticketId, type }` además de `{ notificationId }`. Busca y marca **todas las filas SP del user logueado** que machean `TicketId_N + Type_N + Status_N='Enviada'`.
+
+**Por qué:** Hay dos streams de notifs: las locales (`NOTIF-POLL-*`, generadas por polling) y las SP (numéricas, generadas server-side por push). Cuando el user clickea una notif local del dropdown, el cliente conoce `ticketId+type` pero NO el `spItemId` de la fila SP correspondiente (porque el push es fire-and-forget, no devuelve el id creado). Lo mismo para el tap de push: el SW recibe `ticketId+type` en el payload, no el spItemId.
+
+**Alternativas descartadas:**
+- **Devolver `spItemId` en el push payload**: requeriría que `api/push-utils.ts` espere el POST en `10.Notificaciones` antes de mandar el push (hoy es Promise.allSettled fire-and-forget). Suma latencia al push (~300ms) y acopla dos operaciones que hoy son independientes.
+- **Almacenar `spItemId` en la notif local**: necesitaría una sincronización post-hoc — el cliente recibe el push y matchea con la local. Race conditions complejas.
+- **Mark-by-event (elegido)**: simple, lookup determinístico, funciona para los casos cubiertos. La fila SP siempre tiene `TicketId_N` (excepto DIET_CHANGE que es edge case sin notif local).
+
+**Trade-off aceptado:** un lookup extra en SP por cada click. Con `filterByFloors` activo + filtros por Status_N=Enviada, el query devuelve 0-3 filas típicamente — costo mínimo.
+
+### 16.5. SW → cliente vía `postMessage` (en vez de fetch directo desde el SW)
+
+**Qué:** El service worker no hace fetch a `/api/notifications` al tap de una push. Delega al cliente: si hay un client abierto le manda `postMessage({kind, ticketId, type})`; si no, abre la app con `?notifTicketId=X&notifType=Y` y el cliente lee los params al mount.
+
+**Por qué:** El SW no tiene acceso al JWT del user (vive en localStorage del browser context, separado del SW). Las alternativas eran:
+- **Signed URLs en el push payload**: el server firma un token único para "marcar esta notif" que el SW puede usar sin JWT. Funciona pero suma criptografía y manejo de revocation.
+- **Almacenar JWT en IndexedDB para que el SW lo lea**: rompe el aislamiento de la sesión y agrega vector de ataque (XSS leyendo IndexedDB).
+- **postMessage al client (elegido)**: el cliente ya tiene el JWT y el fetch infra completa. El SW solo decide "qué cliente avisar".
+
+**Trade-off aceptado:** si el user tapea la push pero antes de que la app cargue la cierra → la notif no se marca (no llegó a disparar el fetch). El polling de 30s la traerá de vuelta al banner y el user la puede marcar manualmente. Aceptable porque en práctica el user que tapea quiere abrir la app (no cerrarla inmediatamente).
+
+### 16.6. Filtro server-side de `Status_N='Enviada'` en GET de notifications
+
+**Qué:** [api/notifications.ts](api/notifications.ts) GET filtra `fields/Status_N eq 'Enviada'` directamente en el query a SP, no en el cliente.
+
+**Por qué:** El filtro de "20 min sin confirmar" sigue siendo client-side (por simpleza — no requiere indexar `Fecha_N` en SP), pero el filtro por estado es fundamental: sin él el endpoint traía todas las notifs históricas del user (incluyendo las ya leídas). Para un user con miles de notifs en su histórico, el payload se hacía pesado y el cliente filtraba después. Mover el filtro a SP reduce el payload típico de ~500 KB a ~5 KB.
+
+**Trade-off aceptado:** el endpoint ahora es estricto sobre el campo `Status_N`. Si SP no propagó el PATCH (eventual consistency), una notif marcada como Leída puede aparecer brevemente en el siguiente GET. El cliente refresca automáticamente — el efecto es invisible en práctica.
+
+### 16.7. Eliminar permiso `editar_cama` del catálogo (YAGNI)
+
+**Qué:** Originalmente el catálogo tenía 13 permisos, incluido `editar_cama` como placeholder para una acción futura (habilitar/inhabilitar cama manualmente desde el Mapa). Se sacó.
+
+**Por qué:** No hay UI ni handler que lo use. Cumple con la regla "Don't design for hypothetical future requirements". El catálogo se mantiene cerrado y extensible — si en el futuro Jorge pide la feature, se agrega el permiso en una sola línea de `types.ts`.
+
+**Cómo se removió:** script one-shot PATCHeó Admin (13 → 12 permisos) y Admision (8 → 7 permisos). El script se borró tras correr.

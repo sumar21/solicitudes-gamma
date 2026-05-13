@@ -33,6 +33,7 @@ export enum Role {
   HOSTESS = 'HOSTESS', // Azafata
   CATERING = 'CATERING', // Catering — mismos permisos de lectura que READ_ONLY + push al confirmar recepción
   READ_ONLY = 'READ_ONLY', // Mucamas, etc. — solo vista, sin push
+  DIRECCION = 'DIRECCION', // Dirección — ve TODO (Home, Operativa, Historial, Mapa) pero no ejecuta acciones ni recibe notificaciones
 }
 
 export enum Area {
@@ -101,6 +102,22 @@ export interface SortConfig {
   direction: SortDirection;
 }
 
+// Catálogo cerrado de permisos de acción. Se persiste en SP (99.ABMRoles_Traslados,
+// columna Permisos_RT) como string separado por ';'. El helper `can(user, perm)`
+// chequea contra user.permissions al renderizar botones / disparar mutaciones.
+export const PERMISSIONS = [
+  'crear_ticket','editar_ticket','cancelar_ticket','asignar_cama',
+  'confirmar_limpieza','iniciar_traslado','confirmar_recepcion','consolidar',
+  'editar_aislamiento',
+  'abm_usuarios','abm_roles',
+  'recibe_push',
+] as const;
+export type Permission = typeof PERMISSIONS[number];
+
+// Módulos visibles para el rol (Acceso_RT). Drive el sidebar / vistas.
+export const ROLE_MODULES = ['Home','Operativa','Historial','Mapa de Camas','Configuracion'] as const;
+export type RoleModule = typeof ROLE_MODULES[number];
+
 export interface User {
   id: string;
   name: string;
@@ -110,6 +127,13 @@ export interface User {
   avatar: string;
   lastLogin: string;
   assignedAreas?: Area[]; // For Hostesses and Catering
+  // Configurables desde 99.ABMRoles_Traslados (poblados en login)
+  permissions?: Permission[];
+  modules?: RoleModule[];
+  filterByFloors?: boolean;
+  // Nombre original del rol en SP (NombreRol_RT). Usado para enlazar la suscripción
+  // push con la config del rol en el server (push-utils.getRoleByName).
+  roleName?: string;
 }
 
 export enum NotificationType {

@@ -9,9 +9,16 @@
 
 import { graphFetch } from './graph.js';
 import { requireAuthAndLocation } from './jwt.js';
+import { invalidateRoleCache } from './role-cache.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = '68836bbe-18c5-4cb2-8cc6-e21ecae96710'; // 99.ABMRoles_Traslados
+
+function parseBool(raw: unknown): boolean {
+  if (!raw) return false;
+  const v = String(raw).trim().toLowerCase();
+  return v === 'sí' || v === 'si' || v === 'yes' || v === 'true' || v === '1';
+}
 
 async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -42,6 +49,8 @@ async function handler(req: any, res: any) {
           id: String(item.id),
           name: String(f.NombreRol_RT ?? ''),
           access: String(f.Acceso_RT ?? ''),
+          permissions: String(f.Permisos_RT ?? '').split(';').map(s => s.trim()).filter(Boolean),
+          filterByFloors: parseBool(f.FiltrarPisos_RT),
           status: String(f.Status_RT ?? ''),
         };
       });
@@ -54,10 +63,11 @@ async function handler(req: any, res: any) {
 
   // ── POST ────────────────────────────────────────────────────────────────
   if (req.method === 'POST') {
-    const { name, access } = req.body ?? {};
+    const { name, access, permissions, filterByFloors } = req.body ?? {};
     if (!name) return res.status(400).json({ error: 'name is required' });
 
     try {
+      const permsArr = Array.isArray(permissions) ? permissions.map(String) : [];
       const spRes = await graphFetch(basePath, {
         method: 'POST',
         body: JSON.stringify({
@@ -65,6 +75,8 @@ async function handler(req: any, res: any) {
             Title: '[sumar]',
             NombreRol_RT: String(name),
             Acceso_RT: String(access ?? ''),
+            Permisos_RT: permsArr.join(';'),
+            FiltrarPisos_RT: filterByFloors ? 'Sí' : 'No',
             Status_RT: 'Activo',
           },
         }),
@@ -75,6 +87,7 @@ async function handler(req: any, res: any) {
         return res.status(500).json({ error: 'Failed to create role' });
       }
       const created = (await spRes.json()) as { id: string };
+      invalidateRoleCache();
       console.log(`[roles] Created role: ${name}`);
       return res.status(200).json({ ok: true, id: String(created.id) });
     } catch (err: any) {
@@ -85,12 +98,19 @@ async function handler(req: any, res: any) {
 
   // ── PATCH ───────────────────────────────────────────────────────────────
   if (req.method === 'PATCH') {
-    const { spItemId, name, access } = req.body ?? {};
+    const { spItemId, name, access, permissions, filterByFloors } = req.body ?? {};
     if (!spItemId) return res.status(400).json({ error: 'spItemId required' });
 
     const fields: Record<string, string> = {};
     if (name !== undefined) fields.NombreRol_RT = String(name);
     if (access !== undefined) fields.Acceso_RT = String(access);
+    if (permissions !== undefined) {
+      const arr = Array.isArray(permissions) ? permissions.map(String) : [];
+      fields.Permisos_RT = arr.join(';');
+    }
+    if (filterByFloors !== undefined) {
+      fields.FiltrarPisos_RT = filterByFloors ? 'Sí' : 'No';
+    }
 
     try {
       const spRes = await graphFetch(`${basePath}/${spItemId}/fields`, {
@@ -101,6 +121,7 @@ async function handler(req: any, res: any) {
         console.error('[roles] PATCH failed:', spRes.status);
         return res.status(500).json({ error: 'Failed to update role' });
       }
+      invalidateRoleCache();
       console.log(`[roles] Updated role ${spItemId}`);
       return res.status(200).json({ ok: true });
     } catch (err: any) {

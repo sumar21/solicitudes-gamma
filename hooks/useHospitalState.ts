@@ -3,8 +3,10 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   WorkflowType, Role, SedeType, Ticket, TicketStatus, User, Area,
   Notification, NotificationType, ViewMode, SortConfig, Bed, BedStatus, IsolationType,
+  RoleModule,
 } from '../types';
 import { MOCK_TICKETS } from '../lib/constants';
+import { can, hasModule } from '../lib/permissions';
 
 // ── JWT helpers (client-side, solo lectura — sin verificar firma) ─────────────
 function parseJwtPayload(token: string): Record<string, unknown> | null {
@@ -111,12 +113,14 @@ export const useHospitalState = () => {
   const [currentView, setCurrentView] = useState<ViewMode>(() => {
     const saved = localStorage.getItem(USER_KEY);
     if (saved) {
-      const user = JSON.parse(saved);
-      if (user.role === Role.HOSTESS) return 'REQUESTS';
-      // Catering y READ_ONLY solo acceden al Mapa de Camas — arrancar allí
-      // tras recargar la app con sesión persistida (si no, quedan en HOME
-      // que no les renderiza nada y verían pantalla en blanco).
-      if (user.role === Role.CATERING || user.role === Role.READ_ONLY) return 'BEDS';
+      const user = JSON.parse(saved) as User;
+      // Vista inicial = primer módulo accesible del rol. Mapea Acceso_RT a ViewMode.
+      // Si el user (legacy) no tiene `modules`, default HOME.
+      const modules = (user.modules ?? []) as RoleModule[];
+      if (modules.includes('Home')) return 'HOME';
+      if (modules.includes('Operativa')) return 'REQUESTS';
+      if (modules.includes('Mapa de Camas')) return 'BEDS';
+      if (modules.includes('Historial')) return 'HISTORY';
     }
     return 'HOME';
   });
@@ -348,25 +352,21 @@ export const useHospitalState = () => {
     // Helper to find bed area for a given label
     const areaOf = (label?: string | null) => label ? rawBeds.find(b => b.label === label)?.area : undefined;
 
-    // Check if this notification is relevant for the current user's assigned areas.
-    // Per rol:
-    //   · ADMIN / ADMISSION → ven todo (sin filtro)
-    //   · HOSTESS → filtra por área asignada
-    //   · CATERING → NO recibe notifs in-app del polling.
-    //     Razón: el server-side push ya le manda los 2 eventos que le importan
-    //     (RECEPTION_CONFIRMED + DIET_CHANGE filtrados por área). Sumarle notifs
-    //     locales del polling generaba duplicados (ej. "Nueva Solicitud" cuando
-    //     se crea un ticket en otro piso) que el filtro server explícitamente
-    //     había bloqueado.
-    //   · Otros roles (READ_ONLY, NURSING) → no reciben notifs.
+    // Notif in-app relevante si el rol tiene permiso `recibe_push`. Si además filtra
+    // por pisos, restringimos al área asignada. CATERING está excluido explícitamente
+    // del polling local porque el server-side ya le manda los 2 eventos que le importan
+    // (RECEPTION_CONFIRMED / DIET_CHANGE filtrados por área); sumarle notifs del polling
+    // generaba duplicados que el filtro server había bloqueado.
+    const cateringByName = String(currentUser.role).toUpperCase() === 'CATERING';
     const isRelevant = (originArea?: Area, destArea?: Area) => {
-      if (currentUser.role === Role.ADMIN || currentUser.role === Role.ADMISSION) return true;
-      if (currentUser.role === Role.HOSTESS) {
-        if (!currentUser.assignedAreas?.length) return false;
-        return (originArea && currentUser.assignedAreas.includes(originArea)) ||
-               (destArea   && currentUser.assignedAreas.includes(destArea));
-      }
-      return false;
+      if (cateringByName) return false;
+      if (!can(currentUser, 'recibe_push')) return false;
+      if (!currentUser.filterByFloors) return true;
+      if (!currentUser.assignedAreas?.length) return false;
+      return Boolean(
+        (originArea && currentUser.assignedAreas.includes(originArea)) ||
+        (destArea   && currentUser.assignedAreas.includes(destArea))
+      );
     };
 
     const newNotifs: Notification[] = [];
@@ -605,14 +605,11 @@ export const useHospitalState = () => {
 
       const user: User = data.user;
 
-      // Hostess y Catering tienen áreas asignadas en el campo PisosAzafata_u de SP.
-      // Convertir el string semicolon-separated a array de Area en el frontend.
-      // Sin esto, el filtro inicial de BedsView no se aplica para Catering y la
-      // suscripción push se registra sin áreas → recibiría notifs de todo el hospital.
-      if (
-        (user.role === Role.HOSTESS || user.role === Role.CATERING) &&
-        (data.user as any).assignedFloors
-      ) {
+      // Si el rol filtra por pisos, las áreas asignadas vienen del campo PisosAzafata_u
+      // de SP. Convertir el string semicolon-separated a array de Area en el frontend.
+      // Sin esto, el filtro inicial de BedsView no se aplica y la suscripción push se
+      // registra sin áreas → recibiría notifs de todo el hospital.
+      if (user.filterByFloors && (data.user as any).assignedFloors) {
         const floorsStr = String((data.user as any).assignedFloors);
         const areaValues = Object.values(Area) as string[];
         user.assignedAreas = floorsStr
@@ -663,13 +660,15 @@ export const useHospitalState = () => {
       setToken(data.token);
       setCurrentUser(user);
       setActiveRole(user.role as Role);
-      // Landing view depends on role.
-      //   HOSTESS        → Operativa (sus tickets activos)
-      //   CATERING / R/O → Mapa de Camas (única vista que ven)
-      //   otros          → Monitor
-      const landingView =
-        user.role === Role.HOSTESS ? 'REQUESTS'
-        : (user.role === Role.CATERING || user.role === Role.READ_ONLY) ? 'BEDS'
+      // Landing view = primer módulo accesible (Acceso_RT del rol). Mapea a ViewMode.
+      // Prioridad: Home → Operativa → Mapa de Camas → Historial. Default 'HOME' si el
+      // rol no tiene `modules` (legacy / fail-open).
+      const mods = (user.modules ?? []);
+      const landingView: ViewMode =
+        mods.includes('Home') ? 'HOME'
+        : mods.includes('Operativa') ? 'REQUESTS'
+        : mods.includes('Mapa de Camas') ? 'BEDS'
+        : mods.includes('Historial') ? 'HISTORY'
         : 'HOME';
       setCurrentView(landingView);
 
@@ -687,7 +686,9 @@ export const useHospitalState = () => {
         }
         if (window.Notification.permission === 'granted') {
           import('../lib/pushSubscription').then(({ subscribeToPush }) => {
-            subscribeToPush(data.token, user.id, user.role, user.assignedAreas ?? [], user.sede);
+            // Enviamos el NombreRol_RT (no el enum) para que el server-side pueda
+            // hacer reverse-lookup contra 99.ABMRoles_Traslados.
+            subscribeToPush(data.token, user.id, user.roleName ?? user.role, user.assignedAreas ?? [], user.sede);
           }).catch(() => {});
         }
       }
@@ -729,21 +730,17 @@ export const useHospitalState = () => {
 
   // ── Filtered data ─────────────────────────────────────────────────────────────
   // Notificaciones del dropdown (in-app). Mismo criterio que el detector de polling:
-  //   · ADMIN/ADMISSION → ven todo
-  //   · HOSTESS/CATERING → solo las de sus áreas asignadas
-  //   · Otros roles → nada
+  // requiere permiso `recibe_push`, y si el rol filtra por pisos, solo las de sus áreas.
   const filteredNotifications = useMemo(() => {
     if (!currentUser) return [];
-    if (currentUser.role === Role.ADMIN || currentUser.role === Role.ADMISSION) return notifications;
-    if (currentUser.role === Role.HOSTESS || currentUser.role === Role.CATERING) {
-      if (!currentUser.assignedAreas?.length) return [];
-      return notifications.filter(n => {
-        const isOrigin = n.originArea && currentUser.assignedAreas?.includes(n.originArea);
-        const isDest   = n.destinationArea && currentUser.assignedAreas?.includes(n.destinationArea);
-        return isOrigin || isDest;
-      });
-    }
-    return [];
+    if (!can(currentUser, 'recibe_push')) return [];
+    if (!currentUser.filterByFloors) return notifications;
+    if (!currentUser.assignedAreas?.length) return [];
+    return notifications.filter(n => {
+      const isOrigin = n.originArea && currentUser.assignedAreas?.includes(n.originArea);
+      const isDest   = n.destinationArea && currentUser.assignedAreas?.includes(n.destinationArea);
+      return isOrigin || isDest;
+    });
   }, [notifications, currentUser]);
 
   const filteredTickets = useMemo(() => {
@@ -751,7 +748,11 @@ export const useHospitalState = () => {
     if (currentUser?.sede !== SedeType.SUMAR)
       result = result.filter(t => t.sede === currentUser?.sede);
 
-    if (currentUser?.role === Role.HOSTESS && currentUser.assignedAreas?.length) {
+    // Si el rol filtra por pisos, restringir tickets a las áreas asignadas
+    // (igual que ya hacía HOSTESS hardcoded). Catering no llega acá porque no
+    // tiene acceso a Operativa (Acceso_RT sin 'Operativa') — pero el filtro queda
+    // genérico por filterByFloors para roles nuevos.
+    if (currentUser?.filterByFloors && currentUser.assignedAreas?.length) {
       const allAreas = new Set(Object.values(Area) as string[]);
       const hasAll = currentUser.assignedAreas.length >= allAreas.size - 1; // 9 of 10 = effectively all
       // Only filter if azafata has a subset of areas AND beds are loaded to resolve areas
@@ -806,8 +807,8 @@ export const useHospitalState = () => {
   };
 
   const handleCreateTicket = async (data: Partial<Ticket> & { isolation?: boolean; reason?: string }) => {
-    if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) {
-      alert('Solo Admisión o Admin pueden crear solicitudes.'); return;
+    if (!can(currentUser, 'crear_ticket')) {
+      alert('Tu rol no tiene permiso para crear solicitudes.'); return;
     }
     // Traslado Interno requiere siempre un motivo (fusión con cambio de habitación).
     if (data.workflow === WorkflowType.INTERNAL && !(data.reason || data.changeReason)) {
@@ -857,7 +858,7 @@ export const useHospitalState = () => {
   };
 
   const _createTicket = async (data: Partial<Ticket>) => {
-    if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) return;
+    if (!can(currentUser, 'crear_ticket')) return;
 
     // Block duplicate: no two active transfers for the same origin bed
     const existingActive = tickets.find(t =>
@@ -987,8 +988,8 @@ export const useHospitalState = () => {
   };
 
   const handleConsolidate = async (ticketId: string) => {
-    if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) {
-      alert('Solo Admisión o Admin pueden consolidar en PROGAL.'); return;
+    if (!can(currentUser, 'consolidar')) {
+      alert('Tu rol no tiene permiso para consolidar.'); return;
     }
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket || ticket.status === TicketStatus.COMPLETED) return;
@@ -1011,8 +1012,8 @@ export const useHospitalState = () => {
   };
 
   const handleRejectTicket = async (ticketId: string, reason: string) => {
-    if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) {
-      alert('Solo Admisión o Admin pueden cancelar traslados.'); return;
+    if (!can(currentUser, 'cancelar_ticket')) {
+      alert('Tu rol no tiene permiso para cancelar traslados.'); return;
     }
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket || ticket.status === TicketStatus.REJECTED || ticket.status === TicketStatus.COMPLETED) return;
@@ -1051,8 +1052,8 @@ export const useHospitalState = () => {
     isolationTypes: IsolationType[];
     modificationReason: string;
   }) => {
-    if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) {
-      alert('Solo Admisión o Admin pueden editar traslados.'); return;
+    if (!can(currentUser, 'editar_ticket')) {
+      alert('Tu rol no tiene permiso para editar traslados.'); return;
     }
     const ticket = tickets.find((t: Ticket) => t.id === payload.ticketId);
     if (!ticket) return;
@@ -1242,7 +1243,7 @@ export const useHospitalState = () => {
   //   undefined / [] → remove isolation entirely
   //   [t1, t2, ...]  → set the active isolation types (replaces previous set)
   const toggleIsolation = (bedLabel: string, nextTypes?: IsolationType[]) => {
-    if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) return;
+    if (!can(currentUser, 'editar_aislamiento')) return;
     const bed = beds.find(b => b.label === bedLabel);
     if (!bed?.patientCode) return;
     const code = bed.patientCode.trim();
@@ -1306,16 +1307,20 @@ export const useHospitalState = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchBeds, fetchTickets]);
 
+  // El server ahora filtra Status_N='Enviada' (no es necesario filtrar en cliente).
+  // Solo se aplica el corte por "más de 20 minutos" para decidir qué entra al banner.
   const checkUnreadNotifications = useCallback(async () => {
     try {
       const r = await authFetch('/api/notifications');
       if (!r.ok) return;
       const data = await r.json();
-      const unread = (data.notifications ?? []).filter((n: any) => n.status === 'Enviada');
       const twentyMinAgo = Date.now() - 20 * 60 * 1000;
-      const old = unread.filter((n: any) => new Date(n.fecha).getTime() < twentyMinAgo);
+      const old = (data.notifications ?? [])
+        .filter((n: any) => new Date(n.fecha).getTime() < twentyMinAgo);
       setUnreadSpNotifications(old);
-    } catch { /* silent */ }
+    } catch (err) {
+      console.error('[notifications] check failed:', err);
+    }
   }, [authFetch]);
 
   // Local notification IDs are prefixed with "NOTIF-" (generated client-side).
@@ -1323,34 +1328,111 @@ export const useHospitalState = () => {
   // Only SP IDs should hit the PATCH endpoint; local-only ones just flip state.
   const isSpNotificationId = (id: string) => !!id && !id.startsWith('NOTIF-');
 
-  const handleMarkNotificationRead = (id: string) => {
+  // Marca una notif SP por (ticketId, type) — sin necesidad de conocer el spItemId.
+  // Útil para:
+  //   · click en notif local del dropdown (que tiene ticketId+type pero id local)
+  //   · tap en push notification (el SW pasa ticketId+type al cliente)
+  const markNotificationByEvent = useCallback(async (ticketId: string, type: string) => {
+    if (!ticketId || !type) return;
+    try {
+      const r = await authFetch('/api/notifications', {
+        method: 'PATCH',
+        body: JSON.stringify({ ticketId, type }),
+      });
+      if (!r.ok) {
+        console.error('[notifications] mark-by-event failed', r.status, await r.text().catch(() => ''));
+      }
+      // Refrescar el banner: si la marcamos OK, desaparece; si falló, sigue como estaba.
+      checkUnreadNotifications();
+    } catch (err) {
+      console.error('[notifications] mark-by-event error', err);
+    }
+  }, [authFetch, checkUnreadNotifications]);
+
+  // Marca una notif individual. Acepta:
+  //   · Notification completa (con id, ticketId, type) — preferido
+  //   · string (id) — backwards-compatible
+  // Optimistic update local; si el PATCH a SP falla, refetch para restaurar.
+  const handleMarkNotificationRead = async (notifOrId: Notification | string) => {
+    const isObject = typeof notifOrId !== 'string';
+    const id = isObject ? notifOrId.id : notifOrId;
+
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
-    if (!isSpNotificationId(id)) return; // local-only notification — nothing to persist
-    authFetch('/api/notifications', {
-      method: 'PATCH',
-      body: JSON.stringify({ notificationId: id }),
-    }).then(() => setTimeout(checkUnreadNotifications, 1500)).catch(() => {});
+
+    if (isSpNotificationId(id)) {
+      // Camino legacy: marcar por id explícito (notifs del banner SP).
+      setUnreadSpNotifications(prev => prev.filter(n => n.id !== id));
+      try {
+        const r = await authFetch('/api/notifications', {
+          method: 'PATCH',
+          body: JSON.stringify({ notificationId: id }),
+        });
+        if (!r.ok) {
+          console.error('[notifications] PATCH failed', r.status, await r.text().catch(() => ''));
+          checkUnreadNotifications();
+        }
+      } catch (err) {
+        console.error('[notifications] PATCH error:', err);
+        checkUnreadNotifications();
+      }
+      return;
+    }
+
+    // Notif local (NOTIF-*): linkear con su contrapartida SP por (ticketId, type).
+    // Requiere que el caller pase el objeto completo — si solo pasó id, no hay forma.
+    if (isObject && notifOrId.ticketId && notifOrId.type) {
+      markNotificationByEvent(notifOrId.ticketId, notifOrId.type);
+    }
   };
-  const handleMarkAllNotificationsRead = () => {
+
+  // Marca todas las notifs SP del banner. Usa el endpoint bulk para una sola
+  // llamada de red. Optimistic local; si el server reporta fallos parciales o
+  // un 500, refetch para sincronizar con la verdad del server (las que SÍ se
+  // actualizaron desaparecen del banner; las que NO siguen apareciendo).
+  const handleMarkAllNotificationsRead = async () => {
     setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
-    setUnreadSpNotifications([]); // clear immediately for instant UI feedback
-    // Mark all in SP, then verify after delay
-    Promise.all(
-      unreadSpNotifications
-        .filter((n: { id: string }) => isSpNotificationId(n.id))
-        .map((n: { id: string }) =>
-          authFetch('/api/notifications', {
-            method: 'PATCH',
-            body: JSON.stringify({ notificationId: n.id }),
-          }).catch(() => {})
-        )
-    ).then(() => setTimeout(checkUnreadNotifications, 1500));
+
+    const ids = unreadSpNotifications
+      .map(n => n.id)
+      .filter(isSpNotificationId);
+
+    if (ids.length === 0) {
+      setUnreadSpNotifications([]);
+      return;
+    }
+
+    // Optimistic: limpiamos el banner. Si el bulk falla, refetch lo restaura.
+    setUnreadSpNotifications([]);
+
+    try {
+      const r = await authFetch('/api/notifications', {
+        method: 'PATCH',
+        body: JSON.stringify({ notificationIds: ids }),
+      });
+      if (!r.ok) {
+        const text = await r.text().catch(() => '');
+        console.error(`[notifications] bulk PATCH failed: ${r.status} ${text}`);
+        // Server reportó que TODAS fallaron → restauramos.
+        checkUnreadNotifications();
+        return;
+      }
+      const data = await r.json().catch(() => ({} as any));
+      if ((data.failed ?? []).length > 0) {
+        console.warn(`[notifications] bulk PATCH partial: updated=${data.updated} failed=${data.failed.length}`);
+        // Refetch para que las fallidas vuelvan al banner.
+        checkUnreadNotifications();
+      }
+    } catch (err) {
+      console.error('[notifications] bulk PATCH error:', err);
+      checkUnreadNotifications();
+    }
   };
   const handleDismissToast = (id: string) => {
-    // Find the notification associated with this toast and mark it as read
+    // Find the notification associated with this toast and mark it as read.
+    // Pasamos el objeto completo para que mark-by-event funcione en notifs locales.
     const toast = toasts.find(t => t.id === id);
     if (toast?.notification) {
-      handleMarkNotificationRead(toast.notification.id);
+      handleMarkNotificationRead(toast.notification);
     }
     setToasts(prev => prev.filter(t => t.id !== id));
   };
@@ -1364,6 +1446,40 @@ export const useHospitalState = () => {
     const interval = setInterval(checkUnreadNotifications, 30_000);
     return () => clearInterval(interval);
   }, [token, currentUser, checkUnreadNotifications]);
+
+  // ── Push tap handling: marca como leída la notif SP correspondiente ──────────
+  // El SW dispara dos rutas según si la app estaba abierta:
+  //   1) Abierta → postMessage {kind:'notification-clicked', ticketId, type}
+  //   2) Cerrada → openWindow('/?notifTicketId=X&notifType=Y')
+  // Ambas terminan en markNotificationByEvent.
+  useEffect(() => {
+    if (!currentUser || typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    const onMessage = (event: MessageEvent) => {
+      const d = event.data;
+      if (!d || d.kind !== 'notification-clicked') return;
+      const ticketId = String(d.ticketId ?? '');
+      const type     = String(d.type ?? '');
+      if (ticketId && type) markNotificationByEvent(ticketId, type);
+    };
+    navigator.serviceWorker.addEventListener('message', onMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage);
+  }, [currentUser, markNotificationByEvent]);
+
+  // Si la app se abrió desde una push (cliente estaba cerrado), los query params
+  // notifTicketId / notifType disparan el mark-by-event una sola vez y se limpian
+  // de la URL para que no se re-disparen al refrescar.
+  useEffect(() => {
+    if (!currentUser || typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const ticketId = params.get('notifTicketId');
+    const type     = params.get('notifType');
+    if (!ticketId || !type) return;
+    markNotificationByEvent(ticketId, type);
+    params.delete('notifTicketId');
+    params.delete('notifType');
+    const rest = params.toString();
+    window.history.replaceState(null, '', rest ? `${window.location.pathname}?${rest}` : window.location.pathname);
+  }, [currentUser, markNotificationByEvent]);
 
   return {
     state: {

@@ -1,6 +1,7 @@
 
 import React, { useMemo } from 'react';
 import { Ticket, Role, TicketStatus, SortConfig, SortKey, WorkflowType, User, Bed, BedStatus, Area, IsolationType } from '../types';
+import { can } from '../lib/permissions';
 import {
   Search, Plus, Timer, Clock, ArrowRightLeft,
   ChevronUp, ChevronDown, CheckCircle2, BedDouble, Users, ClipboardCheck, AlertCircle, X, XCircle, Info, MapPin, Pencil
@@ -83,32 +84,27 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
         t.patientName.toLowerCase().includes(searchLower)
       );
     } else {
+      // Si el user no filtra por pisos (Admin/Admision/Direccion/etc.), ve todos
+      // los tickets activos sin importar el tab activo (el tab solo gobierna
+      // qué botones de acción aparecen para "actuar como" otro rol).
+      // Si filtra por pisos (Azafata, Catering, futuros roles), aplica filtro de área
+      // limitado a estados operativos.
       filtered = filtered.filter(t => {
-        if (activeRole === Role.COORDINATOR || activeRole === Role.ADMIN) return true;
-        if (activeRole === Role.ADMISSION) {
-          // Admisión ve todos los tickets activos durante todo el ciclo de vida
-          return true;
-        }
-        if (activeRole === Role.HOSTESS) {
-          const validStatus = t.status === TicketStatus.WAITING_ROOM ||
-            t.status === TicketStatus.IN_TRANSIT ||
-            t.status === TicketStatus.IN_TRANSPORT;
-          if (!validStatus) return false;
-          // Admin viendo el tab Azafata: ve todos los tickets activos sin filtro de área.
-          if (currentUser?.role === Role.ADMIN) return validStatus;
-          // Azafata only sees tickets in her assigned areas (skip if all areas or beds not loaded)
-          if (currentUser?.assignedAreas?.length && beds.length > 0) {
-            const allAreas = Object.values(Area);
-            if (currentUser.assignedAreas.length < allAreas.length - 1) {
-              const originArea = beds.find(b => b.label === t.origin)?.area ?? beds.find(b => t.origin?.includes(b.area))?.area;
-              const destArea = t.destination ? (beds.find(b => b.label === t.destination)?.area ?? beds.find(b => t.destination?.includes(b.area))?.area) : undefined;
-              return currentUser.assignedAreas.includes(originArea as string) ||
-                     currentUser.assignedAreas.includes(destArea as string);
-            }
+        if (!currentUser?.filterByFloors) return true;
+        const validStatus = t.status === TicketStatus.WAITING_ROOM ||
+          t.status === TicketStatus.IN_TRANSIT ||
+          t.status === TicketStatus.IN_TRANSPORT;
+        if (!validStatus) return false;
+        if (currentUser.assignedAreas?.length && beds.length > 0) {
+          const allAreas = Object.values(Area);
+          if (currentUser.assignedAreas.length < allAreas.length - 1) {
+            const originArea = beds.find(b => b.label === t.origin)?.area ?? beds.find(b => t.origin?.includes(b.area))?.area;
+            const destArea = t.destination ? (beds.find(b => b.label === t.destination)?.area ?? beds.find(b => t.destination?.includes(b.area))?.area) : undefined;
+            return currentUser.assignedAreas.includes(originArea as string) ||
+                   currentUser.assignedAreas.includes(destArea as string);
           }
-          return validStatus;
         }
-        return false;
+        return validStatus;
       });
     }
 
@@ -127,32 +123,32 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     const size = isMobile ? "default" : "sm";
     const btnClass = isMobile ? "w-full h-11 text-xs font-black uppercase tracking-widest rounded-xl" : "h-8 text-[10px] uppercase font-bold tracking-tight";
 
-    // ── AZAFATA ──────────────────────────────────────────────────────────────
+    // ── Acciones de Azafata (tab activeRole=HOSTESS) ──────────────────────────
+    // Cada botón está gateado por su permiso fino. El filtro de área se aplica solo
+    // si el usuario filtra por pisos; sin él (admin/admision "actuando como"), no hay
+    // restricción de área.
     if (activeRole === Role.HOSTESS) {
-      // Admin viendo el tab Azafata: actúa como una azafata con TODAS las áreas asignadas.
-      const isAdmin = currentUser?.role === Role.ADMIN;
-      if (!isAdmin && !currentUser?.assignedAreas) return null;
+      const filtersFloors = !!currentUser?.filterByFloors;
+      if (filtersFloors && !currentUser?.assignedAreas) return null;
 
       const allAreas = Object.values(Area);
-      const hasAllAreas = isAdmin || (currentUser?.assignedAreas?.length ?? 0) >= allAreas.length - 1;
+      const hasAllAreas = !filtersFloors || (currentUser?.assignedAreas?.length ?? 0) >= allAreas.length - 1;
 
       const originBed = beds.find(b => b.label === ticket.origin);
       const destBed = ticket.destination ? beds.find(b => b.label === ticket.destination) : null;
 
-      // If azafata has all areas, she can act on everything
       const isOriginHostess = hasAllAreas || !!(originBed && currentUser?.assignedAreas?.includes(originBed.area));
-      const isDestHostess = hasAllAreas || !!(destBed && currentUser?.assignedAreas?.includes(destBed.area));
+      const isDestHostess   = hasAllAreas || !!(destBed   && currentUser?.assignedAreas?.includes(destBed.area));
 
-      // Si no es de ninguna de las dos áreas, no muestra nada
       if (!isOriginHostess && !isDestHostess) return null;
 
       // Ingreso ITR (HRA → piso): el origen son sillones de sala de espera, no hay azafata estable ahí.
       // Toda la operativa la hace la azafata DESTINO: limpiar (si aplica), iniciar traslado y confirmar recepción.
       const isIngresoFlow = ticket.workflow === WorkflowType.ITR_TO_FLOOR;
 
-      // Estado 1: WAITING_ROOM — La azafata DESTINO debe confirmar habitación lista
+      // Estado 1: WAITING_ROOM — confirmar limpieza (azafata destino)
       if (ticket.status === TicketStatus.WAITING_ROOM) {
-        if (isDestHostess)
+        if (isDestHostess && can(currentUser, 'confirmar_limpieza'))
           return (
             <Button size={size} className={cn(btnClass, "bg-blue-600 hover:bg-blue-700 text-white")} onClick={() => onRoomReady(ticket.id)}>
               <ClipboardCheck className="w-3.5 h-3.5 mr-2" /> Habitación Lista
@@ -162,13 +158,11 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
           return <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50">Esperando preparación destino</Badge>;
       }
 
-      // Estado 2: IN_TRANSIT (Habitación Lista) — quién inicia el traslado:
-      //   · Internal: la azafata ORIGEN.
-      //   · Ingreso ITR: la azafata DESTINO (porque el origen es la sala de espera HRA).
+      // Estado 2: IN_TRANSIT — quién inicia el traslado depende del workflow.
       if (ticket.status === TicketStatus.IN_TRANSIT) {
         const canStart = isIngresoFlow ? isDestHostess : isOriginHostess;
         const showWaiting = isIngresoFlow ? false : isDestHostess;
-        if (canStart)
+        if (canStart && can(currentUser, 'iniciar_traslado'))
           return (
             <Button size={size} className={cn(btnClass, "bg-emerald-600 hover:bg-emerald-700 text-white")} onClick={() => onStartTransport(ticket.id)}>
               <ArrowRightLeft className="w-3.5 h-3.5 mr-2" /> Iniciar Traslado
@@ -178,9 +172,9 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
           return <Badge variant="outline" className="text-blue-600 border-blue-200 bg-blue-50">Esperando inicio de traslado</Badge>;
       }
 
-      // Estado 3: IN_TRANSPORT — La azafata DESTINO debe confirmar recepción
+      // Estado 3: IN_TRANSPORT — confirmar recepción (azafata destino)
       if (ticket.status === TicketStatus.IN_TRANSPORT) {
-        if (isDestHostess)
+        if (isDestHostess && can(currentUser, 'confirmar_recepcion'))
           return (
             <Button size={size} className={cn(btnClass, "bg-emerald-600 hover:bg-emerald-700 text-white")} onClick={() => onConfirmReception(ticket.id)}>
               <CheckCircle2 className="w-3.5 h-3.5 mr-2" /> Recepción OK
@@ -193,23 +187,28 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       return null;
     }
 
-    // ── ADMISIÓN / ADMIN ─────────────────────────────────────────────────────
+    // ── Acciones de Admisión/Admin (tab activeRole=ADMIN/ADMISSION) ──────────
+    // Cada botón gateado por su permiso fino.
     if (activeRole === Role.ADMISSION || activeRole === Role.ADMIN) {
       const canMutate = ticket.status !== TicketStatus.COMPLETED && ticket.status !== TicketStatus.REJECTED && ticket.canCancel !== false;
+      const showConsolidate = ticket.status === TicketStatus.WAITING_CONSOLIDATION && can(currentUser, 'consolidar');
+      const showEdit        = canMutate && can(currentUser, 'editar_ticket')   && !!onEdit;
+      const showCancel      = canMutate && can(currentUser, 'cancelar_ticket') && !!onReject;
+      if (!showConsolidate && !showEdit && !showCancel) return null;
       return (
         <div className={cn("flex gap-1.5", isMobile ? "flex-col" : "flex-row")}>
-          {ticket.status === TicketStatus.WAITING_CONSOLIDATION && (
+          {showConsolidate && (
             <Button size={size} className={cn(btnClass, "bg-purple-600 hover:bg-purple-700 text-white")} onClick={() => onConsolidate(ticket.id)}>
               <BedDouble className="w-3.5 h-3.5 mr-2" /> Consolidar PROGAL
             </Button>
           )}
-          {canMutate && onEdit && (
-            <Button size={size} variant="outline" className={cn(btnClass, "border-amber-200 text-amber-700 hover:bg-amber-50")} onClick={() => onEdit(ticket.id)}>
+          {showEdit && (
+            <Button size={size} variant="outline" className={cn(btnClass, "border-amber-200 text-amber-700 hover:bg-amber-50")} onClick={() => onEdit!(ticket.id)}>
               <Pencil className="w-3.5 h-3.5 mr-2" /> Editar
             </Button>
           )}
-          {canMutate && onReject && (
-            <Button size={size} variant="outline" className={cn(btnClass, "border-red-200 text-red-600 hover:bg-red-50")} onClick={() => onReject(ticket.id)}>
+          {showCancel && (
+            <Button size={size} variant="outline" className={cn(btnClass, "border-red-200 text-red-600 hover:bg-red-50")} onClick={() => onReject!(ticket.id)}>
               <XCircle className="w-3.5 h-3.5 mr-2" /> Cancelar
             </Button>
           )}
@@ -239,13 +238,16 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     <div className="p-4 md:p-8 animate-in slide-in-from-right-4 duration-300 max-w-full space-y-4 md:space-y-6">
       <div className="flex flex-col lg:flex-row items-center justify-between gap-4">
         <div className="flex flex-col sm:flex-row items-center gap-3 w-full lg:w-auto">
-          {(currentUser?.role === Role.ADMIN || currentUser?.role === Role.ADMISSION) && (
+          {/* Tab switcher para "actuar como" otro rol. Visible solo si el user puede
+              crear tickets (Admin/Admision) — los demás roles no tienen sentido. */}
+          {can(currentUser, 'crear_ticket') && (
             <div className="flex items-center gap-2 w-full sm:w-auto bg-white p-1 rounded-xl border border-slate-200 shadow-sm overflow-x-auto no-scrollbar">
               {Object.entries(ROLE_LABELS)
                 .filter(([k]) => {
-                  if (currentUser?.role === Role.ADMIN) return true;
-                  if (currentUser?.role === Role.ADMISSION) return k === Role.ADMISSION || k === Role.HOSTESS;
-                  return false;
+                  // Solo Admin (con todos los permisos) ve el tab Admin. Los demás (Admision)
+                  // ven Admision + Azafata pero no Admin.
+                  if (can(currentUser, 'abm_usuarios')) return true;
+                  return k === Role.ADMISSION || k === Role.HOSTESS;
                 })
                 .map(([k, v]) => (
                 <button
@@ -277,7 +279,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
             <Input placeholder="Paciente o ID..." className="pl-10 h-10 rounded-xl text-xs" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
             {searchTerm && <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="w-3.5 h-3.5" /></button>}
           </div>
-          {(currentUser?.role === Role.ADMIN || currentUser?.role === Role.ADMISSION) && (
+          {can(currentUser, 'crear_ticket') && (
             <Button onClick={onNewRequest} className="h-10 bg-emerald-950 hover:bg-emerald-900 rounded-xl shadow-lg px-4 flex items-center gap-2 shrink-0">
               <Plus className="w-4 h-4 text-white" />
               <span className="hidden sm:inline text-xs font-bold">Solicitud</span>
