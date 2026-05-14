@@ -156,13 +156,33 @@ export const useHospitalState = () => {
   // motivo específico. Esto cierra el agujero de "usuario loguea en hospital y
   // sigue operando desde casa porque el JWT sigue válido" — al primer fetch
   // desde una IP no autorizada, el server responde 403 y el cliente sale.
+  //
+  // El header X-Geo lleva lat,lng del browser. El server valida IP+geo (no solo IP)
+  // para que usuarios con IP fuera de whitelist pero físicamente en sede autorizada
+  // puedan operar (ej. HPR user conectado desde 4G en IG).
+  // El browser cachea la posición con maximumAge=60s → 1 hit de GPS por minuto
+  // máximo, aunque hagamos polling cada 8s.
   const authFetch = useCallback(async (url: string, options?: RequestInit): Promise<Response> => {
     const t = localStorage.getItem(TOKEN_KEY);
+
+    // Obtener geo cacheada del browser. enableHighAccuracy=false usa wifi/celular
+    // (más rápido y suficiente para nuestro radio de 200m). Si falla o no hay
+    // permiso, seguimos sin header — server cae a IP-only.
+    const geo = await new Promise<{ lat: number; lng: number } | null>(resolve => {
+      if (typeof navigator === 'undefined' || !navigator.geolocation) { resolve(null); return; }
+      navigator.geolocation.getCurrentPosition(
+        pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        () => resolve(null),
+        { enableHighAccuracy: false, timeout: 10_000, maximumAge: 60_000 },
+      );
+    });
+
     const res = await fetch(url, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
         ...(t ? { Authorization: `Bearer ${t}` } : {}),
+        ...(geo ? { 'X-Geo': `${geo.lat},${geo.lng}` } : {}),
         ...(options?.headers ?? {}),
       },
     });
