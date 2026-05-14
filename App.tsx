@@ -1,9 +1,10 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   LayoutDashboard, Home as HomeIcon, LogOut, History, Menu, Info,
   Mail, Lock, Eye, EyeOff, User, Settings, ChevronDown, ChevronUp, Users, Download
 } from './components/Icons';
+import { Globe, MapPin as MapPinIcon, RefreshCw } from 'lucide-react';
 import { GammaLogo } from './components/GammaLogo';
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
@@ -139,6 +140,49 @@ export default function App() {
   // Force view to BEDS if read-only and trying to access other views (or default)
   // This effect could be better handled in useEffect, but for now we control rendering.
 
+  // ── Login debug info: IP + Geo ─────────────────────────────────────────────
+  // Mostramos abajo del login la IP que ve el server y la geolocalización del
+  // browser. Sirve para que el usuario nos mande captura cuando le rebota la
+  // validación de ubicación al loguear.
+  const [clientIp, setClientIp]   = useState<string | null>(null);
+  const [clientGeo, setClientGeo] = useState<{ lat: number; lng: number } | null>(null);
+  const [geoError, setGeoError]   = useState<string | null>(null);
+  const [loadingDebug, setLoadingDebug] = useState(false);
+
+  const refreshDebugInfo = useCallback(() => {
+    setLoadingDebug(true);
+    setGeoError(null);
+
+    // IP via endpoint público.
+    fetch('/api/client-ip')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setClientIp(d?.ip ?? '—'))
+      .catch(() => setClientIp('—'));
+
+    // Geo via browser. Timeout corto para no quedarse colgado en el login.
+    if ('geolocation' in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setClientGeo({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+          setLoadingDebug(false);
+        },
+        (err) => {
+          setClientGeo(null);
+          setGeoError(err.code === err.PERMISSION_DENIED ? 'permiso denegado' : 'no disponible');
+          setLoadingDebug(false);
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 },
+      );
+    } else {
+      setGeoError('no soportado');
+      setLoadingDebug(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!state.currentUser) refreshDebugInfo();
+  }, [state.currentUser, refreshDebugInfo]);
+
   if (!state.currentUser) {
     return (
       <div className="h-screen w-full flex flex-col items-center bg-slate-50 overflow-auto">
@@ -208,7 +252,43 @@ export default function App() {
             </Button>
           </form>
 
-          <div className="mt-8 pt-5 border-t border-slate-100 text-center">
+          {/* Zócalo de debug — IP que ve el server + geo del browser. Útil para que
+              el usuario nos mande captura si le rebota la validación de ubicación. */}
+          <div className="mt-6 pt-4 border-t border-slate-100">
+            <div className="flex items-stretch gap-2">
+              <div className="flex-1 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2">
+                <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest text-slate-400">
+                  <Globe className="w-3 h-3" />
+                  IP Conexión
+                </div>
+                <div className="text-xs font-bold text-slate-700 tabular-nums mt-0.5 truncate">
+                  {clientIp ?? '—'}
+                </div>
+              </div>
+              <div className="flex-1 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2">
+                <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest text-slate-400">
+                  <MapPinIcon className="w-3 h-3" />
+                  Geo (Lat/Lng)
+                </div>
+                <div className="text-xs font-bold text-slate-700 tabular-nums mt-0.5 truncate">
+                  {clientGeo
+                    ? `${clientGeo.lat.toFixed(3)} / ${clientGeo.lng.toFixed(3)}`
+                    : geoError ?? '—'}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={refreshDebugInfo}
+                disabled={loadingDebug}
+                title="Reintentar"
+                className="shrink-0 rounded-xl border border-slate-200 bg-white px-3 hover:bg-slate-50 disabled:opacity-50 transition-colors"
+              >
+                <RefreshCw className={cn('w-4 h-4 text-slate-500', loadingDebug && 'animate-spin')} />
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-6 pt-5 border-t border-slate-100 text-center">
             <p className="text-xs text-slate-400 font-medium">Grupo Gamma &bull; Red de Salud</p>
             <p className="text-[10px] text-slate-300 mt-0.5">MediFlow v1.0</p>
           </div>

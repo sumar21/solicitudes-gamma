@@ -91,6 +91,7 @@ const routes: Record<string, () => Promise<any>> = {
   '/api/roles':              () => import('./api/roles'),
   '/api/debug-subs':         () => import('./api/debug-subs'),
   '/api/cron-diet-changes':  () => import('./api/cron-diet-changes'),
+  '/api/client-ip':          () => import('./api/client-ip'),
 };
 
 const server = createServer(async (req, res) => {
