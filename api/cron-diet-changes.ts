@@ -1,9 +1,9 @@
 /**
  * POST /api/cron-diet-changes
  *
- * Cron job (lo dispara GitHub Actions cada 30 min). Detecta cambios en la dieta
- * de cualquier paciente ocupado y notifica a Catering del piso correspondiente
- * vía push (type 'DIET_CHANGE').
+ * Cron job (Vercel Cron cada 30 min — config en vercel.json). Detecta cambios
+ * en la dieta de cualquier paciente ocupado y notifica a Catering del piso
+ * correspondiente vía push (type 'DIET_CHANGE').
  *
  * Estrategia:
  *   1. Bulk read del snapshot en SP (lista 11.DietaSnapshot).
@@ -15,11 +15,13 @@
  *        · Hash distinto → PUSH a Catering del piso + PATCH del snapshot.
  *   5. Snapshots con LastChecked_DS > 7 días → marca Inactivo.
  *
- * Auth: header `X-Cron-Secret` debe matchear `process.env.CRON_SECRET`. No usa JWT
- * (es un bot, no un usuario).
+ * Auth: acepta dos formas (compatibilidad con GitHub Actions legacy + Vercel Cron):
+ *   - `Authorization: Bearer ${CRON_SECRET}` ← Vercel Cron lo manda automáticamente
+ *   - `X-Cron-Secret: ${CRON_SECRET}`        ← GitHub Actions / curl manual
+ *  No usa JWT (es un bot, no un usuario).
  *
  * Setup:
- *   - Setear CRON_SECRET (random largo) en .env.local, Vercel y GitHub Secrets.
+ *   - Setear CRON_SECRET (random largo) en .env.local y Vercel envs.
  *   - El LIST_ID de 11.DietaSnapshot está hardcoded abajo (convención del proyecto:
  *     los GUIDs de listas son constantes estructurales, no secretos).
  */
@@ -155,10 +157,19 @@ export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Cron-Secret');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'POST')    return res.status(405).json({ error: 'POST only' });
+  // Vercel Cron usa GET por default; aceptamos ambos. Para curl/Actions legacy seguimos
+  // soportando POST.
+  if (req.method !== 'POST' && req.method !== 'GET') {
+    return res.status(405).json({ error: 'POST or GET only' });
+  }
 
-  // Auth por shared secret (no usuario).
-  const provided = String(req.headers?.['x-cron-secret'] ?? '');
+  // Auth por shared secret (no usuario). Aceptamos ambos formatos:
+  //   - Authorization: Bearer <secret>  → Vercel Cron lo manda automáticamente
+  //   - X-Cron-Secret: <secret>         → GitHub Actions / curl manual
+  const authHeader = String(req.headers?.authorization ?? '');
+  const bearerSecret = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+  const customSecret = String(req.headers?.['x-cron-secret'] ?? '');
+  const provided = bearerSecret || customSecret;
   if (!CRON_SECRET || provided !== CRON_SECRET) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
@@ -241,7 +252,7 @@ export default async function handler(req: any, res: any) {
               dietTags:    tags,
             });
             stats.created++;
-            return;
+            continue; // ← sigue procesando el resto de la queue (antes había return que mataba el worker entero)
           }
 
           if (existing.dietHash === hash) {
@@ -257,7 +268,7 @@ export default async function handler(req: any, res: any) {
               dietTags:    tags,
             });
             stats.unchanged++;
-            return;
+            continue;
           }
 
           // Cambio real: push a Catering + update snapshot.

@@ -9,6 +9,9 @@
  * Sin esto, cada request del polling (cada 8s) haría un fetch a SP — insostenible
  * con 10 usuarios activos (~432k SP calls/día). Con cache, máximo 1 SP call por
  * sede cada 5 min.
+ *
+ * Cross-sede acceptance: ver SEDE_EXTRA_ALLOWED abajo. HPR acepta también
+ * reglas de IG (staff de IG que ocasionalmente entra a MediFlow desde su red).
  */
 
 import { graphFetch } from './graph.js';
@@ -78,6 +81,24 @@ function matchesSedeFactory(sedeNorm: string) {
   };
 }
 
+// Cross-sede acceptance: qué sedes adicionales de la lista 99.ABM_GeoIPS aceptamos
+// cuando el usuario loguea con una sede dada. Caso típico: staff de IG accede
+// ocasionalmente a MediFlow (que es de HPR) — sus IPs/coords están registradas
+// como IG, así que las aceptamos en login HPR.
+//   HPR  → acepta reglas HPR + IG.
+//   IG   → solo IG (no es simétrico — Bandejas / sistemas de IG corren en IG).
+//   SUMAR → superuser, acepta cualquiera (HPR + IG).
+const SEDE_EXTRA_ALLOWED: Record<string, string[]> = {
+  HPR:   ['IG'],
+  SUMAR: ['HPR', 'IG'],
+};
+
+function allowedSpSedes(sedeNorm: string): string[] {
+  const extras = SEDE_EXTRA_ALLOWED[sedeNorm] ?? [];
+  // Set para deduplicar si la sede ya está en extras por error de config.
+  return Array.from(new Set([sedeNorm, ...extras]));
+}
+
 /**
  * Trae las reglas de SP para una sede. Con cache 5 min.
  * Si SP falla, marca un cooldown corto (30s) y devuelve null → fail-open.
@@ -108,14 +129,18 @@ async function fetchRulesForSede(sede: string): Promise<SedeRules | null> {
     }
     const data = (await spRes.json()) as { value: Record<string, unknown>[] };
     const items = data.value ?? [];
-    const matchesSede = matchesSedeFactory(sedeNorm);
+    // Aceptamos reglas de la sede actual + las extras configuradas en SEDE_EXTRA_ALLOWED.
+    const allowedSedes = allowedSpSedes(sedeNorm);
+    const matchers = allowedSedes.map(s => matchesSedeFactory(s));
+    const matchesAnyAllowedSede = (recordSede: string) =>
+      matchers.some(m => m(recordSede));
 
     const geoRecords: { lat: number; lng: number }[] = [];
     const ipPrefixes: string[] = [];
 
     for (const item of items) {
       const f = item.fields as Record<string, unknown>;
-      if (!matchesSede(String(f.Sedes_S ?? ''))) continue;
+      if (!matchesAnyAllowedSede(String(f.Sedes_S ?? ''))) continue;
       const tipo = String(f.Tipo_GI ?? '').toLowerCase();
       if (tipo.includes('geo') || tipo.includes('ubicacion')) {
         const lat = Number(f.LatResumidaNum_GI);
