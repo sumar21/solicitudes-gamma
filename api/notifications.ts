@@ -15,7 +15,7 @@
  */
 
 import { graphFetch } from './graph.js';
-import { requireAuthAndLocation } from './jwt.js';
+import { requireAuth } from './jwt.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = '240f00dd-715b-4c78-9661-3147b7650a0f'; // 10.Notificaciones
@@ -181,4 +181,4 @@ async function handler(req: any, res: any) {
   return res.status(405).json({ error: 'Method not allowed' });
 }
 
-export default requireAuthAndLocation(handler);
+export default requireAuth(handler);

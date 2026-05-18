@@ -5,9 +5,9 @@
  * Body:    { sede: string, lat?: number, lng?: number }
  * Returns: { allowed: boolean, ip: string, method?: string, reason?: string, failOpen?: boolean }
  *
- * Usado en el login (cliente envía lat/lng del browser).
- * La lógica está extraída en `api/location-check.ts` para reusar en el middleware
- * `requireAuthAndLocation` que valida solo IP en cada request post-login.
+ * Usado en el login y en la revalidación periódica del frontend (cada 5 min)
+ * que dispara logout automático si la ubicación dejó de ser válida.
+ * La lógica está extraída en `api/location-check.ts`.
  */
 
 import { requireAuth } from './jwt.js';

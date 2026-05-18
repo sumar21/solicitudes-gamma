@@ -8,7 +8,7 @@
  */
 
 import { graphFetch }  from './graph.js';
-import { requireAuthAndLocation } from './jwt.js';
+import { requireAuth } from './jwt.js';
 import { Ticket, TicketStatus, WorkflowType, SedeType, BedStatus } from '../types.js';
 import { sendPushToSubscribers } from './push-utils.js';
 
@@ -351,4 +351,4 @@ async function handler(req: any, res: any) {
   }
 }
 
-export default requireAuthAndLocation(handler);
+export default requireAuth(handler);

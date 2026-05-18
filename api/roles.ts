@@ -8,7 +8,7 @@
  */
 
 import { graphFetch } from './graph.js';
-import { requireAuthAndLocation } from './jwt.js';
+import { requireAuth } from './jwt.js';
 import { invalidateRoleCache } from './role-cache.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
@@ -151,4 +151,4 @@ async function handler(req: any, res: any) {
   return res.status(405).json({ error: 'Method not allowed' });
 }
 
-export default requireAuthAndLocation(handler);
+export default requireAuth(handler);

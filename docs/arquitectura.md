@@ -387,6 +387,25 @@ Las suscripciones expiradas (HTTP 404/410) se limpian automáticamente.
 - `07.Traslados.IntervinoAzafata_T` (Text): `"NO"` al crear el ticket, pasa a `"SI"` en la primera acción de azafata (`handleRoomReady`, `handleStartTransport`, `handleConfirmReception`). Gatekeepa la cancelación y edición: solo se permite mientras esté en `"NO"`.
 - `08.Aislamientos.Tipo_A` (Text): almacena uno o varios tipos de aislamiento activos por paciente, separados por `;` (ej: `"Covid;Contacto"`). Backward-compatible: los registros con un solo tipo se leen como array de un elemento.
 
+**Formato del campo `IP_GI` en `99.ABM_GeoIPS` (2026-05-14):**
+
+El field acepta dos formatos para definir IPs permitidas. Backwards-compatible — las filas existentes en formato A siguen funcionando.
+
+| Formato | Ejemplo | Qué matchea |
+|---|---|---|
+| **A — Prefix dotted** (legacy, recomendado por default) | `190.172.65.` | Cualquier IP que arranque con `190.172.65.` exacto (todo el `/24`, 256 IPs). El guard de `.` final evita que `192.168.1` matchee falsamente `192.168.10.5`. |
+| **B — CIDR** (nuevo, casos puntuales) | `190.172.65.0/24` | Mismo efecto que el formato A. Útil cuando el admin de red ya tiene el CIDR del ISP a mano. |
+
+**Importante — preferir granularidad chica**:
+- Por default, **agregar una fila `/24` por cada red origen** (formato A o `/24` CIDR). Es lo más restrictivo + auditeable.
+- Solo usar máscaras mayores a `/24` (ej. `/16` o `/22`) si el ISP confirma que TODO ese rango pertenece a la misma organización autorizada. Una máscara amplia como `/16` cubre 65 536 IPs y puede dejar entrar IPs de otras organizaciones del mismo ISP — **no es lo que querés**.
+- Si la misma organización tiene salida por varios `/24` no contiguos (multi-WAN), **agregar una fila por cada `/24`** en lugar de una máscara amplia.
+
+Notas técnicas:
+- Solo IPv4. IPv6 no se soporta hoy (Vercel proxea v4).
+- CIDR mal escrito (ej. `190.172/16` o mask >32) devuelve `false` silenciosamente — el admin se entera por "no entra el user". Recomendación: usar [cidr.xyz](https://cidr.xyz) o similar para validar antes de cargar.
+- **Cache TTL 5 min**: cambios en `99.ABM_GeoIPS` tardan hasta 5 min en propagar (ver `RULES_TTL` en [api/location-check.ts](api/location-check.ts)). Para acelerar: redeploy en Vercel = cold start = cache fresh.
+
 ---
 
 ## 10. Patrones y decisiones de diseño

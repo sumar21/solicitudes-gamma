@@ -8,7 +8,7 @@
  */
 
 import { graphFetch }  from './graph.js';
-import { requireAuthAndLocation } from './jwt.js';
+import { requireAuth } from './jwt.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = 'e623ad06-ff62-441f-b67d-666224af5805'; // 00.Usuarios
@@ -204,4 +204,4 @@ async function handler(req: any, res: any) {
   }
 }
 
-export default requireAuthAndLocation(handler);
+export default requireAuth(handler);

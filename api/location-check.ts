@@ -2,13 +2,12 @@
  * Helper compartido de validación de ubicación.
  *
  * Usado por:
- *   - /api/validate-location (login completo: IP + geo)
- *   - requireAuthAndLocation wrapper (cada request: solo IP, sin geo)
+ *   - /api/validate-location (login + revalidación periódica cada 5 min desde
+ *     el frontend; ambos mandan lat/lng → usa checkRequestLocationFull).
  *
  * Estrategia: lista `99.ABM_GeoIPS` cacheada en memoria por sede (TTL 5 min).
- * Sin esto, cada request del polling (cada 8s) haría un fetch a SP — insostenible
- * con 10 usuarios activos (~432k SP calls/día). Con cache, máximo 1 SP call por
- * sede cada 5 min.
+ * Esto permite que muchas revalidaciones concurrentes peguen al cache sin tirar
+ * SP a SharePoint.
  *
  * Cross-sede acceptance: ver SEDE_EXTRA_ALLOWED abajo. HPR acepta también
  * reglas de IG (staff de IG que ocasionalmente entra a MediFlow desde su red).
@@ -162,14 +161,42 @@ async function fetchRulesForSede(sede: string): Promise<SedeRules | null> {
   }
 }
 
-/** Match de IP contra una lista de prefijos. Usa "." como guarda para evitar
- *  que "192.168.1" matchee "192.168.10.5". */
+/** Convierte una IP IPv4 dotted ("190.172.67.15") a un entero 32-bit unsigned.
+ *  Devuelve null si la IP es inválida. */
+function ipToInt(ip: string): number | null {
+  const parts = ip.split('.').map(Number);
+  if (parts.length !== 4 || parts.some(n => !isFinite(n) || n < 0 || n > 255)) return null;
+  return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+}
+
+/** Match CIDR estilo "190.172.0.0/16" → cubre cualquier IP dentro del rango. */
+function cidrMatches(clientIp: string, cidr: string): boolean {
+  const [network, maskStr] = cidr.split('/');
+  const mask = Number(maskStr);
+  if (!isFinite(mask) || mask < 0 || mask > 32) return false;
+  const networkInt = ipToInt(network);
+  const clientInt  = ipToInt(clientIp);
+  if (networkInt === null || clientInt === null) return false;
+  // Mask 0 → cualquier IP matchea. Mask 32 → solo IP exacta.
+  const maskBits = mask === 0 ? 0 : (0xFFFFFFFF << (32 - mask)) >>> 0;
+  return (networkInt & maskBits) === (clientInt & maskBits);
+}
+
+/** Match de IP contra una lista de prefijos. Soporta dos formatos:
+ *  - Dotted prefix ("190.172.65.") usa "." como guarda para evitar que
+ *    "192.168.1" matchee "192.168.10.5".
+ *  - CIDR ("190.172.0.0/16") usa bitmask. Más flexible para ISPs que asignan
+ *    rangos amplios (un /16 cubre 65536 IPs sin enumerar 256 prefijos /24). */
 function ipMatches(clientIp: string, prefixes: string[]): boolean {
   if (!clientIp || prefixes.length === 0) return false;
   const clientIpDotted = clientIp + '.';
   for (const prefix of prefixes) {
-    const prefixDotted = prefix.replace(/\.$/, '') + '.';
-    if (clientIpDotted === prefixDotted || clientIpDotted.startsWith(prefixDotted)) return true;
+    if (prefix.includes('/')) {
+      if (cidrMatches(clientIp, prefix)) return true;
+    } else {
+      const prefixDotted = prefix.replace(/\.$/, '') + '.';
+      if (clientIpDotted === prefixDotted || clientIpDotted.startsWith(prefixDotted)) return true;
+    }
   }
   return false;
 }
@@ -185,56 +212,9 @@ export type LocationCheckResult = {
 };
 
 /**
- * Validación rápida solo por IP. Pensado para correr en cada request
- * autenticado (vía requireAuthAndLocation). No pide geo al cliente.
- */
-export async function checkRequestLocation(params: {
-  sede: string;
-  clientIp: string;
-}): Promise<LocationCheckResult> {
-  const { sede, clientIp } = params;
-
-  if (isLocalhostIp(clientIp)) {
-    return { allowed: true, ip: clientIp, method: 'localhost' };
-  }
-
-  // SUMAR es un superuser sede → valida contra HPR (única sede de la app).
-  const effectiveSede = String(sede ?? '').toUpperCase() === 'SUMAR' ? 'HPR' : sede;
-
-  const rules = await fetchRulesForSede(effectiveSede);
-  if (!rules) {
-    // SP no responde → fail-open
-    return { allowed: true, ip: clientIp, reason: 'validation_unavailable', failOpen: true };
-  }
-
-  // Si la sede no tiene restricciones configuradas, pasa todo.
-  if (rules.ipPrefixes.length === 0 && rules.geoRecords.length === 0) {
-    return { allowed: true, ip: clientIp, method: 'no_restrictions' };
-  }
-
-  if (ipMatches(clientIp, rules.ipPrefixes)) {
-    return { allowed: true, ip: clientIp, method: 'ip' };
-  }
-
-  // Si llegamos acá, la IP no autoriza y NO tenemos geo en esta llamada.
-  if (!clientIp) {
-    return { allowed: false, ip: '', method: 'no_ip', reason: 'No se pudo detectar tu IP.' };
-  }
-  if (rules.geoRecords.length > 0) {
-    return {
-      allowed: false, ip: clientIp, method: 'geo_unavailable',
-      reason: 'Tu red no está autorizada y no se está validando GPS en este request. Reingresá desde una red autorizada.',
-    };
-  }
-  return {
-    allowed: false, ip: clientIp, method: 'ip_no_match',
-    reason: `Tu red no está autorizada para la sede ${effectiveSede}.`,
-  };
-}
-
-/**
- * Validación completa (IP + geo). Usado por /api/validate-location en el login,
- * donde el cliente sí pasa lat/lng.
+ * Validación completa (IP + geo). Usado por /api/validate-location tanto en el
+ * login como en la revalidación periódica del frontend. El cliente siempre pasa
+ * lat/lng cuando puede; si no, valida solo por IP.
  */
 export async function checkRequestLocationFull(params: {
   sede: string;

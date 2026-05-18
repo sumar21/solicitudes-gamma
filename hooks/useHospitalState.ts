@@ -152,37 +152,22 @@ export const useHospitalState = () => {
 
   // ── authFetch — agrega Authorization header en todos los requests ─────────────
   // Adicionalmente intercepta 403 con `error: 'location_blocked'` (del wrapper
-  // requireAuthAndLocation server-side) y dispara logout automático con el
-  // motivo específico. Esto cierra el agujero de "usuario loguea en hospital y
-  // sigue operando desde casa porque el JWT sigue válido" — al primer fetch
-  // desde una IP no autorizada, el server responde 403 y el cliente sale.
+  // La validación de ubicación NO corre per-request. Tiene su propia cadencia:
+  // un useEffect dispara /api/validate-location cada 5 min. Si falla → logout.
+  // Esto evita kicks por flake (multi-WAN, geo basura, cache stale entre instances)
+  // mientras preserva la garantía "user que se va del hospital es expulsado" con
+  // ventana de máximo 5 min.
   //
-  // El header X-Geo lleva lat,lng del browser. El server valida IP+geo (no solo IP)
-  // para que usuarios con IP fuera de whitelist pero físicamente en sede autorizada
-  // puedan operar (ej. HPR user conectado desde 4G en IG).
-  // El browser cachea la posición con maximumAge=60s → 1 hit de GPS por minuto
-  // máximo, aunque hagamos polling cada 8s.
+  // Igual mantenemos detección de 403 location_blocked acá por si algún endpoint
+  // legacy o futuro lo dispara — no rompe nada y dispara el logout correcto.
   const authFetch = useCallback(async (url: string, options?: RequestInit): Promise<Response> => {
     const t = localStorage.getItem(TOKEN_KEY);
-
-    // Obtener geo cacheada del browser. enableHighAccuracy=false usa wifi/celular
-    // (más rápido y suficiente para nuestro radio de 200m). Si falla o no hay
-    // permiso, seguimos sin header — server cae a IP-only.
-    const geo = await new Promise<{ lat: number; lng: number } | null>(resolve => {
-      if (typeof navigator === 'undefined' || !navigator.geolocation) { resolve(null); return; }
-      navigator.geolocation.getCurrentPosition(
-        pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-        () => resolve(null),
-        { enableHighAccuracy: false, timeout: 10_000, maximumAge: 60_000 },
-      );
-    });
 
     const res = await fetch(url, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
         ...(t ? { Authorization: `Bearer ${t}` } : {}),
-        ...(geo ? { 'X-Geo': `${geo.lat},${geo.lng}` } : {}),
         ...(options?.headers ?? {}),
       },
     });
@@ -1466,6 +1451,52 @@ export const useHospitalState = () => {
     const interval = setInterval(checkUnreadNotifications, 30_000);
     return () => clearInterval(interval);
   }, [token, currentUser, checkUnreadNotifications]);
+
+  // ── Revalidación periódica de ubicación (cada 5 min) ─────────────────────────
+  // Reemplaza la validación per-request (que generaba kicks por flake de
+  // IP/multi-WAN/geo). El contrato sigue: usuario que se va del hospital es
+  // expulsado, con ventana de máximo 5 min.
+  //
+  // Fail-open en errores de red: solo patea cuando el server responde
+  // explícitamente allowed:false. Errores de red, geo no disponible, etc., no
+  // interrumpen la sesión.
+  useEffect(() => {
+    if (!token || !currentUser || currentUser.sede === 'SUMAR') return;
+
+    let cancelled = false;
+    const REVALIDATE_MS = 5 * 60 * 1000;
+
+    const revalidate = async () => {
+      try {
+        const coords = await new Promise<{ lat: number; lng: number } | null>(resolve => {
+          if (typeof navigator === 'undefined' || !navigator.geolocation) { resolve(null); return; }
+          navigator.geolocation.getCurrentPosition(
+            pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+            () => resolve(null),
+            { enableHighAccuracy: false, timeout: 10_000, maximumAge: 60_000 },
+          );
+        });
+        if (cancelled) return;
+
+        const r = await fetch('/api/validate-location', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ sede: currentUser.sede, lat: coords?.lat, lng: coords?.lng }),
+        });
+        if (cancelled) return;
+        const data = await r.json().catch(() => ({} as any));
+        if (data?.allowed === false) {
+          setLoginError(data?.reason ?? 'Ubicación no autorizada — re-ingresá desde una red autorizada.');
+          handleLogout();
+        }
+      } catch {
+        // Fail-open: errores de red NO patean al usuario.
+      }
+    };
+
+    const interval = setInterval(revalidate, REVALIDATE_MS);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [token, currentUser?.id, currentUser?.sede, handleLogout]);
 
   // ── Push tap handling: marca como leída la notif SP correspondiente ──────────
   // El SW dispara dos rutas según si la app estaba abierta:
