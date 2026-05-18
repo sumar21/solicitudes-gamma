@@ -110,7 +110,15 @@ async function fetchRulesForSede(sede: string): Promise<SedeRules | null> {
 
   // Cache hit
   const cached = rulesCache.get(sedeNorm);
-  if (cached && cached.exp > now) return cached.rules;
+  if (cached && cached.exp > now) {
+    console.log('[location-check] cache HIT', {
+      sedeNorm,
+      ipPrefixes: cached.rules.ipPrefixes,
+      geoRecordsCount: cached.rules.geoRecords.length,
+      expiresInMs: cached.exp - now,
+    });
+    return cached.rules;
+  }
 
   // Cooldown de fail-open de SP — si recién falló, no reintentamos.
   if (spFailUntil > now) return null;
@@ -136,6 +144,16 @@ async function fetchRulesForSede(sede: string): Promise<SedeRules | null> {
     const matchesAnyAllowedSede = (recordSede: string) =>
       matchers.some(m => m(recordSede));
 
+    // Snapshot crudo de lo que devolvió SP — sirve para verificar caracteres raros,
+    // case mismatch, o filas que no se ven (Status_GI no exacto).
+    console.log('[location-check] SP raw items', {
+      sedeNorm,
+      allowedSedes,
+      totalRows: items.length,
+      sampleSedes: items.slice(0, 5).map((it: any) => JSON.stringify(String(it.fields?.Sedes_S ?? ''))),
+      sampleTipos: items.slice(0, 5).map((it: any) => JSON.stringify(String(it.fields?.Tipo_GI ?? ''))),
+    });
+
     const geoRecords: { lat: number; lng: number }[] = [];
     const ipPrefixes: string[] = [];
 
@@ -155,6 +173,19 @@ async function fetchRulesForSede(sede: string): Promise<SedeRules | null> {
 
     const rules: SedeRules = { ipPrefixes, geoRecords };
     rulesCache.set(sedeNorm, { rules, exp: now + RULES_TTL });
+
+    // Log final post-filtrado y matching: deja explícito qué se cacheó.
+    console.log('[location-check] fetchRulesForSede DONE', {
+      requested: sede,
+      sedeNorm,
+      allowedSedes,
+      spTotalRows: items.length,
+      matchedRows: ipPrefixes.length + geoRecords.length,
+      ipPrefixes,                  // ← qué prefijos quedaron cargados
+      geoRecordsCount: geoRecords.length,
+      cachedUntil: new Date(now + RULES_TTL).toISOString(),
+    });
+
     return rules;
   } catch (err: any) {
     console.warn(`[location-check] SP exception — fail-open: ${err?.message ?? err}`);
@@ -258,7 +289,26 @@ export async function checkRequestLocationFull(params: {
     }
   }
 
-  // Denegado — clasificar
+  // Denegado — clasificar y loggear con todo el contexto para diagnóstico.
+  // Calculamos closestGeoMeters solo si hay coords y geoRecords (para no romper en empty).
+  const closestGeoMeters = (hadCoords && rules.geoRecords.length > 0)
+    ? Math.round(Math.min(
+        ...rules.geoRecords.map(r =>
+          haversineMeters(Number(lat), Number(lng), r.lat, r.lng)
+        )
+      ))
+    : null;
+  console.log('[location-check] DENIED', {
+    effectiveSede,
+    clientIp,
+    hadCoords,
+    coords: hadCoords ? { lat: Number(lat), lng: Number(lng) } : null,
+    ipPrefixesTried: rules.ipPrefixes,
+    geoRecordsCount: rules.geoRecords.length,
+    closestGeoMeters,
+    geoRadiusLimit: GEO_RADIUS_METERS,
+  });
+
   if (!clientIp) {
     return {
       allowed: false, ip: '', method: 'no_ip',

@@ -227,7 +227,7 @@ Mapea bidireccionalmente entre el modelo `Ticket` de la app y los campos interno
 
 Verifica que el usuario acceda desde una ubicación autorizada:
 - **IP:** compara el subnet del cliente contra prefijos permitidos en la lista `99.ABM_GeoIPS`.
-- **Geolocalización:** calcula distancia Haversine contra coordenadas permitidas (radio 100m).
+- **Geolocalización:** calcula distancia Haversine contra coordenadas permitidas (radio 200m, ver `GEO_RADIUS_METERS` en [api/location-check.ts](api/location-check.ts)).
 - **Fail-open:** si la validación falla técnicamente, se permite el acceso para no bloquear operaciones hospitalarias.
 
 ### 4.5. Otros endpoints
