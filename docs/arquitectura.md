@@ -404,7 +404,7 @@ El field acepta dos formatos para definir IPs permitidas. Backwards-compatible �
 Notas técnicas:
 - Solo IPv4. IPv6 no se soporta hoy (Vercel proxea v4).
 - CIDR mal escrito (ej. `190.172/16` o mask >32) devuelve `false` silenciosamente — el admin se entera por "no entra el user". Recomendación: usar [cidr.xyz](https://cidr.xyz) o similar para validar antes de cargar.
-- **Cache TTL 5 min**: cambios en `99.ABM_GeoIPS` tardan hasta 5 min en propagar (ver `RULES_TTL` en [api/location-check.ts](api/location-check.ts)). Para acelerar: redeploy en Vercel = cold start = cache fresh.
+- **Cache TTL 60s**: cambios en `99.ABM_GeoIPS` tardan hasta ~1 min en propagar al server (ver `RULES_TTL` en [api/location-check.ts](api/location-check.ts)). Sumado al interval de revalidación del frontend (60s), el worst case end-to-end es ~2 min hasta que un user activo es expulsado por un cambio en SP.
 
 ---
 

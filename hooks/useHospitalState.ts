@@ -1452,19 +1452,29 @@ export const useHospitalState = () => {
     return () => clearInterval(interval);
   }, [token, currentUser, checkUnreadNotifications]);
 
-  // ── Revalidación periódica de ubicación (cada 5 min) ─────────────────────────
+  // ── Revalidación periódica de ubicación (cada 1 min) ─────────────────────────
   // Reemplaza la validación per-request (que generaba kicks por flake de
   // IP/multi-WAN/geo). El contrato sigue: usuario que se va del hospital es
-  // expulsado, con ventana de máximo 5 min.
+  // expulsado, con ventana de máximo ~2 min (60s cache server + 60s interval).
+  //
+  // Triggers de revalidación:
+  //   · mount inicial (no esperar el primer tick del interval)
+  //   · setInterval cada 60s
+  //   · visibilitychange (volver a la tab desde background)
+  //   · window focus (volver al foco)
+  //
+  // Throttle MIN_GAP=15s: si el user juega con foco (Alt+Tab múltiples), no
+  // dispara checks consecutivos pegados.
   //
   // Fail-open en errores de red: solo patea cuando el server responde
-  // explícitamente allowed:false. Errores de red, geo no disponible, etc., no
-  // interrumpen la sesión.
+  // explícitamente allowed:false.
   useEffect(() => {
     if (!token || !currentUser || currentUser.sede === 'SUMAR') return;
 
     let cancelled = false;
-    const REVALIDATE_MS = 5 * 60 * 1000;
+    let lastCheck = 0;
+    const REVALIDATE_MS = 60 * 1000;
+    const MIN_GAP = 15_000;
 
     const revalidate = async () => {
       try {
@@ -1494,8 +1504,27 @@ export const useHospitalState = () => {
       }
     };
 
-    const interval = setInterval(revalidate, REVALIDATE_MS);
-    return () => { cancelled = true; clearInterval(interval); };
+    const triggerCheck = () => {
+      if (cancelled) return;
+      const now = Date.now();
+      if (now - lastCheck < MIN_GAP) return;
+      lastCheck = now;
+      revalidate();
+    };
+
+    triggerCheck(); // chequeo inmediato al mount, sin esperar el primer tick
+
+    const interval = setInterval(triggerCheck, REVALIDATE_MS);
+    const onVisibility = () => { if (document.visibilityState === 'visible') triggerCheck(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', triggerCheck);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('focus', triggerCheck);
+    };
   }, [token, currentUser?.id, currentUser?.sede, handleLogout]);
 
   // ── Push tap handling: marca como leída la notif SP correspondiente ──────────

@@ -29,7 +29,9 @@ interface SedeRules {
 }
 
 const rulesCache = new Map<string, { rules: SedeRules; exp: number }>();
-const RULES_TTL = 5 * 60 * 1000;
+// TTL bajo (60s) para que cambios en 99.ABM_GeoIPS propaguen rápido (worst case
+// ~1 min). 5 instances de Vercel × 1 fetch/min = trivial para SP.
+const RULES_TTL = 60 * 1000;
 
 // ── Cache de "fail-open" si SP cae: evita machacar SP con retries en cascada
 // cuando ya sabemos que respondió mal hace segundos. TTL corto.
