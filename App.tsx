@@ -473,7 +473,10 @@ export default function App() {
               </Button>
             )}
             <div className="flex items-center gap-1 sm:gap-3 pl-1 sm:pl-4 border-l border-slate-100">
-              {can(state.currentUser, 'recibe_push') && (
+              {(can(state.currentUser, 'notif_new_ticket')
+                || can(state.currentUser, 'notif_status_update')
+                || can(state.currentUser, 'notif_reception_confirmed')
+                || can(state.currentUser, 'notif_diet_change')) && (
                 <Popover open={isNotificationsOpen} onOpenChange={setIsNotificationsOpen}>
                   <PopoverTrigger asChild>
                     <Button variant="ghost" size="icon" className="relative w-10 h-10 sm:w-9 sm:h-9 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 active:bg-slate-200">

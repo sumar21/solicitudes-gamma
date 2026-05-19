@@ -13,3 +13,26 @@ export const can = (user: User | null | undefined, perm: Permission): boolean =>
 
 export const hasModule = (user: User | null | undefined, mod: RoleModule): boolean =>
   !!user?.modules?.includes(mod);
+
+// Mapeo de tipo de notificación al permiso requerido para recibirla.
+// Fuente única de verdad client-side. El server tiene un map equivalente
+// (intencionalmente duplicado por separación de TS/build).
+const NOTIF_TYPE_TO_PERMISSION: Record<string, Permission> = {
+  NEW_TICKET:           'notif_new_ticket',
+  STATUS_UPDATE:        'notif_status_update',
+  RECEPTION_CONFIRMED:  'notif_reception_confirmed',
+  DIET_CHANGE:          'notif_diet_change',
+};
+
+/**
+ * Chequea si el user puede recibir un push/notif de cierto tipo. Tipo desconocido
+ * → false (fail-safe: no notificamos lo que no sabemos clasificar).
+ */
+export const canReceiveNotif = (
+  user: User | null | undefined,
+  notifType: string | null | undefined,
+): boolean => {
+  if (!notifType) return false;
+  const perm = NOTIF_TYPE_TO_PERMISSION[notifType];
+  return perm ? can(user, perm) : false;
+};

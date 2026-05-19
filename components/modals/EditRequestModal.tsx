@@ -144,7 +144,8 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
               }}
               options={[
                 { label: "Traslado Interno", value: WorkflowType.INTERNAL },
-                { label: "Ingreso ITR", value: WorkflowType.ITR_TO_FLOOR },
+                { label: "Sala de Espera Admisión", value: WorkflowType.ITR_TO_FLOOR },
+                { label: "Ingreso a ITR", value: WorkflowType.INGRESO_A_ITR },
               ]}
               placeholder="Seleccione flujo"
               showSearch={false}

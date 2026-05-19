@@ -50,8 +50,16 @@ const ROLE_LABELS: Partial<Record<Role, string>> = {
 
 const WORKFLOW_SHORT: Record<WorkflowType, string> = {
   [WorkflowType.INTERNAL]: 'Int.',
-  [WorkflowType.ITR_TO_FLOOR]: 'ITR',
+  [WorkflowType.ITR_TO_FLOOR]: 'Sala Esp.',
+  [WorkflowType.INGRESO_A_ITR]: 'ITR',
   [WorkflowType.ROOM_CHANGE]: 'Hab.',
+};
+
+const WORKFLOW_LABEL_BADGE: Record<WorkflowType, string> = {
+  [WorkflowType.INTERNAL]: 'Interno',
+  [WorkflowType.ITR_TO_FLOOR]: 'Sala de Espera',
+  [WorkflowType.INGRESO_A_ITR]: 'Ingreso ITR',
+  [WorkflowType.ROOM_CHANGE]: 'Interno',
 };
 
 export const RequestsView: React.FC<RequestsViewProps> = ({
@@ -142,9 +150,10 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
 
       if (!isOriginHostess && !isDestHostess) return null;
 
-      // Ingreso ITR (HRA → piso): el origen son sillones de sala de espera, no hay azafata estable ahí.
-      // Toda la operativa la hace la azafata DESTINO: limpiar (si aplica), iniciar traslado y confirmar recepción.
-      const isIngresoFlow = ticket.workflow === WorkflowType.ITR_TO_FLOOR;
+      // Los 3 workflows (INTERNAL, ITR_TO_FLOOR/Sala de Espera, INGRESO_A_ITR) usan
+      // operativa idéntica: azafata de origen inicia el traslado, azafata de destino
+      // confirma limpieza y recepción. (Antes ITR_TO_FLOOR era caso especial "todo
+      // destino" porque se asumía HRA sin azafata; la operación confirmó que sí hay.)
 
       // Estado 1: WAITING_ROOM — confirmar limpieza (azafata destino)
       if (ticket.status === TicketStatus.WAITING_ROOM) {
@@ -154,25 +163,23 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
               <ClipboardCheck className="w-3.5 h-3.5 mr-2" /> Habitación Lista
             </Button>
           );
-        if (isOriginHostess && !isIngresoFlow)
+        if (isOriginHostess)
           return <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50">Esperando preparación destino</Badge>;
       }
 
-      // Estado 2: IN_TRANSIT — quién inicia el traslado depende del workflow.
+      // Estado 2: IN_TRANSIT — azafata de origen inicia el traslado
       if (ticket.status === TicketStatus.IN_TRANSIT) {
-        const canStart = isIngresoFlow ? isDestHostess : isOriginHostess;
-        const showWaiting = isIngresoFlow ? false : isDestHostess;
-        if (canStart && can(currentUser, 'iniciar_traslado'))
+        if (isOriginHostess && can(currentUser, 'iniciar_traslado'))
           return (
             <Button size={size} className={cn(btnClass, "bg-emerald-600 hover:bg-emerald-700 text-white")} onClick={() => onStartTransport(ticket.id)}>
               <ArrowRightLeft className="w-3.5 h-3.5 mr-2" /> Iniciar Traslado
             </Button>
           );
-        if (showWaiting)
+        if (isDestHostess)
           return <Badge variant="outline" className="text-blue-600 border-blue-200 bg-blue-50">Esperando inicio de traslado</Badge>;
       }
 
-      // Estado 3: IN_TRANSPORT — confirmar recepción (azafata destino)
+      // Estado 3: IN_TRANSPORT — azafata destino confirma recepción
       if (ticket.status === TicketStatus.IN_TRANSPORT) {
         if (isDestHostess && can(currentUser, 'confirmar_recepcion'))
           return (
@@ -180,7 +187,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
               <CheckCircle2 className="w-3.5 h-3.5 mr-2" /> Recepción OK
             </Button>
           );
-        if (isOriginHostess && !isIngresoFlow)
+        if (isOriginHostess)
           return <Badge variant="outline" className="text-slate-500 border-slate-200 bg-slate-50">Traslado en curso...</Badge>;
       }
 
@@ -427,7 +434,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                     <TableCell>
                       <div className="flex flex-col gap-1.5 items-start">
                         <Badge variant="outline" className="text-[9px] bg-white text-slate-400 border-slate-200 font-black uppercase tracking-tight">
-                          {ticket.workflow === WorkflowType.ITR_TO_FLOOR ? 'Ingreso ITR' : 'Interno'}
+                          {WORKFLOW_LABEL_BADGE[ticket.workflow] ?? 'Interno'}
                         </Badge>
                         <div className="text-[10px] text-slate-500 mt-1">
                           {ticket.status === TicketStatus.WAITING_ROOM && "Esperando habitación lista."}

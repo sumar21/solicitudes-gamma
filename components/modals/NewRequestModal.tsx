@@ -100,20 +100,29 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
   };
 
   // Filtros por workflow:
-  //   INTERNAL      → origen cualquier sector EXCEPTO HRA (sala de espera no es origen interno);
-  //                   destino cualquier sector EXCEPTO HRA y HIT.
-  //   ITR_TO_FLOOR  → origen SOLO HRA (sillones de sala de espera con paciente registrado);
-  //                   destino cualquier sector EXCEPTO HRA y HIT.
+  //   INTERNAL        → origen cualquier sector EXCEPTO HRA y HIT;
+  //                     destino cualquier AVAILABLE/PREPARATION EXCEPTO HRA y HIT.
+  //   ITR_TO_FLOOR    → origen SOLO HRA (sillones sala de espera con paciente registrado);
+  //                     destino idem.
+  //   INGRESO_A_ITR   → origen SOLO HIT (las 8 camas de Internación Transitoria);
+  //                     destino idem.
   // Usamos isHitArea/isHraArea en vez de === Area.X porque Gamma puede devolver
   // variaciones de string (tildes, casing).
-  const isItrFlow = workflow === WorkflowType.ITR_TO_FLOOR;
+  const isSalaEsperaFlow = workflow === WorkflowType.ITR_TO_FLOOR;
+  const isIngresoItrFlow = workflow === WorkflowType.INGRESO_A_ITR;
+
   const availableOrigins = beds
     .filter(b => b.status === BedStatus.OCCUPIED)
-    .filter(b => isItrFlow ? isHraArea(b.area) : !isHraArea(b.area))
+    .filter(b => {
+      if (isSalaEsperaFlow) return isHraArea(b.area);
+      if (isIngresoItrFlow) return isHitArea(b.area);
+      return !isHraArea(b.area) && !isHitArea(b.area); // INTERNAL
+    })
     .sort(sortByAreaThenLabel);
+
   const availableDestinations = beds
     .filter(b => b.status === BedStatus.AVAILABLE || b.status === BedStatus.PREPARATION)
-    .filter(b => !isHitArea(b.area) && !isHraArea(b.area)) // ITR/Sala Espera nunca son destino
+    .filter(b => !isHitArea(b.area) && !isHraArea(b.area)) // HRA y HIT nunca son destino
     .filter(b => !activeTransferDestinations.has(b.label)) // ocultar camas ya asignadas a otro ticket activo
     .sort(sortByAreaThenLabel);
 
@@ -141,7 +150,8 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
               }}
               options={[
                 { label: "Traslado Interno", value: WorkflowType.INTERNAL },
-                { label: "Ingreso ITR", value: WorkflowType.ITR_TO_FLOOR },
+                { label: "Sala de Espera Admisión", value: WorkflowType.ITR_TO_FLOOR },
+                { label: "Ingreso a ITR", value: WorkflowType.INGRESO_A_ITR },
               ]}
               placeholder="Seleccione flujo"
               showSearch={false}

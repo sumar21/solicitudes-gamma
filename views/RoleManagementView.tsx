@@ -63,7 +63,10 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
   {
     module: '__cross__', label: 'Notificaciones',
     perms: [
-      { code: 'recibe_push', label: 'Recibe push + notificaciones in-app' },
+      { code: 'notif_new_ticket',          label: 'Traslado pedido (nuevo)' },
+      { code: 'notif_status_update',       label: 'Actualizaciones de estado (en tránsito, en transporte, cancelado, etc.)' },
+      { code: 'notif_reception_confirmed', label: 'Recepción confirmada (traslado finalizado)' },
+      { code: 'notif_diet_change',         label: 'Cambio de dieta' },
     ],
   },
 ];

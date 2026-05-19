@@ -110,16 +110,19 @@ function subAreaMatches(sub: Subscription, params: PushParams): boolean {
   return matchesLegacy(originArea) || matchesLegacy(destinationArea);
 }
 
+// Mapeo tipo de notif → permiso requerido. Misma fuente de verdad que
+// lib/permissions.ts del cliente (duplicada intencionalmente — server compila aparte).
+const NOTIF_TYPE_TO_PERMISSION: Record<string, string> = {
+  NEW_TICKET:           'notif_new_ticket',
+  STATUS_UPDATE:        'notif_status_update',
+  RECEPTION_CONFIRMED:  'notif_reception_confirmed',
+  DIET_CHANGE:          'notif_diet_change',
+};
+
 // Decide si una suscripción es relevante para el push actual. Filtra por:
 //  · sede / excludeUser (no son permisos — comportamiento universal)
-//  · permiso `recibe_push` en el rol (configurable en 99.ABMRoles_Traslados)
+//  · permiso granular según el tipo de notif (configurable en 99.ABMRoles_Traslados)
 //  · filtro por pisos asignados si el rol tiene FiltrarPisos_RT=Sí
-//
-// Caso especial Catering: si el nombre del rol es "Catering", se restringe a
-// los eventos RECEPTION_CONFIRMED y DIET_CHANGE. Esta granularidad por tipo
-// de evento no está modelada como permiso (sería 2 permisos extra solo para
-// un rol). Si en el futuro se necesita, se modelan como recibe_recepcion /
-// recibe_dieta. TODO si crece la matriz.
 function isRelevant(sub: Subscription, params: PushParams, roleCfg: RoleConfig | null): boolean {
   // Exclude the user who triggered the action
   if (params.excludeUserId && sub.userId === params.excludeUserId) return false;
@@ -127,13 +130,13 @@ function isRelevant(sub: Subscription, params: PushParams, roleCfg: RoleConfig |
   // Filter by sede
   if (params.sede && sub.sede && sub.sede !== params.sede && sub.sede !== 'SUMAR') return false;
 
-  // Rol no configurado o sin permiso `recibe_push` → no recibe nada.
-  if (!roleCfg || !roleCfg.permissions.includes('recibe_push')) return false;
+  // Rol no configurado → no recibe nada.
+  if (!roleCfg) return false;
 
-  // Caso especial Catering — restricción por tipo de evento.
-  if (roleCfg.name.toLowerCase() === 'catering') {
-    if (params.type !== 'RECEPTION_CONFIRMED' && params.type !== 'DIET_CHANGE') return false;
-  }
+  // Chequeo granular: el rol debe tener el permiso correspondiente al tipo.
+  // Tipo desconocido o no mapeado → no se envía (fail-safe).
+  const reqPerm = params.type ? NOTIF_TYPE_TO_PERMISSION[params.type] : undefined;
+  if (!reqPerm || !roleCfg.permissions.includes(reqPerm)) return false;
 
   // Si el rol filtra por pisos, validar que la cama del ticket caiga en las
   // áreas asignadas del subscriber. Sin filtro → recibe todo lo del sede.

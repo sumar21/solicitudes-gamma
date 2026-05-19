@@ -6,7 +6,7 @@ import {
   RoleModule,
 } from '../types';
 import { MOCK_TICKETS } from '../lib/constants';
-import { can, hasModule } from '../lib/permissions';
+import { can, hasModule, canReceiveNotif } from '../lib/permissions';
 
 // ── JWT helpers (client-side, solo lectura — sin verificar firma) ─────────────
 function parseJwtPayload(token: string): Record<string, unknown> | null {
@@ -210,6 +210,10 @@ export const useHospitalState = () => {
   const appStartTimeRef = React.useRef(Date.now()); // suppress notifications for first 15s
   const bedsEtagRef = React.useRef<string | null>(null); // ETag for beds 304 support
   const soundCooldownRef = React.useRef(false); // prevent sound spam
+  // Cache cliente de la última posición geo válida. Compartida entre login y
+  // revalidación periódica. TTL 30 min — evita golpear navigator.geolocation
+  // (y por ende el prompt de permiso del browser) en cada poll.
+  const geoCacheRef = React.useRef<{ coords: { lat: number; lng: number } | null; ts: number }>({ coords: null, ts: 0 });
   const [rawBeds, setRawBeds]                      = useState<Bed[]>([]);
   const [tickets, setTickets]                      = useState<Ticket[]>(MOCK_TICKETS);
   // Isolation: stored by patientCode, derived to bed labels via beds data
@@ -357,20 +361,20 @@ export const useHospitalState = () => {
     // Helper to find bed area for a given label
     const areaOf = (label?: string | null) => label ? rawBeds.find(b => b.label === label)?.area : undefined;
 
-    // Notif in-app relevante si el rol tiene permiso `recibe_push`. Si además filtra
-    // por pisos, restringimos al área asignada. CATERING está excluido explícitamente
-    // del polling local porque el server-side ya le manda los 2 eventos que le importan
-    // (RECEPTION_CONFIRMED / DIET_CHANGE filtrados por área); sumarle notifs del polling
-    // generaba duplicados que el filtro server había bloqueado.
-    const cateringByName = String(currentUser.role).toUpperCase() === 'CATERING';
-    const isRelevant = (originArea?: Area, destArea?: Area) => {
-      if (cateringByName) return false;
-      if (!can(currentUser, 'recibe_push')) return false;
+    // Notif in-app relevante si:
+    //   1) el rol tiene el permiso granular para ese tipo de notif (notif_new_ticket, etc.)
+    //   2) si filtra por pisos, el área del ticket está en sus áreas asignadas.
+    // El caso especial "Catering todo bloqueado" ya no hace falta: Catering simplemente
+    // NO tiene los permisos notif_new_ticket / notif_status_update en su rol, así que
+    // canReceiveNotif retorna false para esas notifs. Si en el futuro alguien le agrega
+    // esos permisos en el ABM, Catering los recibe — comportamiento consistente.
+    const isRelevant = (notif: Notification) => {
+      if (!canReceiveNotif(currentUser, notif.type)) return false;
       if (!currentUser.filterByFloors) return true;
       if (!currentUser.assignedAreas?.length) return false;
       return Boolean(
-        (originArea && currentUser.assignedAreas.includes(originArea)) ||
-        (destArea   && currentUser.assignedAreas.includes(destArea))
+        (notif.originArea      && currentUser.assignedAreas.includes(notif.originArea)) ||
+        (notif.destinationArea && currentUser.assignedAreas.includes(notif.destinationArea))
       );
     };
 
@@ -472,9 +476,9 @@ export const useHospitalState = () => {
     if (newNotifs.length > 0) {
       setNotifications(n => [...newNotifs, ...n]);
 
-      // Create toasts only for relevant notifications (filtered by area)
+      // Create toasts only for relevant notifications (filtered por permiso + área)
       const relevantToasts = newNotifs
-        .filter(n => isRelevant(n.originArea, n.destinationArea))
+        .filter(n => isRelevant(n))
         .map(n => ({ id: `TOAST-${n.id}`, notification: n }));
       if (relevantToasts.length > 0) {
         setToasts(prev => [...relevantToasts, ...prev].slice(0, 5)); // max 5 toasts
@@ -638,7 +642,13 @@ export const useHospitalState = () => {
               { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 },
             );
           });
-          if (coords) { userLat = coords.lat; userLng = coords.lng; }
+          if (coords) {
+            userLat = coords.lat;
+            userLng = coords.lng;
+            // Populamos el cache compartido: la revalidación periódica reusa
+            // estas coords por 30 min sin volver a pedir permiso al browser.
+            geoCacheRef.current = { coords: { lat: coords.lat, lng: coords.lng }, ts: Date.now() };
+          }
         } catch { /* geo unavailable, IP check will be used */ }
 
         try {
@@ -735,16 +745,16 @@ export const useHospitalState = () => {
 
   // ── Filtered data ─────────────────────────────────────────────────────────────
   // Notificaciones del dropdown (in-app). Mismo criterio que el detector de polling:
-  // requiere permiso `recibe_push`, y si el rol filtra por pisos, solo las de sus áreas.
-  const filteredNotifications = useMemo(() => {
+  // permiso granular por tipo de notif + filtro por pisos si aplica.
+  const filteredNotifications = useMemo<Notification[]>(() => {
     if (!currentUser) return [];
-    if (!can(currentUser, 'recibe_push')) return [];
-    if (!currentUser.filterByFloors) return notifications;
-    if (!currentUser.assignedAreas?.length) return [];
-    return notifications.filter(n => {
+    return notifications.filter((n: Notification) => {
+      if (!canReceiveNotif(currentUser, n.type)) return false;
+      if (!currentUser.filterByFloors) return true;
+      if (!currentUser.assignedAreas?.length) return false;
       const isOrigin = n.originArea && currentUser.assignedAreas?.includes(n.originArea);
       const isDest   = n.destinationArea && currentUser.assignedAreas?.includes(n.destinationArea);
-      return isOrigin || isDest;
+      return Boolean(isOrigin || isDest);
     });
   }, [notifications, currentUser]);
 
@@ -1457,14 +1467,19 @@ export const useHospitalState = () => {
   // IP/multi-WAN/geo). El contrato sigue: usuario que se va del hospital es
   // expulsado, con ventana de máximo ~2 min (60s cache server + 60s interval).
   //
-  // Triggers de revalidación:
+  // Triggers:
   //   · mount inicial (no esperar el primer tick del interval)
   //   · setInterval cada 60s
-  //   · visibilitychange (volver a la tab desde background)
-  //   · window focus (volver al foco)
   //
-  // Throttle MIN_GAP=15s: si el user juega con foco (Alt+Tab múltiples), no
-  // dispara checks consecutivos pegados.
+  // Decisión: NO usamos `visibilitychange` ni `focus` como triggers porque en
+  // móvil esos eventos se disparan demasiado (cada vez que aparece el teclado,
+  // scroll fuerte, notificación, etc.) y cada disparo terminaba pidiendo geo →
+  // prompt del browser → mala UX. El interval de 60s es suficiente para detectar
+  // que un usuario se fue (combinado con cache server-side de 60s, ventana máxima
+  // de kick = ~2 min).
+  //
+  // Cache cliente (geoCacheRef): la posición se reusa por 30 min sin volver a
+  // llamar a navigator.geolocation, así no acumulamos prompts de permiso en mobile.
   //
   // Fail-open en errores de red: solo patea cuando el server responde
   // explícitamente allowed:false.
@@ -1472,20 +1487,32 @@ export const useHospitalState = () => {
     if (!token || !currentUser || currentUser.sede === 'SUMAR') return;
 
     let cancelled = false;
-    let lastCheck = 0;
     const REVALIDATE_MS = 60 * 1000;
-    const MIN_GAP = 15_000;
+    const GEO_CACHE_TTL = 30 * 60_000;
+
+    const getCachedGeo = async (): Promise<{ lat: number; lng: number } | null> => {
+      const now = Date.now();
+      // Cache HIT — devolvemos la última posición sin tocar navigator.geolocation
+      // (esto evita prompts de permiso recurrentes en Chrome Android).
+      if (geoCacheRef.current.coords && now - geoCacheRef.current.ts < GEO_CACHE_TTL) {
+        return geoCacheRef.current.coords;
+      }
+      // Cache miss/expired — pedimos al browser.
+      const coords = await new Promise<{ lat: number; lng: number } | null>(resolve => {
+        if (typeof navigator === 'undefined' || !navigator.geolocation) { resolve(null); return; }
+        navigator.geolocation.getCurrentPosition(
+          pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+          () => resolve(null),
+          { enableHighAccuracy: false, timeout: 10_000, maximumAge: 30 * 60_000 },
+        );
+      });
+      if (coords) geoCacheRef.current = { coords, ts: now };
+      return coords;
+    };
 
     const revalidate = async () => {
       try {
-        const coords = await new Promise<{ lat: number; lng: number } | null>(resolve => {
-          if (typeof navigator === 'undefined' || !navigator.geolocation) { resolve(null); return; }
-          navigator.geolocation.getCurrentPosition(
-            pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-            () => resolve(null),
-            { enableHighAccuracy: false, timeout: 10_000, maximumAge: 60_000 },
-          );
-        });
+        const coords = await getCachedGeo();
         if (cancelled) return;
 
         const r = await fetch('/api/validate-location', {
@@ -1504,27 +1531,10 @@ export const useHospitalState = () => {
       }
     };
 
-    const triggerCheck = () => {
-      if (cancelled) return;
-      const now = Date.now();
-      if (now - lastCheck < MIN_GAP) return;
-      lastCheck = now;
-      revalidate();
-    };
+    revalidate(); // chequeo inmediato al mount
 
-    triggerCheck(); // chequeo inmediato al mount, sin esperar el primer tick
-
-    const interval = setInterval(triggerCheck, REVALIDATE_MS);
-    const onVisibility = () => { if (document.visibilityState === 'visible') triggerCheck(); };
-    document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('focus', triggerCheck);
-
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-      document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('focus', triggerCheck);
-    };
+    const interval = setInterval(revalidate, REVALIDATE_MS);
+    return () => { cancelled = true; clearInterval(interval); };
   }, [token, currentUser?.id, currentUser?.sede, handleLogout]);
 
   // ── Push tap handling: marca como leída la notif SP correspondiente ──────────

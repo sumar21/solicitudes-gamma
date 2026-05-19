@@ -69,7 +69,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ tickets }) => {
   // Data para Gráficos
   const volumeData = [
     { label: 'Traslado Interno', value: tickets.filter(t => t.workflow === WorkflowType.INTERNAL).length, type: WorkflowType.INTERNAL },
-    { label: 'Ingreso ITR', value: tickets.filter(t => t.workflow === WorkflowType.ITR_TO_FLOOR).length, type: WorkflowType.ITR_TO_FLOOR },
+    { label: 'Sala de Espera', value: tickets.filter(t => t.workflow === WorkflowType.ITR_TO_FLOOR).length, type: WorkflowType.ITR_TO_FLOOR },
+    { label: 'Ingreso a ITR', value: tickets.filter(t => t.workflow === WorkflowType.INGRESO_A_ITR).length, type: WorkflowType.INGRESO_A_ITR },
     { label: 'Cambio Habitación', value: tickets.filter(t => t.workflow === WorkflowType.ROOM_CHANGE).length, type: WorkflowType.ROOM_CHANGE },
   ];
 

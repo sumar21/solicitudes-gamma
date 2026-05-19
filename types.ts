@@ -12,7 +12,13 @@ export enum IsolationType {
 
 export enum WorkflowType {
   INTERNAL = 'INTERNAL',
+  /** Origen: sala de espera de Admisión (HRA) con paciente registrado. Antes se
+   *  llamaba "Ingreso ITR" pero el origen real es HRA, no ITR. Se renombró a
+   *  "Sala de Espera Admisión" en la UI; el value SP se mantiene para compat. */
   ITR_TO_FLOOR = 'ITR_TO_FLOOR',
+  /** Origen: las 8 camas de HIT (Internación Transitoria). Workflow nuevo (2026-05)
+   *  para traslados que salen de ITR hacia pisos. */
+  INGRESO_A_ITR = 'INGRESO_A_ITR',
   /** @deprecated fusionado con INTERNAL — ya no se ofrece al crear nuevos tickets;
    *  los tickets viejos en SP con este valor siguen leyéndose y se renderizan como "Traslado Interno". */
   ROOM_CHANGE = 'ROOM_CHANGE',
@@ -110,7 +116,12 @@ export const PERMISSIONS = [
   'confirmar_limpieza','iniciar_traslado','confirmar_recepcion','consolidar',
   'editar_aislamiento',
   'abm_usuarios','abm_roles',
-  'recibe_push',
+  // Notificaciones granulares por tipo (antes había un solo `recibe_push`).
+  // Cada permiso gobierna que el usuario reciba push + in-app de ese tipo.
+  'notif_new_ticket',
+  'notif_status_update',
+  'notif_reception_confirmed',
+  'notif_diet_change',
 ] as const;
 export type Permission = typeof PERMISSIONS[number];
 
@@ -139,8 +150,10 @@ export interface User {
 export enum NotificationType {
   NEW_TICKET = 'NEW_TICKET',
   STATUS_UPDATE = 'STATUS_UPDATE',
-  ROLE_CHANGE = 'ROLE_CHANGE',
-  SYSTEM = 'SYSTEM',
+  RECEPTION_CONFIRMED = 'RECEPTION_CONFIRMED',
+  DIET_CHANGE = 'DIET_CHANGE',
+  ROLE_CHANGE = 'ROLE_CHANGE',  // no usado hoy, backwards-compat
+  SYSTEM = 'SYSTEM',            // no usado hoy, backwards-compat
 }
 
 export interface Notification {

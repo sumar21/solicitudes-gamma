@@ -22,7 +22,10 @@ interface HistoryViewProps {
 
 const WORKFLOW_LABELS: Record<WorkflowType, string> = {
   [WorkflowType.INTERNAL]: 'Traslado Interno',
-  [WorkflowType.ITR_TO_FLOOR]: 'Ingreso ITR',
+  // ITR_TO_FLOOR antes era "Ingreso ITR" pero el origen real es la sala de espera
+  // de Admisión (HRA). Renombrado en 2026-05 para reflejar la semántica real.
+  [WorkflowType.ITR_TO_FLOOR]: 'Sala de Espera Admisión',
+  [WorkflowType.INGRESO_A_ITR]: 'Ingreso a ITR',
   // Tickets legacy que se crearon como "Cambio de Habitación" se muestran ahora
   // como "Traslado Interno" porque ambos workflows fueron fusionados.
   [WorkflowType.ROOM_CHANGE]: 'Traslado Interno',

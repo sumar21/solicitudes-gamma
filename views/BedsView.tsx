@@ -250,12 +250,18 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     return result;
   }, [beds, currentUser, searchFilter, areaFilters, statusFilters, allAreas.length, bedTicketMap, showIsolatedOnly, isolatedBeds, financierFilters, physicianFilters]);
 
-  // Group beds by Area, ordered with HIT first
+  // Group beds by Area, ordered with HIT first.
+  // Gamma a veces devuelve las camas de un piso en orden arbitrario (mezcla
+  // 405-1 antes de 401-2, etc.). Forzamos el orden interno por label con
+  // numeric collator para que "401 - Cama 02" < "402 - Cama 01" como uno espera.
   const bedsByArea: Record<string, Bed[]> = {};
   filteredBeds.forEach((bed: Bed) => {
     if (!bedsByArea[bed.area]) bedsByArea[bed.area] = [];
     bedsByArea[bed.area].push(bed);
   });
+  for (const area of Object.keys(bedsByArea)) {
+    bedsByArea[area].sort((a, b) => a.label.localeCompare(b.label, 'es', { numeric: true }));
+  }
   const sortedAreaEntries = Object.entries(bedsByArea).sort(([a], [b]) => {
     const ia = AREA_ORDER.indexOf(a as Area);
     const ib = AREA_ORDER.indexOf(b as Area);
