@@ -75,8 +75,28 @@ function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[]): Bed[] {
         if (dest) dest.status = BedStatus.ASSIGNED;
         break;
       case TicketStatus.WAITING_CONSOLIDATION:
-        if (dest)   { dest.status = BedStatus.OCCUPIED;     dest.patientName = ticket.patientName; }
-        if (origin) { origin.status = BedStatus.PREPARATION; origin.patientName = undefined; }
+        // Hasta que Admin consolide en PROGAL, Gamma todavía apunta el paciente a
+        // la cama origen. Visualmente lo mostramos en destino — y "transportamos"
+        // los identificadores PROGAL (patientCode + eventOrigin + eventNumber) al
+        // destino para que el enrich on-demand (click en la tarjeta) traiga los
+        // datos correctos. Sin esto, el panel detalle de la cama destino aparece
+        // vacío porque Gamma no encuentra al paciente ahí todavía.
+        if (dest && origin) {
+          dest.status       = BedStatus.OCCUPIED;
+          dest.patientName  = ticket.patientName;
+          dest.patientCode  = origin.patientCode;
+          dest.eventOrigin  = origin.eventOrigin;
+          dest.eventNumber  = origin.eventNumber;
+        }
+        if (origin) {
+          origin.status       = BedStatus.PREPARATION;
+          origin.patientName  = undefined;
+          // Limpiar identificadores en el origen: visualmente está en preparación
+          // y un click no debería traer al paciente que ya "se fue" hacia destino.
+          origin.patientCode  = undefined;
+          origin.eventOrigin  = undefined;
+          origin.eventNumber  = undefined;
+        }
         break;
     }
   }
