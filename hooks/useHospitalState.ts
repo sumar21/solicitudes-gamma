@@ -118,6 +118,23 @@ function statusChangeLabel(_from: string, to: string): { title: string } | null 
     default: return null;
   }
 }
+
+/**
+ * Timestamp del evento real del ticket (no "ahora" del cliente).
+ * Hace que la hora en el dropdown refleje cuándo se generó el cambio en el server,
+ * no cuándo el polling lo detectó.
+ */
+function timestampOfTicketEvent(t: Ticket): string {
+  const iso =
+      t.status === TicketStatus.IN_TRANSIT             ? t.cleaningDoneAt
+    : t.status === TicketStatus.IN_TRANSPORT           ? t.transportStartedAt
+    : t.status === TicketStatus.WAITING_CONSOLIDATION  ? t.receptionConfirmedAt
+    : t.status === TicketStatus.COMPLETED              ? t.completedAt
+    : t.status === TicketStatus.REJECTED               ? t.completedAt
+    : t.createdAt;
+  const d = iso ? new Date(iso) : new Date();
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
 const WARNING_MINUTES     = 15;
 const TOKEN_KEY           = 'mediflow_token';
 const USER_KEY            = 'mediflow_user';
@@ -306,10 +323,12 @@ export const useHospitalState = () => {
   const enrichBed = useCallback(async (bed: Bed): Promise<Bed> => {
     if (!bed.patientCode) return bed;
     try {
-      // fresh=1 fuerza re-fetch del evento (dieta/diagnóstico/plan) cada vez que
-      // se abre el modal de una cama. El cache de paciente (DNI/edad/sexo) sigue
-      // activo en el server (10 min) para no machacar consultas inmutables.
-      const params = new URLSearchParams({ patientCode: bed.patientCode, fresh: '1' });
+      // El evento (diet/diagnóstico/ayunos/plan) ya viene en `bed` desde /api/beds
+      // y vive en el shared cache server-side (60s). Acá solo necesitamos los datos
+      // del paciente que NO están en /api/beds: DNI, edad, sexo (consultarpacientecodigo,
+      // cacheado 10 min). Por eso NO pasamos fresh=1 — sería un re-fetch innecesario
+      // del evento que ya tenemos fresco.
+      const params = new URLSearchParams({ patientCode: bed.patientCode });
       if (bed.eventOrigin) params.set('eventOrigin', bed.eventOrigin);
       if (bed.eventNumber != null) params.set('eventNumber', String(bed.eventNumber));
       const r = await authFetch(`/api/bed-enrich?${params}`);
@@ -416,7 +435,7 @@ export const useHospitalState = () => {
         // ── New ticket appeared ─────────────────────────────────────────
         const notif: Notification = {
           id: `NOTIF-POLL-${t.id}`, isRead: false,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          timestamp: timestampOfTicketEvent(t),
           type: NotificationType.NEW_TICKET,
           title: 'Nueva Solicitud de Traslado',
           message: `${t.patientName}: ${t.origin} → ${t.destination ?? '?'}`,
@@ -440,7 +459,7 @@ export const useHospitalState = () => {
           if (label) {
             newNotifs.push({
               id: `NOTIF-POLL-${t.id}-${t.status}`, isRead: false,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              timestamp: timestampOfTicketEvent(t),
               type: NotificationType.STATUS_UPDATE,
               title: label.title,
               message: `${t.patientName}: ${t.origin} → ${t.destination ?? '?'}`,
@@ -457,7 +476,7 @@ export const useHospitalState = () => {
           if (prevDestArea && prevDestArea !== destArea) {
             newNotifs.push({
               id: `NOTIF-POLL-${t.id}-CANCEL-${prevDest}`, isRead: false,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              timestamp: timestampOfTicketEvent(t),
               type: NotificationType.STATUS_UPDATE,
               title: 'Traslado Cancelado',
               message: `${t.patientName}: el traslado hacia ${prevDest} fue cancelado (destino modificado).`,
@@ -469,7 +488,7 @@ export const useHospitalState = () => {
           if (destArea && destArea !== prevDestArea) {
             newNotifs.push({
               id: `NOTIF-POLL-${t.id}-NEW-${t.destination}`, isRead: false,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              timestamp: timestampOfTicketEvent(t),
               type: NotificationType.NEW_TICKET,
               title: 'Nueva Solicitud de Traslado',
               message: `${t.patientName}: ${t.origin} → ${t.destination ?? '?'}`,
@@ -481,7 +500,7 @@ export const useHospitalState = () => {
           if (originArea) {
             newNotifs.push({
               id: `NOTIF-POLL-${t.id}-MOD-${t.destination}`, isRead: false,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              timestamp: timestampOfTicketEvent(t),
               type: NotificationType.STATUS_UPDATE,
               title: 'Modificación de Solicitud',
               message: `${t.patientName}: destino cambiado a ${t.destination ?? '?'}.`,
@@ -754,13 +773,31 @@ export const useHospitalState = () => {
       }).catch(() => {});
     }
 
+    // Reset refs de detección de cambios. Sin esto, al re-loguear en la misma pestaña
+    // el detector de polling compara los tickets nuevos contra el snapshot del usuario
+    // anterior y dispara notifs falsas para todos los tickets activos como si fueran
+    // recién creados.
+    initialLoadDoneRef.current    = false;
+    appStartTimeRef.current       = Date.now();
+    prevTicketSnapshotRef.current = new Map();
+    soundCooldownRef.current      = false;
+    ticketsEtagRef.current        = null;
+    bedsEtagRef.current           = null;
+
+    // Reset state in-memory para que el próximo login no arranque mostrando
+    // dropdown/banner con datos del user anterior por un instante.
+    setTickets([]);
+    setNotifications([]);
+    setToasts([]);
+    setUnreadSpNotifications([]);
+    setRawBeds([]);
+
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
     setToken(null);
     setCurrentUser(null);
     setExpirySoon(false);
     setMinutesLeft(0);
-    bedsEtagRef.current = null;
   }, []);
 
   // ── Filtered data ─────────────────────────────────────────────────────────────

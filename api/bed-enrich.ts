@@ -11,7 +11,11 @@
  */
 
 import { requireAuth } from './jwt.js';
-import { getToken, fetchPatientDetails, fetchEventDetails, calcAge } from './gamma-client.js';
+import {
+  getToken, fetchPatientDetails, fetchEventDetails, getEventCached, setEventCache, calcAge,
+} from './gamma-client.js';
+import { parseDiets, type DietEntry } from './diet-tags.js';
+import { summarizeFasting, type FastingSummary } from './ayunos.js';
 
 // Maps the EVE_TIPO_INTERNACION code to its human label.
 // Grupo Gamma uses 1- and 2-letter codes:
@@ -34,11 +38,6 @@ const ADMISSION_TYPE_LABELS: Record<string, string> = {
   T:  'Trasplante Hepático',
 };
 
-interface DietEntry {
-  descripcion: string;           // HCG_DESCRIPCION (e.g. "Diabetico", "Tipo", "Celiaco")
-  respuesta: string;             // EIP_RESPUESTA_VALOR (e.g. "Sí", "No", "Liviana")
-}
-
 interface EnrichResult {
   dni?: string;
   age?: number;
@@ -60,20 +59,17 @@ interface EnrichResult {
   // Chips resumen para mostrar rápido en la tarjeta — ya filtrados: solo
   // condiciones con valor "Sí" (excepto "Tipo" que se guarda con su valor).
   dietTags?: string[];
+  // Ayunos programados (resumen + lista de indicaciones para el modal).
+  fasting?: FastingSummary;
 }
 
-// ── Cache split: patient (TTL largo) vs event+dieta (TTL muy corto) ─────────
-// Razón: DNI/edad/sexo/financiador no cambian durante una internación, así que
-// 10 min es seguro. Pero el evento incluye DIAGNÓSTICO, PLAN MÉDICO, FECHA DE
-// CIRUGÍA y sobre todo la DIETA, que sí cambian (PROGAL las edita en vivo).
-// Cachear el evento mucho tiempo causaba que cambios en PROGAL no se vieran
-// hasta 10 min después. Ahora el evento sobrevive solo 30s (cubre clicks
-// consecutivos del modal sin machacar a Gamma, pero refresca rápido).
+// ── Cache de paciente (TTL largo). Para el EVENTO usamos el cache compartido
+// de gamma-client.ts (getEventCached) — así /api/beds y este endpoint pegan al
+// mismo store y evitamos doble fetch cuando el cliente carga el mapa y luego
+// clickea una cama. El cliente que necesita data ultra-fresca pasa ?fresh=1
+// (modal): en ese path se bypassa el cache compartido y se hace fetch directo.
 const patientCache = new Map<string, { data: Partial<EnrichResult>; exp: number }>();
 const PATIENT_TTL  = 10 * 60 * 1000; // 10 minutos
-
-const eventCache = new Map<string, { data: Partial<EnrichResult>; exp: number }>();
-const EVENT_TTL  = 30 * 1000; // 30 segundos
 
 async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -97,41 +93,34 @@ async function handler(req: any, res: any) {
   }
 
   const now = Date.now();
-  const eventKey = eventOrigin && eventNumber ? `${eventOrigin}-${eventNumber}` : null;
+  const needEvent = !!(eventOrigin && eventNumber);
 
-  // Decidir qué hace falta fetchear según cada cache
+  // Decidir si hace falta tocar el endpoint /pacientes (cache 10 min).
   const cachedPatient = patientCache.get(patientCode);
   const patientFresh  = cachedPatient && cachedPatient.exp > now;
-
-  const cachedEvent = eventKey ? eventCache.get(eventKey) : undefined;
-  const eventFresh  = !fresh && cachedEvent && cachedEvent.exp > now;
-
-  // Si ambos están frescos, devolver merge inmediato sin tocar Gamma.
-  if (patientFresh && (!eventKey || eventFresh)) {
-    return res.status(200).json({
-      ...(cachedPatient!.data),
-      ...(eventFresh ? cachedEvent!.data : {}),
-    });
-  }
+  const needPatient   = !patientFresh;
 
   try {
-    // Solo pedir tokens y data de Gamma para lo que NO está cacheado.
-    const needPatient = !patientFresh;
-    const needEvent   = !!eventKey && !eventFresh;
-
     const [tokenPat, tokenEvt] = await Promise.all([
       needPatient ? getToken('consultarpacientecodigo') : Promise.resolve(''),
       needEvent   ? getToken('obtenereventointernacion') : Promise.resolve(''),
     ]);
 
+    // El evento: si fresh=1 (modal on-click) → bypass cache y refrescar el shared cache.
+    // Si fresh!=1 → usar el shared cache de gamma-client (mismo que pega /api/beds).
     const [patient, event] = await Promise.all([
       needPatient ? fetchPatientDetails(tokenPat, patientCode) : Promise.resolve(null),
       needEvent && eventOrigin && eventNumber
-        ? fetchEventDetails(tokenEvt, eventOrigin, parseInt(eventNumber))
+        ? (fresh
+            ? fetchEventDetails(tokenEvt, eventOrigin, parseInt(eventNumber)).then(ev => {
+                setEventCache(eventOrigin, parseInt(eventNumber), ev);
+                return ev;
+              })
+            : getEventCached(tokenEvt, eventOrigin, parseInt(eventNumber)))
         : Promise.resolve(null),
     ]);
 
-    // Construir el bloque "paciente" (lento de cachear).
+    // Bloque "paciente" — cache 10 min.
     let patientData: Partial<EnrichResult> = patientFresh ? cachedPatient!.data : {};
     if (patient) {
       patientData = {};
@@ -142,10 +131,9 @@ async function handler(req: any, res: any) {
       patientCache.set(patientCode, { data: patientData, exp: now + PATIENT_TTL });
     }
 
-    // Construir el bloque "evento" (cache corto, refresca seguido).
-    let eventData: Partial<EnrichResult> = eventFresh ? cachedEvent!.data : {};
+    // Bloque "evento" — derivado en cada request (el cache vive en gamma-client).
+    const eventData: Partial<EnrichResult> = {};
     if (event) {
-      eventData = {};
       eventData.diagnosis = event.EVE_DIAGNOSTICO?.trim() || undefined;
       if (event.PROFESIONAL_NOMBRE?.trim()) {
         eventData.prescribingPhysician = event.PROFESIONAL_NOMBRE.trim();
@@ -155,14 +143,13 @@ async function handler(req: any, res: any) {
         eventData.institution = event.INSTITUCION_NOMBRE.trim();
       }
 
-      // Tipo de internación — guardamos el código crudo + label humano
+      // Tipo de internación — guardamos el código crudo + label humano.
       const typeCode = event.EVE_TIPO_INTERNACION?.trim().toUpperCase();
       if (typeCode) {
         eventData.admissionTypeCode = typeCode;
         eventData.admissionType = ADMISSION_TYPE_LABELS[typeCode] ?? typeCode;
       }
 
-      // Fechas — Gamma ya las devuelve como strings ISO; las pasamos tal cual
       if (event.EVE_FECHA_HORA_INGRESO) {
         eventData.admissionDate = String(event.EVE_FECHA_HORA_INGRESO);
       }
@@ -174,7 +161,6 @@ async function handler(req: any, res: any) {
         eventData.authorizedDays = event.EVE_DIAS_AUTORIZADOS;
       }
 
-      // Plan médico — Gamma sumó IPM_PLAN_MEDICO (código) + IPM_DESCRIPCION (legible).
       if (event.IPM_PLAN_MEDICO) {
         eventData.medicalPlan = String(event.IPM_PLAN_MEDICO).trim() || undefined;
       }
@@ -182,36 +168,14 @@ async function handler(req: any, res: any) {
         eventData.medicalPlanDescription = String(event.IPM_DESCRIPCION).trim() || undefined;
       }
 
-      // Dietas — Gamma devuelve un array de {HCG_DESCRIPCION, EIP_RESPUESTA_VALOR}.
-      // Guardamos el array completo para auditoría y además armamos dietTags
-      // con las condiciones "activas" (respuesta Sí) para mostrar en la tarjeta.
-      if (Array.isArray(event.DIETAS) && event.DIETAS.length > 0) {
-        const diets: DietEntry[] = event.DIETAS
-          .filter(d => d?.HCG_DESCRIPCION)
-          .map(d => ({
-            descripcion: String(d.HCG_DESCRIPCION ?? '').trim(),
-            respuesta:   String(d.EIP_RESPUESTA_VALOR ?? '').trim(),
-          }));
-        if (diets.length > 0) {
-          eventData.diets = diets;
-          const tags: string[] = [];
-          for (const d of diets) {
-            const resp = d.respuesta.toLowerCase();
-            // "Tipo" guarda su valor libre ("Liviana", "Blanda", ...) como chip;
-            // el resto de las condiciones son Sí/No → solo las Sí aparecen.
-            if (d.descripcion.toLowerCase() === 'tipo') {
-              if (d.respuesta && resp !== 'no') tags.push(d.respuesta);
-            } else if (resp === 'sí' || resp === 'si') {
-              tags.push(d.descripcion);
-            }
-          }
-          if (tags.length > 0) eventData.dietTags = tags;
-        }
-      }
-      // Persistir el bloque evento en su propio cache (TTL corto: 30s).
-      if (eventKey) {
-        eventCache.set(eventKey, { data: eventData, exp: now + EVENT_TTL });
-      }
+      // Dietas — helper compartido con /api/beds.
+      const { diets, dietTags } = parseDiets(event.DIETAS);
+      if (diets) eventData.diets = diets;
+      if (dietTags) eventData.dietTags = dietTags;
+
+      // Ayunos — helper compartido.
+      const fasting = summarizeFasting(event.AYUNOS);
+      if (fasting) eventData.fasting = fasting;
     }
 
     // Mergear paciente + evento. El evento gana en campos compartidos por si el

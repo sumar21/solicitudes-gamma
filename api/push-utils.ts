@@ -123,24 +123,43 @@ const NOTIF_TYPE_TO_PERMISSION: Record<string, string> = {
 //  · sede / excludeUser (no son permisos — comportamiento universal)
 //  · permiso granular según el tipo de notif (configurable en 99.ABMRoles_Traslados)
 //  · filtro por pisos asignados si el rol tiene FiltrarPisos_RT=Sí
+//
+// Logueo: cada rama de descarte loguea la razón. Esto permite diagnosticar
+// "por qué no le llegó push a X" sin agregar instrumentación ad-hoc cada vez.
 function isRelevant(sub: Subscription, params: PushParams, roleCfg: RoleConfig | null): boolean {
-  // Exclude the user who triggered the action
-  if (params.excludeUserId && sub.userId === params.excludeUserId) return false;
+  const tag = `user=${sub.userId} role=${sub.role}`;
 
-  // Filter by sede
-  if (params.sede && sub.sede && sub.sede !== params.sede && sub.sede !== 'SUMAR') return false;
+  if (params.excludeUserId && sub.userId === params.excludeUserId) {
+    console.log(`[push-utils]  ✗ ${tag} — excluded (trigger user)`);
+    return false;
+  }
 
-  // Rol no configurado → no recibe nada.
-  if (!roleCfg) return false;
+  if (params.sede && sub.sede && sub.sede !== params.sede && sub.sede !== 'SUMAR') {
+    console.log(`[push-utils]  ✗ ${tag} — sede mismatch (sub=${sub.sede} push=${params.sede})`);
+    return false;
+  }
 
-  // Chequeo granular: el rol debe tener el permiso correspondiente al tipo.
-  // Tipo desconocido o no mapeado → no se envía (fail-safe).
+  if (!roleCfg) {
+    console.log(`[push-utils]  ✗ ${tag} — role config not found in 99.ABMRoles_Traslados`);
+    return false;
+  }
+
   const reqPerm = params.type ? NOTIF_TYPE_TO_PERMISSION[params.type] : undefined;
-  if (!reqPerm || !roleCfg.permissions.includes(reqPerm)) return false;
+  if (!reqPerm) {
+    console.log(`[push-utils]  ✗ ${tag} — type "${params.type}" not mapped to any permission`);
+    return false;
+  }
+  if (!roleCfg.permissions.includes(reqPerm)) {
+    console.log(`[push-utils]  ✗ ${tag} — missing permission ${reqPerm} (has: [${roleCfg.permissions.join(',')}])`);
+    return false;
+  }
 
-  // Si el rol filtra por pisos, validar que la cama del ticket caiga en las
-  // áreas asignadas del subscriber. Sin filtro → recibe todo lo del sede.
-  if (roleCfg.filterByFloors) return subAreaMatches(sub, params);
+  if (roleCfg.filterByFloors && !subAreaMatches(sub, params)) {
+    console.log(`[push-utils]  ✗ ${tag} — areas mismatch (sub.assignedAreas=[${sub.assignedAreas.join(',')}] push.originArea="${params.originAreaName}" push.destArea="${params.destinationAreaName}")`);
+    return false;
+  }
+
+  console.log(`[push-utils]  ✓ ${tag} — relevant (type=${params.type})`);
   return true;
 }
 

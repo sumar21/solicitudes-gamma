@@ -97,6 +97,19 @@ export interface Bed {
   disabledReason?: string;
   diets?: { descripcion: string; respuesta: string }[]; // Respuestas crudas del form de dieta
   dietTags?: string[];           // Chips resumen (condiciones activas / tipo)
+  // Ayunos programados del paciente. `hasUpcoming` controla el ícono de la tarjeta.
+  // `indications[].upcoming` trae las próximas (hasta 5) ocurrencias en ISO para el modal.
+  fasting?: {
+    hasUpcoming: boolean;
+    nextAt?: string;
+    indications: Array<{
+      indicationId: number;
+      startISO: string;
+      hours: number[];
+      totalOccurrences: number;
+      upcoming: string[];
+    }>;
+  };
 }
 
 export type ViewMode = 'HOME' | 'REQUESTS' | 'USERS' | 'HISTORY' | 'BEDS';

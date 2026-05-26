@@ -1,18 +1,33 @@
 /**
- * GET /api/beds — bed map from Gamma (fast, cached, no enrichment).
+ * GET /api/beds — bed map from Gamma (cached, enriquecido con data del evento).
  *
- * Only calls 2 Gamma endpoints: obtenermapacamas + obtenermapacamasocupadas.
- * Returns basic bed data (status, patientName, patientCode, event info).
- * Enrichment (DNI, financier, diagnosis, physician) is handled by /api/bed-enrich.
+ * Endpoints Gamma usados:
+ *   - obtenermapacamas / obtenermapacamasocupadas: base del mapa
+ *   - obtenereventointernacion (por cada cama ocupada, vía getEventCached): enrich
+ *     con diet, ayunos, diagnóstico, plan, fechas, tipo de internación.
  *
- * Server-side cache: 45s TTL. ETag support for 304 responses.
+ * Server-side cache: 45s TTL para el mapa completo + 60s TTL compartido para el evento
+ * (gamma-client.getEventCached). 5 workers paralelos para el enrich.
  */
 
 import { requireAuth } from './jwt.js';
 import {
   getToken, GAMMA_BASE, simpleHash,
-  GammaBed, GammaSector,
+  GammaBed, GammaSector, GammaEvent, getEventCached,
 } from './gamma-client.js';
+import { parseDiets } from './diet-tags.js';
+import { summarizeFasting } from './ayunos.js';
+
+const ADMISSION_TYPE_LABELS: Record<string, string> = {
+  C:  'Clínica',
+  CO: 'COVID-19',
+  H:  'Hemodinamia',
+  K:  'Quemado',
+  O:  'Oncológica',
+  Q:  'Quirúrgica',
+  R:  'Trasplante Renal',
+  T:  'Trasplante Hepático',
+};
 
 // ── BedStatus string values (mirrors types.ts enum) ──────────────────────────
 const STATUS = {
@@ -84,6 +99,76 @@ function transformBeds(mapData: GammaSector[], occupiedData: GammaSector[]) {
   }
 
   return beds;
+}
+
+// ── Enrich beds con data del evento (diet, ayunos, diagnóstico, plan, fechas) ──
+function applyEventToBed(bed: any, event: GammaEvent): void {
+  if (event.EVE_DIAGNOSTICO?.trim()) bed.diagnosis = event.EVE_DIAGNOSTICO.trim();
+
+  // Profesional: priorizar el del evento si no vino en camas ocupadas.
+  if (!bed.prescribingPhysician && event.PROFESIONAL_NOMBRE?.trim()) {
+    bed.prescribingPhysician = event.PROFESIONAL_NOMBRE.trim();
+  }
+  // Institution: fallback al evento.
+  if (!bed.institution && event.INSTITUCION_NOMBRE?.trim()) {
+    bed.institution = event.INSTITUCION_NOMBRE.trim();
+  }
+
+  const typeCode = event.EVE_TIPO_INTERNACION?.trim().toUpperCase();
+  if (typeCode) {
+    bed.admissionTypeCode = typeCode;
+    bed.admissionType = ADMISSION_TYPE_LABELS[typeCode] ?? typeCode;
+  }
+
+  if (event.EVE_FECHA_HORA_INGRESO) bed.admissionDate = String(event.EVE_FECHA_HORA_INGRESO);
+  if (event.EVE_FECHA_PROBABLE_CIRUGIA) bed.expectedSurgeryDate = String(event.EVE_FECHA_PROBABLE_CIRUGIA);
+  if (typeof event.EVE_DIAS_AUTORIZADOS === 'number') bed.authorizedDays = event.EVE_DIAS_AUTORIZADOS;
+
+  if (event.IPM_DESCRIPCION) {
+    bed.medicalPlanDescription = String(event.IPM_DESCRIPCION).trim() || undefined;
+  }
+
+  const { diets, dietTags } = parseDiets(event.DIETAS);
+  if (diets) bed.diets = diets;
+  if (dietTags) bed.dietTags = dietTags;
+
+  const fasting = summarizeFasting(event.AYUNOS);
+  if (fasting) bed.fasting = fasting;
+}
+
+async function enrichBedsWithEventData(beds: any[]): Promise<void> {
+  const toEnrich = beds.filter(b =>
+    b.status === STATUS.OCCUPIED && b.patientCode && b.eventOrigin && b.eventNumber != null
+  );
+  if (toEnrich.length === 0) return;
+
+  const tokenEvt = await getToken('obtenereventointernacion');
+  if (!tokenEvt) {
+    console.warn('[api/beds] No event token — skipping enrich');
+    return;
+  }
+
+  const queue = [...toEnrich];
+  let failed = 0;
+  const worker = async () => {
+    while (queue.length > 0) {
+      const bed = queue.shift();
+      if (!bed) break;
+      try {
+        const event = await getEventCached(tokenEvt, bed.eventOrigin, bed.eventNumber);
+        if (event) applyEventToBed(bed, event);
+        else failed++;
+      } catch (e: any) {
+        failed++;
+        console.warn(`[api/beds] enrich failed for ${bed.eventOrigin}-${bed.eventNumber}:`, e?.message ?? e);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: 5 }, worker));
+
+  if (failed > 0) {
+    console.warn(`[api/beds] enrich: ${failed}/${toEnrich.length} beds without event data`);
+  }
 }
 
 // ── Server-side response cache (survives warm invocations) ──────────────────
@@ -181,6 +266,11 @@ async function handler(req: any, res: any) {
     }
 
     const beds = transformBeds(mapData, occData);
+
+    // ── Enrich cada cama ocupada con la data del evento (diet, ayunos, etc.) ──
+    // 5 workers paralelos sobre el cache compartido — si todos los eventos están
+    // calientes el enrich es ~instantáneo; cold cuesta ~5–8s con ~60 camas.
+    await enrichBedsWithEventData(beds);
 
     // Update cache only on a fully successful response
     const etag = simpleHash(beds.map(b => `${b.id}:${b.status}:${b.patientCode ?? ''}`).join('|'));

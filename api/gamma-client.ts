@@ -77,6 +77,17 @@ export interface GammaEvent {
     HCG_DESCRIPCION?: string;
     EIP_RESPUESTA_VALOR?: string;
   }>;
+  // Indicaciones de ayuno. Una indicación = N filas que comparten PEA_ID_INDICACION
+  // y PEA_FECHA_HORA_INICIO, donde cada fila aporta una PAH_HORA (hora del día).
+  // PEA_CANTIDAD_REPETICIONES es el total de aplicaciones a lo largo de TODAS las
+  // horas de esa indicación, ciclando por día desde PEA_FECHA_HORA_INICIO.
+  AYUNOS?: Array<{
+    PEA_ID_INDICACION?: number;
+    PEA_ID_PLANIFICACION?: number;
+    PEA_FECHA_HORA_INICIO?: string;
+    PAH_HORA?: number;
+    PEA_CANTIDAD_REPETICIONES?: number;
+  }>;
 }
 
 // ── Token cache (survives warm invocations) ──────────────────────────────────
@@ -192,4 +203,28 @@ export function simpleHash(str: string): string {
     hash = ((hash << 5) + hash + str.charCodeAt(i)) >>> 0;
   }
   return hash.toString(36);
+}
+
+// ── Shared event cache (used by /api/beds enrich AND /api/bed-enrich) ─────────
+// Mantener una sola fuente de verdad para "evento de un paciente" evita doble
+// fetch cuando el mapa de camas se carga y luego el usuario clickea una cama.
+const eventCache = new Map<string, { data: GammaEvent | null; exp: number }>();
+const EVENT_TTL = 60_000;
+
+export async function getEventCached(
+  token: string,
+  origin: string,
+  number: number,
+): Promise<GammaEvent | null> {
+  const key = `${origin}-${number}`;
+  const cached = eventCache.get(key);
+  if (cached && cached.exp > Date.now()) return cached.data;
+  const data = await fetchEventDetails(token, origin, number);
+  eventCache.set(key, { data, exp: Date.now() + EVENT_TTL });
+  return data;
+}
+
+/** Permite que bed-enrich con `fresh=1` actualice el cache compartido tras un fetch directo. */
+export function setEventCache(origin: string, number: number, data: GammaEvent | null): void {
+  eventCache.set(`${origin}-${number}`, { data, exp: Date.now() + EVENT_TTL });
 }
