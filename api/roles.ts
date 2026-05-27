@@ -106,6 +106,9 @@ async function handler(req: any, res: any) {
     if (access !== undefined) fields.Acceso_RT = String(access);
     if (permissions !== undefined) {
       const arr = Array.isArray(permissions) ? permissions.map(String) : [];
+      if (arr.length === 0) {
+        console.warn(`[roles] PATCH id=${spItemId} — writing empty Permisos_RT (all permissions removed)`);
+      }
       fields.Permisos_RT = arr.join(';');
     }
     if (filterByFloors !== undefined) {

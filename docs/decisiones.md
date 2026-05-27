@@ -943,3 +943,45 @@ Resultado del bug: Catering recibía "Nueva Solicitud de Traslado" (NEW_TICKET) 
 **Por qué:** No hay UI ni handler que lo use. Cumple con la regla "Don't design for hypothetical future requirements". El catálogo se mantiene cerrado y extensible — si en el futuro Jorge pide la feature, se agrega el permiso en una sola línea de `types.ts`.
 
 **Cómo se removió:** script one-shot PATCHeó Admin (13 → 12 permisos) y Admision (8 → 7 permisos). El script se borró tras correr.
+
+## 17. Decisiones recientes (2026-05-27)
+
+### 17.1. Enrich upfront en `/api/beds` vs. endpoint separado vs. cron
+
+**Qué:** `/api/beds` ahora enriquece todas las camas ocupadas con data del evento (diet, ayunos, diagnóstico, plan, fechas) usando 5 workers paralelos sobre un cache compartido de 60s.
+
+**Alternativas descartadas:**
+- **Endpoint separado en background** (`/api/beds-fasting`): beds carga rápido, el ícono aparece segundos después. Menos riesgo pero 2 endpoints + flash visual.
+- **Cron pre-computa a SP** (estilo cron-diet-changes): frontend siempre instantáneo pero más complejo (cron + SP list + join), latencia de hasta 10 min para reflejar cambios.
+
+**Por qué upfront:** si ya pagamos el costo de fetchear el evento para los ayunos, no tiene sentido deferirlo — aprovechamos para traer todo (dieta, diagnóstico, plan, fechas). El modal abre instantáneamente. Cold load ~5–8s, warm ~500ms (beds cache 45s + event cache 60s absorben el poll de 60s).
+
+**Impacto:** `bed-enrich` ya no usa `fresh=1` en el click — lee del cache compartido. Solo fetch del paciente (DNI/edad/sexo). Latencia de modal: ~500ms primera vez, ~50ms subsiguiente.
+
+### 17.2. Permisos granulares de notificación (4 permisos vs. 1 `recibe_push`)
+
+**Qué:** Reemplazar el permiso único `recibe_push` por 4 granulares: `notif_new_ticket`, `notif_status_update`, `notif_reception_confirmed`, `notif_diet_change`.
+
+**Alternativas descartadas:**
+- **Mantener `recibe_push` + filtro hardcoded por rol**: sencillo pero inflexible. Catering necesitaba solo dieta + recepción; con `recibe_push` binario era todo o nada.
+- **Filtro por `type` en la UI de roles** (sin backend): permite al user elegir pero el server sigue mandando todo, desperdicia bandwidth.
+
+**Por qué granular:** cada tipo de notif tiene público distinto. `NOTIF_TYPE_TO_PERMISSION` mapea `NotificationType → Permission`. El push-utils y el polling detector del cliente comparten la misma función `canReceiveNotif(user, type)`.
+
+### 17.3. Cache compartido de eventos en gamma-client.ts
+
+**Qué:** `getEventCached()` en `gamma-client.ts` con Map módulo-nivel (60s TTL). Reemplaza los caches locales de `bed-enrich.ts`.
+
+**Alternativas descartadas:**
+- **Cache por endpoint** (cada uno mantiene su Map): duplica fetch cuando `/api/beds` carga y luego el user clickea una cama.
+- **Redis / external cache**: overengineering para Vercel serverless. El Map vive en la invocación warm y es suficiente.
+
+**Por qué:** single source of truth para eventos. Si `/api/beds` pobló el cache hace 30s, el click en bed-enrich lo lee sin tocar Gamma. `setEventCache()` permite al path `fresh=1` actualizar el cache compartido.
+
+### 17.4. toggleModule restaura permisos al reactivar módulo
+
+**Qué:** Al desactivar un módulo, sus permisos se borran del Set. Antes, reactivarlo NO los restauraba. Ahora se guarda un `originalPermissions` snapshot al abrir el modal y se restaura al reactivar.
+
+**Por qué:** bug reportado por Agustín — editó notificaciones de un rol y los permisos se vaciaron. Análisis mostró que el flujo de togglePermission (solo notifs) es seguro, pero un toggle accidental de módulo destruía permisos irrecuperablemente.
+
+**Impacto:** solo cambia `RoleManagementView.tsx`. El backend agrega log warning cuando se escribe `Permisos_RT` vacío para trazabilidad futura.

@@ -897,3 +897,94 @@ El service worker no tiene acceso al JWT, así que delega al cliente. [src-sw/sw
 ### 27.4. Caso DIET_CHANGE (sin ticketId)
 
 [api/cron-diet-changes.ts](api/cron-diet-changes.ts) no incluye `ticketId` en su push (es un evento de cama, no de ticket). El endpoint mark-by-event responde `{ ok: true, updated: 0 }` y la notif queda en el banner hasta que el user la marque manualmente con "Marcar todas como leídas" del modal de pendientes. Aceptable porque DIET_CHANGE no genera notif local (solo push).
+
+---
+
+## 28. Permisos granulares de notificación (2026-05-27)
+
+El permiso único `recibe_push` fue reemplazado por 4 permisos granulares configurables por rol desde el ABM:
+
+| Permiso | Tipo de notificación |
+|---|---|
+| `notif_new_ticket` | Traslado pedido (nuevo) |
+| `notif_status_update` | Actualizaciones de estado |
+| `notif_reception_confirmed` | Recepción confirmada |
+| `notif_diet_change` | Cambio de dieta |
+
+### 28.1. Mapeo type → permission
+
+[lib/permissions.ts](lib/permissions.ts) exporta `NOTIF_TYPE_TO_PERMISSION` y el helper `canReceiveNotif(user, type)`. Tanto el push server-side (`api/push-utils.ts`) como el detector de polling del cliente (`hooks/useHospitalState.ts`) usan este helper para decidir qué notifs mostrar/enviar.
+
+### 28.2. Logging de diagnóstico en push-utils
+
+[api/push-utils.ts](api/push-utils.ts) `isRelevant` loguea la razón exacta de cada descarte por subscriber: excluded (trigger user), sede mismatch, role config not found, type not mapped, missing permission, areas mismatch. Visible en Vercel logs filtrando por `[push-utils]`.
+
+---
+
+## 29. Enrich upfront en `/api/beds` y ayunos (2026-05-27)
+
+### 29.1. Cambio arquitectural: de "fast/enrich" a enrich completo
+
+Antes: `/api/beds` solo devolvía datos básicos (status, patientName, patientCode). El enrich (DNI, dieta, diagnóstico, etc.) se hacía on-click con `/api/bed-enrich`. Ahora: `/api/beds` enriquece TODAS las camas ocupadas con data del evento Gamma en cada poll. El modal abre sin loading para campos del evento.
+
+Flujo actual:
+```
+/api/beds (cada 60s, cache 45s):
+  ├── obtenermapacamas + obtenermapacamasocupadas  → beds base
+  └── 5 workers × getEventCached(origin, number)   → diet, ayunos, diagnóstico, fechas, plan
+        ↓
+  Cada bed ocupado: { ...base, diagnosis, dietTags, fasting, admissionDate, ... }
+
+Click en cama → /api/bed-enrich (sin fresh=1):
+  └── Solo consultarpacientecodigo → DNI, edad, sexo (cache 10 min)
+  └── Evento: del shared cache (60s), NO re-fetch
+```
+
+### 29.2. Cache compartido de eventos
+
+[api/gamma-client.ts](api/gamma-client.ts) exporta `getEventCached(token, origin, number)` con cache módulo-nivel (60s TTL). Lo usan:
+- `/api/beds` — enrich masivo (5 workers)
+- `/api/bed-enrich` — on-click (sin `fresh=1` → cache hit)
+
+`setEventCache()` permite que bed-enrich con `fresh=1` (uso futuro/manual) actualice el cache compartido tras fetch directo.
+
+### 29.3. Helpers extraídos
+
+| Archivo | Función | Usado por |
+|---|---|---|
+| [api/diet-tags.ts](api/diet-tags.ts) | `parseDiets(DIETAS)` → `{ diets, dietTags }` | beds.ts, bed-enrich.ts |
+| [api/ayunos.ts](api/ayunos.ts) | `summarizeFasting(AYUNOS)` → `FastingSummary` | beds.ts, bed-enrich.ts |
+
+### 29.4. Ayunos en el mapa de camas
+
+Gamma expone `AYUNOS[]` en `obtenereventointernacion`. Cada entrada es un par (indicación, hora):
+- `PEA_ID_INDICACION` — identifica la indicación
+- `PEA_FECHA_HORA_INICIO` — desde cuándo aplica (ISO datetime)
+- `PAH_HORA` — hora del día (0–23)
+- `PEA_CANTIDAD_REPETICIONES` — total de ocurrencias (ciclando por las horas, día por día)
+
+El helper `summarizeFasting()` agrupa por indicación, genera la secuencia de timestamps, y devuelve `{ hasUpcoming, nextAt, indications[].upcoming[] }`.
+
+**UI:**
+- **Tarjeta de cama**: ícono `UtensilsCrossed` (lucide-react) en círculo ámbar abajo-derecha cuando `bed.fasting.hasUpcoming`. Tooltip con próximo horario.
+- **Modal de detalle**: pestaña "Ayunos" con tarjetas por indicación mostrando horas programadas y próximas 5 ocurrencias.
+
+### 29.5. Cron de dieta cada 5 minutos
+
+[vercel.json](vercel.json) — el cron `cron-diet-changes` pasó de `*/30` a `*/5` para detectar cambios de dieta más rápido.
+
+---
+
+## 30. Fixes de notificaciones (2026-05-27)
+
+### 30.1. Re-login sin notifs falsas
+
+[hooks/useHospitalState.ts](hooks/useHospitalState.ts) `handleLogout` ahora resetea refs del detector de polling (`initialLoadDoneRef`, `appStartTimeRef`, `prevTicketSnapshotRef`, `soundCooldownRef`, `ticketsEtagRef`) y limpia states in-memory (`tickets`, `notifications`, `toasts`, `unreadSpNotifications`, `rawBeds`). Sin esto, al re-loguear en la misma pestaña, el detector comparaba contra el snapshot del user anterior y disparaba notifs falsas para todos los tickets activos.
+
+### 30.2. Timestamp real del evento
+
+`timestampOfTicketEvent(t)` en [hooks/useHospitalState.ts](hooks/useHospitalState.ts) mapea `status → timestamp del ticket` (cleaningDoneAt, transportStartedAt, receptionConfirmedAt, completedAt, createdAt) en lugar de `new Date()` (hora del cliente). Las notifs del polling ahora muestran la hora del evento real.
+
+### 30.3. Restauración de permisos al reactivar módulo en ABM
+
+[views/RoleManagementView.tsx](views/RoleManagementView.tsx) — `toggleModule` destruía los permisos de un módulo al desactivarlo, y NO los restauraba al reactivarlo. Ahora guarda un snapshot de `originalPermissions` al abrir el modal y los restaura si el módulo se reactiva.

@@ -89,6 +89,10 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<SPRole | null>(null);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  // Snapshot de los permisos al abrir el modal. Si el usuario desactiva un módulo
+  // (lo que borra sus permisos del Set) y luego lo reactiva, restauramos los permisos
+  // que tenía al abrir — evita pérdida accidental por toggle rápido.
+  const [originalPermissions, setOriginalPermissions] = useState<Set<Permission>>(new Set());
   // Qué grupos de permisos están desplegados en el modal (key = group.label).
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
@@ -136,18 +140,21 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
   const openCreate = () => {
     setEditingRole(null);
     setForm(emptyForm);
+    setOriginalPermissions(new Set());
     setExpandedGroups(new Set());
     setIsModalOpen(true);
   };
 
   const openEdit = (role: SPRole) => {
     setEditingRole(role);
+    const perms = new Set<Permission>(role.permissions ?? []);
     setForm({
       name: role.name,
       selectedModules: new Set(role.access.split('/').filter(Boolean)),
-      selectedPermissions: new Set(role.permissions ?? []),
+      selectedPermissions: new Set(perms),
       filterByFloors: !!role.filterByFloors,
     });
+    setOriginalPermissions(perms);
     setExpandedGroups(new Set());
     setIsModalOpen(true);
   };
@@ -156,11 +163,21 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
     setForm(prev => {
       const next = new Set(prev.selectedModules);
       next.has(mod) ? next.delete(mod) : next.add(mod);
-      // Si se deshabilita el módulo, retirar sus permisos asociados.
       const nextPerms = new Set(prev.selectedPermissions);
       if (!next.has(mod)) {
+        // Desactivar módulo → quitar sus permisos del Set.
         for (const group of PERMISSION_GROUPS) {
           if (group.module === mod) group.perms.forEach(p => nextPerms.delete(p.code));
+        }
+      } else {
+        // Reactivar módulo → restaurar los permisos que estaban al abrir el modal,
+        // para que un toggle accidental no destruya permisos irrecuperablemente.
+        for (const group of PERMISSION_GROUPS) {
+          if (group.module === mod) {
+            group.perms.forEach(p => {
+              if (originalPermissions.has(p.code)) nextPerms.add(p.code);
+            });
+          }
         }
       }
       return { ...prev, selectedModules: next, selectedPermissions: nextPerms };

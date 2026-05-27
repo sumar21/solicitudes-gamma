@@ -16,7 +16,7 @@
   "crons": [
     {
       "path": "/api/cron-diet-changes",
-      "schedule": "*/30 * * * *"
+      "schedule": "*/5 * * * *"
     }
   ]
 }

@@ -1308,6 +1308,91 @@ if (ticket.destination) {
 - Siempre incluir el header `Prefer: HonorNonIndexedQueriesWarningMayFailRandomly` en queries no indexadas.
 - Si la query falla (no entra al `if (conflictRes.ok)`), se sigue adelante con el write — fail-open en validaciones que no son de seguridad sino operativas.
 
+## Nuevos patrones (2026-05-27)
+
+### Worker pool para enrich masivo
+
+Cuando hay que fetchear data de Gamma para N camas en paralelo, usar un pool de 5 workers async sobre una queue compartida. El patrón evita saturar Gamma con 60+ requests simultáneos:
+
+```ts
+const queue = [...toEnrich];
+const worker = async () => {
+  while (queue.length > 0) {
+    const item = queue.shift();
+    if (!item) break;
+    try {
+      const data = await getEventCached(token, item.origin, item.number);
+      if (data) applyData(item, data);
+    } catch { /* log + continue */ }
+  }
+};
+await Promise.all(Array.from({ length: 5 }, worker));
+```
+
+Usado en: `api/beds.ts` (enrich upfront), `api/cron-diet-changes.ts`.
+
+### Cache compartido módulo-nivel con TTL
+
+Para data que se accede desde múltiples endpoints serverless en la misma invocación warm, exportar un cache Map desde un módulo compartido:
+
+```ts
+// gamma-client.ts
+const eventCache = new Map<string, { data: T | null; exp: number }>();
+const TTL = 60_000;
+
+export async function getCached(key: string, fetcher: () => Promise<T>): Promise<T | null> {
+  const cached = eventCache.get(key);
+  if (cached && cached.exp > Date.now()) return cached.data;
+  const data = await fetcher();
+  eventCache.set(key, { data, exp: Date.now() + TTL });
+  return data;
+}
+```
+
+Ventaja: `/api/beds` y `/api/bed-enrich` comparten el mismo cache de eventos. Evita doble fetch cuando el mapa carga y el user clickea una cama.
+
+### Helpers de parseo extraídos a archivos propios
+
+Cuando la misma lógica de transformación se usa en 2+ endpoints, extraer a un archivo helper en `api/`:
+
+| Helper | Función | Consumers |
+|---|---|---|
+| `api/diet-tags.ts` | `parseDiets(DIETAS)` | beds.ts, bed-enrich.ts |
+| `api/ayunos.ts` | `summarizeFasting(AYUNOS)` | beds.ts, bed-enrich.ts |
+
+Los helpers van en `api/` (no en `lib/`) porque solo se usan server-side. Los imports usan extensión `.js` como todo dentro de `api/`.
+
+### Snapshot de estado original para undo en formularios
+
+Cuando un formulario tiene acciones destructivas (desactivar módulo borra permisos), guardar un snapshot del estado original al abrir el modal. Usar el snapshot para restaurar en caso de reactivación:
+
+```ts
+const [originalPerms, setOriginalPerms] = useState<Set<Permission>>(new Set());
+
+const openEdit = (role: SPRole) => {
+  const perms = new Set<Permission>(role.permissions ?? []);
+  setOriginalPerms(perms);
+  setForm({ ...form, selectedPermissions: new Set(perms) });
+};
+
+// En toggle: si reactiva, restaurar desde originalPerms
+```
+
+### Log de diagnóstico con razón de descarte
+
+En funciones de filtrado server-side (push-utils `isRelevant`, location-check), loguear **por qué** cada candidato fue descartado, no solo el conteo final. Formato: `[módulo]  ✗ id=X — razón (contexto)` y `[módulo]  ✓ id=X — aprobado`.
+
+```ts
+if (!roleCfg.permissions.includes(reqPerm)) {
+  console.log(`[push-utils]  ✗ user=${sub.userId} — missing ${reqPerm} (has: [${roleCfg.permissions}])`);
+  return false;
+}
+console.log(`[push-utils]  ✓ user=${sub.userId} — relevant`);
+return true;
+```
+
+Invaluable para diagnosticar "por qué no me llegó la push" sin reproducir el escenario completo.
+
 ### Filtros condicionales por workflow en modales de ticket
 
 Cuando un dropdown depende del valor de otro select (ej: filtrar camas por workflow), construir el filtro como composición de `.filter()` y resetear el campo dependiente al cambiar el padre:
