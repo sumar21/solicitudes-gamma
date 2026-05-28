@@ -106,7 +106,7 @@ export interface Bed {
       indicationId: number;
       startISO: string;
       hours: number[];
-      totalOccurrences: number;
+      totalOccurrences: number | null;
       upcoming: string[];
     }>;
   };

@@ -1489,7 +1489,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                                     <div className="flex items-center justify-between mb-1.5">
                                       <p className="text-[8px] font-bold uppercase text-amber-700">Indicación #{ind.indicationId}</p>
                                       <span className="text-[10px] font-bold text-amber-800">
-                                        {ind.totalOccurrences} ocurrencia{ind.totalOccurrences === 1 ? '' : 's'}
+                                        {ind.totalOccurrences != null
+                                          ? `${ind.totalOccurrences} ocurrencia${ind.totalOccurrences === 1 ? '' : 's'}`
+                                          : 'Repeticiones no especificadas'}
                                       </span>
                                     </div>
                                     <p className="text-[11px] text-slate-600 mb-1.5">
