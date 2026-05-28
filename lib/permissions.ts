@@ -22,6 +22,7 @@ const NOTIF_TYPE_TO_PERMISSION: Record<string, Permission> = {
   STATUS_UPDATE:        'notif_status_update',
   RECEPTION_CONFIRMED:  'notif_reception_confirmed',
   DIET_CHANGE:          'notif_diet_change',
+  FASTING_CHANGE:       'notif_fasting_change',
 };
 
 /**

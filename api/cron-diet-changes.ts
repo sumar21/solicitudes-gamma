@@ -1,18 +1,24 @@
 /**
  * POST /api/cron-diet-changes
  *
- * Cron job (Vercel Cron cada 30 min — config en vercel.json). Detecta cambios
- * en la dieta de cualquier paciente ocupado y notifica a Catering del piso
- * correspondiente vía push (type 'DIET_CHANGE').
+ * Cron job (Vercel Cron cada 15 min — config en vercel.json). El "cron de
+ * notificaciones clínicas a Catering": detecta cambios de DIETA y de AYUNO de
+ * cualquier paciente ocupado y notifica al piso correspondiente vía push
+ * (type 'DIET_CHANGE' y 'FASTING_CHANGE' — cada uno gobernado por su permiso).
  *
  * Estrategia:
- *   1. Bulk read del snapshot en SP (lista 11.DietaSnapshot).
+ *   1. Bulk read del snapshot en SP (lista 11.DietaSnapshot — guarda DietHash_DS
+ *      y FastingHash_DS por paciente).
  *   2. Trae camas ocupadas vía Gamma (obtenermapacamasocupadas).
- *   3. Por cada cama ocupada con paciente + evento, fetcha el evento y hashea la dieta.
- *   4. Compara contra el snapshot:
- *        · Sin snapshot previo → CREA snapshot + NO push (primer ciclo silencioso).
- *        · Hash igual → solo PATCH LastChecked_DS.
- *        · Hash distinto → PUSH a Catering del piso + PATCH del snapshot.
+ *   3. Por cada cama ocupada con paciente + evento, fetcha el evento y hashea
+ *      dieta (hashTags) + ayuno (fastingHash).
+ *   4. Compara cada dimensión contra el snapshot, independientes:
+ *        · Sin snapshot previo → CREA + NO push (primer ciclo silencioso).
+ *        · Hash igual → sin push.
+ *        · Hash distinto → PUSH a Catering del piso.
+ *        · FastingHash previo '' (snapshots viejos pre-feature) → bootstrap
+ *          silencioso: persiste el hash sin push.
+ *      Siempre refresca el snapshot (LastChecked + ambos hashes).
  *   5. Snapshots con LastChecked_DS > 7 días → marca Inactivo.
  *
  * Auth: acepta dos formas (compatibilidad con GitHub Actions legacy + Vercel Cron):
@@ -32,6 +38,7 @@ import {
   GammaSector, GammaBed, GammaEvent,
 } from './gamma-client.js';
 import { sendPushToSubscribers } from './push-utils.js';
+import { fastingHash, summarizeFasting } from './ayunos.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = 'f8895f54-7c86-4ebf-b281-caec77837359'; // 11.DietaSnapshot
@@ -69,6 +76,7 @@ interface Snapshot {
   patientCode: string;
   dietHash: string;
   dietTags: string;
+  fastingHash: string;  // '' = nunca inicializado (bootstrap); 'none' = sin ayunos
   patientName: string;
   areaName: string;
   eventOrigin: string;
@@ -95,6 +103,7 @@ async function fetchSnapshots(): Promise<Map<string, Snapshot>> {
       patientCode: code,
       dietHash:    String(f.DietHash_DS ?? ''),
       dietTags:    String(f.DietTags_DS ?? ''),
+      fastingHash: String(f.FastingHash_DS ?? ''),
       patientName: String(f.PatientName_DS ?? ''),
       areaName:    String(f.AreaName_DS ?? ''),
       eventOrigin: String(f.EventOrigin_DS ?? ''),
@@ -114,6 +123,7 @@ async function upsertSnapshot(args: {
   eventNumber: number;
   dietHash: string;
   dietTags: string[];
+  fastingHash: string;
 }): Promise<void> {
   const basePath = `/sites/${SITE_ID}/lists/${LIST_ID}/items`;
   const now = new Date().toISOString();
@@ -122,6 +132,7 @@ async function upsertSnapshot(args: {
     PatientCode_DS: args.patientCode,
     DietHash_DS:    args.dietHash,
     DietTags_DS:    args.dietTags.join(';'),
+    FastingHash_DS: args.fastingHash,
     EventOrigin_DS: args.eventOrigin,
     EventNumber_DS: args.eventNumber,
     PatientName_DS: args.patientName,
@@ -178,7 +189,7 @@ export default async function handler(req: any, res: any) {
     return res.status(503).json({ error: 'SHAREPOINT_SITE_ID no configurado' });
   }
 
-  const stats = { checked: 0, created: 0, unchanged: 0, changed: 0, notified: 0, deactivated: 0, errors: 0 };
+  const stats = { checked: 0, created: 0, unchanged: 0, changed: 0, notified: 0, fastingChanged: 0, fastingNotified: 0, deactivated: 0, errors: 0 };
 
   try {
     // 1) Snapshot bulk
@@ -236,64 +247,72 @@ export default async function handler(req: any, res: any) {
         try {
           const event = await fetchEventDetails(tokenEvt, b.eventOrigin, b.eventNumber);
           const tags = extractDietTags(event);
-          const hash = hashTags(tags);
+          const dHash = hashTags(tags);
+          const fHash = fastingHash(event?.AYUNOS);
           const existing = snapshots.get(b.patientCode);
 
-          if (!existing) {
-            // Primer ciclo para este paciente: crear snapshot SIN push (anti-spam bootstrap).
-            await upsertSnapshot({
-              existing: undefined,
-              patientCode: b.patientCode,
-              patientName: b.patientName,
-              areaName:    b.areaName,
-              eventOrigin: b.eventOrigin,
-              eventNumber: b.eventNumber,
-              dietHash:    hash,
-              dietTags:    tags,
-            });
-            stats.created++;
-            continue; // ← sigue procesando el resto de la queue (antes había return que mataba el worker entero)
-          }
-
-          if (existing.dietHash === hash) {
-            // Sin cambios: solo refrescar LastChecked.
-            await upsertSnapshot({
-              existing,
-              patientCode: b.patientCode,
-              patientName: b.patientName,
-              areaName:    b.areaName,
-              eventOrigin: b.eventOrigin,
-              eventNumber: b.eventNumber,
-              dietHash:    hash,
-              dietTags:    tags,
-            });
-            stats.unchanged++;
-            continue;
-          }
-
-          // Cambio real: push a Catering + update snapshot.
-          stats.changed++;
-          const tagsLabel = tags.length > 0 ? tags.join(', ') : 'sin dieta especial';
-          await sendPushToSubscribers({
-            title: 'Dieta actualizada',
-            body:  `${b.patientName || 'Paciente'}: ${tagsLabel}`,
-            type:  'DIET_CHANGE',
-            originAreaName:      b.areaName,
-            destinationAreaName: b.areaName,
-            sede: 'HPR',
-          });
-          stats.notified++;
-
-          await upsertSnapshot({
-            existing,
+          const baseArgs = {
             patientCode: b.patientCode,
             patientName: b.patientName,
             areaName:    b.areaName,
             eventOrigin: b.eventOrigin,
             eventNumber: b.eventNumber,
-            dietHash:    hash,
+            dietHash:    dHash,
             dietTags:    tags,
-          });
+            fastingHash: fHash,
+          };
+
+          if (!existing) {
+            // Primer ciclo para este paciente: crear snapshot SIN push (anti-spam bootstrap).
+            await upsertSnapshot({ existing: undefined, ...baseArgs });
+            stats.created++;
+            continue; // ← sigue procesando el resto de la queue
+          }
+
+          let changed = false;
+
+          // ── Dieta ──
+          if (existing.dietHash !== dHash) {
+            changed = true;
+            stats.changed++;
+            const tagsLabel = tags.length > 0 ? tags.join(', ') : 'sin dieta especial';
+            await sendPushToSubscribers({
+              title: 'Dieta actualizada',
+              body:  `${b.patientName || 'Paciente'}: ${tagsLabel}`,
+              type:  'DIET_CHANGE',
+              originAreaName: b.areaName, destinationAreaName: b.areaName, sede: 'HPR',
+            });
+            stats.notified++;
+          }
+
+          // ── Ayuno ── (independiente de dieta). Si el campo nunca se inicializó ('')
+          // → solo bootstrap silencioso (lo persiste el upsert final), sin push.
+          if (existing.fastingHash !== '' && existing.fastingHash !== fHash) {
+            changed = true;
+            stats.fastingChanged++;
+            const summary = summarizeFasting(event?.AYUNOS);
+            const horas = summary
+              ? Array.from(new Set(summary.indications.flatMap(i => i.hours)))
+                  .sort((a, b2) => a - b2)
+                  .map(h => `${String(h).padStart(2, '0')}:00`).join(', ')
+              : '';
+            let detalle: string;
+            if (existing.fastingHash === 'none') detalle = horas ? `Nuevo ayuno programado: ${horas}` : 'Nuevo ayuno programado';
+            else if (fHash === 'none')           detalle = 'Ayuno cancelado';
+            else                                 detalle = horas ? `Ayuno modificado: ${horas}` : 'Ayuno modificado';
+            await sendPushToSubscribers({
+              title: 'Ayuno actualizado',
+              body:  `${b.patientName || 'Paciente'}: ${detalle}`,
+              type:  'FASTING_CHANGE',
+              originAreaName: b.areaName, destinationAreaName: b.areaName, sede: 'HPR',
+            });
+            stats.fastingNotified++;
+          }
+
+          if (!changed) stats.unchanged++;
+
+          // Refrescar snapshot siempre (LastChecked + hashes nuevos, incl. bootstrap del fasting).
+          await upsertSnapshot({ existing, ...baseArgs });
         } catch (err: any) {
           stats.errors++;
           console.error(`[cron-diet] error procesando ${b.patientCode}:`, err?.message ?? err);

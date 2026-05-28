@@ -83,6 +83,14 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       setEnrichedBed(null);
       return;
     }
+    // El bed ya trae el enrich completo de SP (cron) → el modal abre al instante,
+    // sin pegar a Gamma. Solo caemos al fetch on-demand si la cama todavía no fue
+    // procesada por el cron (cama recién ocupada, sin enrich en 12.EnrichCamas).
+    if (selectedBed.enriched) {
+      setEnrichedBed(null);
+      setEnrichLoading(false);
+      return;
+    }
     setEnrichLoading(true);
     setEnrichedBed(null);
     onEnrichBed(selectedBed).then(enriched => {

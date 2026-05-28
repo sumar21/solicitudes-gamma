@@ -17,6 +17,13 @@
     {
       "path": "/api/cron-diet-changes",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron-enrich-beds",
+      "schedule": "*/15 * * * *"
     }
-  ]
+  ],
+  "functions": {
+    "api/cron-enrich-beds.ts": { "maxDuration": 300 }
+  }
 }

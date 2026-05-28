@@ -97,6 +97,9 @@ export interface Bed {
   disabledReason?: string;
   diets?: { descripcion: string; respuesta: string }[]; // Respuestas crudas del form de dieta
   dietTags?: string[];           // Chips resumen (condiciones activas / tipo)
+  // True si /api/beds le aplicó el enrich precomputado de SP (12.EnrichCamas).
+  // El modal lo usa para no pegar a Gamma on-click cuando ya tiene los datos.
+  enriched?: boolean;
   // Ayunos programados del paciente. `hasUpcoming` controla el ícono de la tarjeta.
   // `indications[].upcoming` trae las próximas (hasta 5) ocurrencias en ISO para el modal.
   fasting?: {
@@ -135,6 +138,7 @@ export const PERMISSIONS = [
   'notif_status_update',
   'notif_reception_confirmed',
   'notif_diet_change',
+  'notif_fasting_change',
 ] as const;
 export type Permission = typeof PERMISSIONS[number];
 
@@ -165,6 +169,7 @@ export enum NotificationType {
   STATUS_UPDATE = 'STATUS_UPDATE',
   RECEPTION_CONFIRMED = 'RECEPTION_CONFIRMED',
   DIET_CHANGE = 'DIET_CHANGE',
+  FASTING_CHANGE = 'FASTING_CHANGE',
   ROLE_CHANGE = 'ROLE_CHANGE',  // no usado hoy, backwards-compat
   SYSTEM = 'SYSTEM',            // no usado hoy, backwards-compat
 }

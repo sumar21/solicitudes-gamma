@@ -19,7 +19,7 @@
  *       23 00:00.
  */
 
-import type { GammaEvent } from './gamma-client.js';
+import { simpleHash, type GammaEvent } from './gamma-client.js';
 
 export interface FastingIndication {
   indicationId: number;
@@ -148,4 +148,23 @@ export function summarizeFasting(
     nextAt: nextAtMs === Infinity ? undefined : new Date(nextAtMs).toISOString(),
     indications,
   };
+}
+
+/**
+ * Hash estable del estado de ayunos de un evento — para detectar cambios entre
+ * corridas del cron (análogo a hashTags de dietas).
+ *
+ * Devuelve `'none'` cuando no hay ayunos (centinela explícito): así el cron puede
+ * distinguir "sin ayunos" de "snapshot nunca inicializado" (campo SP vacío `''`)
+ * y no spamear el primer ciclo. Usa solo campos estables (id de planificación,
+ * horas, inicio, repeticiones) → no depende de `now`.
+ */
+export function fastingHash(ayunos: GammaEvent['AYUNOS'] | undefined): string {
+  const summary = summarizeFasting(ayunos);
+  if (!summary || summary.indications.length === 0) return 'none';
+  const sig = summary.indications
+    .map(i => `${i.indicationId}:${i.hours.join(',')}:${i.startISO}:${i.totalOccurrences ?? 'n'}`)
+    .sort()
+    .join('|');
+  return simpleHash(sig);
 }

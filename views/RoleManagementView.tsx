@@ -67,6 +67,7 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
       { code: 'notif_status_update',       label: 'Actualizaciones de estado (en tránsito, en transporte, cancelado, etc.)' },
       { code: 'notif_reception_confirmed', label: 'Recepción confirmada (traslado finalizado)' },
       { code: 'notif_diet_change',         label: 'Cambio de dieta' },
+      { code: 'notif_fasting_change',      label: 'Cambio de ayuno' },
     ],
   },
 ];

@@ -12,56 +12,9 @@
 
 import { requireAuth } from './jwt.js';
 import {
-  getToken, fetchPatientDetails, fetchEventDetails, getEventCached, setEventCache, calcAge,
+  getToken, fetchPatientDetails, fetchEventDetails, getEventCached, setEventCache,
 } from './gamma-client.js';
-import { parseDiets, type DietEntry } from './diet-tags.js';
-import { summarizeFasting, type FastingSummary } from './ayunos.js';
-
-// Maps the EVE_TIPO_INTERNACION code to its human label.
-// Grupo Gamma uses 1- and 2-letter codes:
-//   C  = Clínica
-//   CO = COVID-19
-//   H  = Hemodinamia
-//   K  = Quemado
-//   O  = Oncológica
-//   Q  = Quirúrgica
-//   R  = Trasplante Renal
-//   T  = Trasplante Hepático
-const ADMISSION_TYPE_LABELS: Record<string, string> = {
-  C:  'Clínica',
-  CO: 'COVID-19',
-  H:  'Hemodinamia',
-  K:  'Quemado',
-  O:  'Oncológica',
-  Q:  'Quirúrgica',
-  R:  'Trasplante Renal',
-  T:  'Trasplante Hepático',
-};
-
-interface EnrichResult {
-  dni?: string;
-  age?: number;
-  sex?: 'M' | 'F';
-  institution?: string;
-  diagnosis?: string;
-  prescribingPhysician?: string;
-  // Nuevos campos derivados del evento (obtenereventointernacion v2):
-  admissionType?: string;        // Etiqueta legible ("Clínica", "Quirúrgica", ...)
-  admissionTypeCode?: string;    // Código crudo ("C", "Q", ...)
-  admissionDate?: string;        // ISO string de EVE_FECHA_HORA_INGRESO
-  expectedSurgeryDate?: string;  // ISO string de EVE_FECHA_PROBABLE_CIRUGIA (si aplica)
-  authorizedDays?: number;       // EVE_DIAS_AUTORIZADOS
-  // Plan médico del paciente (IPM_*). El código (`medicalPlan`) ya viene también en
-  // /api/beds desde camas ocupadas; este endpoint solo agrega la `medicalPlanDescription`.
-  medicalPlan?: string;
-  medicalPlanDescription?: string;
-  diets?: DietEntry[];           // Respuestas completas del formulario de dieta
-  // Chips resumen para mostrar rápido en la tarjeta — ya filtrados: solo
-  // condiciones con valor "Sí" (excepto "Tipo" que se guarda con su valor).
-  dietTags?: string[];
-  // Ayunos programados (resumen + lista de indicaciones para el modal).
-  fasting?: FastingSummary;
-}
+import { buildPatientData, buildEventData, type EnrichResult } from './enrich-core.js';
 
 // ── Cache de paciente (TTL largo). Para el EVENTO usamos el cache compartido
 // de gamma-client.ts (getEventCached) — así /api/beds y este endpoint pegan al
@@ -120,63 +73,15 @@ async function handler(req: any, res: any) {
         : Promise.resolve(null),
     ]);
 
-    // Bloque "paciente" — cache 10 min.
+    // Bloque "paciente" — cache 10 min. Si vino del fetch, lo recacheamos.
     let patientData: Partial<EnrichResult> = patientFresh ? cachedPatient!.data : {};
     if (patient) {
-      patientData = {};
-      patientData.institution = patient.ENT_NOMBRE_FANTASIA?.trim() || undefined;
-      patientData.dni = patient.ENT_NUMERO_DOCUMENTO?.trim() || undefined;
-      patientData.age = patient.PCN_FECHA_NACIMIENTO ? calcAge(patient.PCN_FECHA_NACIMIENTO) : undefined;
-      patientData.sex = patient.PCN_SEXO === 'M' || patient.PCN_SEXO === 'F' ? patient.PCN_SEXO : undefined;
+      patientData = buildPatientData(patient);
       patientCache.set(patientCode, { data: patientData, exp: now + PATIENT_TTL });
     }
 
     // Bloque "evento" — derivado en cada request (el cache vive en gamma-client).
-    const eventData: Partial<EnrichResult> = {};
-    if (event) {
-      eventData.diagnosis = event.EVE_DIAGNOSTICO?.trim() || undefined;
-      if (event.PROFESIONAL_NOMBRE?.trim()) {
-        eventData.prescribingPhysician = event.PROFESIONAL_NOMBRE.trim();
-      }
-      // Fallback de institution si vino vacía del paciente.
-      if (!patientData.institution && event.INSTITUCION_NOMBRE) {
-        eventData.institution = event.INSTITUCION_NOMBRE.trim();
-      }
-
-      // Tipo de internación — guardamos el código crudo + label humano.
-      const typeCode = event.EVE_TIPO_INTERNACION?.trim().toUpperCase();
-      if (typeCode) {
-        eventData.admissionTypeCode = typeCode;
-        eventData.admissionType = ADMISSION_TYPE_LABELS[typeCode] ?? typeCode;
-      }
-
-      if (event.EVE_FECHA_HORA_INGRESO) {
-        eventData.admissionDate = String(event.EVE_FECHA_HORA_INGRESO);
-      }
-      if (event.EVE_FECHA_PROBABLE_CIRUGIA) {
-        eventData.expectedSurgeryDate = String(event.EVE_FECHA_PROBABLE_CIRUGIA);
-      }
-
-      if (typeof event.EVE_DIAS_AUTORIZADOS === 'number') {
-        eventData.authorizedDays = event.EVE_DIAS_AUTORIZADOS;
-      }
-
-      if (event.IPM_PLAN_MEDICO) {
-        eventData.medicalPlan = String(event.IPM_PLAN_MEDICO).trim() || undefined;
-      }
-      if (event.IPM_DESCRIPCION) {
-        eventData.medicalPlanDescription = String(event.IPM_DESCRIPCION).trim() || undefined;
-      }
-
-      // Dietas — helper compartido con /api/beds.
-      const { diets, dietTags } = parseDiets(event.DIETAS);
-      if (diets) eventData.diets = diets;
-      if (dietTags) eventData.dietTags = dietTags;
-
-      // Ayunos — helper compartido.
-      const fasting = summarizeFasting(event.AYUNOS);
-      if (fasting) eventData.fasting = fasting;
-    }
+    const eventData = buildEventData(event, { fallbackInstitution: !patientData.institution });
 
     // Mergear paciente + evento. El evento gana en campos compartidos por si el
     // último update de PROGAL vino vía el endpoint del evento (raro pero posible).

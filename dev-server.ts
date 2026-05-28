@@ -91,6 +91,7 @@ const routes: Record<string, () => Promise<any>> = {
   '/api/roles':              () => import('./api/roles'),
   '/api/debug-subs':         () => import('./api/debug-subs'),
   '/api/cron-diet-changes':  () => import('./api/cron-diet-changes'),
+  '/api/cron-enrich-beds':   () => import('./api/cron-enrich-beds'),
   '/api/client-ip':          () => import('./api/client-ip'),
 };
 
