@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { Bed, BedStatus, Ticket, TicketStatus, User, Area, IsolationType } from '../types';
 import { can } from '../lib/permissions';
+import { hasLiveFasting, liveUpcoming, formatART } from '../lib/fasting';
 import { Input } from '../components/ui/input';
 import { cn } from '../lib/utils';
 import { BedDouble, User as UserIcon, Info, Search, X, Download, ChevronDown, Check, AlertTriangle, CheckCircle2, ShieldAlert, RefreshCw, UtensilsCrossed } from 'lucide-react';
@@ -1178,12 +1179,13 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                         <X className="w-2 h-2 md:w-2.5 md:h-2.5 text-white" strokeWidth={3} />
                       </div>
                     )}
-                    {bed.fasting?.hasUpcoming && (
+                    {hasLiveFasting(bed.fasting) && (
                       <div
-                        className="absolute bottom-0.5 right-0.5 w-3 h-3 md:w-3.5 md:h-3.5 bg-amber-500 rounded-full flex items-center justify-center ring-1 ring-white shadow-sm"
-                        title={`Ayuno programado${bed.fasting.nextAt ? ` — próximo ${new Date(bed.fasting.nextAt).toLocaleString([], { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}` : ''}`}
+                        className="absolute bottom-0.5 right-0.5 flex items-center gap-0.5 px-1 h-3 md:h-3.5 rounded-full bg-amber-500 text-white text-[7px] md:text-[8px] font-black ring-1 ring-white shadow-sm"
+                        title="Ayuno programado"
                       >
-                        <UtensilsCrossed className="w-2 h-2 md:w-2.5 md:h-2.5 text-white" strokeWidth={3} />
+                        <UtensilsCrossed className="w-2 h-2 md:w-2.5 md:h-2.5" strokeWidth={3} />
+                        <span>Ayuno</span>
                       </div>
                     )}
 
@@ -1287,7 +1289,12 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                       displayBed?.authorizedDays != null ||
                       !!displayBed?.expectedSurgeryDate;
                     const hasDietData = !!(displayBed?.diets && displayBed.diets.length > 0);
-                    const hasFastingData = !!(displayBed?.fasting?.indications && displayBed.fasting.indications.length > 0);
+                    // Reloj inteligente: solo indicaciones con ocurrencias vigentes/futuras
+                    // (recalculadas en hora Argentina con el now del cliente).
+                    const liveFastingInds = (displayBed?.fasting?.indications ?? [])
+                      .map(ind => ({ ind, prox: liveUpcoming(ind) }))
+                      .filter(x => x.prox.length > 0);
+                    const hasFastingData = liveFastingInds.length > 0;
 
                     // All tabs always navigable. If the enrich didn't return data
                     // for a tab, the tab content renders an explicit "sin datos" line
@@ -1492,7 +1499,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                           <>
                             {hasFastingData && (
                               <div className="space-y-2">
-                                {displayBed!.fasting!.indications.map(ind => (
+                                {liveFastingInds.map(({ ind, prox }) => (
                                   <div key={ind.indicationId} className="bg-amber-50/60 rounded-xl p-3 border border-amber-100">
                                     <div className="flex items-center justify-between mb-1.5">
                                       <p className="text-[8px] font-bold uppercase text-amber-700">Indicación #{ind.indicationId}</p>
@@ -1505,24 +1512,20 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                                     <p className="text-[11px] text-slate-600 mb-1.5">
                                       Horas: <span className="font-bold text-slate-800">{ind.hours.map(h => `${String(h).padStart(2, '0')}:00`).join(', ')}</span>
                                     </p>
-                                    {ind.upcoming.length > 0 && (
-                                      <>
-                                        <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Próximas</p>
-                                        <ul className="space-y-0.5">
-                                          {ind.upcoming.map((iso, idx) => (
-                                            <li key={idx} className="text-[11px] text-slate-700">
-                                              {new Date(iso).toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                                            </li>
-                                          ))}
-                                        </ul>
-                                      </>
-                                    )}
+                                    <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Próximas</p>
+                                    <ul className="space-y-0.5">
+                                      {prox.map((epoch, idx) => (
+                                        <li key={idx} className="text-[11px] text-slate-700">
+                                          {formatART(epoch)}
+                                        </li>
+                                      ))}
+                                    </ul>
                                   </div>
                                 ))}
                               </div>
                             )}
                             {!enrichLoading && !hasFastingData && (
-                              <p className="text-xs text-slate-400 italic text-center py-2">Sin ayunos programados</p>
+                              <p className="text-xs text-slate-400 italic text-center py-2">Sin ayunos próximos</p>
                             )}
                             {enrichLoading && (
                               <p className="text-xs text-slate-400 italic text-center py-2">Cargando...</p>
