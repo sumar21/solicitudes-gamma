@@ -1400,6 +1400,19 @@ export const useHospitalState = () => {
   // Only SP IDs should hit the PATCH endpoint; local-only ones just flip state.
   const isSpNotificationId = (id: string) => !!id && !id.startsWith('NOTIF-');
 
+  // Le pide al service worker que cierre las notifs del SO (lock screen / bandeja)
+  // del ticket. Sin ticketId → cierra todas (caso "marcar todas como leídas").
+  // Estilo WhatsApp: leer el hilo limpia sus notifs del celular.
+  const closeOsNotifications = useCallback((ticketId?: string) => {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    navigator.serviceWorker.ready
+      .then(reg => reg.active?.postMessage({
+        type: 'CLOSE_NOTIFICATIONS',
+        ticketId: ticketId ?? '',
+      }))
+      .catch(() => {});
+  }, []);
+
   // Marca una notif SP por (ticketId, type) — sin necesidad de conocer el spItemId.
   // Útil para:
   //   · click en notif local del dropdown (que tiene ticketId+type pero id local)
@@ -1419,7 +1432,10 @@ export const useHospitalState = () => {
     } catch (err) {
       console.error('[notifications] mark-by-event error', err);
     }
-  }, [authFetch, checkUnreadNotifications]);
+    // Cerrar la(s) notif(s) del SO de este ticket aunque el PATCH haya fallado:
+    // el objetivo acá es limpiar el lock screen, independiente del estado en SP.
+    closeOsNotifications(ticketId);
+  }, [authFetch, checkUnreadNotifications, closeOsNotifications]);
 
   // Marca una notif individual. Acepta:
   //   · Notification completa (con id, ticketId, type) — preferido
@@ -1447,6 +1463,10 @@ export const useHospitalState = () => {
         console.error('[notifications] PATCH error:', err);
         checkUnreadNotifications();
       }
+      // Cerrar la notif del SO de este ticket.
+      if (isObject && notifOrId.ticketId) {
+        closeOsNotifications(notifOrId.ticketId);
+      }
       return;
     }
 
@@ -1463,6 +1483,8 @@ export const useHospitalState = () => {
   // actualizaron desaparecen del banner; las que NO siguen apareciendo).
   const handleMarkAllNotificationsRead = async () => {
     setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+    // Limpiar TODAS las notifs del SO (lock screen / bandeja).
+    closeOsNotifications();
 
     const ids = unreadSpNotifications
       .map(n => n.id)

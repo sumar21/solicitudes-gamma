@@ -14,10 +14,25 @@ cleanupOutdatedCaches();
 // friction — users get the new version automatically.
 clientsClaim();
 
-// Apply SKIP_WAITING when the frontend asks for it (via virtual:pwa-register)
+// Cierra las notificaciones del SO que matcheen un ticket (o todas si no se pasa).
+// Estilo WhatsApp: leer un "hilo" (ticket) limpia todas sus notifs del lock screen.
+// DIET_CHANGE no tiene ticketId — se limpia con "marcar todas" (sin args) o al tocarla.
+async function closeMatchingNotifications(ticketId?: string): Promise<void> {
+  const notifs = await self.registration.getNotifications();
+  for (const n of notifs) {
+    if (!ticketId) { n.close(); continue; }                  // sin args → todas
+    if ((n.data as any)?.ticketId === ticketId) n.close();   // hilo del ticket
+  }
+}
+
 self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'SKIP_WAITING') {
-    self.skipWaiting();
+  const msg = event.data;
+  if (!msg) return;
+  // Apply SKIP_WAITING when the frontend asks for it (via virtual:pwa-register)
+  if (msg.type === 'SKIP_WAITING') { self.skipWaiting(); return; }
+  // Cerrar notifs del SO cuando el cliente marca como leído.
+  if (msg.type === 'CLOSE_NOTIFICATIONS') {
+    event.waitUntil(closeMatchingNotifications(msg.ticketId));
   }
 });
 
