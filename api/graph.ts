@@ -51,3 +51,40 @@ export async function graphFetch(path: string, init?: RequestInit): Promise<Resp
     },
   });
 }
+
+/**
+ * PATCH masivo vía Microsoft Graph `$batch` (hasta 20 ops por request).
+ * Mucho más rápido que PATCH individuales cuando hay cientos de ítems.
+ * `itemsBasePath` es relativo a /v1.0, ej. `/sites/{site}/lists/{list}/items`.
+ */
+export async function graphBatchPatchFields(
+  itemsBasePath: string,
+  items: { id: string; fields: Record<string, unknown> }[],
+): Promise<{ updated: number; failed: number }> {
+  let updated = 0;
+  let failed = 0;
+  for (let i = 0; i < items.length; i += 20) {
+    const chunk = items.slice(i, i + 20);
+    const requestBody = {
+      requests: chunk.map((it, idx) => ({
+        id: String(idx),
+        method: 'PATCH',
+        url: `${itemsBasePath}/${it.id}/fields`,
+        headers: { 'Content-Type': 'application/json' },
+        body: it.fields,
+      })),
+    };
+    try {
+      const res = await graphFetch('/$batch', { method: 'POST', body: JSON.stringify(requestBody) });
+      if (!res.ok) { failed += chunk.length; continue; }
+      const data = (await res.json()) as { responses?: { status: number }[] };
+      for (const r of data.responses ?? []) {
+        if (r.status >= 200 && r.status < 300) updated++;
+        else failed++;
+      }
+    } catch {
+      failed += chunk.length;
+    }
+  }
+  return { updated, failed };
+}

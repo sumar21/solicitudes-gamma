@@ -14,7 +14,7 @@
  * Uses SharePoint list "10.Notificaciones"
  */
 
-import { graphFetch } from './graph.js';
+import { graphFetch, graphBatchPatchFields } from './graph.js';
 import { requireAuth } from './jwt.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
@@ -138,6 +138,49 @@ async function handler(req: any, res: any) {
       } catch (err: any) {
         console.error('[notifications] mark-by-event error:', err);
         return res.status(500).json({ ok: false, updated: 0, failed: [{ id: 'lookup', error: err?.message }] });
+      }
+    }
+
+    // Modo 4: markAllForUser. Marca TODAS las notifs Enviada del user logueado
+    // (no solo el top-50 visible en el banner). Resuelve el backlog acumulado:
+    // lookup paginado + PATCH con pool de 8. `remaining>0` si se alcanzó el tope.
+    if (body.markAllForUser === true) {
+      const MAX = 3000; // con $batch (20 ops/req) marcar miles es rápido
+      const filter = encodeURIComponent(
+        `fields/UserId_N eq ${userId} and fields/Entorno_N eq '${ENTORNO}' and fields/Status_N eq 'Enviada'`
+      );
+      try {
+        const allIds: string[] = [];
+        let next: string | null = `${basePath}?$select=id&$filter=${filter}&$top=500`;
+        while (next && allIds.length < MAX) {
+          const lookup: any = await graphFetch(next, {
+            headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' },
+          });
+          if (!lookup.ok) {
+            const errText = await lookup.text().catch(() => '');
+            console.error(`[notifications] markAll lookup failed: ${lookup.status} ${errText}`);
+            return res.status(500).json({ ok: false, updated: 0, failed: [{ id: 'lookup', status: lookup.status, error: errText.slice(0, 200) }] });
+          }
+          const lookupData: any = await lookup.json();
+          for (const it of lookupData.value ?? []) allIds.push(String(it.id));
+          const raw = lookupData['@odata.nextLink'] as string | undefined;
+          // nextLink es absoluta; graphFetch espera path relativo a /v1.0.
+          next = raw ? raw.replace(/^https:\/\/graph\.microsoft\.com\/v1\.0/, '') : null;
+        }
+
+        const remaining = next ? 1 : 0; // quedó backlog sin recorrer (alcanzó MAX)
+        const { updated, failed } = await graphBatchPatchFields(
+          basePath,
+          allIds.map(id => ({ id, fields: { Status_N: 'Leida', LeidaAt_N: nowIso } })),
+        );
+
+        if (updated === 0 && failed > 0) {
+          return res.status(500).json({ ok: false, updated, failed, remaining });
+        }
+        return res.status(200).json({ ok: true, updated, failed, remaining });
+      } catch (err: any) {
+        console.error('[notifications] markAllForUser error:', err);
+        return res.status(500).json({ ok: false, updated: 0, failed: 1, error: err?.message ?? String(err) });
       }
     }
 

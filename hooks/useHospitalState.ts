@@ -138,6 +138,64 @@ function timestampOfTicketEvent(t: Ticket): string {
 const WARNING_MINUTES     = 15;
 const TOKEN_KEY           = 'mediflow_token';
 const USER_KEY            = 'mediflow_user';
+const GEO_KEY             = 'mediflow_geo';
+const GEO_CACHE_TTL       = 30 * 60_000; // 30 min — reuso de la última posición sin re-pedir permiso
+
+type GeoCoords = { lat: number; lng: number };
+type GeoRef = React.MutableRefObject<{ coords: GeoCoords | null; ts: number }>;
+
+// Lee la última geo válida persistida (sobrevive recargas/deploys), si está vigente.
+function readPersistedGeo(): { coords: GeoCoords; ts: number } | null {
+  try {
+    const raw = localStorage.getItem(GEO_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as { lat: number; lng: number; ts: number };
+    if (typeof p?.lat !== 'number' || typeof p?.lng !== 'number' || typeof p?.ts !== 'number') return null;
+    if (Date.now() - p.ts >= GEO_CACHE_TTL) return null;
+    return { coords: { lat: p.lat, lng: p.lng }, ts: p.ts };
+  } catch { return null; }
+}
+
+function writePersistedGeo(coords: GeoCoords): void {
+  try { localStorage.setItem(GEO_KEY, JSON.stringify({ ...coords, ts: Date.now() })); } catch { /* ignore */ }
+}
+
+// Estado del permiso de geolocalización. 'unknown' si el browser no soporta la
+// Permissions API para geolocation (ej. Safari/iOS) → lo tratamos como NO concedido
+// para no disparar prompts en background.
+async function geoPermissionState(): Promise<'granted' | 'prompt' | 'denied' | 'unknown'> {
+  try {
+    if (typeof navigator === 'undefined' || !navigator.permissions?.query) return 'unknown';
+    const status = await navigator.permissions.query({ name: 'geolocation' as PermissionName });
+    return status.state as 'granted' | 'prompt' | 'denied';
+  } catch { return 'unknown'; }
+}
+
+// Geo SIN prompt: ref en memoria → localStorage. Nunca llama getCurrentPosition.
+function geoNoPrompt(ref: GeoRef): GeoCoords | null {
+  const now = Date.now();
+  if (ref.current.coords && now - ref.current.ts < GEO_CACHE_TTL) return ref.current.coords;
+  const p = readPersistedGeo();
+  if (p) { ref.current = { coords: p.coords, ts: p.ts }; return p.coords; } // hidrata el ref tras un remount
+  return null;
+}
+
+// Único punto que dispara el prompt del browser. Persiste lo obtenido (ref + localStorage).
+function requestFreshGeo(ref: GeoRef): Promise<GeoCoords | null> {
+  return new Promise<GeoCoords | null>(resolve => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) { resolve(null); return; }
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        ref.current = { coords, ts: Date.now() };
+        writePersistedGeo(coords);
+        resolve(coords);
+      },
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 },
+    );
+  });
+}
 
 export const useHospitalState = () => {
 
@@ -668,39 +726,25 @@ export const useHospitalState = () => {
 
       // ── Location validation (skip for SUMAR superusers) ──────────────────
       if (user.sede !== 'SUMAR') {
-        let userLat: number | undefined;
-        let userLng: number | undefined;
-        try {
-          const coords = await new Promise<{ lat: number; lng: number } | null>((resolve) => {
-            if (!navigator.geolocation) { resolve(null); return; }
-            navigator.geolocation.getCurrentPosition(
-              (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-              () => resolve(null),
-              // 15s gives users enough time to accept the browser's permission prompt
-              // without timing out when they're actually on-site.
-              { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 },
-            );
-          });
-          if (coords) {
-            userLat = coords.lat;
-            userLng = coords.lng;
-            // Populamos el cache compartido: la revalidación periódica reusa
-            // estas coords por 30 min sin volver a pedir permiso al browser.
-            geoCacheRef.current = { coords: { lat: coords.lat, lng: coords.lng }, ts: Date.now() };
-          }
-        } catch { /* geo unavailable, IP check will be used */ }
+        const postValidateLogin = (coords: GeoCoords | null) =>
+          fetch('/api/validate-location', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.token}` },
+            body: JSON.stringify({ sede: user.sede, lat: coords?.lat, lng: coords?.lng }),
+          }).then(r => r.json());
 
         try {
-          const locRes = await fetch('/api/validate-location', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${data.token}`,
-            },
-            body: JSON.stringify({ sede: user.sede, lat: userLat, lng: userLng }),
-          });
-          const locData = await locRes.json();
-          if (locData.allowed === false) {
+          // IP-first: reusamos la geo persistida (si vigente) o validamos sin geo, sin pedir
+          // permiso. Solo pedimos GPS si la IP no alcanza y falta geo.
+          let coords = geoNoPrompt(geoCacheRef);
+          let locData = await postValidateLogin(coords);
+
+          if (locData?.allowed === false && locData?.method === 'geo_unavailable' && !coords) {
+            coords = await requestFreshGeo(geoCacheRef);
+            if (coords) locData = await postValidateLogin(coords);
+          }
+
+          if (locData?.allowed === false) {
             setLoginError(locData.reason || 'Ubicación no autorizada para esta sede');
             return;
           }
@@ -1388,7 +1432,9 @@ export const useHospitalState = () => {
       const data = await r.json();
       const twentyMinAgo = Date.now() - 20 * 60 * 1000;
       const old = (data.notifications ?? [])
-        .filter((n: any) => new Date(n.fecha).getTime() < twentyMinAgo);
+        // Defensivo: el server ya filtra Status_N='Enviada', pero si el filtro fallara
+        // (lista grande / columna no indexada) igual descartamos las ya leídas en cliente.
+        .filter((n: any) => n.status === 'Enviada' && new Date(n.fecha).getTime() < twentyMinAgo);
       setUnreadSpNotifications(old);
     } catch (err) {
       console.error('[notifications] check failed:', err);
@@ -1477,47 +1523,35 @@ export const useHospitalState = () => {
     }
   };
 
-  // Marca todas las notifs SP del banner. Usa el endpoint bulk para una sola
-  // llamada de red. Optimistic local; si el server reporta fallos parciales o
-  // un 500, refetch para sincronizar con la verdad del server (las que SÍ se
-  // actualizaron desaparecen del banner; las que NO siguen apareciendo).
+  // Marca TODAS las notifs Enviada del user en SP (no solo el top-50 visible del
+  // banner) — sino, con backlog grande (típico del Admin que recibe todo) el banner
+  // nunca se vaciaba. El server hace lookup paginado + PATCH masivo; si quedó backlog
+  // (`remaining`), repetimos. Optimistic local; refetch final para sincronizar.
   const handleMarkAllNotificationsRead = async () => {
     setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
     // Limpiar TODAS las notifs del SO (lock screen / bandeja).
     closeOsNotifications();
-
-    const ids = unreadSpNotifications
-      .map(n => n.id)
-      .filter(isSpNotificationId);
-
-    if (ids.length === 0) {
-      setUnreadSpNotifications([]);
-      return;
-    }
-
-    // Optimistic: limpiamos el banner. Si el bulk falla, refetch lo restaura.
+    // Optimistic: limpiamos el banner. Si falla, el refetch lo restaura.
     setUnreadSpNotifications([]);
 
     try {
-      const r = await authFetch('/api/notifications', {
-        method: 'PATCH',
-        body: JSON.stringify({ notificationIds: ids }),
-      });
-      if (!r.ok) {
-        const text = await r.text().catch(() => '');
-        console.error(`[notifications] bulk PATCH failed: ${r.status} ${text}`);
-        // Server reportó que TODAS fallaron → restauramos.
-        checkUnreadNotifications();
-        return;
-      }
-      const data = await r.json().catch(() => ({} as any));
-      if ((data.failed ?? []).length > 0) {
-        console.warn(`[notifications] bulk PATCH partial: updated=${data.updated} failed=${data.failed.length}`);
-        // Refetch para que las fallidas vuelvan al banner.
-        checkUnreadNotifications();
+      // El backlog puede superar el tope por llamada → repetir mientras queden.
+      for (let i = 0; i < 5; i++) {
+        const r = await authFetch('/api/notifications', {
+          method: 'PATCH',
+          body: JSON.stringify({ markAllForUser: true }),
+        });
+        if (!r.ok) {
+          console.error(`[notifications] markAll failed: ${r.status} ${await r.text().catch(() => '')}`);
+          break;
+        }
+        const data = await r.json().catch(() => ({} as any));
+        if (!data?.remaining) break; // no quedó backlog
       }
     } catch (err) {
-      console.error('[notifications] bulk PATCH error:', err);
+      console.error('[notifications] markAll error:', err);
+    } finally {
+      // Sincronizar el banner con la verdad de SP (lo que sí se marcó desaparece).
       checkUnreadNotifications();
     }
   };
@@ -1567,40 +1601,35 @@ export const useHospitalState = () => {
 
     let cancelled = false;
     const REVALIDATE_MS = 60 * 1000;
-    const GEO_CACHE_TTL = 30 * 60_000;
 
-    const getCachedGeo = async (): Promise<{ lat: number; lng: number } | null> => {
-      const now = Date.now();
-      // Cache HIT — devolvemos la última posición sin tocar navigator.geolocation
-      // (esto evita prompts de permiso recurrentes en Chrome Android).
-      if (geoCacheRef.current.coords && now - geoCacheRef.current.ts < GEO_CACHE_TTL) {
-        return geoCacheRef.current.coords;
-      }
-      // Cache miss/expired — pedimos al browser.
-      const coords = await new Promise<{ lat: number; lng: number } | null>(resolve => {
-        if (typeof navigator === 'undefined' || !navigator.geolocation) { resolve(null); return; }
-        navigator.geolocation.getCurrentPosition(
-          pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-          () => resolve(null),
-          { enableHighAccuracy: false, timeout: 10_000, maximumAge: 30 * 60_000 },
-        );
-      });
-      if (coords) geoCacheRef.current = { coords, ts: now };
-      return coords;
-    };
+    const postValidate = (coords: GeoCoords | null) =>
+      fetch('/api/validate-location', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ sede: currentUser.sede, lat: coords?.lat, lng: coords?.lng }),
+      }).then(r => r.json().catch(() => ({} as any)));
 
     const revalidate = async () => {
       try {
-        const coords = await getCachedGeo();
+        // IP-first: validamos con la geo cacheada (o sin geo) SIN pedir permiso.
+        let coords = geoNoPrompt(geoCacheRef);
+        let data = await postValidate(coords);
         if (cancelled) return;
 
-        const r = await fetch('/api/validate-location', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ sede: currentUser.sede, lat: coords?.lat, lng: coords?.lng }),
-        });
-        if (cancelled) return;
-        const data = await r.json().catch(() => ({} as any));
+        // Solo si la IP no alcanzó y falta geo → pedimos GPS una vez y reintentamos,
+        // PERO solo si el permiso ya está concedido (getCurrentPosition es silencioso).
+        // Si está en 'prompt'/'denied'/'unknown', NO disparamos un prompt sorpresa estando
+        // en background: fail-open (no expulsamos). La validación estricta ya ocurrió en el
+        // login; acá esperamos a que el user interactúe o a que la IP vuelva a alcanzar.
+        if (data?.allowed === false && data?.method === 'geo_unavailable' && !coords) {
+          const perm = await geoPermissionState();
+          if (cancelled) return;
+          if (perm !== 'granted') return; // no prompt en background, no logout
+          coords = await requestFreshGeo(geoCacheRef);
+          if (cancelled) return;
+          if (coords) { data = await postValidate(coords); if (cancelled) return; }
+        }
+
         if (data?.allowed === false) {
           setLoginError(data?.reason ?? 'Ubicación no autorizada — re-ingresá desde una red autorizada.');
           handleLogout();

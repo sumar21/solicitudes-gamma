@@ -1238,7 +1238,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
             const isDisabled  = selectedBed.status === BedStatus.DISABLED;
 
             return (
-              <div>
+              <div className="min-w-0">
                 {/* Header */}
                 <div className={cn("px-6 py-5 flex items-center gap-4", t.headerBg)}>
                   <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm shrink-0", t.iconBg)}>
@@ -1318,8 +1318,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                           <p className="text-base font-black text-slate-900 leading-snug">{selectedBed.patientName}</p>
                         </div>
 
-                        {/* Tab bar */}
-                        <div className="flex gap-1 bg-slate-100 rounded-xl p-1">
+                        {/* Tab bar — scrolleable en X para que en mobile los 4 tabs no
+                            desborden el fondo gris (cada tab mantiene su ancho). */}
+                        <div className="flex gap-1 bg-slate-100 rounded-xl p-1 overflow-x-auto">
                           {tabs.map(tab => {
                             const isActive = tab.key === activeTab;
                             return (
@@ -1328,7 +1329,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                                 type="button"
                                 onClick={() => setDetailTab(tab.key)}
                                 className={cn(
-                                  "flex-1 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
+                                  "shrink-0 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest whitespace-nowrap transition-all",
                                   isActive
                                     ? "bg-white text-emerald-900 shadow-sm"
                                     : "text-slate-500 hover:text-slate-700"

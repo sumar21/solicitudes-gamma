@@ -21,9 +21,14 @@
     {
       "path": "/api/cron-enrich-beds",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron-cleanup-notifs",
+      "schedule": "0 4 * * *"
     }
   ],
   "functions": {
-    "api/cron-enrich-beds.ts": { "maxDuration": 300 }
+    "api/cron-enrich-beds.ts": { "maxDuration": 300 },
+    "api/cron-cleanup-notifs.ts": { "maxDuration": 300 }
   }
 }
