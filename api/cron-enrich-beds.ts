@@ -12,8 +12,10 @@
  */
 
 import { graphFetch } from './graph.js';
-import { getToken, GammaSector } from './gamma-client.js';
-import { buildEnrich } from './enrich-core.js';
+import { getToken, simpleHash, GammaSector } from './gamma-client.js';
+import { buildEnrich, type EnrichResult } from './enrich-core.js';
+import type { FastingSummary } from './ayunos.js';
+import { sendPushToSubscribers } from './push-utils.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = '443c4ff0-bc98-43ef-a49c-7fd91cc63734'; // 12.EnrichCamas
@@ -28,6 +30,23 @@ interface EnrichRow {
   spItemId: string;
   eventKey: string;
   updatedAt: string;
+  // Fasting del Payload_EC anterior — sirve para detectar cambios y mandar push
+  // a Catering (notif_fasting_change). Si no había fasting en el payload viejo,
+  // queda undefined (= 'none' al hashear → bootstrap silencioso si tampoco hay ahora).
+  oldFasting: FastingSummary | undefined;
+}
+
+// Hash estable del estado de ayunos. Mismo criterio que api/ayunos.ts fastingHash
+// pero recibe el `FastingSummary` ya procesado (lo que guardamos en Payload_EC).
+// 'none' cuando no hay indicaciones — distinto de un hash real, así detectamos
+// transición "no ayuno → ayuno" y viceversa.
+function hashFastingSummary(s: FastingSummary | undefined | null): string {
+  if (!s || !s.indications || s.indications.length === 0) return 'none';
+  const sig = s.indications
+    .map(i => `${i.indicationId}:${i.hours.join(',')}:${i.startISO}:${i.totalOccurrences ?? 'n'}`)
+    .sort()
+    .join('|');
+  return simpleHash(sig);
 }
 
 async function fetchEnrichRows(): Promise<Map<string, EnrichRow>> {
@@ -44,10 +63,20 @@ async function fetchEnrichRows(): Promise<Map<string, EnrichRow>> {
     const f = item.fields as Record<string, unknown>;
     const key = String(f.EventKey_EC ?? '').trim();
     if (!key) continue;
+    // Parsear Payload_EC para extraer el fasting viejo (comparación de cambio).
+    let oldFasting: FastingSummary | undefined;
+    try {
+      const raw = String(f.Payload_EC ?? '');
+      if (raw) {
+        const parsed = JSON.parse(raw) as EnrichResult;
+        oldFasting = parsed.fasting;
+      }
+    } catch { /* fila corrupta — sin oldFasting */ }
     map.set(key, {
       spItemId:  String(item.id),
       eventKey:  key,
       updatedAt: String(f.UpdatedAt_EC ?? ''),
+      oldFasting,
     });
   }
   return map;
@@ -127,8 +156,13 @@ export default async function handler(req: any, res: any) {
     }
     const occData = (await occRes.json()) as GammaSector[];
 
-    // 3) Flatten a camas con paciente + evento válido.
-    interface OccBed { patientCode: string; eventOrigin: string; eventNumber: number }
+    // 3) Flatten a camas con paciente + evento válido. Guardamos areaName/patientName
+    // para que la detección de cambio de fasting pueda emitir push (Catering filtra por
+    // área y necesita el nombre legible).
+    interface OccBed {
+      patientCode: string; eventOrigin: string; eventNumber: number;
+      areaName: string; patientName: string;
+    }
     const beds: OccBed[] = [];
     for (const sector of occData) {
       for (const room of sector.habitaciones ?? []) {
@@ -137,7 +171,11 @@ export default async function handler(req: any, res: any) {
           const origen = bed.origen_evento ? String(bed.origen_evento).trim() : '';
           const numero = typeof bed.numero_evento === 'number' ? bed.numero_evento : Number(bed.numero_evento);
           if (!code || !origen || !numero) continue;
-          beds.push({ patientCode: code, eventOrigin: origen, eventNumber: numero });
+          beds.push({
+            patientCode: code, eventOrigin: origen, eventNumber: numero,
+            areaName: String(sector.nombre ?? '').trim(),
+            patientName: String(bed.paciente ?? '').trim(),
+          });
         }
       }
     }
@@ -150,6 +188,7 @@ export default async function handler(req: any, res: any) {
     ]);
     const seenKeys = new Set<string>();
     const queue = [...beds];
+    let fastingNotified = 0;
     const worker = async () => {
       while (queue.length > 0) {
         const b = queue.shift();
@@ -163,8 +202,37 @@ export default async function handler(req: any, res: any) {
             eventOrigin: b.eventOrigin,
             eventNumber: b.eventNumber,
           });
+
+          // ── Detección de cambio de fasting (push a Catering / quien tenga notif_fasting_change) ──
+          // Solo si la fila YA existía: paciente nuevo (sin row previa) = bootstrap silencioso
+          // para no spamear con todos los ayunos pre-existentes al primer ciclo.
+          const existing = rows.get(eventKey);
+          if (existing) {
+            const oldHash = hashFastingSummary(existing.oldFasting);
+            const newHash = hashFastingSummary(payload.fasting);
+            if (oldHash !== newHash) {
+              const horas = payload.fasting
+                ? Array.from(new Set(payload.fasting.indications.flatMap(i => i.hours)))
+                    .sort((a, b2) => a - b2)
+                    .map(h => `${String(h).padStart(2, '0')}:00`).join(', ')
+                : '';
+              let detalle: string;
+              if (oldHash === 'none')      detalle = horas ? `Nuevo ayuno programado: ${horas}` : 'Nuevo ayuno programado';
+              else if (newHash === 'none') detalle = 'Ayuno cancelado';
+              else                          detalle = horas ? `Ayuno modificado: ${horas}` : 'Ayuno modificado';
+              console.log(`[cron-enrich] FASTING CHANGE ${eventKey} patient=${b.patientName} old=${oldHash} new=${newHash}`);
+              await sendPushToSubscribers({
+                title: 'Ayuno actualizado',
+                body:  `${b.patientName || 'Paciente'}: ${detalle}`,
+                type:  'FASTING_CHANGE',
+                originAreaName: b.areaName, destinationAreaName: b.areaName, sede: 'HPR',
+              });
+              fastingNotified++;
+            }
+          }
+
           await upsertEnrich({
-            existing: rows.get(eventKey),
+            existing,
             eventKey,
             patientCode: b.patientCode,
             payload,
@@ -177,6 +245,7 @@ export default async function handler(req: any, res: any) {
       }
     };
     await Promise.all(Array.from({ length: WORKERS }, worker));
+    (stats as any).fastingNotified = fastingNotified;
 
     // 5) Cleanup: filas no vistas en este ciclo + viejas → Inactivo.
     const staleCutoff = Date.now() - STALE_MS;

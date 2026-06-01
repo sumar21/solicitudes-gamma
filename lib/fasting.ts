@@ -71,5 +71,6 @@ export function formatART(epochMs: number): string {
   return new Date(epochMs).toLocaleString('es-AR', {
     timeZone: 'America/Argentina/Buenos_Aires',
     day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+    hour12: false,  // 24h para coincidir con el header "Horas: HH:00" del modal
   });
 }
