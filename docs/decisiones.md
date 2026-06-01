@@ -985,3 +985,85 @@ Resultado del bug: Catering recibía "Nueva Solicitud de Traslado" (NEW_TICKET) 
 **Por qué:** bug reportado por Agustín — editó notificaciones de un rol y los permisos se vaciaron. Análisis mostró que el flujo de togglePermission (solo notifs) es seguro, pero un toggle accidental de módulo destruía permisos irrecuperablemente.
 
 **Impacto:** solo cambia `RoleManagementView.tsx`. El backend agrega log warning cuando se escribe `Permisos_RT` vacío para trazabilidad futura.
+
+## 18. Decisiones recientes (mapa de camas, notifs, ayunos, geo)
+
+### 18.1. Enrich del mapa de camas precomputado en SharePoint (cron) vs. on-request
+
+**Qué:** `/api/beds` ya no hace N llamadas a `obtenereventointernacion` por cama en el request del usuario. Un cron (`cron-enrich-beds`, cada 15min, 8 workers paralelos) precomputa todo el enrich en la lista `12.EnrichCamas` y `/api/beds` lo lee de SP (1 query + merge en memoria).
+
+**Por qué:** con ~150 camas ocupadas, las N llamadas (incluso con cache y workers) llevaban el request a >60s y Vercel mataba la conexión — se vio en una demo. El enfoque clásico de "fast/enrich en dos fases" (sección 5.2) ya no alcanza con la cantidad de campos que requiere el modal (DNI, edad, sexo, diagnóstico, dieta, ayunos, fechas, plan).
+
+**Alternativas descartadas:**
+- **Mantener el on-request + bajar el TTL del cache de evento**: igual el primer request post-cold-start hace las N llamadas. No resuelve el caso de la demo.
+- **Vercel KV / Redis externo**: agrega infra. SharePoint ya es la DB de la app y se reusa el patrón de `11.DietaSnapshot`.
+- **Mapa también desde SP (no live)**: el estado de cama (ocupada/disponible) es operativamente crítico (riesgo de doble asignación) y debe ser real-time. Solo cacheamos el enrich.
+
+**Impacto:** `bed-enrich` queda como fallback on-demand (`fresh=1` o cama sin `enriched` flag). Hay duplicación de fetch de evento (cron-enrich-beds + cron-diet-changes), aceptada como deuda; se evalúa unificar si crece.
+
+### 18.2. ETag de `/api/beds` incluye firma del enrich
+
+**Qué:** El ETag se calcula como `simpleHash(mapSig + '#' + enrichSig)` donde `enrichSig` es hash de `EventKey:UpdatedAt_EC` de las filas aplicadas.
+
+**Por qué:** sin esto, el polling del cliente recibe 304 cuando el cron actualizó el enrich pero los beds del mapa no cambiaron de estado → la app nunca refleja cambios de ayuno/dieta/diagnóstico hasta recargar. Con el enrichSig, cada actualización del cron rompe el ETag y la app baja el payload nuevo en su próximo poll.
+
+**Trade-off:** el cron reescribe `UpdatedAt_EC` cada ciclo aunque nada haya cambiado → el cliente baja el payload completo cada ~15min. Trivial.
+
+### 18.3. Detección de cambio de fasting en `cron-enrich-beds`, no en `cron-diet-changes`
+
+**Qué:** Originalmente la detección de cambios de ayuno vivía en `cron-diet-changes` con una columna `FastingHash_DS` en `11.DietaSnapshot`. Se movió a `cron-enrich-beds` que ya escribe el `fasting` en `Payload_EC` y puede comparar viejo vs nuevo trivialmente.
+
+**Por qué:** la columna `FastingHash_DS` debía crearse a mano en SP (el app de Graph no tiene `Sites.Manage.All`). Más importante: era duplicar estado. El cron que escribe el dato es el que mejor sabe cuándo cambia.
+
+**Cómo:** `fetchEnrichRows` parsea `Payload_EC` y extrae `oldFasting`. El worker compara `hashFastingSummary(oldFasting)` vs el nuevo y, si difieren **y la fila ya existía** (no es bootstrap del paciente), manda push `FASTING_CHANGE`. Bootstrap silencioso solo para pacientes nuevos (sin fila previa), no para el campo fasting per se — así un ayuno cargado tras el deploy SÍ dispara push aunque sea la primera vez que se detecta para ese paciente.
+
+### 18.4. `markAllForUser` con Microsoft Graph `$batch`
+
+**Qué:** El modo PATCH `{ markAllForUser: true }` marca **todas** las `Enviada` del user (no el top-50 visible del banner) usando el endpoint `/$batch` de Graph (20 PATCH por request).
+
+**Por qué:** un Admin con 1003 `Enviada` acumuladas requería 1003 PATCH individuales (~150-300ms cada uno) = >5 minutos. El user refresca antes de que termine, el optimistic se revierte, el banner sigue. Con `$batch` baja a ~10s.
+
+**Alternativa descartada:** subir el pool de workers a 20+ — sigue siendo 1003 requests HTTP individuales, no resuelve el problema de fondo.
+
+### 18.5. Cron de cleanup de notificaciones (no destructivo, 2 días)
+
+**Qué:** `cron-cleanup-notifs` (diario 4am) marca `Status_N = 'Leida'` las notifs `Enviada` con `Fecha_N` < hoy - 2 días. NO borra.
+
+**Por qué:** la raíz del backlog (Admin acumulando 1000+ notifs) requiere prevención automática. Una notif sin confirmar tras 2 días ya no es accionable. Mantiene el volumen sano y el banner refleja solo lo realmente reciente.
+
+**Por qué "marcar Leida" y no "borrar":** preservar historial (auditoría), reversibilidad si hubo error. El volumen de la lista sigue creciendo lentamente, pero no impacta al banner (que filtra `Status_N='Enviada'`).
+
+### 18.6. Geo: IP-first + persistencia en localStorage + `Permissions API`
+
+**Qué:** El cliente valida ubicación **sin coords primero**. Solo pide GPS si el server responde `geo_unavailable` Y `navigator.permissions.query({name:'geolocation'})` devuelve `granted`. La última geo válida se persiste en `localStorage` (key `mediflow_geo`, TTL 30min) para sobrevivir recargas.
+
+**Por qué:** los prompts de geolocalización se repetían tras cada deploy (autoUpdate del SW recarga la PWA → re-mount → `useRef` vacío → revalidate llama `getCurrentPosition`). En mobile el permiso es efímero (allow-once / iOS standalone) → prompt sorpresa. La combinación IP-first + persistencia + check de permiso elimina prompts en uso normal:
+- WiFi del hospital → IP autoriza, GPS nunca se pide.
+- Datos móviles con geo cacheada → se reusa, no prompt.
+- Datos móviles sin cache en background → fail-open (no expulsa, no prompt sorpresa).
+
+**Trade-off de seguridad aceptado:** la geo cacheada sobrevive 30min a recargas. Si alguien se va del hospital con la app abierta, la expulsión por GPS puede tardar hasta 30min (ya era el TTL en memoria; ahora también persiste). La expulsión por IP (al perder la WiFi) sigue siendo inmediata.
+
+### 18.7. Cerrar notificaciones del SO al marcar leído (WhatsApp-like)
+
+**Qué:** Cuando el usuario marca una notif como leída en la app (o el push se tap-ea), el cliente postMessage al SW con `{ type: 'CLOSE_NOTIFICATIONS', ticketId }`. El SW usa `registration.getNotifications()` y cierra las que matcheen `data.ticketId` ("el hilo del ticket"). Sin args → cierra todas (mark-all).
+
+**Por qué:** las notificaciones del SO (lock screen) persistían aunque el usuario las leyera en la app — desconectado del modelo mental de "ya lo vi". Patrón estándar de Web Push.
+
+**Caveat:** funciona prolijo en Android. En iOS PWA el SO controla más estrictamente la bandeja; puede no responder al `close()` programático.
+
+### 18.8. Ayunos: cálculo client-side en hora Argentina
+
+**Qué:** Las "próximas" ocurrencias de ayuno se recalculan en el cliente en cada render usando `Date.UTC(Y, M-1, D+d, H+3, ...)` (UTC-3 fijo). El servidor (`api/ayunos.ts`) sigue calculando para el cron pero el cliente lo ignora y recalcula con su `now`.
+
+**Por qué:** dos razones combinadas:
+1. **TZ bug**: el cron corre en Vercel (UTC), `new Date()`+`setHours(15)` daba 15:00 UTC = 12:00 ART, corriendo todo 3hs.
+2. **Reloj inteligente**: el cron precomputaba `upcoming` y lo congelaba 15min; el cliente lo reemplaza con cálculo en vivo (gracia 1h por ocurrencia, así el ayuno de las 15 se ve hasta las 16).
+
+**Trade-off:** Argentina no tiene DST, UTC-3 hardcoded es seguro. Si alguna vez cambiara, ajustar `ART_OFFSET_H` o usar `Intl` con `timeZone`.
+
+### 18.9. Modal de cama: `min-w-0` en el wrapper + tabs scrolleables
+
+**Qué:** El `DialogContent` base usa CSS grid en su contenedor scrollable; sus hijos directos heredan `min-width: auto` y no encogen por debajo del contenido → overflow. El wrapper del modal de cama lleva `min-w-0` para respetar el ancho del modal. Los tabs (mobile) usan `overflow-x-auto` + `shrink-0 whitespace-nowrap` (no `flex-1`).
+
+**Por qué:** en mobile la sección de aislamiento desbordaba a la izquierda ("MARCAR" cortado), y los 4 tabs no entraban en el fondo gris. El fix está acotado al modal de cama; no se toca el `DialogContent` base para no afectar otros modales.

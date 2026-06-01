@@ -988,3 +988,133 @@ El helper `summarizeFasting()` agrupa por indicación, genera la secuencia de ti
 ### 30.3. Restauración de permisos al reactivar módulo en ABM
 
 [views/RoleManagementView.tsx](views/RoleManagementView.tsx) — `toggleModule` destruía los permisos de un módulo al desactivarlo, y NO los restauraba al reactivarlo. Ahora guarda un snapshot de `originalPermissions` al abrir el modal y los restaura si el módulo se reactiva.
+
+---
+
+## 31. Enrich del mapa de camas precomputado en SharePoint
+
+Refactor mayor del flujo de `/api/beds` para evitar timeouts (>60s) cuando muchas camas requerían enrich on-request.
+
+### 31.1. Lista nueva `12.EnrichCamas`
+
+LIST_ID `443c4ff0-bc98-43ef-a49c-7fd91cc63734`. Una fila por evento ocupado:
+- `EventKey_EC` = `${eventOrigin}-${eventNumber}` (clave de match).
+- `PatientCode_EC`.
+- `Payload_EC` (multiline text) = `JSON.stringify(EnrichResult)` — dni, age, sex, diagnosis, admission*, fechas, plan, diets, dietTags, **fasting**.
+- `UpdatedAt_EC`, `Status_EC`, `Entorno_EC`.
+
+### 31.2. Helper compartido `api/enrich-core.ts`
+
+Centraliza la construcción del `EnrichResult` (paciente + evento) que antes vivía inline en `bed-enrich.ts`:
+- `buildPatientData(patient)` — bloque DNI/edad/sexo/financiador (puro).
+- `buildEventData(event, opts?)` — bloque diagnóstico/dieta/ayunos/plan/fechas (puro).
+- `buildEnrich({ tokenPat, tokenEvt, ... })` — hace fetch a Gamma (paciente + evento via `getEventCached`) y compone. Usado por el cron de enrich y por `bed-enrich` on-demand.
+
+### 31.3. Cron `cron-enrich-beds` (cada 15 min)
+
+[api/cron-enrich-beds.ts](api/cron-enrich-beds.ts). Recorre todas las camas ocupadas con 8 workers paralelos, llama `buildEnrich` por cada una, upsert a `12.EnrichCamas`. `maxDuration: 300s` en vercel.json. Cleanup de filas no vistas + viejas → `Status_EC = 'Inactivo'`.
+
+### 31.4. `/api/beds` lee del cache de SP
+
+[api/beds.ts](api/beds.ts) `enrichBedsFromCache`: tras `transformBeds`, lee `12.EnrichCamas` (1 query), arma Map por `eventKey`, aplica `applyEnrichToBed` (incluye DNI/edad/sexo + flag `enriched: true`). El request del usuario nunca hace las N llamadas de evento → sin timeout.
+
+**ETag del endpoint incluye una firma del enrich** (hash de `eventKey:UpdatedAt_EC` de filas aplicadas). Sino el polling recibe 304 y no refleja cambios de enrich. Ver §31.5.
+
+### 31.5. Frescura sin recarga: polling de beds + cache compartido de eventos
+
+- Cache server-side de `/api/beds` con TTL 45s + ETag combinado (mapa + firma del enrich) → el cliente recibe 200 cuando el enrich cambió en SP.
+- `gamma-client.ts` exporta `getEventCached` (Map module-level, 60s TTL). Compartido entre `/api/beds` (legacy path) y `/api/bed-enrich`.
+- Cadena: cron 15min escribe a SP → app re-lee `/api/beds` en su poll de 60s → cambio visible en ≤16 min sin recarga.
+
+### 31.6. Click en cama: condicional `enriched`
+
+[views/BedsView.tsx](views/BedsView.tsx) modal — el `useEffect` que dispara `onEnrichBed` ahora salta si `selectedBed.enriched` (la fila vino del cron y ya tiene todo). Solo pega a Gamma como fallback para camas recién ocupadas que el cron aún no procesó.
+
+---
+
+## 32. Notificaciones: cleanup, $batch y filtro defensivo
+
+Resuelve el banner "Tenés N notificaciones sin confirmar" que no se vaciaba para usuarios con backlog (Admin con 1000+ filas `Enviada`).
+
+### 32.1. `markAllForUser` con Microsoft Graph `$batch`
+
+[api/notifications.ts](api/notifications.ts) modo PATCH `{ markAllForUser: true }` marca **todas** las `Status_N='Enviada'` del user logueado (no solo el top-50 del banner). Usa el helper compartido `graphBatchPatchFields` ([api/graph.ts](api/graph.ts)) — 20 PATCH por request al endpoint `/$batch`. Pasa de marcar de a una (~150ms × 1000 = 2.5 min) a ~10s. `remaining` indica si quedó backlog (cliente repite hasta 5 iteraciones).
+
+### 32.2. Filtro defensivo de status en el cliente
+
+[hooks/useHospitalState.ts](hooks/useHospitalState.ts) `checkUnreadNotifications` ahora filtra `n.status === 'Enviada'` además de fecha >20min. Defensivo: si el `$filter` del server fallara (columnas no indexadas con `HonorNonIndexedQueriesWarningMayFailRandomly`), el cliente no muestra Leidas.
+
+### 32.3. Cron `cron-cleanup-notifs` (diario 4am)
+
+[api/cron-cleanup-notifs.ts](api/cron-cleanup-notifs.ts). Trae todas las `Enviada` del entorno, filtra en memoria por `Fecha_N` < hoy-2 días, las marca `Leida` con `$batch`. NO borra (no destructivo). Mantiene el volumen y el banner sanos sin acumular. Retención: 2 días (constante `RETENTION_DAYS`).
+
+---
+
+## 33. Detección de cambios de ayuno en `cron-enrich-beds`
+
+Originalmente `cron-diet-changes` cubría dieta + ayuno (con `FastingHash_DS` en `11.DietaSnapshot`). Refactor: la detección de fasting **se movió a `cron-enrich-beds`** porque ese cron ya escribe el `fasting` en `Payload_EC` y compara naturalmente viejo vs nuevo en cada ciclo, sin necesidad de columnas extra.
+
+### 33.1. Flujo nuevo
+
+[api/cron-enrich-beds.ts](api/cron-enrich-beds.ts): `fetchEnrichRows` parsea `Payload_EC` y extrae `oldFasting`. El worker compara `hashFastingSummary(oldFasting)` vs el nuevo. Si difiere **y** la fila ya existía (no es bootstrap del paciente) → `sendPushToSubscribers({ type: 'FASTING_CHANGE', ... })` con mensaje contextual ("Nuevo ayuno programado: HH:MM" / "Ayuno modificado" / "Ayuno cancelado").
+
+[api/cron-diet-changes.ts](api/cron-diet-changes.ts) volvió a ser solo dieta: sin `FastingHash_DS`, sin `fastingHash` en `Snapshot`/`upsertSnapshot`. JSDoc actualizado.
+
+### 33.2. Permiso granular `notif_fasting_change`
+
+Tipo `NotificationType.FASTING_CHANGE` + permiso `notif_fasting_change` en el catálogo. Mapeado en ambos lados (`lib/permissions.ts` y `api/push-utils.ts` `NOTIF_TYPE_TO_PERMISSION`). Configurable en el ABM (`views/RoleManagementView.tsx` checkbox "Cambio de ayuno" en el grupo cross-module).
+
+---
+
+## 34. Ayunos: reloj inteligente client-side + helper TZ Argentina
+
+[lib/fasting.ts](lib/fasting.ts) (NUEVO, client-side):
+- `fastingOccurrenceEpochs(startISO, hours, total)` — genera epochs en hora Argentina (UTC-3 fijo, sin DST). Parsea `startISO` por partes para no depender de la TZ del runtime. `Date.UTC(Y, M-1, D+d, H+3, ...)` normaliza overflow de día/hora.
+- `liveUpcoming(ind, now)` — próximas ocurrencias vigentes/futuras con gracia 1h (la de las 15 se ve hasta las 16).
+- `hasLiveFasting(fasting, now)` — boolean para el ícono de la tarjeta.
+- `formatART(epoch)` — `toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', hour12: false, ... })`. 24h explícito.
+
+Razón: el cron (Vercel UTC) precomputaba `upcoming`/`hasUpcoming` y los congelaba 15min; el cliente los **ignora** y recalcula en cada render con su `now` y hora Argentina explícita. Cambios live, sin TZ bug, sin esperar al próximo cron.
+
+### 34.1. UI ayunos
+
+[views/BedsView.tsx](views/BedsView.tsx):
+- Pill ámbar "🍽 Ayuno" en la tarjeta (no círculo chico) — visible solo si `hasLiveFasting`.
+- Modal: pestaña "Ayunos" lista indicaciones con `liveUpcoming` + `formatART`. Indicaciones sin próximas se ocultan; si ninguna → "Sin ayunos próximos".
+
+---
+
+## 35. Permisos y persistencia de geolocalización
+
+Refactor para minimizar prompts al usuario tras recargas (deploy autoUpdate del SW + descarte de memoria del SO).
+
+### 35.1. Cache geo persistido en localStorage
+
+[hooks/useHospitalState.ts](hooks/useHospitalState.ts) — `mediflow_geo` con `{ lat, lng, ts }` y TTL 30min. Helpers módulo-level:
+- `readPersistedGeo()` / `writePersistedGeo(coords)` — sobreviven recargas y deploys.
+- `geoNoPrompt(ref)` — devuelve geo del ref o localStorage si vigente, **sin** llamar `getCurrentPosition`.
+- `requestFreshGeo(ref)` — único punto que dispara prompt; persiste lo obtenido.
+- `geoPermissionState()` — consulta `navigator.permissions.query({ name: 'geolocation' })`.
+
+### 35.2. IP-first en validación de ubicación
+
+Tanto el login como la revalidación periódica ahora validan **sin coords primero**. Solo piden GPS si el server responde `method: 'geo_unavailable'` (IP no autoriza) **Y** el permiso del browser está `granted` (no disparar prompt sorpresa en background si está `prompt`/`denied`/`unknown`). Resultado:
+- Celu en WiFi del hospital → nunca prompt.
+- Datos móviles con geo cacheada → reusa, no prompt.
+- Datos móviles sin cache + permiso `prompt` → fail-open en background (no expulsa; espera interacción).
+
+---
+
+## 36. Service worker: cerrar notificaciones del SO al leer (WhatsApp-like)
+
+[src-sw/sw.ts](src-sw/sw.ts) extiende el listener `message` para manejar `CLOSE_NOTIFICATIONS`:
+- Si `ticketId` presente → cierra todas las notifs del SO con `data.ticketId` matcheando (el "hilo" del ticket).
+- Si no se pasa `ticketId` → cierra todas (caso "marcar todas como leídas").
+
+El cliente ([hooks/useHospitalState.ts](hooks/useHospitalState.ts)) invoca via `closeOsNotifications(ticketId?)` después de marcar leído (en `markNotificationByEvent`, `handleMarkNotificationRead` SP-id, `handleMarkAllNotificationsRead`). Limita el match a Android (en iOS el SO controla más estrictamente la bandeja).
+
+---
+
+## 37. Tab bar del modal de cama scrolleable (mobile)
+
+[views/BedsView.tsx](views/BedsView.tsx) — la botonera de tabs del modal de cama usa `overflow-x-auto` + tabs `shrink-0 whitespace-nowrap` (en vez de `flex-1`). En mobile, los 4 tabs (GENERALES / INTERNACIÓN / DIETA / AYUNOS) ya no se desbordan del fondo gris ni se ven cortados al activarse. El wrapper del modal lleva `min-w-0` para que el contenido respete el ancho del DialogContent (CSS grid).

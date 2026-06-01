@@ -2238,3 +2238,207 @@ if (req.method === 'PATCH') {
 - El SW pasa atributos por postMessage sin chance de hacer lookup.
 
 **Seguridad:** el filtro DEBE incluir `UserId_N eq ${req.user.id}` server-side para que el caller no pueda marcar entidades ajenas. Aplicar el mismo patrón para cualquier endpoint que use atributos de negocio: el server reduce el scope al user logueado.
+
+## Nuevos patrones (mapa de camas, notifs, ayunos, geo)
+
+### `$batch` de Microsoft Graph para operaciones masivas SP
+
+Cuando hay que mutar muchas filas de SharePoint (PATCH de cientos/miles), individuales son inviables (~150-300ms × N). Usar el endpoint `/v1.0/$batch` con hasta **20 requests por batch**:
+
+```ts
+// api/graph.ts
+export async function graphBatchPatchFields(
+  itemsBasePath: string,
+  items: { id: string; fields: Record<string, unknown> }[],
+): Promise<{ updated: number; failed: number }> {
+  let updated = 0, failed = 0;
+  for (let i = 0; i < items.length; i += 20) {
+    const chunk = items.slice(i, i + 20);
+    const body = {
+      requests: chunk.map((it, idx) => ({
+        id: String(idx), method: 'PATCH',
+        url: `${itemsBasePath}/${it.id}/fields`,
+        headers: { 'Content-Type': 'application/json' },
+        body: it.fields,
+      })),
+    };
+    const res = await graphFetch('/$batch', { method: 'POST', body: JSON.stringify(body) });
+    if (!res.ok) { failed += chunk.length; continue; }
+    const data = await res.json();
+    for (const r of data.responses ?? []) {
+      if (r.status >= 200 && r.status < 300) updated++; else failed++;
+    }
+  }
+  return { updated, failed };
+}
+```
+
+Las `url` de cada request son **relativas a `/v1.0`** (sin host); `graphFetch('/$batch', ...)` ya prepende el host.
+
+**Cuándo:** `markAllForUser` en notifs, `cron-cleanup-notifs`. Pasa de minutos a segundos para >1000 items.
+
+### Cron pattern para detectar cambios y notificar
+
+Para detectar cambios de un atributo entre ciclos y disparar push, el patrón es siempre el mismo:
+
+1. **Lookup del estado anterior** desde SP (snapshot list o `Payload_EC` parseado).
+2. **Bootstrap silencioso** la primera vez (sin push) para no spamear al deploy/primer ciclo.
+3. **Hash estable** del estado (ordenado + `simpleHash`) y comparar viejo vs nuevo.
+4. **Push si cambia** + persistir el estado nuevo.
+
+```ts
+// Patrón aplicado en cron-enrich-beds (fasting) y cron-diet-changes (dieta):
+const existing = rows.get(eventKey);
+const newHash = hashOfX(payload.x);
+
+if (!existing) {
+  await upsert({ ... });  // bootstrap silencioso, sin push
+  continue;
+}
+const oldHash = hashOfX(existing.oldX);
+if (oldHash !== newHash) {
+  console.log(`[cron-X] CHANGE patient=${b.patientCode} old=${oldHash} new=${newHash}`);
+  await sendPushToSubscribers({ type: 'X_CHANGE', ... });
+}
+await upsert({ ... });
+```
+
+**Decisión clave:** la detección vive en el cron que **escribe** el atributo, no en otro cron que lo replica. Sino se duplica estado y se necesitan columnas extra.
+
+### Hash estable de estructuras: `sort + join + simpleHash`
+
+Para hashear listas que pueden venir en orden no determinístico (Gamma a veces reordena `DIETAS`, `AYUNOS`), el patrón es:
+
+```ts
+function hashTags(tags: string[]): string {
+  return simpleHash([...tags].sort().join('|'));
+}
+
+function hashFastingSummary(s: FastingSummary | undefined): string {
+  if (!s?.indications?.length) return 'none';  // centinela explícito
+  const sig = s.indications
+    .map(i => `${i.indicationId}:${i.hours.join(',')}:${i.startISO}:${i.totalOccurrences ?? 'n'}`)
+    .sort()
+    .join('|');
+  return simpleHash(sig);
+}
+```
+
+- `sort()` antes del join garantiza estabilidad ante reordenamientos.
+- Un **centinela explícito** (`'none'`, distinto de `''` o de un hash real) permite distinguir "no inicializado" de "sin datos" — usado en bootstrap silencioso vs cambio real.
+
+### Logging del diff cuando se dispara un evento ruidoso
+
+Cuando un cron emite push pero hay sospecha de falsos positivos, agregar log del diff antes de mandar:
+
+```ts
+if (existing.hash !== newHash) {
+  console.log(`[cron-X] CHANGE patient=${b.patientCode}`);
+  console.log(`  prev hash=${existing.hash} tags=${existing.tags}`);
+  console.log(`  new  hash=${newHash} tags=${tags.join(';')}`);
+  await sendPush(...);
+}
+```
+
+Si `prev` y `new` son visualmente idénticos pero el hash difiere → hash inestable / dato corrupto. Si difieren → cambio real. Diagnóstico explícito en Vercel logs sin tener que reproducir.
+
+### Helpers compartidos en `api/` (no en `lib/`)
+
+Lógica server-only se extrae a `api/<nombre>.ts` (no `lib/`), porque `lib/` lo importa el frontend y se bundlea al client. Ejemplos:
+
+- `api/enrich-core.ts` — `buildPatientData`, `buildEventData`, `buildEnrich` (compartido por `bed-enrich` y `cron-enrich-beds`).
+- `api/diet-tags.ts` — `parseDiets` (compartido por `beds.ts` legacy y `enrich-core`).
+- `api/ayunos.ts` — `summarizeFasting`, `fastingHash` (cron-side).
+
+Imports con extensión `.js` (`from './enrich-core.js'`) como el resto del backend.
+
+### Hora Argentina explícita (UTC-3) cuando el momento importa
+
+Argentina no tiene DST → UTC-3 es fijo. Si el código corre en runtimes con TZ distinta (Vercel UTC, devices con TZ no-Argentina), construir/mostrar timestamps con offset explícito:
+
+```ts
+// Build: construir epoch en hora ART sin depender del runtime
+const epoch = Date.UTC(Y, M - 1, D + d, H + 3, 0, 0);
+
+// Display: mostrar en ART sin depender del device
+new Date(epoch).toLocaleString('es-AR', {
+  timeZone: 'America/Argentina/Buenos_Aires',
+  hour: '2-digit', minute: '2-digit',
+  hour12: false,   // ← clave: es-AR puede default a 12h con a.m./p.m.
+});
+```
+
+**Trampa típica:** `new Date('2026-05-28T09:57:00')` (string naive sin Z) lo interpreta como **local time** del runtime. En Vercel (UTC) eso es 09:57Z. Para parsear como ART, **extraer las partes con regex** y reconstruir con `Date.UTC(..., h+3, ...)` — no usar `new Date(naive)`.
+
+### `min-w-0` en hijos de CSS grid (y children dentro de DialogContent)
+
+Un CSS grid item tiene `min-width: auto` por default, así que **no encoge por debajo de su contenido** y puede desbordar el grid. Cuando hijos del grid puedan tener contenido ancho (palabras largas, sub-grids), agregar `min-w-0` al hijo:
+
+```tsx
+<DialogContent>  {/* base usa `grid gap-4` en su contenedor scrollable */}
+  <div className="min-w-0">  {/* ← clave para que el contenido respete el ancho */}
+    ...sección con grid de chips, texto largo, etc...
+  </div>
+</DialogContent>
+```
+
+Sin esto, en mobile el contenido desbordaba y se veía cortado a un lado por el `overflow: clip` del modal.
+
+### Tab bar scrolleable horizontal
+
+Cuando una botonera de tabs no entra en el ancho (mobile), no comprimir con `flex-1` (genera desborde / botón activo cortado). Mejor: `overflow-x-auto` en el contenedor + `shrink-0 whitespace-nowrap` en cada tab. En desktop, los 4 tabs entran y se ven igual; en mobile, scrollean.
+
+```tsx
+<div className="flex gap-1 bg-slate-100 rounded-xl p-1 overflow-x-auto">
+  {tabs.map(tab => (
+    <button className={cn(
+      "shrink-0 px-3 py-1.5 rounded-lg whitespace-nowrap ...",
+      isActive ? "bg-white shadow-sm" : "..."
+    )}>...</button>
+  ))}
+</div>
+```
+
+### Persistencia con TTL en localStorage + ref en memoria
+
+Cuando el valor (geo, etc.) debe sobrevivir recargas del SW (`autoUpdate`), guardarlo en `localStorage` además del `useRef`. La función de lectura prioriza ref → localStorage → fetch fresh:
+
+```ts
+function readPersistedX(): { v: T; ts: number } | null {
+  const raw = localStorage.getItem(KEY);
+  if (!raw) return null;
+  const p = JSON.parse(raw);
+  if (Date.now() - p.ts >= TTL) return null;  // expirado
+  return p;
+}
+
+function getXNoFetch(ref: Ref): T | null {
+  if (ref.current.v && Date.now() - ref.current.ts < TTL) return ref.current.v;
+  const p = readPersistedX();
+  if (p) { ref.current = p; return p.v; }     // hidrata el ref tras un remount
+  return null;
+}
+```
+
+El ref vive en memoria (rápido); localStorage es el fallback persistente. Sirve para evitar prompts repetidos de permisos del browser tras un re-mount.
+
+### Comunicación cliente ↔ Service Worker vía `postMessage`
+
+Cuando el cliente necesita que el SW haga algo (cerrar notifs del SO, skip waiting), usar `postMessage` con un envelope `{ type: '...', ...args }`:
+
+```ts
+// cliente
+navigator.serviceWorker.ready.then(reg =>
+  reg.active?.postMessage({ type: 'CLOSE_NOTIFICATIONS', ticketId })
+);
+
+// sw.ts
+self.addEventListener('message', (event) => {
+  const msg = event.data;
+  if (msg?.type === 'CLOSE_NOTIFICATIONS') {
+    event.waitUntil(closeMatchingNotifications(msg.ticketId));
+  }
+});
+```
+
+Usar `serviceWorker.ready` (no `.controller`) para garantizar SW activo. El envelope `type` debe coexistir con otros (`SKIP_WAITING` ya estaba) → branch explícito.
