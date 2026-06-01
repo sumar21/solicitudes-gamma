@@ -61,6 +61,65 @@ function playNotificationSound() {
 }
 
 // ── Bed merge ─────────────────────────────────────────────────────────────────
+// Limpia TODOS los campos asociados a un paciente (identificadores + enrich completo).
+// Sin esto, tras un movimiento (ej. WAITING_CONSOLIDATION) la cama origen queda con
+// fasting/dieta/diagnóstico/DNI "fantasma" del paciente que ya se fue → la pill de
+// ayuno y demás aparecen donde no corresponde.
+function clearPatientFromBed(b: Bed): void {
+  b.patientName = undefined;
+  b.patientCode = undefined;
+  b.eventOrigin = undefined;
+  b.eventNumber = undefined;
+  b.dni = undefined;
+  b.age = undefined;
+  b.sex = undefined;
+  b.diagnosis = undefined;
+  b.prescribingPhysician = undefined;
+  b.institution = undefined;
+  b.attendingPhysician = undefined;
+  b.admissionType = undefined;
+  b.admissionTypeCode = undefined;
+  b.admissionDate = undefined;
+  b.expectedSurgeryDate = undefined;
+  b.authorizedDays = undefined;
+  b.medicalPlan = undefined;
+  b.medicalPlanCode = undefined;
+  b.medicalPlanDescription = undefined;
+  b.diets = undefined;
+  b.dietTags = undefined;
+  b.fasting = undefined;
+  b.enriched = false;
+}
+
+// Copia el paciente + TODO su enrich de un bed a otro. Necesario para que la cama
+// destino en WAITING_CONSOLIDATION muestre el enrich completo (modal abre con datos
+// al instante, sin esperar al próximo poll de /api/beds).
+function copyPatientToBed(from: Bed, to: Bed): void {
+  to.patientName = from.patientName;
+  to.patientCode = from.patientCode;
+  to.eventOrigin = from.eventOrigin;
+  to.eventNumber = from.eventNumber;
+  to.dni = from.dni;
+  to.age = from.age;
+  to.sex = from.sex;
+  to.diagnosis = from.diagnosis;
+  to.prescribingPhysician = from.prescribingPhysician;
+  to.institution = from.institution;
+  to.attendingPhysician = from.attendingPhysician;
+  to.admissionType = from.admissionType;
+  to.admissionTypeCode = from.admissionTypeCode;
+  to.admissionDate = from.admissionDate;
+  to.expectedSurgeryDate = from.expectedSurgeryDate;
+  to.authorizedDays = from.authorizedDays;
+  to.medicalPlan = from.medicalPlan;
+  to.medicalPlanCode = from.medicalPlanCode;
+  to.medicalPlanDescription = from.medicalPlanDescription;
+  to.diets = from.diets;
+  to.dietTags = from.dietTags;
+  to.fasting = from.fasting;
+  to.enriched = from.enriched;
+}
+
 function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[]): Bed[] {
   const result = gammaBeds.map(b => ({ ...b }));
   for (const ticket of activeTickets) {
@@ -76,26 +135,17 @@ function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[]): Bed[] {
         break;
       case TicketStatus.WAITING_CONSOLIDATION:
         // Hasta que Admin consolide en PROGAL, Gamma todavía apunta el paciente a
-        // la cama origen. Visualmente lo mostramos en destino — y "transportamos"
-        // los identificadores PROGAL (patientCode + eventOrigin + eventNumber) al
-        // destino para que el enrich on-demand (click en la tarjeta) traiga los
-        // datos correctos. Sin esto, el panel detalle de la cama destino aparece
-        // vacío porque Gamma no encuentra al paciente ahí todavía.
+        // la cama origen. Visualmente lo mostramos en destino: copiamos paciente +
+        // enrich completo (fasting/dieta/diagnóstico/DNI) al destino, y limpiamos
+        // TODO en el origen — sino la pill de ayuno y otros campos quedan fantasma.
         if (dest && origin) {
-          dest.status       = BedStatus.OCCUPIED;
-          dest.patientName  = ticket.patientName;
-          dest.patientCode  = origin.patientCode;
-          dest.eventOrigin  = origin.eventOrigin;
-          dest.eventNumber  = origin.eventNumber;
+          copyPatientToBed(origin, dest);
+          dest.status = BedStatus.OCCUPIED;
+          dest.patientName = ticket.patientName; // usar el del ticket por si el origin venía vacío
         }
         if (origin) {
-          origin.status       = BedStatus.PREPARATION;
-          origin.patientName  = undefined;
-          // Limpiar identificadores en el origen: visualmente está en preparación
-          // y un click no debería traer al paciente que ya "se fue" hacia destino.
-          origin.patientCode  = undefined;
-          origin.eventOrigin  = undefined;
-          origin.eventNumber  = undefined;
+          clearPatientFromBed(origin);
+          origin.status = BedStatus.PREPARATION;
         }
         break;
     }

@@ -49,6 +49,26 @@ function hashFastingSummary(s: FastingSummary | undefined | null): string {
   return simpleHash(sig);
 }
 
+// Formato "HH:00, HH:00, ..." con horas únicas y ordenadas para el body del push.
+function formatFastingHours(s: FastingSummary | undefined | null): string {
+  if (!s) return '';
+  return Array.from(new Set(s.indications.flatMap(i => i.hours)))
+    .sort((a, b) => a - b)
+    .map(h => `${String(h).padStart(2, '0')}:00`)
+    .join(', ');
+}
+
+// True si la fecha de ingreso es ≤24h atrás. Se usa para distinguir
+// "paciente pre-existente" (bootstrap silencioso) vs "paciente recién ingresado
+// con ayuno" (notificar igual). Gamma manda EVE_FECHA_HORA_INGRESO sin tz —
+// el espacio se reemplaza por 'T' para que Date.parse lo acepte en todos los runtimes.
+function isRecentAdmission(admissionDate: string | undefined): boolean {
+  if (!admissionDate) return false;
+  const ts = Date.parse(admissionDate.replace(' ', 'T'));
+  if (isNaN(ts)) return false;
+  return (Date.now() - ts) <= 24 * 60 * 60 * 1000;
+}
+
 async function fetchEnrichRows(): Promise<Map<string, EnrichRow>> {
   const map = new Map<string, EnrichRow>();
   if (!SITE_ID || !LIST_ID) return map;
@@ -204,18 +224,21 @@ export default async function handler(req: any, res: any) {
           });
 
           // ── Detección de cambio de fasting (push a Catering / quien tenga notif_fasting_change) ──
-          // Solo si la fila YA existía: paciente nuevo (sin row previa) = bootstrap silencioso
-          // para no spamear con todos los ayunos pre-existentes al primer ciclo.
+          // Dos disparadores:
+          //  · Fila existente y el hash de fasting cambió → push (alta/baja/modificación).
+          //  · Fila NUEVA + el paciente ingresó hace ≤24h + tiene fasting → push igual.
+          //    Esto evita perder la notificación de "primer ayuno" cuando coincide con el
+          //    primer ciclo del cron para ese paciente. El bootstrap silencioso se mantiene
+          //    para pacientes pre-existentes (admisión >24h) para no spamear ayunos viejos
+          //    si se reseteara la lista 12.EnrichCamas.
           const existing = rows.get(eventKey);
+          const newFasting = payload.fasting;
+          const hasFasting = !!(newFasting && newFasting.indications.length > 0);
           if (existing) {
             const oldHash = hashFastingSummary(existing.oldFasting);
-            const newHash = hashFastingSummary(payload.fasting);
+            const newHash = hashFastingSummary(newFasting);
             if (oldHash !== newHash) {
-              const horas = payload.fasting
-                ? Array.from(new Set(payload.fasting.indications.flatMap(i => i.hours)))
-                    .sort((a, b2) => a - b2)
-                    .map(h => `${String(h).padStart(2, '0')}:00`).join(', ')
-                : '';
+              const horas = formatFastingHours(newFasting);
               let detalle: string;
               if (oldHash === 'none')      detalle = horas ? `Nuevo ayuno programado: ${horas}` : 'Nuevo ayuno programado';
               else if (newHash === 'none') detalle = 'Ayuno cancelado';
@@ -229,6 +252,17 @@ export default async function handler(req: any, res: any) {
               });
               fastingNotified++;
             }
+          } else if (hasFasting && isRecentAdmission(payload.admissionDate)) {
+            const horas = formatFastingHours(newFasting);
+            const detalle = horas ? `Nuevo ayuno programado: ${horas}` : 'Nuevo ayuno programado';
+            console.log(`[cron-enrich] FASTING NEW-PATIENT ${eventKey} patient=${b.patientName} admission=${payload.admissionDate}`);
+            await sendPushToSubscribers({
+              title: 'Ayuno actualizado',
+              body:  `${b.patientName || 'Paciente'}: ${detalle}`,
+              type:  'FASTING_CHANGE',
+              originAreaName: b.areaName, destinationAreaName: b.areaName, sede: 'HPR',
+            });
+            fastingNotified++;
           }
 
           await upsertEnrich({
