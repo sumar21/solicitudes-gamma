@@ -123,9 +123,16 @@ function applyEnrichToBed(bed: any, e: EnrichResult): void {
 // refleja un ayuno/dieta nuevo mientras la cama no cambie de estado.
 // Si la lista no está configurada o el read falla → mapa sin enrich (nunca reintroduce
 // las N llamadas a Gamma) y firma vacía.
-async function enrichBedsFromCache(beds: any[]): Promise<string> {
+async function enrichBedsFromCache(beds: any[], occEventKeys: Set<string>): Promise<string> {
   if (!SITE_ID || !ENRICH_LIST_ID) return '';
-  const occupied = beds.filter(b => b.status === STATUS.OCCUPIED && b.eventOrigin && b.eventNumber != null);
+  // Solo aplicamos enrich si el eventKey está en obtenermapacamasocupadas (fuente live).
+  // Una cama puede tener status='Ocupada' y eventOrigin/Number residual del array general
+  // tras moverse el paciente — esos casos NO reciben enrich (evita pill fantasma).
+  const occupied = beds.filter(b =>
+    b.status === STATUS.OCCUPIED
+    && b.eventOrigin && b.eventNumber != null
+    && occEventKeys.has(`${b.eventOrigin}-${b.eventNumber}`)
+  );
   if (occupied.length === 0) return '';
 
   try {
@@ -259,11 +266,26 @@ async function handler(req: any, res: any) {
 
     const beds = transformBeds(mapData, occData);
 
+    // Set de eventKeys realmente ocupados según obtenermapacamasocupadas (fuente LIVE).
+    // Si una cama figura "Ocupada" en obtenermapacamas pero NO está acá, es residual
+    // (paciente recién movido; Gamma todavía no sincronizó el array general). No le
+    // aplicamos enrich para evitar pills/ayuno/dieta fantasma en la cama vieja.
+    const occEventKeys = new Set<string>();
+    for (const sector of occData) {
+      for (const room of sector.habitaciones ?? []) {
+        for (const bed of room.camas ?? []) {
+          const origen = bed.origen_evento ? String(bed.origen_evento).trim() : '';
+          const numero = typeof bed.numero_evento === 'number' ? bed.numero_evento : Number(bed.numero_evento);
+          if (origen && numero) occEventKeys.add(`${origen}-${numero}`);
+        }
+      }
+    }
+
     // ── Enrich leído del cache de SP (precomputado por cron-enrich-beds) ──
     // 1 query a 12.EnrichCamas + merge en memoria. No hace llamadas a Gamma por cama.
     // Devuelve una firma del enrich que entra al ETag (sino el polling recibe 304 y no
     // refleja cambios de enrich mientras la cama no cambie de estado).
-    const enrichSig = await enrichBedsFromCache(beds);
+    const enrichSig = await enrichBedsFromCache(beds, occEventKeys);
 
     // Update cache only on a fully successful response. El ETag combina el estado del
     // mapa (id/status/paciente) + la firma del enrich.
