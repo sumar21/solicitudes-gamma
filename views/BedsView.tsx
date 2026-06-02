@@ -894,8 +894,11 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     };
 
     // Total = 270mm; A4 landscape 277mm útil → cabe.
-    // Hab(12) | Cama(10) | Sector(30) | Paciente(45) | Dieta(40) | Ayuno(30) | Observaciones(103)
-    const colWidths  = [12, 10, 30, 45, 40, 30, 103];
+    // Hab(12) | Cama(10) | Sector(15) | Paciente(45) | Dieta(55) | Ayuno(45) | Observaciones(88)
+    // Dieta y Ayuno suelen tener listas largas que se truncaban — ahora ganan ancho a costa del
+    // sector (valores cortos tipo "Piso 4") y observaciones (mantiene 88mm, suficiente para
+    // notas tipo "Observaciones: NADA POR BOCA 00:00 (08/01)"). Dieta/Ayuno/Obs wrap en múltiples líneas.
+    const colWidths  = [12, 10, 15, 45, 55, 45, 88];
     const colHeaders = ['Hab.', 'Cama', 'Sector', 'Paciente', 'Dieta', 'Ayuno', 'Observaciones'];
     const rowHBase = 6;
     const tableWidth = colWidths.reduce((s, w) => s + w, 0);
@@ -980,12 +983,17 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
 
     rows.forEach((row, i) => {
       if (!row) return;
-      // Calcular altura de la fila: máximo entre rowHBase y líneas de obs wrapeadas.
+      // Wrap multi-línea para Dieta, Ayuno y Observaciones (las 3 columnas que pueden
+      // exceder el ancho). Hab/Cama/Sector/Paciente quedan en una sola línea.
+      // La altura de la fila se calcula como el máximo entre las tres columnas wrapeadas.
       doc.setFontSize(6.5);
-      const obsLines: string[] = row.obs
+      const dietaLines: string[] = doc.splitTextToSize(row.dieta || '—', colWidths[4] - 3);
+      const ayunoLines: string[] = doc.splitTextToSize(row.ayuno,         colWidths[5] - 3);
+      const obsLines:   string[] = row.obs
         ? doc.splitTextToSize(row.obs, colWidths[6] - 3)
         : [''];
-      const rowH = Math.max(rowHBase, obsLines.length * 3.2 + 2.5);
+      const maxLines = Math.max(dietaLines.length, ayunoLines.length, obsLines.length);
+      const rowH = Math.max(rowHBase, maxLines * 3.2 + 2.5);
 
       ensurePage(rowH);
 
@@ -1003,14 +1011,18 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       doc.text(truncate(row.area,        colWidths[2]), colX[2] + 1.5, textY);
       doc.text(truncate(row.patientName, colWidths[3]), colX[3] + 1.5, textY);
 
-      // Dieta — color emerald para tags presentes
+      // Dieta — verde, multi-línea
       doc.setTextColor(4, 120, 87);
-      doc.text(truncate(row.dieta || '—', colWidths[4]), colX[4] + 1.5, textY);
+      dietaLines.forEach((line, li) => {
+        doc.text(line, colX[4] + 1.5, curY + 3 + li * 3.2);
+      });
 
-      // Ayuno — color amber para horas indicadas
+      // Ayuno — ámbar si hay horas, gris si "—", multi-línea
       if (row.ayuno !== '—') doc.setTextColor(146, 64, 14);
-      else doc.setTextColor(148, 163, 184);
-      doc.text(truncate(row.ayuno, colWidths[5]), colX[5] + 1.5, textY);
+      else                    doc.setTextColor(148, 163, 184);
+      ayunoLines.forEach((line, li) => {
+        doc.text(line, colX[5] + 1.5, curY + 3 + li * 3.2);
+      });
 
       // Observaciones — multi-línea
       doc.setTextColor(30, 41, 59);
