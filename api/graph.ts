@@ -52,6 +52,45 @@ export async function graphFetch(path: string, init?: RequestInit): Promise<Resp
   });
 }
 
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+// SharePoint/Graph throttlean (429) o devuelven errores transitorios (503/504) bajo
+// carga. Estos SÍ conviene reintentar; el resto (4xx de validación) no.
+function isTransient(status: number): boolean {
+  return status === 429 || status === 503 || status === 504;
+}
+
+/**
+ * graphFetch con reintento ante throttling/errores transitorios. Honra el header
+ * `Retry-After` (segundos) si SharePoint lo manda; si no, backoff exponencial.
+ * `init.body` debe ser string (no stream) para poder reusarse entre intentos.
+ *
+ * Pensado para escrituras (PATCH/POST) dentro de los crons: maximiza que la
+ * persistencia salga bien EN LA MISMA corrida —y la notificación se mande al toque—
+ * en vez de esperar 15 min al próximo ciclo. Intentos y delays acotados para no
+ * pasarnos del maxDuration de la función.
+ */
+export async function graphFetchRetry(
+  path: string,
+  init?: RequestInit,
+  opts: { retries?: number; baseDelayMs?: number; maxDelayMs?: number } = {},
+): Promise<Response> {
+  const retries    = opts.retries    ?? 3;
+  const baseDelay  = opts.baseDelayMs ?? 400;
+  const maxDelay   = opts.maxDelayMs  ?? 8000;
+
+  let res = await graphFetch(path, init);
+  for (let attempt = 0; !res.ok && isTransient(res.status) && attempt < retries; attempt++) {
+    const retryAfterSec = Number(res.headers.get('Retry-After'));
+    const delay = Number.isFinite(retryAfterSec) && retryAfterSec > 0
+      ? Math.min(retryAfterSec * 1000, maxDelay)
+      : Math.min(baseDelay * 2 ** attempt, maxDelay);
+    await sleep(delay);
+    res = await graphFetch(path, init);
+  }
+  return res;
+}
+
 /**
  * PATCH masivo vía Microsoft Graph `$batch` (hasta 20 ops por request).
  * Mucho más rápido que PATCH individuales cuando hay cientos de ítems.

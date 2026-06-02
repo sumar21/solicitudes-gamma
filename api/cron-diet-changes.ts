@@ -30,7 +30,7 @@
  *     los GUIDs de listas son constantes estructurales, no secretos).
  */
 
-import { graphFetch } from './graph.js';
+import { graphFetch, graphFetchRetry } from './graph.js';
 import {
   getToken, fetchEventDetails, simpleHash,
   GammaSector, GammaBed, GammaEvent,
@@ -45,13 +45,22 @@ const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 const STALE_DAYS = 7; // snapshots sin update tras esto se marcan Inactivos
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+// Normalización determinística del texto de un tag: unicode NFC + colapsar
+// espacios internos + trim. Evita falsos positivos por diferencias cosméticas
+// (acentos compuestos vs precompuestos, espacios dobles) que Gamma puede devolver
+// de forma inconsistente entre corridas y harían "saltar" el hash sin cambio real.
+// Mantener sincronizado con parseDiets en api/diet-tags.ts.
+function normalizeTag(s: string): string {
+  return s.normalize('NFC').replace(/\s+/g, ' ').trim();
+}
+
 // Misma lógica de tags activos que usa /api/bed-enrich (mantener sincronizado).
 function extractDietTags(event: GammaEvent | null): string[] {
   if (!event || !Array.isArray(event.DIETAS) || event.DIETAS.length === 0) return [];
   const tags: string[] = [];
   for (const d of event.DIETAS) {
-    const desc = String(d?.HCG_DESCRIPCION ?? '').trim();
-    const resp = String(d?.EIP_RESPUESTA_VALOR ?? '').trim();
+    const desc = normalizeTag(String(d?.HCG_DESCRIPCION ?? ''));
+    const resp = normalizeTag(String(d?.EIP_RESPUESTA_VALOR ?? ''));
     if (!desc) continue;
     const lresp = resp.toLowerCase();
     if (desc.toLowerCase() === 'tipo') {
@@ -118,7 +127,7 @@ async function upsertSnapshot(args: {
   eventNumber: number;
   dietHash: string;
   dietTags: string[];
-}): Promise<void> {
+}): Promise<boolean> {
   const basePath = `/sites/${SITE_ID}/lists/${LIST_ID}/items`;
   const now = new Date().toISOString();
   const fields = {
@@ -134,17 +143,20 @@ async function upsertSnapshot(args: {
     Status_DS:      'Activo',
     Entorno_DS:     ENTORNO,
   };
-  if (args.existing) {
-    await graphFetch(`${basePath}/${args.existing.spItemId}/fields`, {
-      method: 'PATCH',
-      body: JSON.stringify(fields),
-    });
-  } else {
-    await graphFetch(basePath, {
-      method: 'POST',
-      body: JSON.stringify({ fields }),
-    });
-  }
+  // Devuelve si la escritura persistió. graphFetch NO lanza en respuestas no-2xx
+  // (devuelve el Response crudo), así que hay que chequear .ok explícitamente: si
+  // SharePoint throttlea (429) o falla, el hash NO se guarda y el caller debe evitar
+  // notificar para no re-spamear el mismo cambio en la próxima corrida.
+  const res = args.existing
+    ? await graphFetchRetry(`${basePath}/${args.existing.spItemId}/fields`, {
+        method: 'PATCH',
+        body: JSON.stringify(fields),
+      })
+    : await graphFetchRetry(basePath, {
+        method: 'POST',
+        body: JSON.stringify({ fields }),
+      });
+  return res.ok;
 }
 
 async function markSnapshotInactive(spItemId: string): Promise<void> {
@@ -182,7 +194,15 @@ export default async function handler(req: any, res: any) {
     return res.status(503).json({ error: 'SHAREPOINT_SITE_ID no configurado' });
   }
 
-  const stats = { checked: 0, created: 0, unchanged: 0, changed: 0, notified: 0, deactivated: 0, errors: 0 };
+  // Modo re-baseline silencioso (disparo MANUAL, no automático): persiste todos los
+  // hashes pero NO envía ningún push. Sirve para re-sincronizar el snapshot tras un
+  // deploy que cambia el formato de hash o tras un cambio masivo de nomenclatura en
+  // Progal, evitando una única ola legítima de notificaciones. Uso: ?silent=1.
+  const silent = ['1', 'true', 'yes'].includes(
+    String(req.query?.silent ?? req.query?.rebaseline ?? '').toLowerCase(),
+  );
+
+  const stats = { checked: 0, created: 0, unchanged: 0, changed: 0, notified: 0, skippedPersistFail: 0, deactivated: 0, errors: 0, silent };
 
   try {
     // 1) Snapshot bulk
@@ -260,27 +280,40 @@ export default async function handler(req: any, res: any) {
             continue;
           }
 
-          if (existing.dietHash !== dHash) {
+          const changed = existing.dietHash !== dHash;
+
+          // Persistir PRIMERO (LastChecked + hash nuevo). Si la escritura falla
+          // (SP throttle/error), NO notificamos: el hash viejo queda intacto y el
+          // cambio se vuelve a detectar — y notificar una sola vez — cuando SP
+          // persista en una corrida futura. Esto corta el spam auto-perpetuado.
+          const persisted = await upsertSnapshot({ existing, ...baseArgs });
+
+          if (!persisted) {
+            stats.skippedPersistFail++;
+            console.warn(`[cron-diet] persist FAIL patient=${b.patientCode} (${b.patientName}) — push pospuesto`);
+            continue;
+          }
+
+          if (changed) {
             stats.changed++;
             // Log del diff para diagnosticar falsos positivos: si prev/new son
             // idénticos visualmente pero el hash difiere → hash inestable / dato corrupto.
-            console.log(`[cron-diet] DIETA CHANGE patient=${b.patientCode} (${b.patientName})`);
+            console.log(`[cron-diet] DIETA CHANGE patient=${b.patientCode} (${b.patientName})${silent ? ' [silent]' : ''}`);
             console.log(`  prev hash=${existing.dietHash} tags=${existing.dietTags || '(vacío)'}`);
             console.log(`  new  hash=${dHash} tags=${tags.join(';') || '(vacío)'}`);
-            const tagsLabel = tags.length > 0 ? tags.join(', ') : 'sin dieta especial';
-            await sendPushToSubscribers({
-              title: 'Dieta actualizada',
-              body:  `${b.patientName || 'Paciente'}: ${tagsLabel}`,
-              type:  'DIET_CHANGE',
-              originAreaName: b.areaName, destinationAreaName: b.areaName, sede: 'HPR',
-            });
-            stats.notified++;
+            if (!silent) {
+              const tagsLabel = tags.length > 0 ? tags.join(', ') : 'sin dieta especial';
+              await sendPushToSubscribers({
+                title: 'Dieta actualizada',
+                body:  `${b.patientName || 'Paciente'}: ${tagsLabel}`,
+                type:  'DIET_CHANGE',
+                originAreaName: b.areaName, destinationAreaName: b.areaName, sede: 'HPR',
+              });
+              stats.notified++;
+            }
           } else {
             stats.unchanged++;
           }
-
-          // Refrescar snapshot siempre (LastChecked + hash nuevo).
-          await upsertSnapshot({ existing, ...baseArgs });
         } catch (err: any) {
           stats.errors++;
           console.error(`[cron-diet] error procesando ${b.patientCode}:`, err?.message ?? err);

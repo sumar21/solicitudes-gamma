@@ -11,7 +11,7 @@
  * Auth: CRON_SECRET (Bearer que manda Vercel Cron, o X-Cron-Secret manual). No JWT.
  */
 
-import { graphFetch } from './graph.js';
+import { graphFetch, graphFetchRetry } from './graph.js';
 import { getToken, simpleHash, GammaSector } from './gamma-client.js';
 import { buildEnrich, type EnrichResult } from './enrich-core.js';
 import type { FastingSummary } from './ayunos.js';
@@ -107,7 +107,7 @@ async function upsertEnrich(args: {
   eventKey: string;
   patientCode: string;
   payload: unknown;
-}): Promise<void> {
+}): Promise<boolean> {
   const basePath = `/sites/${SITE_ID}/lists/${LIST_ID}/items`;
   const fields = {
     Title:          '[sumar]',
@@ -118,17 +118,19 @@ async function upsertEnrich(args: {
     Status_EC:      'Activo',
     Entorno_EC:     ENTORNO,
   };
-  if (args.existing) {
-    await graphFetch(`${basePath}/${args.existing.spItemId}/fields`, {
-      method: 'PATCH',
-      body: JSON.stringify(fields),
-    });
-  } else {
-    await graphFetch(basePath, {
-      method: 'POST',
-      body: JSON.stringify({ fields }),
-    });
-  }
+  // Devuelve si la escritura persistió. graphFetch NO lanza en no-2xx: si SP
+  // throttlea/falla, el payload (y el fasting baseline) NO se guarda → el caller
+  // debe evitar el push para no re-notificar el mismo cambio en la próxima corrida.
+  const res = args.existing
+    ? await graphFetchRetry(`${basePath}/${args.existing.spItemId}/fields`, {
+        method: 'PATCH',
+        body: JSON.stringify(fields),
+      })
+    : await graphFetchRetry(basePath, {
+        method: 'POST',
+        body: JSON.stringify({ fields }),
+      });
+  return res.ok;
 }
 
 async function markInactive(spItemId: string): Promise<void> {
@@ -159,7 +161,14 @@ export default async function handler(req: any, res: any) {
   if (!SITE_ID) return res.status(503).json({ error: 'SHAREPOINT_SITE_ID no configurado' });
   if (!LIST_ID) return res.status(503).json({ error: '12.EnrichCamas LIST_ID no configurado' });
 
-  const stats = { checked: 0, upserted: 0, errors: 0, deactivated: 0 };
+  // Re-baseline silencioso (disparo MANUAL): reescribe todos los payloads pero NO
+  // envía ningún push de fasting. Para re-sincronizar baselines tras un deploy que
+  // cambie el formato del hash. Uso: ?silent=1.
+  const silent = ['1', 'true', 'yes'].includes(
+    String(req.query?.silent ?? req.query?.rebaseline ?? '').toLowerCase(),
+  );
+
+  const stats = { checked: 0, upserted: 0, errors: 0, skippedPersistFail: 0, deactivated: 0, silent };
 
   try {
     // 1) Filas existentes en SP.
@@ -234,6 +243,10 @@ export default async function handler(req: any, res: any) {
           const existing = rows.get(eventKey);
           const newFasting = payload.fasting;
           const hasFasting = !!(newFasting && newFasting.indications.length > 0);
+
+          // Decidir QUÉ notificar (sin enviar todavía): el push se manda recién
+          // después de un upsert exitoso, para no re-notificar si SP falla.
+          let pushBody: string | null = null;
           if (existing) {
             const oldHash = hashFastingSummary(existing.oldFasting);
             const newHash = hashFastingSummary(newFasting);
@@ -243,35 +256,40 @@ export default async function handler(req: any, res: any) {
               if (oldHash === 'none')      detalle = horas ? `Nuevo ayuno programado: ${horas}` : 'Nuevo ayuno programado';
               else if (newHash === 'none') detalle = 'Ayuno cancelado';
               else                          detalle = horas ? `Ayuno modificado: ${horas}` : 'Ayuno modificado';
-              console.log(`[cron-enrich] FASTING CHANGE ${eventKey} patient=${b.patientName} old=${oldHash} new=${newHash}`);
-              await sendPushToSubscribers({
-                title: 'Ayuno actualizado',
-                body:  `${b.patientName || 'Paciente'}: ${detalle}`,
-                type:  'FASTING_CHANGE',
-                originAreaName: b.areaName, destinationAreaName: b.areaName, sede: 'HPR',
-              });
-              fastingNotified++;
+              console.log(`[cron-enrich] FASTING CHANGE ${eventKey} patient=${b.patientName} old=${oldHash} new=${newHash}${silent ? ' [silent]' : ''}`);
+              pushBody = `${b.patientName || 'Paciente'}: ${detalle}`;
             }
           } else if (hasFasting && isRecentAdmission(payload.admissionDate)) {
             const horas = formatFastingHours(newFasting);
             const detalle = horas ? `Nuevo ayuno programado: ${horas}` : 'Nuevo ayuno programado';
-            console.log(`[cron-enrich] FASTING NEW-PATIENT ${eventKey} patient=${b.patientName} admission=${payload.admissionDate}`);
-            await sendPushToSubscribers({
-              title: 'Ayuno actualizado',
-              body:  `${b.patientName || 'Paciente'}: ${detalle}`,
-              type:  'FASTING_CHANGE',
-              originAreaName: b.areaName, destinationAreaName: b.areaName, sede: 'HPR',
-            });
-            fastingNotified++;
+            console.log(`[cron-enrich] FASTING NEW-PATIENT ${eventKey} patient=${b.patientName} admission=${payload.admissionDate}${silent ? ' [silent]' : ''}`);
+            pushBody = `${b.patientName || 'Paciente'}: ${detalle}`;
           }
 
-          await upsertEnrich({
+          // Persistir PRIMERO. Si falla, no notificamos (se reintenta en la próxima
+          // corrida y se notifica una sola vez cuando SP persista el nuevo baseline).
+          const persisted = await upsertEnrich({
             existing,
             eventKey,
             patientCode: b.patientCode,
             payload,
           });
+          if (!persisted) {
+            stats.skippedPersistFail++;
+            console.warn(`[cron-enrich] persist FAIL ${eventKey} patient=${b.patientName} — push pospuesto`);
+            continue;
+          }
           stats.upserted++;
+
+          if (pushBody && !silent) {
+            await sendPushToSubscribers({
+              title: 'Ayuno actualizado',
+              body:  pushBody,
+              type:  'FASTING_CHANGE',
+              originAreaName: b.areaName, destinationAreaName: b.areaName, sede: 'HPR',
+            });
+            fastingNotified++;
+          }
         } catch (err: any) {
           stats.errors++;
           console.error(`[cron-enrich] error en ${eventKey}:`, err?.message ?? err);

@@ -15,6 +15,14 @@ export interface DietEntry {
   respuesta: string;    // EIP_RESPUESTA_VALOR
 }
 
+// Normalización determinística (unicode NFC + colapsar espacios + trim).
+// DEBE coincidir con normalizeTag en api/cron-diet-changes.ts: el cron hashea
+// estos mismos tags para detectar cambios, así que la nomenclatura mostrada y la
+// hasheada tienen que normalizarse igual o el hash "saltaría" sin cambio real.
+function normalizeTag(s: string): string {
+  return s.normalize('NFC').replace(/\s+/g, ' ').trim();
+}
+
 export function parseDiets(
   dietas: GammaEvent['DIETAS'] | undefined,
 ): { diets?: DietEntry[]; dietTags?: string[] } {
@@ -23,8 +31,8 @@ export function parseDiets(
   const diets: DietEntry[] = dietas
     .filter(d => d?.HCG_DESCRIPCION)
     .map(d => ({
-      descripcion: String(d.HCG_DESCRIPCION ?? '').trim(),
-      respuesta:   String(d.EIP_RESPUESTA_VALOR ?? '').trim(),
+      descripcion: normalizeTag(String(d.HCG_DESCRIPCION ?? '')),
+      respuesta:   normalizeTag(String(d.EIP_RESPUESTA_VALOR ?? '')),
     }));
 
   if (diets.length === 0) return {};

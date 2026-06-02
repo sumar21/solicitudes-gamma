@@ -28,6 +28,7 @@
     }
   ],
   "functions": {
+    "api/cron-diet-changes.ts": { "maxDuration": 300 },
     "api/cron-enrich-beds.ts": { "maxDuration": 300 },
     "api/cron-cleanup-notifs.ts": { "maxDuration": 300 }
   }
