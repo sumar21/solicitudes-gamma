@@ -74,3 +74,39 @@ export function formatART(epochMs: number): string {
     hour12: false,  // 24h para coincidir con el header "Horas: HH:00" del modal
   });
 }
+
+/**
+ * Horas únicas de ayuno (en ART) programadas para HOY, ordenadas asc. Útil para
+ * listados/PDFs "del día" — distinto de `liveUpcoming` que solo mira lo que está
+ * por venir desde ahora. Acá tomamos TODA la jornada ART [00:00, 24:00).
+ *
+ * Ejemplo: si Gamma manda una indicación con `hours=[10,12,18]` y otra con `[10,15]`,
+ * ambas para hoy → devuelve `[10, 12, 15, 18]`. Ocurrencias de otros días se descartan.
+ */
+export function fastingHoursForToday(
+  fasting: Bed['fasting'] | undefined,
+  now: number = Date.now(),
+): number[] {
+  if (!fasting?.indications?.length) return [];
+  // Inicio del día ART (00:00 ART = 03:00 UTC del mismo día calendario ART).
+  // Usamos toLocaleDateString con timeZone para obtener Y-M-D del "hoy" del usuario.
+  const artYMD = new Date(now).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' });
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(artYMD);
+  if (!m) return [];
+  const [, Y, M, D] = m;
+  const dayStart = Date.UTC(+Y, +M - 1, +D, ART_OFFSET_H, 0, 0);
+  const dayEnd   = dayStart + 24 * 60 * 60 * 1000;
+
+  const horas = new Set<number>();
+  for (const ind of fasting.indications) {
+    const occs = fastingOccurrenceEpochs(ind.startISO, ind.hours, ind.totalOccurrences);
+    for (const epoch of occs) {
+      if (epoch >= dayStart && epoch < dayEnd) {
+        // Recuperar la hora ART del epoch (UTC - 3, normalizado mod 24).
+        const artHour = (new Date(epoch).getUTCHours() - ART_OFFSET_H + 24) % 24;
+        horas.add(artHour);
+      }
+    }
+  }
+  return Array.from(horas).sort((a, b) => a - b);
+}

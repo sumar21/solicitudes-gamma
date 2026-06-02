@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { Bed, BedStatus, Ticket, TicketStatus, User, Area, IsolationType } from '../types';
 import { can } from '../lib/permissions';
-import { hasLiveFasting, liveUpcoming, formatART } from '../lib/fasting';
+import { hasLiveFasting, liveUpcoming, formatART, fastingHoursForToday } from '../lib/fasting';
 import { Input } from '../components/ui/input';
 import { cn } from '../lib/utils';
 import { BedDouble, User as UserIcon, Info, Search, X, ChevronDown, Check, AlertTriangle, CheckCircle2, ShieldAlert, RefreshCw, UtensilsCrossed, FileText, ArrowDownAZ } from 'lucide-react';
@@ -920,14 +920,14 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     drawHeader(logoPng);
     drawTableHeader();
 
-    // Resumen legible de ayuno: "15:00, 16:00, 17:00" (horas únicas del payload.fasting).
+    // Resumen legible de ayuno DEL DÍA DE HOY (en ART): "15:00, 16:00, 17:00".
+    // Filtra ocurrencias por jornada [00:00, 24:00) ART — sino se mezclaban horas de
+    // indicaciones de otros días (ej. ayuno cargado el 28/05 con total=4 sumaba sus
+    // horas a un paciente cuyo ayuno de hoy era distinto).
     const fastingSummary = (bed: Bed): string => {
-      const f = bed.fasting;
-      if (!f || !f.indications || f.indications.length === 0) return '';
-      const horas = Array.from(new Set(f.indications.flatMap(i => i.hours)))
-        .sort((a, b) => a - b)
-        .map(h => `${String(h).padStart(2, '0')}:00`);
-      return horas.join(', ');
+      const horas = fastingHoursForToday(bed.fasting);
+      if (horas.length === 0) return '';
+      return horas.map(h => `${String(h).padStart(2, '0')}:00`).join(', ');
     };
 
     // Observación textual: respuestas de `diets` con texto largo (>25 chars).
