@@ -2442,3 +2442,136 @@ self.addEventListener('message', (event) => {
 ```
 
 Usar `serviceWorker.ready` (no `.controller`) para garantizar SW activo. El envelope `type` debe coexistir con otros (`SKIP_WAITING` ya estaba) → branch explícito.
+
+### Constantes canónicas de campos cuando hay 3+ helpers que iteran lo mismo
+
+Si tenés tres o más helpers que copian/limpian/extraen el mismo subset de propiedades de un objeto (ej. `Bed`), DRY-ear a través de una tupla `as const`:
+
+```ts
+const ENRICH_FIELDS = [
+  'dni', 'age', 'sex', 'diagnosis', 'fasting', 'dietTags', /* ... */ 'enriched',
+] as const;
+
+type EnrichField = typeof ENRICH_FIELDS[number];
+type EnrichSnapshot = Pick<Bed, EnrichField>;
+
+function clearEnrich(b: Bed): void {
+  const r = b as unknown as Record<string, unknown>;
+  for (const f of ENRICH_FIELDS) r[f] = undefined;
+}
+
+function extractEnrich(b: Bed): EnrichSnapshot {
+  const src = b as unknown as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const f of ENRICH_FIELDS) out[f] = src[f];
+  return out as EnrichSnapshot;
+}
+```
+
+**Por qué:** las tres listas literales (`clear`, `copy`, `extract`) divergen con el tiempo — un campo nuevo se agrega en dos lugares y se olvida en el tercero. Con la tupla, el tipo `EnrichSnapshot` también se deriva automáticamente. Los casts `as unknown as Record<string, unknown>` son necesarios porque `Bed` no tiene index signature; el doble-cast vía `unknown` es el patrón canónico de TS.
+
+Aplicado en `clearPatientFromBed` / `copyPatientToBed` / `extractEnrichSnapshot` / `reapplyEnrichFromMap` en [hooks/useHospitalState.ts](hooks/useHospitalState.ts).
+
+### Mapa cliente-side `useRef` para snapshots que sobreviven polls
+
+Cuando un valor debe acumularse entre polls pero no debe disparar re-renders en cada update (ej. el snapshot de enrich por `patientCode`), usar `useRef<Map<K, V>>(new Map())` y mutarlo in-place. El re-render se dispara desde el `useState` que ya cambia por otra razón (`setRawBeds`), y el `useMemo` lee el ref actualizado:
+
+```ts
+const snapshotMapRef = useRef<Map<string, EnrichSnapshot>>(new Map());
+
+// En el handler que actualiza estado:
+for (const bed of data.beds) {
+  if (bed.patientCode && bed.enriched === true) {
+    snapshotMapRef.current.set(bed.patientCode, extractEnrichSnapshot(bed));
+  }
+}
+setRawBeds(data.beds);  // este sí dispara re-render
+
+// En el useMemo derivado:
+const beds = useMemo(() => {
+  const merged = mergeBeds(rawBeds, active);
+  return reapplyEnrichFromMap(merged, snapshotMapRef.current);
+}, [rawBeds, tickets]);
+```
+
+**Importante**: actualizar el snapshot **solo cuando el server marcó `enriched === true`** (señal de que aplicó enrich válido del cache). Si llega `enriched !== true`, no tocar la entrada — se mantiene el snapshot del poll previo (es el caso "el cron aún no procesó al paciente en su nueva ubicación"; queremos que el dato lo siga). Guardar valores `undefined` explícitos cuando vienen así del enrich, sino una "cancelación" del campo nunca limpiaría la entrada.
+
+### Iconos distintivos en botones cuando el label se oculta en mobile
+
+Cuando una barra de acciones usa `<span className="hidden sm:inline">Label</span>` para ahorrar espacio en mobile, **NO repetir el mismo icono genérico** (ej. tres `<Download />` para tres PDFs distintos): el usuario en mobile no puede distinguirlos. Asignar un icono temático por botón + `title` (tooltip desktop) + `aria-label` (accesibilidad):
+
+```tsx
+<Button title="PDF por sector" aria-label="Exportar PDF por sector">
+  <FileText className="h-3.5 w-3.5" />
+  <span className="hidden sm:inline">PDF</span>
+</Button>
+<Button title="PDF alfabético por paciente" aria-label="Exportar PDF alfabético">
+  <ArrowDownAZ className="h-3.5 w-3.5" />
+  <span className="hidden sm:inline">PDF A-Z</span>
+</Button>
+<Button title="PDF de dietas y ayunos" aria-label="Exportar PDF de dietas">
+  <UtensilsCrossed className="h-3.5 w-3.5" />
+  <span className="hidden sm:inline">Dietas</span>
+</Button>
+```
+
+Durante el estado de spinner (export en progreso) sí compartir el mismo spinner — eso indica "trabajando", no la identidad de la acción.
+
+### Respuestas largas vs cortas en formularios: dos secciones distintas
+
+Cuando un formulario incluye preguntas con respuestas mayoritariamente cortas (Sí / No / 1-2 palabras) pero **algunas pocas** de texto libre largo (ej. observaciones), no usar un solo grid 2-col `flex justify-between`: el texto libre revienta el layout, se trunca, y se pierde info crítica.
+
+Patrón: separar la lista en dos al render-time por longitud, y renderizar cada bloque distinto:
+
+```tsx
+const LONG_ANSWER_LEN = 25;
+const shortItems = items.filter(d => (d.respuesta ?? '').trim().length <= LONG_ANSWER_LEN);
+const longItems  = items.filter(d => (d.respuesta ?? '').trim().length >  LONG_ANSWER_LEN);
+
+{shortItems.length > 0 && (
+  <div className="bg-slate-50 rounded-xl p-3">
+    <p className="text-[8px] font-bold uppercase">Formulario completo</p>
+    <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+      {shortItems.map(d => (
+        <div key={d.descripcion} className="flex items-center justify-between gap-2 min-w-0">
+          <span className="truncate">{d.descripcion}</span>
+          <span className="shrink-0 font-bold">{d.respuesta}</span>
+        </div>
+      ))}
+    </div>
+  </div>
+)}
+
+{longItems.length > 0 && (
+  <div className="bg-amber-50/40 rounded-xl p-3 space-y-2">
+    <p className="text-[8px] font-bold uppercase">Notas</p>
+    {longItems.map(d => (
+      <div key={d.descripcion} className="space-y-0.5">
+        <p className="text-[10px] font-semibold uppercase">{d.descripcion}</p>
+        <p className="break-words whitespace-pre-wrap leading-snug">{d.respuesta}</p>
+      </div>
+    ))}
+  </div>
+)}
+```
+
+`break-words` + `whitespace-pre-wrap` permiten wrap correcto sin truncar. El `min-w-0` en cada item del grid corto mitiga overflow lateral en mobile cuando la descripción es larga. Aplicado en el tab DIETA del modal de cama ([views/BedsView.tsx](views/BedsView.tsx)).
+
+### PDF: wrap multilínea en columnas con texto variable
+
+Cuando una columna de un PDF puede tener texto largo (observaciones, notas), no truncar — usar `doc.splitTextToSize(text, maxWidth)` y **ajustar el alto de la fila al máximo entre el rowHBase y el número de líneas wrapeadas × interlineado**:
+
+```ts
+const obsLines: string[] = row.obs
+  ? doc.splitTextToSize(row.obs, colWidths[OBS_COL_IDX] - 3)
+  : [''];
+const rowH = Math.max(rowHBase, obsLines.length * 3.2 + 2.5);
+ensurePage(rowH);
+// dibujar fila con altura `rowH`
+obsLines.forEach((line, li) => {
+  doc.text(line, colX[OBS_COL_IDX] + 1.5, curY + 3 + li * 3.2);
+});
+curY += rowH;
+```
+
+Las otras columnas se truncan con `…` (helper `truncate(text, colWidth)`) — el doc queda compacto cuando las observaciones son cortas y crece solo donde hace falta. Aplicado en `exportPDFDietas` ([views/BedsView.tsx](views/BedsView.tsx)).

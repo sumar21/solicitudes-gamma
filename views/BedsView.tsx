@@ -4,7 +4,7 @@ import { can } from '../lib/permissions';
 import { hasLiveFasting, liveUpcoming, formatART } from '../lib/fasting';
 import { Input } from '../components/ui/input';
 import { cn } from '../lib/utils';
-import { BedDouble, User as UserIcon, Info, Search, X, Download, ChevronDown, Check, AlertTriangle, CheckCircle2, ShieldAlert, RefreshCw, UtensilsCrossed } from 'lucide-react';
+import { BedDouble, User as UserIcon, Info, Search, X, ChevronDown, Check, AlertTriangle, CheckCircle2, ShieldAlert, RefreshCw, UtensilsCrossed, FileText, ArrowDownAZ } from 'lucide-react';
 import { Dialog, DialogContent } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
@@ -64,7 +64,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
   const [enrichedBed, setEnrichedBed] = useState<Bed | null>(null);
   const [enrichLoading, setEnrichLoading] = useState(false);
-  const [pdfExporting, setPdfExporting] = useState<'normal' | 'alpha' | false>(false);
+  const [pdfExporting, setPdfExporting] = useState<'normal' | 'alpha' | 'dietas' | false>(false);
   const [pdfProgress, setPdfProgress] = useState({ done: 0, total: 0 });
   // Tab activa dentro del detalle de una cama ocupada (Generales / Internación / Dieta / Ayunos)
   const [detailTab, setDetailTab] = useState<'general' | 'internacion' | 'dieta' | 'ayunos'>('general');
@@ -278,7 +278,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   });
 
   // ── Batch enrich for PDF export (concurrency limited) ──────────────────────
-  const enrichBedsForPdf = useCallback(async (bedsToExport: Bed[], type: 'normal' | 'alpha' = 'normal'): Promise<Bed[]> => {
+  const enrichBedsForPdf = useCallback(async (bedsToExport: Bed[], type: 'normal' | 'alpha' | 'dietas' = 'normal'): Promise<Bed[]> => {
     if (!onEnrichBed) return bedsToExport;
     const occupied = bedsToExport.filter(b => b.status === BedStatus.OCCUPIED && b.patientCode && !b.dni);
     if (occupied.length === 0) return bedsToExport;
@@ -837,6 +837,193 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     doc.save(`pacientes-alfa-${new Date().toISOString().slice(0, 10)}.pdf`);
   }, [filteredBeds, bedTicketMap, currentUser, enrichBedsForPdf]);
 
+  // ── PDF Export (dietas / ayunos / observaciones) ──────────────────────────
+  // Listado pensado para Catering: solo camas ocupadas con datos nutricionales.
+  // Columnas: Habitación · Cama · Sector · Paciente · Dieta · Ayuno · Observaciones.
+  // Observaciones admite varias líneas; el alto de fila se ajusta dinámicamente.
+  const exportPDFDietas = useCallback(async () => {
+    const enrichedBeds = await enrichBedsForPdf(filteredBeds, 'dietas');
+
+    const svgToLogoPng = (): Promise<string | null> => {
+      return new Promise((resolve) => {
+        try {
+          const svgMarkup = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 299 300" fill="none">
+            <path d="M177.763 209.923C175.477 205.948 171.246 203.498 166.673 203.498H132.327C127.75 203.498 123.523 205.948 121.236 209.923L104.063 239.768C101.776 243.743 101.776 248.643 104.063 252.618L121.236 282.462C123.523 286.437 127.753 288.887 132.327 288.887H166.676C171.252 288.887 175.479 286.437 177.766 282.462L194.939 252.618C197.226 248.643 197.226 243.743 194.939 239.768L177.763 209.923Z" fill="#022C22"/>
+            <path d="M121.236 90.078C123.523 94.053 127.753 96.503 132.327 96.503H166.676C171.252 96.503 175.479 94.053 177.766 90.078L194.939 60.2336C197.226 56.2586 197.226 51.3586 194.939 47.3836L177.763 17.5363C175.477 13.5613 171.249 11.1113 166.673 11.1113H132.327C127.75 11.1113 123.523 13.5613 121.236 17.5363L104.063 47.3808C101.776 51.3558 101.776 56.2558 104.063 60.2308L121.236 90.078Z" fill="#022C22"/>
+            <path d="M277.967 191.673L260.794 161.825C258.507 157.85 254.276 155.4 249.703 155.4H215.354C210.778 155.4 206.55 157.85 204.263 161.825L187.09 191.67C184.803 195.645 184.803 200.545 187.09 204.52L204.263 234.364C206.55 238.339 210.78 240.789 215.354 240.789H249.703C254.279 240.789 258.507 238.339 260.794 234.364L277.967 204.52C280.254 200.548 280.254 195.648 277.967 191.673Z" fill="#022C22"/>
+            <path d="M38.2046 138.175C40.4914 142.15 44.7217 144.6 49.2953 144.6H83.6443C88.2207 144.6 92.4482 142.15 94.735 138.175L111.908 108.33C114.195 104.355 114.195 99.4554 111.908 95.4804L94.735 65.6359C92.4482 61.6609 88.2179 59.2109 83.6443 59.2109H49.2981C44.7217 59.2109 40.4942 61.6609 38.2074 65.6359L21.0315 95.4776C18.7447 99.4526 18.7447 104.353 21.0315 108.328L38.2046 138.175Z" fill="#022C22"/>
+            <path d="M111.911 191.672L94.7378 161.827C92.451 157.852 88.2207 155.402 83.6471 155.402H49.2981C44.7217 155.402 40.4942 157.852 38.2074 161.827L21.0315 191.672C18.7447 195.647 18.7447 200.547 21.0315 204.522L38.2046 234.366C40.4914 238.341 44.7217 240.791 49.2953 240.791H83.6443C88.2207 240.791 92.4482 238.341 94.735 234.366L111.908 204.522C114.198 200.547 114.198 195.647 111.911 191.672Z" fill="#022C22"/>
+            <path d="M187.087 108.328L202.187 134.567H183.43C179.142 127.098 173.821 117.831 173.821 117.831C171.863 114.428 168.242 112.331 164.327 112.331H134.926C131.008 112.331 127.39 114.428 125.433 117.831L110.732 143.379C108.774 146.781 108.774 150.976 110.732 154.379L125.433 179.926C127.39 183.329 131.008 185.426 134.926 185.426H164.327C168.245 185.426 171.863 183.329 173.821 179.926L184.305 161.704H148.89V143.829H177.536H188.737H211.054C212.417 144.317 213.859 144.601 215.348 144.601H249.697C254.274 144.601 258.501 142.151 260.788 138.176L277.961 108.331C280.248 104.356 280.248 99.4563 277.961 95.4813L260.794 65.634C258.507 61.659 254.277 59.209 249.703 59.209H215.354C210.778 59.209 206.55 61.659 204.263 65.634L187.09 95.4785C184.801 99.4535 184.801 104.353 187.087 108.328Z" fill="#022C22"/>
+          </svg>`;
+          const blob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' });
+          const url = URL.createObjectURL(blob);
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 200; canvas.height = 200;
+            const ctx = canvas.getContext('2d');
+            if (ctx) { ctx.drawImage(img, 0, 0, 200, 200); resolve(canvas.toDataURL('image/png')); }
+            else { resolve(null); }
+            URL.revokeObjectURL(url);
+          };
+          img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+          img.src = url;
+        } catch { resolve(null); }
+      });
+    };
+
+    const logoPng = await svgToLogoPng();
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const now = new Date().toLocaleString('es-AR');
+    const margin = 10;
+
+    const drawHeader = (logo: string | null) => {
+      const logoSize = 12;
+      const textX = logo ? margin + logoSize + 4 : margin;
+      if (logo) { try { doc.addImage(logo, 'PNG', margin, 4, logoSize, logoSize); } catch { /* skip */ } }
+      doc.setFontSize(14); doc.setFont('helvetica', 'bold'); doc.setTextColor(2, 44, 34);
+      doc.text('Grupo Gamma — Dietas y Ayunos', textX, 10);
+      doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(100, 116, 139);
+      doc.text('MediFlow · Catering', textX, 15);
+      doc.setFontSize(7); doc.setTextColor(148, 163, 184);
+      doc.text(`Sede ${currentUser?.sede || 'HPR'}  ·  ${now}`, pageW - margin, 10, { align: 'right' });
+      doc.setDrawColor(7, 146, 113); doc.setLineWidth(0.5);
+      doc.line(margin, 19, pageW - margin, 19);
+    };
+
+    // Total = 270mm; A4 landscape 277mm útil → cabe.
+    // Hab(12) | Cama(10) | Sector(30) | Paciente(45) | Dieta(40) | Ayuno(30) | Observaciones(103)
+    const colWidths  = [12, 10, 30, 45, 40, 30, 103];
+    const colHeaders = ['Hab.', 'Cama', 'Sector', 'Paciente', 'Dieta', 'Ayuno', 'Observaciones'];
+    const rowHBase = 6;
+    const tableWidth = colWidths.reduce((s, w) => s + w, 0);
+    const colX: number[] = [];
+    { let cx = margin; for (const w of colWidths) { colX.push(cx); cx += w; } }
+
+    let curY = 26;
+    const ensurePage = (needed: number) => {
+      if (curY + needed > pageH - margin) { doc.addPage(); drawHeader(logoPng); curY = 26; drawTableHeader(); }
+    };
+    const drawTableHeader = () => {
+      doc.setFillColor(226, 232, 240);
+      doc.rect(margin, curY, tableWidth, rowHBase, 'F');
+      doc.setFontSize(6); doc.setFont('helvetica', 'bold'); doc.setTextColor(71, 85, 105);
+      colHeaders.forEach((h, i) => { doc.text(h, colX[i] + 1.5, curY + rowHBase - 1.8); });
+      curY += rowHBase;
+    };
+
+    drawHeader(logoPng);
+    drawTableHeader();
+
+    // Resumen legible de ayuno: "15:00, 16:00, 17:00" (horas únicas del payload.fasting).
+    const fastingSummary = (bed: Bed): string => {
+      const f = bed.fasting;
+      if (!f || !f.indications || f.indications.length === 0) return '';
+      const horas = Array.from(new Set(f.indications.flatMap(i => i.hours)))
+        .sort((a, b) => a - b)
+        .map(h => `${String(h).padStart(2, '0')}:00`);
+      return horas.join(', ');
+    };
+
+    // Observación textual: respuestas de `diets` con texto largo (>25 chars).
+    // Se concatenan precedidas del rótulo (ej. "Observaciones: ...") separadas por " · ".
+    const observationsText = (bed: Bed): string => {
+      const ds = bed.diets;
+      if (!ds || ds.length === 0) return '';
+      const longs = ds.filter(d => (d.respuesta ?? '').trim().length > 25);
+      return longs.map(d => `${d.descripcion}: ${(d.respuesta ?? '').trim()}`).join(' · ');
+    };
+
+    // Filtramos a OCUPADAS con AL MENOS UNO de: dietTags, fasting, observaciones.
+    interface DietaRow {
+      roomCode: string; bedCode: string; area: string; patientName: string;
+      dieta: string; ayuno: string; obs: string;
+    }
+    const rows: DietaRow[] = enrichedBeds
+      .map((bed: Bed): DietaRow | null => {
+        if (bed.status !== BedStatus.OCCUPIED) return null;
+        const dietTags = bed.dietTags ?? [];
+        const ayuno = fastingSummary(bed);
+        const obs = observationsText(bed);
+        if (dietTags.length === 0 && !ayuno && !obs) return null;
+        return {
+          roomCode:    bed.roomCode ?? '',
+          bedCode:     bed.bedCode ?? '',
+          area:        AREA_LABELS[bed.area] ?? bed.area,
+          patientName: bed.patientName ?? '',
+          dieta:       dietTags.join(', '),
+          ayuno:       ayuno || '—',
+          obs,
+        };
+      })
+      .filter((r: DietaRow | null): r is DietaRow => r !== null)
+      .sort((a, b) => {
+        const byArea = a.area.localeCompare(b.area, 'es');
+        if (byArea !== 0) return byArea;
+        return a.roomCode.localeCompare(b.roomCode, 'es', { numeric: true });
+      });
+
+    if (rows.length === 0) {
+      doc.setFontSize(9); doc.setFont('helvetica', 'italic'); doc.setTextColor(100, 116, 139);
+      doc.text('Sin camas con datos nutricionales para exportar.', margin, curY + 6);
+      doc.save(`dietas-${new Date().toISOString().slice(0, 10)}.pdf`);
+      return;
+    }
+
+    // Helper: trunca un texto al ancho de columna (chars aprox a fontSize=6.5).
+    const truncate = (text: string, colWidth: number): string => {
+      const maxChars = Math.floor(colWidth / 1.4);
+      return text.length > maxChars ? text.substring(0, maxChars - 1) + '…' : text;
+    };
+
+    rows.forEach((row, i) => {
+      if (!row) return;
+      // Calcular altura de la fila: máximo entre rowHBase y líneas de obs wrapeadas.
+      doc.setFontSize(6.5);
+      const obsLines: string[] = row.obs
+        ? doc.splitTextToSize(row.obs, colWidths[6] - 3)
+        : [''];
+      const rowH = Math.max(rowHBase, obsLines.length * 3.2 + 2.5);
+
+      ensurePage(rowH);
+
+      const even = i % 2 === 0;
+      doc.setFillColor(even ? 255 : 248, even ? 255 : 248, even ? 255 : 248);
+      doc.rect(margin, curY, tableWidth, rowH, 'F');
+      doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.1);
+      doc.line(margin, curY + rowH, margin + tableWidth, curY + rowH);
+
+      doc.setFontSize(6.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(30, 41, 59);
+      const textY = curY + rowHBase - 1.8;
+
+      doc.text(row.roomCode,                            colX[0] + 1.5, textY);
+      doc.text(row.bedCode,                             colX[1] + 1.5, textY);
+      doc.text(truncate(row.area,        colWidths[2]), colX[2] + 1.5, textY);
+      doc.text(truncate(row.patientName, colWidths[3]), colX[3] + 1.5, textY);
+
+      // Dieta — color emerald para tags presentes
+      doc.setTextColor(4, 120, 87);
+      doc.text(truncate(row.dieta || '—', colWidths[4]), colX[4] + 1.5, textY);
+
+      // Ayuno — color amber para horas indicadas
+      if (row.ayuno !== '—') doc.setTextColor(146, 64, 14);
+      else doc.setTextColor(148, 163, 184);
+      doc.text(truncate(row.ayuno, colWidths[5]), colX[5] + 1.5, textY);
+
+      // Observaciones — multi-línea
+      doc.setTextColor(30, 41, 59);
+      obsLines.forEach((line, li) => {
+        doc.text(line, colX[6] + 1.5, curY + 3 + li * 3.2);
+      });
+
+      curY += rowH;
+    });
+
+    doc.save(`dietas-${new Date().toISOString().slice(0, 10)}.pdf`);
+  }, [filteredBeds, currentUser, enrichBedsForPdf]);
+
   // ── Status helpers ────────────────────────────────────────────────────────
   const getStatusColor = (status: BedStatus) => {
     switch (status) {
@@ -953,13 +1140,17 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                 <span className="hidden sm:inline">Refrescar</span>
               </Button>
             )}
-            <Button variant="outline" size="sm" onClick={exportPDF} disabled={!!pdfExporting} className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50 disabled:opacity-50">
-              {pdfExporting === 'normal' ? <span className="inline-block w-3 h-3 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : <Download className="h-3 w-3" />}
+            <Button variant="outline" size="sm" onClick={exportPDF} disabled={!!pdfExporting} title="PDF por sector" aria-label="Exportar PDF por sector" className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50 disabled:opacity-50">
+              {pdfExporting === 'normal' ? <span className="inline-block w-3 h-3 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
               <span className="hidden sm:inline">{pdfExporting === 'normal' ? `${pdfProgress.done}/${pdfProgress.total}` : 'PDF'}</span>
             </Button>
-            <Button variant="outline" size="sm" onClick={exportPDFAlpha} disabled={!!pdfExporting} className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50 disabled:opacity-50">
-              {pdfExporting === 'alpha' ? <span className="inline-block w-3 h-3 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : <Download className="h-3 w-3" />}
+            <Button variant="outline" size="sm" onClick={exportPDFAlpha} disabled={!!pdfExporting} title="PDF alfabético por paciente" aria-label="Exportar PDF alfabético" className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50 disabled:opacity-50">
+              {pdfExporting === 'alpha' ? <span className="inline-block w-3 h-3 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : <ArrowDownAZ className="h-3.5 w-3.5" />}
               <span className="hidden sm:inline">{pdfExporting === 'alpha' ? `${pdfProgress.done}/${pdfProgress.total}` : 'PDF A-Z'}</span>
+            </Button>
+            <Button variant="outline" size="sm" onClick={exportPDFDietas} disabled={!!pdfExporting} title="PDF de dietas y ayunos" aria-label="Exportar PDF de dietas" className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50 disabled:opacity-50">
+              {pdfExporting === 'dietas' ? <span className="inline-block w-3 h-3 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : <UtensilsCrossed className="h-3.5 w-3.5" />}
+              <span className="hidden sm:inline">{pdfExporting === 'dietas' ? `${pdfProgress.done}/${pdfProgress.total}` : 'Dietas'}</span>
             </Button>
           </div>
         </div>
@@ -1464,28 +1655,50 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                                 </div>
                               </div>
                             )}
-                            {displayBed?.diets && displayBed.diets.length > 0 && (
-                              <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-2">Formulario completo</p>
-                                <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
-                                  {displayBed.diets.map((d, idx) => {
-                                    const resp = (d.respuesta ?? '').trim();
-                                    const isNo = resp.toLowerCase() === 'no';
-                                    return (
-                                      <div key={idx} className="flex items-center justify-between gap-2 text-[11px]">
-                                        <span className="text-slate-500 truncate">{d.descripcion}</span>
-                                        <span className={cn(
-                                          "font-bold shrink-0",
-                                          isNo ? "text-slate-400" : "text-emerald-700"
-                                        )}>
-                                          {resp || '—'}
-                                        </span>
+                            {displayBed?.diets && displayBed.diets.length > 0 && (() => {
+                              const LONG_ANSWER_LEN = 25;
+                              const shortDiets = displayBed.diets.filter(d => (d.respuesta ?? '').trim().length <= LONG_ANSWER_LEN);
+                              const longDiets  = displayBed.diets.filter(d => (d.respuesta ?? '').trim().length >  LONG_ANSWER_LEN);
+                              return (
+                                <>
+                                  {shortDiets.length > 0 && (
+                                    <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                                      <p className="text-[8px] font-bold uppercase text-slate-400 mb-2">Formulario completo</p>
+                                      <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+                                        {shortDiets.map((d, idx) => {
+                                          const resp = (d.respuesta ?? '').trim();
+                                          const isNo = resp.toLowerCase() === 'no';
+                                          return (
+                                            <div key={idx} className="flex items-center justify-between gap-2 text-[11px] min-w-0">
+                                              <span className="text-slate-500 truncate">{d.descripcion}</span>
+                                              <span className={cn(
+                                                "font-bold shrink-0",
+                                                isNo ? "text-slate-400" : "text-emerald-700"
+                                              )}>
+                                                {resp || '—'}
+                                              </span>
+                                            </div>
+                                          );
+                                        })}
                                       </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            )}
+                                    </div>
+                                  )}
+                                  {longDiets.length > 0 && (
+                                    <div className="bg-amber-50/40 rounded-xl p-3 border border-amber-100 space-y-2">
+                                      <p className="text-[8px] font-bold uppercase text-amber-700">Notas</p>
+                                      {longDiets.map((d, idx) => (
+                                        <div key={idx} className="space-y-0.5">
+                                          <p className="text-[10px] font-semibold uppercase text-slate-500">{d.descripcion}</p>
+                                          <p className="text-[11px] text-slate-800 break-words whitespace-pre-wrap leading-snug">
+                                            {(d.respuesta ?? '').trim() || '—'}
+                                          </p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </>
+                              );
+                            })()}
                             {!enrichLoading && !hasDietData && (
                               <p className="text-xs text-slate-400 italic text-center py-2">Sin datos de dieta disponibles</p>
                             )}

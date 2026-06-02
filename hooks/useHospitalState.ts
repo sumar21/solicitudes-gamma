@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
   WorkflowType, Role, SedeType, Ticket, TicketStatus, User, Area,
   Notification, NotificationType, ViewMode, SortConfig, Bed, BedStatus, IsolationType,
@@ -61,63 +61,67 @@ function playNotificationSound() {
 }
 
 // ── Bed merge ─────────────────────────────────────────────────────────────────
-// Limpia TODOS los campos asociados a un paciente (identificadores + enrich completo).
-// Sin esto, tras un movimiento (ej. WAITING_CONSOLIDATION) la cama origen queda con
-// fasting/dieta/diagnóstico/DNI "fantasma" del paciente que ya se fue → la pill de
-// ayuno y demás aparecen donde no corresponde.
+// Lista canónica de campos del paciente. IDENTITY = identifica al paciente actual
+// (patientName/Code, eventOrigin/Number). ENRICH = datos del evento que vienen del
+// cache de SP (diagnóstico, dieta, ayunos, plan, fechas, DNI/edad/sexo).
+// Cualquier campo nuevo de enrich a futuro se agrega solo acá → clear/copy/snapshot
+// quedan sincronizados sin tocar tres lugares.
+const IDENTITY_FIELDS = ['patientName', 'patientCode', 'eventOrigin', 'eventNumber'] as const;
+const ENRICH_FIELDS = [
+  'institution', 'attendingPhysician',
+  'dni', 'age', 'sex',
+  'diagnosis', 'prescribingPhysician',
+  'admissionType', 'admissionTypeCode', 'admissionDate', 'expectedSurgeryDate', 'authorizedDays',
+  'medicalPlan', 'medicalPlanCode', 'medicalPlanDescription',
+  'diets', 'dietTags', 'fasting',
+  'enriched',
+] as const;
+type EnrichField = typeof ENRICH_FIELDS[number];
+type PatientEnrichSnapshot = Pick<Bed, EnrichField>;
+
+// Limpia TODOS los campos asociados a un paciente (identidad + enrich). Sin esto,
+// tras un movimiento (ej. WAITING_CONSOLIDATION) la cama origen queda con
+// fasting/dieta/diagnóstico/DNI "fantasma" del paciente que ya se fue.
 function clearPatientFromBed(b: Bed): void {
-  b.patientName = undefined;
-  b.patientCode = undefined;
-  b.eventOrigin = undefined;
-  b.eventNumber = undefined;
-  b.dni = undefined;
-  b.age = undefined;
-  b.sex = undefined;
-  b.diagnosis = undefined;
-  b.prescribingPhysician = undefined;
-  b.institution = undefined;
-  b.attendingPhysician = undefined;
-  b.admissionType = undefined;
-  b.admissionTypeCode = undefined;
-  b.admissionDate = undefined;
-  b.expectedSurgeryDate = undefined;
-  b.authorizedDays = undefined;
-  b.medicalPlan = undefined;
-  b.medicalPlanCode = undefined;
-  b.medicalPlanDescription = undefined;
-  b.diets = undefined;
-  b.dietTags = undefined;
-  b.fasting = undefined;
+  const r = b as unknown as Record<string, unknown>;
+  for (const f of IDENTITY_FIELDS) r[f] = undefined;
+  for (const f of ENRICH_FIELDS)   r[f] = undefined;
   b.enriched = false;
 }
 
-// Copia el paciente + TODO su enrich de un bed a otro. Necesario para que la cama
+// Copia paciente + TODO el enrich de un bed a otro. Necesario para que la cama
 // destino en WAITING_CONSOLIDATION muestre el enrich completo (modal abre con datos
 // al instante, sin esperar al próximo poll de /api/beds).
 function copyPatientToBed(from: Bed, to: Bed): void {
-  to.patientName = from.patientName;
-  to.patientCode = from.patientCode;
-  to.eventOrigin = from.eventOrigin;
-  to.eventNumber = from.eventNumber;
-  to.dni = from.dni;
-  to.age = from.age;
-  to.sex = from.sex;
-  to.diagnosis = from.diagnosis;
-  to.prescribingPhysician = from.prescribingPhysician;
-  to.institution = from.institution;
-  to.attendingPhysician = from.attendingPhysician;
-  to.admissionType = from.admissionType;
-  to.admissionTypeCode = from.admissionTypeCode;
-  to.admissionDate = from.admissionDate;
-  to.expectedSurgeryDate = from.expectedSurgeryDate;
-  to.authorizedDays = from.authorizedDays;
-  to.medicalPlan = from.medicalPlan;
-  to.medicalPlanCode = from.medicalPlanCode;
-  to.medicalPlanDescription = from.medicalPlanDescription;
-  to.diets = from.diets;
-  to.dietTags = from.dietTags;
-  to.fasting = from.fasting;
-  to.enriched = from.enriched;
+  const src = from as unknown as Record<string, unknown>;
+  const dst = to   as unknown as Record<string, unknown>;
+  for (const f of IDENTITY_FIELDS) dst[f] = src[f];
+  for (const f of ENRICH_FIELDS)   dst[f] = src[f];
+}
+
+// Extrae el snapshot de enrich de un bed (sin la identidad — patientCode es la llave
+// del mapa). Se usa al recibir un bed con `enriched===true` del server para guardar
+// "lo que el paciente trae consigo" e ir aplicándolo donde el paciente esté.
+function extractEnrichSnapshot(bed: Bed): PatientEnrichSnapshot {
+  const src = bed as unknown as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const f of ENRICH_FIELDS) out[f] = src[f];
+  return out as PatientEnrichSnapshot;
+}
+
+// Para cada bed con patientCode, si tenemos un snapshot guardado para ese paciente,
+// sobreescribir TODOS los campos del enrich con los del snapshot. Esto garantiza que
+// la pill (y demás campos) sigan al paciente aunque el server no haya actualizado
+// el enrich todavía en su nueva cama (cron-enrich-beds corre cada 15 min). Beds sin
+// patientCode o no presentes en el mapa quedan intactos.
+function reapplyEnrichFromMap(beds: Bed[], map: Map<string, PatientEnrichSnapshot>): Bed[] {
+  for (const bed of beds) {
+    if (!bed.patientCode) continue;
+    const snap = map.get(bed.patientCode);
+    if (!snap) continue;
+    Object.assign(bed, snap);
+  }
+  return beds;
 }
 
 function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[]): Bed[] {
@@ -365,9 +369,16 @@ export const useHospitalState = () => {
   // A patient may have multiple isolation types active at once (e.g. Covid + Contacto).
   const [isolatedPatients, setIsolatedPatients]    = useState<Map<string, IsolationType[]>>(new Map()); // patientCode → isolation types
 
+  // Snapshot del enrich por patientCode — se actualiza en cada fetchBeds con los beds
+  // cuyo enriched===true. Permite que la pill de ayuno/dieta/diagnóstico "siga" al
+  // paciente cuando se mueve de cama y el cron aún no procesó su nueva ubicación.
+  // useRef porque mutamos en cada poll sin querer disparar re-renders extra.
+  const patientEnrichMapRef = useRef<Map<string, PatientEnrichSnapshot>>(new Map());
+
   const beds = useMemo(() => {
     const active = tickets.filter(t => t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED);
-    return mergeBeds(rawBeds, active);
+    const merged = mergeBeds(rawBeds, active);
+    return reapplyEnrichFromMap(merged, patientEnrichMapRef.current);
   }, [rawBeds, tickets]);
 
   // Derive isolatedBeds (bed labels) from isolatedPatients (patientCodes) + beds + active tickets
@@ -416,6 +427,14 @@ export const useHospitalState = () => {
         const hasOccupied = data.beds.some((b: any) => b.status === 'Ocupada' || b.status === 'En preparación' || b.status === 'Inhabilitada');
         if (!hasOccupied && rawBeds.length > 0 && rawBeds.some(b => b.status === BedStatus.OCCUPIED)) {
           return; // Gamma partial failure — keep previous data
+        }
+        // Actualizar el snapshot de enrich por paciente: solo donde el server marcó
+        // enriched===true (aplicó enrich del cache). Guardamos también valores undefined
+        // — sino la cancelación de un ayuno nunca limpiaría la entrada del mapa.
+        for (const bed of data.beds as Bed[]) {
+          if (bed.patientCode && bed.enriched === true) {
+            patientEnrichMapRef.current.set(bed.patientCode, extractEnrichSnapshot(bed));
+          }
         }
         setBedsError(null);
         setRawBeds(data.beds);

@@ -1067,3 +1067,29 @@ Resultado del bug: Catering recibía "Nueva Solicitud de Traslado" (NEW_TICKET) 
 **Qué:** El `DialogContent` base usa CSS grid en su contenedor scrollable; sus hijos directos heredan `min-width: auto` y no encogen por debajo del contenido → overflow. El wrapper del modal de cama lleva `min-w-0` para respetar el ancho del modal. Los tabs (mobile) usan `overflow-x-auto` + `shrink-0 whitespace-nowrap` (no `flex-1`).
 
 **Por qué:** en mobile la sección de aislamiento desbordaba a la izquierda ("MARCAR" cortado), y los 4 tabs no entraban en el fondo gris. El fix está acotado al modal de cama; no se toca el `DialogContent` base para no afectar otros modales.
+
+### 18.10. La pill de ayuno/dieta "acompaña al paciente" (snapshot cliente-side)
+
+**Qué:** El cliente mantiene un `Map<patientCode, EnrichSnapshot>` (en `useRef`, mutado in-place) derivado de los polls. En cada `fetchBeds`, los beds con `enriched === true` actualizan su entrada del mapa (incluso con valores `undefined`). Al construir `beds` para render, después de `mergeBeds` corre `reapplyEnrichFromMap` que sobreescribe los campos del enrich con el snapshot del paciente actual de cada cama. Resultado: la pill de ayuno (y dieta/diagnóstico/etc.) aparece donde está el `patientCode`, no donde el server o el cron creían.
+
+**Por qué:** el problema reportado por Catering — tras mover un paciente con ayuno de 805 → 801, la pill quedaba en 805 hasta el próximo cron (15min); peor, si BOTTOLI (sin ayuno) entraba a 805 antes del cron, la pill se "heredaba" al nuevo paciente. Hay múltiples ventanas donde el server puede devolver inconsistencia transitoria (cache 45s + Gamma desincronizado entre `obtenermapacamas` general y `obtenermapacamasocupadas` + cron cada 15min + tickets COMPLETED que dejan de aplicar `mergeBeds`). La solución a nivel server no cubre el caso "Progal directo sin ticket". El snapshot client-side combina **PROGAL + tickets activos + ENRICH "histórico por paciente"** — la pill sigue al patientCode siempre.
+
+**Alternativas descartadas:**
+- **Limpieza retroactiva por ticket COMPLETED reciente**: cubre solo el caso con ticket MediFlow. Falla si Admisión mueve directamente en Progal (no hay ticket que limpiar). Además, no garantiza que la pill aparezca en el destino antes del cron.
+- **Hardening server-side adicional**: ya hay un filtro por `occEventKeys` en [api/beds.ts:131](api/beds.ts#L131). Reforzarlo no resolvía el caso del cliente (que reportaba el bug aún con el filtro activo). El problema vive en el desfase temporal, no en el filtro.
+- **Reducir el cron a 5min**: 3× más carga + 3× más calls a Gamma. El usuario decidió mantener 15min.
+
+**Trade-off aceptado:** si un ayuno se **cancela** en Gamma y el cron aún no procesó al paciente, el snapshot mantiene la pill por hasta 15min. Mismo comportamiento que el flujo anterior — el fix no empeora ese caso. Eliminarlo requeriría disparar el cron on-demand al confirmar el ticket o al detectar el cambio en Gamma — fuera de alcance.
+
+### 18.11. Push del primer ayuno: rama explícita "paciente recién ingresado"
+
+**Qué:** En `cron-enrich-beds`, además de la rama "fila existente y el hash cambió", hay una segunda rama: si la fila es **nueva** (no había estado previo) Y el paciente tiene fasting Y su `admissionDate` es ≤24h atrás → enviar push (`FASTING_CHANGE`, body "Nuevo ayuno programado: HH:MM").
+
+**Por qué:** la rama original ("solo push si la fila YA existía") trataba a todo paciente nuevo como bootstrap silencioso, perdiendo el push del primer ayuno cuando coincidía con la primera vez que el cron procesaba a ese paciente. Caso real: paciente HECTOR EDUARDO ingresa al hospital, le cargan ayuno a las 09:24 ART, el cron 09:30 crea la fila en `12.EnrichCamas` con el fasting → bootstrap silencioso → push perdido.
+
+**Por qué con `admissionDate ≤ 24h` y no "siempre que sea nuevo":** sin la condición, un futuro reset de la lista `12.EnrichCamas` (o el primer deploy del cron) crearía filas para TODOS los pacientes pre-existentes con ayuno → spam masivo de "Nuevo ayuno programado". El umbral 24h asegura que solo dispare para pacientes **realmente recién ingresados**.
+
+**Alternativas descartadas:**
+- **Flag global "bootstrap completado" en SP**: una fila extra en otra lista para saber si el cron ya hizo su primer ciclo. Más complejidad y otra dependencia operativa.
+- **Notificar siempre paciente nuevo (sin umbral)**: simple pero introduce el riesgo de spam mencionado.
+- **Comparar el count de filas nuevas por ciclo**: heurística frágil (ej. múltiples ingresos simultáneos darían falso positivo de bootstrap).

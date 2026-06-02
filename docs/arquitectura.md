@@ -1118,3 +1118,67 @@ El cliente ([hooks/useHospitalState.ts](hooks/useHospitalState.ts)) invoca via `
 ## 37. Tab bar del modal de cama scrolleable (mobile)
 
 [views/BedsView.tsx](views/BedsView.tsx) — la botonera de tabs del modal de cama usa `overflow-x-auto` + tabs `shrink-0 whitespace-nowrap` (en vez de `flex-1`). En mobile, los 4 tabs (GENERALES / INTERNACIÓN / DIETA / AYUNOS) ya no se desbordan del fondo gris ni se ven cortados al activarse. El wrapper del modal lleva `min-w-0` para que el contenido respete el ancho del DialogContent (CSS grid).
+
+---
+
+## 38. Movimiento de pacientes en `mergeBeds`: identidad + enrich completo
+
+[hooks/useHospitalState.ts](hooks/useHospitalState.ts).
+
+### 38.1. Constantes canónicas de campos del paciente
+
+`IDENTITY_FIELDS` (4: `patientName`, `patientCode`, `eventOrigin`, `eventNumber`) y `ENRICH_FIELDS` (19: `institution`, `attendingPhysician`, `dni`, `age`, `sex`, `diagnosis`, `prescribingPhysician`, `admissionType*`, `admissionDate`, `expectedSurgeryDate`, `authorizedDays`, `medicalPlan*`, `diets`, `dietTags`, `fasting`, `enriched`) son tuples `as const`.
+
+`clearPatientFromBed`, `copyPatientToBed`, `extractEnrichSnapshot` y `reapplyEnrichFromMap` iteran sobre estas constantes. Cualquier campo nuevo de enrich se agrega en un solo lugar y los cuatro helpers quedan sincronizados sin tocar tres listas literales.
+
+### 38.2. `mergeBeds` en `WAITING_CONSOLIDATION`
+
+Hasta que Admin consolide en PROGAL, Gamma sigue apuntando al paciente en la cama origen. Visualmente lo mostramos en destino: `copyPatientToBed(origin, dest)` copia paciente + enrich completo, y `clearPatientFromBed(origin)` limpia TODO en el origen (sino la pill de ayuno, dieta, diagnóstico, DNI quedan fantasma).
+
+### 38.3. La pill "acompaña al paciente": snapshot client-side por `patientCode`
+
+[hooks/useHospitalState.ts](hooks/useHospitalState.ts) `patientEnrichMapRef: Map<patientCode, PatientEnrichSnapshot>` (en `useRef`).
+
+- **En cada `fetchBeds` exitoso**, antes de `setRawBeds`: para cada `bed` con `patientCode && enriched === true`, `extractEnrichSnapshot(bed)` y `map.set(patientCode, snap)`. Beds con `enriched !== true` **no actualizan** la entrada (se mantiene el snapshot del poll previo).
+- **En el `useMemo beds`** (tras `mergeBeds`): `reapplyEnrichFromMap(merged, map)` recorre los beds y, para cada uno con `patientCode` presente en el mapa, `Object.assign(bed, snap)` — sobreescribe TODOS los campos del enrich con los del snapshot.
+
+Consecuencia: cuando un paciente con ayuno se mueve de cama, la pill aparece **donde está hoy** según el `patientCode` actual del bed, sin esperar al próximo `cron-enrich-beds` (15 min). Cubre el caso "Catering veía la pill fantasma" al mover pacientes vía Progal directo (sin ticket en MediFlow).
+
+### 38.4. Caveats
+
+- **Cancelación de ayuno**: si Gamma cancela el ayuno pero el cron aún no procesó al paciente, el snapshot sigue mostrando la pill hasta 15min. Mismo comportamiento que el flujo anterior — el fix no empeora ese caso.
+- **Persistencia**: el mapa vive en memoria, se pierde al recargar. El primer poll después de F5 trae todos los enrich del cache SP → el mapa se rehidrata.
+- **Crecimiento**: ~150 pacientes activos × ~1KB c/u = <200KB. Sin cleanup explícito por ahora.
+
+---
+
+## 39. Exportables PDF del mapa de camas
+
+[views/BedsView.tsx](views/BedsView.tsx) — tres botones en la barra superior, cada uno con icono distintivo + tooltip + `aria-label`. En mobile el label se oculta (`hidden sm:inline`) pero los iconos quedan diferenciados.
+
+| Botón | Icono | Función |
+|---|---|---|
+| PDF | `FileText` | Mapa por sector — `exportPDF`, A4 landscape, columnas: Hab/Cama/Estado/Paciente/DNI/Edad/Sexo/Tipo/Ingreso/Días/Cirugía/Evento/Profesional/Financiador. |
+| PDF A-Z | `ArrowDownAZ` | Listado alfabético por paciente — `exportPDFAlpha`, mismo formato ordenado por nombre. |
+| Dietas | `UtensilsCrossed` | `exportPDFDietas` (NUEVO). Solo OCUPADAS con `dietTags` ∪ `fasting` ∪ observaciones. Columnas: Hab · Cama · Sector · Paciente · **Dieta** (verde) · **Ayuno** (ámbar) · **Observaciones** (multi-línea, `doc.splitTextToSize` ajusta el alto de la fila dinámicamente). Pensado para Catering. |
+
+Los 3 PDFs parten de `filteredBeds` (derivado de `beds`) → heredan automáticamente la combinación **PROGAL + tickets activos + ENRICH "sigue al paciente"** (§38.3). El paso intermedio `enrichBedsForPdf` ejecuta `onEnrichBed` on-demand solo para beds sin DNI; pega a Gamma con el `patientCode + eventOrigin + eventNumber` actuales — datos vivos para esa identidad, no del cache stale.
+
+---
+
+## 40. `cron-enrich-beds`: push de ayuno también para pacientes recién ingresados
+
+[api/cron-enrich-beds.ts](api/cron-enrich-beds.ts) helper `isRecentAdmission(admissionDate)` — true si `admissionDate` (string crudo de Gamma `EVE_FECHA_HORA_INGRESO`, formato `"YYYY-MM-DD HH:MM:SS"`) es ≤24h atrás. Normaliza el espacio a `'T'` para que `Date.parse` lo acepte consistentemente entre runtimes.
+
+Segunda rama del detector de fasting:
+
+```ts
+if (existing) {
+  // (a) Cambio de hash sobre fila ya existente → push (como antes).
+} else if (hasFasting && isRecentAdmission(payload.admissionDate)) {
+  // (b) Fila NUEVA + paciente admitido ≤24h + tiene fasting → push.
+  //     Logging: [cron-enrich] FASTING NEW-PATIENT ...
+}
+```
+
+**Por qué:** el bootstrap silencioso original (sin push si la fila no existía) trataba a TODO paciente nuevo como bootstrap, perdiendo el push del primer ayuno cuando el paciente recién ingresaba al hospital. La rama (b) corrige eso sin reintroducir el spam de "el deploy crea filas → push masivo": pacientes pre-existentes (admisión >24h) siguen entrando por bootstrap silencioso.
