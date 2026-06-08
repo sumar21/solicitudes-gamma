@@ -8,6 +8,27 @@ export const GAMMA_BASE = process.env.GAMMA_VM_URL ?? 'http://35.224.5.114/proxy
 const CLIENT_ID = process.env.CLIENT_ID ?? '';
 const CLIENT_SECRET = process.env.CLIENT_SECRET ?? '';
 
+// Gamma corre sobre una VM proxy single-node que a veces responde en 20-25s o se
+// cuelga indefinidamente. Sin un techo por llamada, un request colgado bloquea su
+// worker hasta que Vercel mata la función entera (status 0 / INVOCATION_TIMEOUT).
+// Con timeout, la llamada lenta aborta y se trata como error de ESA cama: la corrida
+// sigue y reintenta el próximo ciclo. Tuneable por env sin redeploy.
+export const GAMMA_TIMEOUT_MS = Number(process.env.GAMMA_FETCH_TIMEOUT_MS ?? 30_000);
+
+export async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs: number = GAMMA_TIMEOUT_MS,
+): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ── Gamma response types ─────────────────────────────────────────────────────
 export interface GammaBed {
   codigo: number;
@@ -98,7 +119,7 @@ export async function getToken(scope: string): Promise<string> {
   if (cached && Date.now() < cached.exp) return cached.token;
 
   // Step 1 — auth code
-  const codeRes = await fetch(
+  const codeRes = await fetchWithTimeout(
     `${GAMMA_BASE}/oauth_authorize?response_type=code&client_id=${encodeURIComponent(CLIENT_ID)}&state=xyz`,
   );
   const codeText = await codeRes.text();
@@ -114,7 +135,7 @@ export async function getToken(scope: string): Promise<string> {
   }
 
   // Step 2 — access token
-  const tokenRes = await fetch(`${GAMMA_BASE}/oauth_token`, {
+  const tokenRes = await fetchWithTimeout(`${GAMMA_BASE}/oauth_token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -167,7 +188,7 @@ export function calcAge(fechaNac: string): number | undefined {
 
 export async function fetchPatientDetails(token: string, patientCode: string): Promise<GammaPatient | null> {
   try {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `${GAMMA_BASE}/oauth_resource/consultarpacientecodigo?codigo=${encodeURIComponent(patientCode)}`,
       { headers: { Authorization: `Bearer ${token}` } },
     );
@@ -183,7 +204,7 @@ export async function fetchPatientDetails(token: string, patientCode: string): P
 
 export async function fetchEventDetails(token: string, eventOrigin: string, eventNumber: number): Promise<GammaEvent | null> {
   try {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `${GAMMA_BASE}/oauth_resource/obtenereventointernacion?empresa=HPR&origen=${encodeURIComponent(eventOrigin)}&numero=${encodeURIComponent(String(eventNumber))}`,
       { headers: { Authorization: `Bearer ${token}` } },
     );

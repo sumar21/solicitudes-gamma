@@ -32,7 +32,7 @@
 
 import { graphFetch, graphFetchRetry } from './graph.js';
 import {
-  getToken, fetchEventDetails, simpleHash,
+  getToken, fetchEventDetails, fetchWithTimeout, simpleHash,
   GammaSector, GammaBed, GammaEvent,
 } from './gamma-client.js';
 import { sendPushToSubscribers } from './push-utils.js';
@@ -202,7 +202,12 @@ export default async function handler(req: any, res: any) {
     String(req.query?.silent ?? req.query?.rebaseline ?? '').toLowerCase(),
   );
 
-  const stats = { checked: 0, created: 0, unchanged: 0, changed: 0, notified: 0, skippedPersistFail: 0, deactivated: 0, errors: 0, silent };
+  const stats = { checked: 0, created: 0, unchanged: 0, changed: 0, notified: 0, skippedPersistFail: 0, skippedByBudget: 0, deactivated: 0, errors: 0, silent };
+
+  // Presupuesto de tiempo por corrida: si nos acercamos al maxDuration (300s),
+  // cortamos prolijo y devolvemos 200 con stats parciales en vez de que Vercel mate
+  // la función (status 0). Las camas que quedaron se retoman en el próximo ciclo.
+  const deadline = Date.now() + Number(process.env.CRON_BUDGET_MS ?? 240_000);
 
   try {
     // 1) Snapshot bulk
@@ -210,7 +215,7 @@ export default async function handler(req: any, res: any) {
 
     // 2) Camas ocupadas desde Gamma
     const tokenOcc = await getToken('obtenermapacamasocupadas');
-    const occRes = await fetch(
+    const occRes = await fetchWithTimeout(
       `${process.env.GAMMA_VM_URL ?? 'http://35.224.5.114/proxy/index.php'}/oauth_resource/obtenermapacamasocupadas`,
       { headers: { Authorization: `Bearer ${tokenOcc}` } },
     );
@@ -253,12 +258,19 @@ export default async function handler(req: any, res: any) {
     const seenCodes = new Set<string>();
     const queue = [...beds];
     const workers = Array.from({ length: 5 }, async () => {
-      while (queue.length > 0) {
+      while (queue.length > 0 && Date.now() < deadline) {
         const b = queue.shift();
         if (!b) return;
         seenCodes.add(b.patientCode);
         try {
           const event = await fetchEventDetails(tokenEvt, b.eventOrigin, b.eventNumber);
+          // null = fetch falló/timeout. NO lo tratamos como "sin dieta": eso
+          // dispararía un falso push de "dieta removida". Saltamos — el hash viejo
+          // queda intacto y se reintenta en el próximo ciclo.
+          if (event === null) {
+            stats.errors++;
+            continue;
+          }
           const tags = extractDietTags(event);
           const dHash = hashTags(tags);
           const existing = snapshots.get(b.patientCode);
@@ -322,16 +334,26 @@ export default async function handler(req: any, res: any) {
     });
     await Promise.all(workers);
 
+    // Si cortamos por presupuesto, las camas sin procesar quedan para el próximo ciclo.
+    if (queue.length > 0) {
+      stats.skippedByBudget = queue.length;
+      console.warn(`[cron-diet] budget agotado: ${queue.length} camas pospuestas al próximo ciclo`);
+    }
+
     // 5) Cleanup: snapshots no vistos en este ciclo + viejos → Inactivo.
-    const staleCutoff = Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000;
-    for (const [code, snap] of snapshots) {
-      if (seenCodes.has(code)) continue;
-      const lastTs = Date.parse(snap.lastChecked);
-      if (!isNaN(lastTs) && lastTs < staleCutoff) {
-        try {
-          await markSnapshotInactive(snap.spItemId);
-          stats.deactivated++;
-        } catch { /* no-op */ }
+    // Sólo si no agotamos el presupuesto: con la corrida cortada habría camas no
+    // vistas que no son stale de verdad. El cleanup se retoma el próximo ciclo.
+    if (Date.now() < deadline) {
+      const staleCutoff = Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000;
+      for (const [code, snap] of snapshots) {
+        if (seenCodes.has(code)) continue;
+        const lastTs = Date.parse(snap.lastChecked);
+        if (!isNaN(lastTs) && lastTs < staleCutoff) {
+          try {
+            await markSnapshotInactive(snap.spItemId);
+            stats.deactivated++;
+          } catch { /* no-op */ }
+        }
       }
     }
 

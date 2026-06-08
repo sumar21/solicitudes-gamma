@@ -107,12 +107,15 @@ export async function buildEnrich(args: {
   patientCode: string;
   eventOrigin: string;
   eventNumber: number;
-}): Promise<EnrichResult> {
+}): Promise<EnrichResult & { eventFetchFailed: boolean }> {
   const [patient, event] = await Promise.all([
     fetchPatientDetails(args.tokenPat, args.patientCode),
     getEventCached(args.tokenEvt, args.eventOrigin, args.eventNumber),
   ]);
   const patientData = buildPatientData(patient);
   const eventData = buildEventData(event, { fallbackInstitution: !patientData.institution });
-  return { ...patientData, ...eventData };
+  // event === null = el fetch del evento falló/timeouteó (no "evento sin datos").
+  // El caller debe saltear el upsert para no pisar el payload bueno con uno vacío
+  // ni emitir un falso "Ayuno cancelado". Las camas ocupadas siempre tienen evento.
+  return { ...patientData, ...eventData, eventFetchFailed: event === null };
 }

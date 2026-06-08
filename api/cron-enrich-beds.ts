@@ -12,7 +12,7 @@
  */
 
 import { graphFetch, graphFetchRetry } from './graph.js';
-import { getToken, simpleHash, GammaSector } from './gamma-client.js';
+import { getToken, fetchWithTimeout, simpleHash, GammaSector } from './gamma-client.js';
 import { buildEnrich, type EnrichResult } from './enrich-core.js';
 import type { FastingSummary } from './ayunos.js';
 import { sendPushToSubscribers } from './push-utils.js';
@@ -168,7 +168,12 @@ export default async function handler(req: any, res: any) {
     String(req.query?.silent ?? req.query?.rebaseline ?? '').toLowerCase(),
   );
 
-  const stats = { checked: 0, upserted: 0, errors: 0, skippedPersistFail: 0, deactivated: 0, silent };
+  const stats = { checked: 0, upserted: 0, errors: 0, skippedPersistFail: 0, skippedByBudget: 0, deactivated: 0, silent };
+
+  // Presupuesto de tiempo por corrida: si nos acercamos al maxDuration (300s),
+  // cortamos prolijo y devolvemos 200 con stats parciales en vez de que Vercel mate
+  // la función (status 0). Las camas que quedaron se retoman en el próximo ciclo.
+  const deadline = Date.now() + Number(process.env.CRON_BUDGET_MS ?? 240_000);
 
   try {
     // 1) Filas existentes en SP.
@@ -176,7 +181,7 @@ export default async function handler(req: any, res: any) {
 
     // 2) Camas ocupadas desde Gamma.
     const tokenOcc = await getToken('obtenermapacamasocupadas');
-    const occRes = await fetch(
+    const occRes = await fetchWithTimeout(
       `${GAMMA_BASE}/oauth_resource/obtenermapacamasocupadas`,
       { headers: { Authorization: `Bearer ${tokenOcc}` } },
     );
@@ -219,18 +224,25 @@ export default async function handler(req: any, res: any) {
     const queue = [...beds];
     let fastingNotified = 0;
     const worker = async () => {
-      while (queue.length > 0) {
+      while (queue.length > 0 && Date.now() < deadline) {
         const b = queue.shift();
         if (!b) return;
         const eventKey = `${b.eventOrigin}-${b.eventNumber}`;
         seenKeys.add(eventKey);
         try {
-          const payload = await buildEnrich({
+          const { eventFetchFailed, ...payload } = await buildEnrich({
             tokenPat, tokenEvt,
             patientCode: b.patientCode,
             eventOrigin: b.eventOrigin,
             eventNumber: b.eventNumber,
           });
+          // El fetch del evento falló/timeouteó: NO pisar el payload bueno con uno
+          // vacío (borraría diagnóstico/dieta/ayuno) ni emitir un falso "Ayuno
+          // cancelado". Saltamos — se reintenta en el próximo ciclo.
+          if (eventFetchFailed) {
+            stats.errors++;
+            continue;
+          }
 
           // ── Detección de cambio de fasting (push a Catering / quien tenga notif_fasting_change) ──
           // Dos disparadores:
@@ -299,13 +311,23 @@ export default async function handler(req: any, res: any) {
     await Promise.all(Array.from({ length: WORKERS }, worker));
     (stats as any).fastingNotified = fastingNotified;
 
+    // Si cortamos por presupuesto, las camas sin procesar quedan para el próximo ciclo.
+    if (queue.length > 0) {
+      stats.skippedByBudget = queue.length;
+      console.warn(`[cron-enrich] budget agotado: ${queue.length} camas pospuestas al próximo ciclo`);
+    }
+
     // 5) Cleanup: filas no vistas en este ciclo + viejas → Inactivo.
-    const staleCutoff = Date.now() - STALE_MS;
-    for (const [key, row] of rows) {
-      if (seenKeys.has(key)) continue;
-      const ts = Date.parse(row.updatedAt);
-      if (!isNaN(ts) && ts < staleCutoff) {
-        try { await markInactive(row.spItemId); stats.deactivated++; } catch { /* no-op */ }
+    // Sólo si no agotamos el presupuesto: con la corrida cortada habría filas no
+    // vistas que no son stale de verdad. El cleanup se retoma el próximo ciclo.
+    if (Date.now() < deadline) {
+      const staleCutoff = Date.now() - STALE_MS;
+      for (const [key, row] of rows) {
+        if (seenKeys.has(key)) continue;
+        const ts = Date.parse(row.updatedAt);
+        if (!isNaN(ts) && ts < staleCutoff) {
+          try { await markInactive(row.spItemId); stats.deactivated++; } catch { /* no-op */ }
+        }
       }
     }
 

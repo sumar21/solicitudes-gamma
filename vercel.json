@@ -15,12 +15,12 @@
   ],
   "crons": [
     {
-      "path": "/api/cron-diet-changes",
-      "schedule": "*/15 * * * *"
+      "path": "/api/cron-enrich-beds",
+      "schedule": "0,15,30,45 * * * *"
     },
     {
-      "path": "/api/cron-enrich-beds",
-      "schedule": "*/15 * * * *"
+      "path": "/api/cron-diet-changes",
+      "schedule": "7,22,37,52 * * * *"
     },
     {
       "path": "/api/cron-cleanup-notifs",
