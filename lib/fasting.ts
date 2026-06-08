@@ -28,15 +28,20 @@ function parseArtParts(iso: string): { Y: number; M: number; D: number; h: numbe
 
 /**
  * Epochs (ms UTC) de las ocurrencias de una indicación, en orden cronológico, en hora
- * Argentina. Empieza el día de startISO, cicla por las horas día a día, descarta las
- * anteriores al inicio, hasta llegar a `total` (o un ciclo si total es null).
+ * Argentina. Empieza el día de startISO, cicla por TODAS las horas listadas día a día,
+ * hasta llegar a `total` (o un ciclo si total es null).
+ *
+ * La membresía se decide por la FECHA de inicio, no por su hora-del-día: si Gamma manda
+ * `inicio=8/6 02:00, horas=[1..8], total=8`, las 8 ocurrencias caen todas el 8/6
+ * (01:00–08:00). NO descartamos la 01:00 por ser previa a las 02:00 — hacerlo obligaba a
+ * rellenar la 8ª ocurrencia rodando al día siguiente (9/6 01:00 fantasma). Las horas ya
+ * pasadas simplemente no aparecen como "próximas" (las filtra `liveUpcoming`).
  */
 export function fastingOccurrenceEpochs(startISO: string, hours: number[], total: number | null): number[] {
   if (!hours.length) return [];
   const p = parseArtParts(startISO);
   if (!p) return [];
 
-  const startEpoch = Date.UTC(p.Y, p.M - 1, p.D, p.h + ART_OFFSET_H, p.min, 0);
   const sortedHours = [...hours].sort((a, b) => a - b);
   const effectiveTotal = total ?? sortedHours.length;
   const maxDays = total === null ? 1 : 365;
@@ -45,7 +50,6 @@ export function fastingOccurrenceEpochs(startISO: string, hours: number[], total
   for (let d = 0; out.length < effectiveTotal && d < maxDays; d++) {
     for (const H of sortedHours) {
       const epoch = Date.UTC(p.Y, p.M - 1, p.D + d, H + ART_OFFSET_H, 0, 0);
-      if (epoch < startEpoch) continue;
       out.push(epoch);
       if (out.length >= effectiveTotal) break;
     }

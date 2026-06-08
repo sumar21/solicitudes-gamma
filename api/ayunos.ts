@@ -14,9 +14,10 @@
  *     → 4 ocurrencias: 18 10:00, 18 11:00, 18 12:00, 18 13:00.
  *
  *   - startISO=2026-05-19 14:51, hours=[0,22,23], total=12
- *     → 12 ocurrencias en orden: 19 22:00, 19 23:00, 20 00:00, 20 22:00,
- *       20 23:00, 21 00:00, 21 22:00, 21 23:00, 22 00:00, 22 22:00, 22 23:00,
- *       23 00:00.
+ *     → 12 ocurrencias en orden: 19 00:00, 19 22:00, 19 23:00, 20 00:00, 20 22:00,
+ *       20 23:00, 21 00:00, 21 22:00, 21 23:00, 22 00:00, 22 22:00, 22 23:00.
+ *     (La membresía se decide por la FECHA de inicio, no por su hora-del-día: la 19 00:00
+ *      cuenta aunque sea previa a las 14:51. Ver nota en generateOccurrences.)
  */
 
 import { simpleHash, type GammaEvent } from './gamma-client.js';
@@ -68,8 +69,14 @@ function groupRaws(rows: Raw[]): Map<string, { id: number; startISO: string; hou
  * hasta llegar a `total` ocurrencias.
  *
  * El "día 0" es el día calendario de startISO. Cada día siguiente reinicia el ciclo
- * de horas. Solo cuentan las ocurrencias cuyo timestamp >= startISO (descarta horas
- * del día 0 que ya pasaron antes del inicio).
+ * de horas. La membresía se decide por la FECHA de inicio, NO por su hora-del-día:
+ * todas las horas listadas del día 0 cuentan aunque sean previas a la hora de inicio.
+ *
+ * Por qué: con `inicio=8/6 02:00, horas=[1..8], total=8`, descartar la 01:00 por ser
+ * previa a las 02:00 dejaba 7 ocurrencias y obligaba a rellenar la 8ª rodando al día
+ * siguiente (9/6 01:00) — un horario fantasma que el ayuno no tiene. Manteniéndolas
+ * todas el 8/6, las ya pasadas simplemente no figuran como futuras (las filtra
+ * summarizeFasting con `now`).
  */
 function generateOccurrences(startISO: string, hours: number[], total: number | null): Date[] {
   if (hours.length === 0) return [];
@@ -91,7 +98,6 @@ function generateOccurrences(startISO: string, hours: number[], total: number | 
       const t = new Date(day0);
       t.setDate(day0.getDate() + d);
       t.setHours(h, 0, 0, 0);
-      if (t.getTime() < start.getTime()) continue;
       out.push(t);
       if (out.length >= effectiveTotal) break;
     }
