@@ -340,7 +340,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                   <p className="text-[8px] font-black uppercase text-slate-400 leading-none mb-1">Origen</p>
                   <div className="flex items-center gap-1.5 w-full">
                     <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <p className="text-xs font-bold text-slate-700 truncate">{formatBedName(ticket.origin)}</p>
+                    <p className="text-xs font-bold text-slate-700 break-words leading-tight">{formatBedName(ticket.origin)}</p>
                   </div>
                 </div>
                 
@@ -351,7 +351,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                 <div className="flex flex-col min-w-0 flex-1 items-end text-right">
                   <p className="text-[8px] font-black uppercase text-blue-400 leading-none mb-1">Destino</p>
                   <div className="flex items-center gap-1.5 justify-end w-full">
-                    <p className="text-xs font-black text-blue-900 truncate">{ticket.destination ? formatBedName(ticket.destination) : 'Pendiente'}</p>
+                    <p className="text-xs font-black text-blue-900 break-words leading-tight text-right">{ticket.destination ? formatBedName(ticket.destination) : 'Pendiente'}</p>
                     <BedDouble className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                   </div>
                   {ticket.targetBedOriginalStatus && (
