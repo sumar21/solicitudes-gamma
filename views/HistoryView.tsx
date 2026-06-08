@@ -375,9 +375,9 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
               </div>
 
               <div className="flex items-center justify-between gap-2">
-                <span className="flex-1 min-w-0 text-[10px] font-black text-slate-800 uppercase bg-slate-100 px-2 py-1 rounded-lg truncate text-center">{formatBedName(t.origin)}</span>
+                <span className="flex-1 min-w-0 text-[10px] font-black text-slate-800 uppercase bg-slate-100 px-2 py-1 rounded-lg break-words leading-tight text-center">{formatBedName(t.origin)}</span>
                 <ArrowRightLeft className="w-3 h-3 text-slate-300 shrink-0" />
-                <span className="flex-1 min-w-0 text-[10px] font-black text-blue-700 uppercase bg-blue-50 px-2 py-1 rounded-lg truncate text-center">{t.destination ? formatBedName(t.destination) : 'ANULADO'}</span>
+                <span className="flex-1 min-w-0 text-[10px] font-black text-blue-700 uppercase bg-blue-50 px-2 py-1 rounded-lg break-words leading-tight text-center">{t.destination ? formatBedName(t.destination) : 'ANULADO'}</span>
               </div>
             </Card>
           ))
