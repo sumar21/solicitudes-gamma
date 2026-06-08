@@ -34,6 +34,10 @@ interface EnrichRow {
   // a Catering (notif_fasting_change). Si no había fasting en el payload viejo,
   // queda undefined (= 'none' al hashear → bootstrap silencioso si tampoco hay ahora).
   oldFasting: FastingSummary | undefined;
+  // dietTags del Payload_EC anterior — baseline para detectar cambio de DIETA acá
+  // mismo (reemplaza a cron-diet-changes + lista 11.DietaSnapshot). undefined = sin
+  // dieta especial (hashea estable, así "dieta especial → sin dieta" también dispara).
+  oldDietTags: string[] | undefined;
 }
 
 // Hash estable del estado de ayunos. Mismo criterio que api/ayunos.ts fastingHash
@@ -47,6 +51,13 @@ function hashFastingSummary(s: FastingSummary | undefined | null): string {
     .sort()
     .join('|');
   return simpleHash(sig);
+}
+
+// Hash estable de los tags de dieta. Mismo criterio que cron-diet-changes.hashTags
+// (ordenado + join '|') sobre el dietTags YA normalizado por parseDiets — por eso el
+// hash es equivalente y no genera falsos positivos al consolidar. [] = sin dieta especial.
+function hashDietTags(tags: string[] | undefined): string {
+  return simpleHash([...(tags ?? [])].sort().join('|'));
 }
 
 // Formato "HH:00, HH:00, ..." con horas únicas y ordenadas para el body del push.
@@ -83,20 +94,23 @@ async function fetchEnrichRows(): Promise<Map<string, EnrichRow>> {
     const f = item.fields as Record<string, unknown>;
     const key = String(f.EventKey_EC ?? '').trim();
     if (!key) continue;
-    // Parsear Payload_EC para extraer el fasting viejo (comparación de cambio).
+    // Parsear Payload_EC para extraer el baseline viejo (fasting + dieta) y comparar.
     let oldFasting: FastingSummary | undefined;
+    let oldDietTags: string[] | undefined;
     try {
       const raw = String(f.Payload_EC ?? '');
       if (raw) {
         const parsed = JSON.parse(raw) as EnrichResult;
         oldFasting = parsed.fasting;
+        oldDietTags = parsed.dietTags;
       }
-    } catch { /* fila corrupta — sin oldFasting */ }
+    } catch { /* fila corrupta — sin baseline */ }
     map.set(key, {
       spItemId:  String(item.id),
       eventKey:  key,
       updatedAt: String(f.UpdatedAt_EC ?? ''),
       oldFasting,
+      oldDietTags,
     });
   }
   return map;
@@ -223,6 +237,7 @@ export default async function handler(req: any, res: any) {
     const seenKeys = new Set<string>();
     const queue = [...beds];
     let fastingNotified = 0;
+    let dietNotified = 0;
     const worker = async () => {
       while (queue.length > 0 && Date.now() < deadline) {
         const b = queue.shift();
@@ -278,6 +293,23 @@ export default async function handler(req: any, res: any) {
             pushBody = `${b.patientName || 'Paciente'}: ${detalle}`;
           }
 
+          // ── Detección de cambio de DIETA (push notif_diet_change) ──
+          // Reemplaza a cron-diet-changes: comparamos el dietTags nuevo contra el del
+          // payload anterior (mismo hash que usaba ese cron). Bootstrap silencioso para
+          // filas nuevas, igual que el cron viejo: no spamear dietas pre-existentes al
+          // repoblar 12.EnrichCamas. Sólo notifica cuando una fila EXISTENTE cambia.
+          const newDietTags = payload.dietTags ?? [];
+          let dietPushBody: string | null = null;
+          if (existing) {
+            const oldDietHash = hashDietTags(existing.oldDietTags);
+            const newDietHash = hashDietTags(newDietTags);
+            if (oldDietHash !== newDietHash) {
+              const label = newDietTags.length > 0 ? newDietTags.join(', ') : 'sin dieta especial';
+              console.log(`[cron-enrich] DIET CHANGE ${eventKey} patient=${b.patientName} old=${oldDietHash} new=${newDietHash}${silent ? ' [silent]' : ''}`);
+              dietPushBody = `${b.patientName || 'Paciente'}: ${label}`;
+            }
+          }
+
           // Persistir PRIMERO. Si falla, no notificamos (se reintenta en la próxima
           // corrida y se notifica una sola vez cuando SP persista el nuevo baseline).
           const persisted = await upsertEnrich({
@@ -302,6 +334,16 @@ export default async function handler(req: any, res: any) {
             });
             fastingNotified++;
           }
+
+          if (dietPushBody && !silent) {
+            await sendPushToSubscribers({
+              title: 'Dieta actualizada',
+              body:  dietPushBody,
+              type:  'DIET_CHANGE',
+              originAreaName: b.areaName, destinationAreaName: b.areaName, sede: 'HPR',
+            });
+            dietNotified++;
+          }
         } catch (err: any) {
           stats.errors++;
           console.error(`[cron-enrich] error en ${eventKey}:`, err?.message ?? err);
@@ -310,6 +352,7 @@ export default async function handler(req: any, res: any) {
     };
     await Promise.all(Array.from({ length: WORKERS }, worker));
     (stats as any).fastingNotified = fastingNotified;
+    (stats as any).dietNotified = dietNotified;
 
     // Si cortamos por presupuesto, las camas sin procesar quedan para el próximo ciclo.
     if (queue.length > 0) {

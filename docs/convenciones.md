@@ -2575,3 +2575,56 @@ curY += rowH;
 ```
 
 Las otras columnas se truncan con `…` (helper `truncate(text, colWidth)`) — el doc queda compacto cuando las observaciones son cortas y crece solo donde hace falta. Aplicado en `exportPDFDietas` ([views/BedsView.tsx](views/BedsView.tsx)).
+
+## Nuevos patrones (robustez de upstreams lentos, 2026-06-08)
+
+### `fetch` con timeout (`AbortController`) para upstreams lentos
+
+Cuando un upstream puede colgarse (Gamma VM single-node), envolver `fetch` con un `AbortController` con timeout configurable por env. El `fetch` de Node no tiene timeout útil por default → un request colgado bloquea hasta el `maxDuration` de la función y la mata (status 0).
+
+```ts
+export const GAMMA_TIMEOUT_MS = Number(process.env.GAMMA_FETCH_TIMEOUT_MS ?? 30_000);
+export async function fetchWithTimeout(url, init = {}, timeoutMs = GAMMA_TIMEOUT_MS) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try { return await fetch(url, { ...init, signal: ctrl.signal }); }
+  finally { clearTimeout(timer); }
+}
+```
+
+Las funciones que ya envuelven en `try/catch` (devuelven `null`) absorben el `AbortError` como un fallo más. El `timeoutMs` por env permite tunear en prod sin redeploy.
+
+### Presupuesto de tiempo (deadline) en jobs largos
+
+Un job que itera N entidades contra un upstream lento debe cortar antes del `maxDuration` y devolver 200 parcial, en vez de que la plataforma lo mate (status 0, sin diagnóstico):
+
+```ts
+const deadline = Date.now() + Number(process.env.CRON_BUDGET_MS ?? 240_000);
+const worker = async () => { while (queue.length > 0 && Date.now() < deadline) { /* ... */ } };
+// ...tras los workers:
+if (queue.length > 0) stats.skippedByBudget = queue.length;
+if (Date.now() < deadline) { /* cleanup de stale; se saltea si se agotó el budget */ }
+```
+
+Requiere idempotencia (persist-before-notify) para que lo no procesado se retome el ciclo siguiente sin perder ni duplicar efectos.
+
+### Distinguir "fetch falló" de "dato vacío" antes de derivar un evento
+
+Un helper que devuelve `null` para "no hay dato" Y "el fetch falló" es ambiguo: si aguas abajo se deriva un evento (notificación, escritura de cache), un fallo transitorio se confunde con "el dato se borró". Surfacear el fallo explícito:
+
+```ts
+// buildEnrich
+return { ...data, eventFetchFailed: event === null };
+// caller
+if (eventFetchFailed) { stats.errors++; continue; } // no upsert, no push
+```
+
+Evita notis falsas ("X removido") y que un payload vacío pise el cache bueno.
+
+### Reintento con backoff para escrituras SP transitorias (`graphFetchRetry`)
+
+[api/graph.ts](api/graph.ts) `graphFetchRetry(path, init, opts?)` reintenta **solo** ante 429/503/504 (throttling/transitorios de SharePoint/Graph), honrando el header `Retry-After` o backoff exponencial acotado (`baseDelay 400ms`, `maxDelay 8s`, 3 intentos). Pensado para escrituras (PATCH/POST) dentro de los crons: maximiza que la persistencia salga en la MISMA corrida —y la notificación se mande al toque— en vez de esperar 15 min al próximo ciclo. NO reintenta 4xx de validación. `init.body` debe ser string (no stream) para poder reusarse entre intentos.
+
+### Mobile cards: `break-words` en vez de `truncate`
+
+En tarjetas (no tablas) donde el ancho es limitado, preferir que el texto baje de línea antes que cortarlo con `…`. `truncate` esconde info crítica (ej. el destino de un traslado en mobile); `break-words leading-tight` la muestra completa creciendo en alto. Las tablas de desktop sí mantienen `whitespace-nowrap` a propósito. Aplicado en las tarjetas mobile de [views/RequestsView.tsx](views/RequestsView.tsx) y [views/HistoryView.tsx](views/HistoryView.tsx).

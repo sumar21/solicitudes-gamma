@@ -1182,3 +1182,38 @@ if (existing) {
 ```
 
 **Por qué:** el bootstrap silencioso original (sin push si la fila no existía) trataba a TODO paciente nuevo como bootstrap, perdiendo el push del primer ayuno cuando el paciente recién ingresaba al hospital. La rama (b) corrige eso sin reintroducir el spam de "el deploy crea filas → push masivo": pacientes pre-existentes (admisión >24h) siguen entrando por bootstrap silencioso.
+
+## 41. Robustez de los crons frente a Gamma lento (2026-06-08)
+
+Gamma corre sobre una VM proxy single-node que bajo carga responde `obtenereventointernacion` en 20-25s o se cuelga. Sin techo por llamada, un request colgado bloqueaba el worker hasta que Vercel mataba la función entera (log: status `0` / `FUNCTION_INVOCATION_TIMEOUT`, `Duration: 0ms`, sin respuesta). Tres capas de defensa, todas tuneables por env sin redeploy.
+
+### 41.1. `fetchWithTimeout` en gamma-client
+
+[api/gamma-client.ts](api/gamma-client.ts) exporta `fetchWithTimeout(url, init?, timeoutMs?)` — envuelve `fetch` con un `AbortController` que aborta a los `GAMMA_TIMEOUT_MS` (env `GAMMA_FETCH_TIMEOUT_MS`, default 30s). Aplicado a `getToken` (oauth_authorize + oauth_token), `fetchPatientDetails`, `fetchEventDetails` y a las llamadas de `obtenermapacamasocupadas` de los crons. Una llamada lenta aborta → se trata como error de ESA cama, no de toda la corrida.
+
+### 41.2. Presupuesto de tiempo por corrida (deadline)
+
+`cron-enrich-beds` y `cron-diet-changes` calculan `const deadline = Date.now() + CRON_BUDGET_MS` (env `CRON_BUDGET_MS`, default 240s, bajo el `maxDuration` de 300s). El loop de workers corre `while (queue.length > 0 && Date.now() < deadline)`. Si se agota el presupuesto, corta prolijo, reporta `stats.skippedByBudget` y devuelve `200` con stats parciales — en vez de que la plataforma la mate con status 0. Las camas sin procesar se retoman el ciclo siguiente. El cleanup de filas stale se saltea si se agotó el presupuesto (filas no vistas por el corte ≠ stale reales).
+
+### 41.3. Distinguir "fetch falló" de "dato vacío"
+
+`fetchEventDetails` devuelve `null` tanto si el evento no existe como si el fetch falló/timeouteó. Tratar ese `null` como "sin dieta/ayuno" disparaba **notificaciones falsas** ("dieta removida" / "Ayuno cancelado") y, en enrich, **pisaba el payload bueno con uno vacío**. Fix:
+- `cron-diet-changes`: si `event === null` → `stats.errors++; continue` (no toca el snapshot, no notifica).
+- `buildEnrich` ([api/enrich-core.ts](api/enrich-core.ts)) ahora devuelve `eventFetchFailed: event === null`; `cron-enrich-beds` saltea el upsert+push cuando es `true`.
+
+Con los timeouts de 41.1 esto se volvía más frecuente, así que el guard es necesario para no convertir un cuelgue transitorio en una notificación falsa.
+
+### 41.4. Schedules desfasados
+
+Ambos crons corrían en `*/15` (mismo minuto) y saturaban la VM simultáneamente (5+8 workers paralelos), inflando las latencias. Quedó `cron-enrich-beds` en `0,15,30,45` y — tras la consolidación (§42) — `cron-diet-changes` desprogramado.
+
+## 42. Consolidación: detección de dieta dentro de `cron-enrich-beds` (2026-06-08)
+
+`cron-enrich-beds` ya fetcha el evento de cada cama y calcula `dietTags` (vía `parseDiets`). `cron-diet-changes` volvía a fetchear el MISMO evento solo para la dieta — duplicando la carga sobre la VM lenta. Se movió la detección de dieta a `cron-enrich-beds`, en paralelo a la de ayuno:
+
+- `EnrichRow` suma `oldDietTags` (parseado del `Payload_EC` anterior, igual que `oldFasting`).
+- Helper `hashDietTags(tags)` = `simpleHash([...tags].sort().join('|'))` — **idéntico** a `cron-diet-changes.hashTags` sobre el `dietTags` ya normalizado por `parseDiets`, así no hay falsos positivos al migrar.
+- Si una fila **existente** cambia el hash de dieta → push `DIET_CHANGE` ("Dieta actualizada"). Bootstrap silencioso en filas nuevas (igual que el cron viejo; la dieta NO usa la rama "recién ingresado" del ayuno — ver decisión 19.5).
+- `stats.dietNotified` además de `fastingNotified`.
+
+`cron-diet-changes` quedó **desprogramado** de [vercel.json](vercel.json) (el archivo persiste para rebaseline manual con `?silent=1`). La lista `11.DietaSnapshot` queda sin uso. Resultado: ayuno + dieta salen de una sola corrida (:00/:15/:30/:45), con la mitad de llamadas a Gamma. El envío (`sendPushToSubscribers` con `type: 'DIET_CHANGE'`) es idéntico al del cron viejo, así que el filtrado de suscriptores, el permiso `notif_diet_change` y el guardado en `10.Notificaciones` no cambian.

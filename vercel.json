@@ -19,10 +19,6 @@
       "schedule": "0,15,30,45 * * * *"
     },
     {
-      "path": "/api/cron-diet-changes",
-      "schedule": "7,22,37,52 * * * *"
-    },
-    {
       "path": "/api/cron-cleanup-notifs",
       "schedule": "0 4 * * *"
     }

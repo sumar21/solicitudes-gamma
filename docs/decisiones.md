@@ -1093,3 +1093,43 @@ Resultado del bug: Catering recibía "Nueva Solicitud de Traslado" (NEW_TICKET) 
 - **Flag global "bootstrap completado" en SP**: una fila extra en otra lista para saber si el cron ya hizo su primer ciclo. Más complejidad y otra dependencia operativa.
 - **Notificar siempre paciente nuevo (sin umbral)**: simple pero introduce el riesgo de spam mencionado.
 - **Comparar el count de filas nuevas por ciclo**: heurística frágil (ej. múltiples ingresos simultáneos darían falso positivo de bootstrap).
+
+## 19. Decisiones recientes (robustez de crons y consolidación, 2026-06-08)
+
+### 19.1. Timeout por llamada a Gamma con `AbortController`
+
+**Qué:** todas las llamadas a la VM de Gamma pasan por `fetchWithTimeout` (default 30s, env `GAMMA_FETCH_TIMEOUT_MS`).
+
+**Por qué:** la VM proxy single-node respondía en 20-25s o se colgaba; sin techo por llamada un request colgado mataba la función entera (status 0 / `FUNCTION_INVOCATION_TIMEOUT`). El timeout convierte "Gamma colgada" en "error de esa cama" y la corrida sigue.
+
+**Alternativas descartadas:** subir `maxDuration` (no ataca el cuelgue, solo lo posterga); bajar concurrencia (no evita un único request infinito).
+
+### 19.2. Presupuesto de tiempo por corrida vs. dejar que Vercel mate la función
+
+**Qué:** `deadline = now + CRON_BUDGET_MS` (default 240s); el loop corta al alcanzarlo y devuelve 200 con stats parciales (`skippedByBudget`).
+
+**Por qué:** un timeout de plataforma deja status 0 sin diagnóstico y sin garantía de idempotencia. Cortar nosotros mismos es prolijo: se reporta qué quedó pendiente y se retoma el ciclo siguiente. El patrón persist-before-notify hace que ninguna notificación se pierda por el corte.
+
+**Alternativas descartadas:** subir `maxDuration` (no resuelve, solo corre el límite); procesar menos camas por corrida con un tope fijo (no se adapta a la latencia real de Gamma).
+
+### 19.3. Detección de dieta consolidada en `cron-enrich-beds` (eliminar `cron-diet-changes`)
+
+**Qué:** la detección de cambio de dieta se movió a `cron-enrich-beds`; el cron de dietas se desprogramó de `vercel.json`.
+
+**Por qué:** ambos crons fetcheaban el mismo evento por cama — el doble de carga sobre la VM lenta. Enrich ya tiene `dietTags` en su payload; reusar ese baseline (`oldDietTags` del `Payload_EC`) elimina la duplicación y unifica las notis (ayuno + dieta) en una sola corrida. El hash es idéntico al viejo → sin falsos positivos al migrar.
+
+**Alternativas descartadas:**
+- **Mantener los dos crons desfasados** (`enrich` en `0,15,30,45`, `diet` en `7,22,37,52`): funciona contra la contención pero NO elimina la duplicación de llamadas a Gamma. Fue el paso intermedio antes de consolidar.
+- **Borrar el archivo `cron-diet-changes.ts`**: se conserva para rebaseline manual (`?silent=1`) y como referencia; solo se desprogramó.
+
+### 19.4. `eventFetchFailed`: no tratar un fetch fallido como "dato vacío"
+
+**Qué:** `buildEnrich` devuelve `eventFetchFailed`; los crons saltean upsert/push cuando el evento no se pudo traer. `cron-diet-changes` hace `continue` si `event === null`.
+
+**Por qué:** `fetchEventDetails` devuelve `null` tanto en "sin evento" como en "fetch falló/timeout". Tratarlo como dieta/ayuno vacíos disparaba falsos "dieta removida" / "Ayuno cancelado" y pisaba el cache bueno de `12.EnrichCamas`. Con los timeouts (19.1) el caso se vuelve más frecuente, así que el guard es necesario.
+
+### 19.5. Dieta sin push en "paciente recién ingresado" (a diferencia del ayuno)
+
+**Qué:** la dieta solo notifica cuando una fila existente cambia de hash; NO usa la rama "admisión ≤24h" que sí tiene el ayuno (§18.11).
+
+**Por qué:** decisión de negocio confirmada con el cliente — el ayuno recién cargado es operativamente urgente para catering (preparar/suspender comida según horario), la dieta de un ingreso no agrega valor como alerta. Mantener la dieta en bootstrap silencioso evita ruido innecesario.
