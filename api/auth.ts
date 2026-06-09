@@ -137,6 +137,8 @@ export default async function handler(req: any, res: any) {
       permissions:    roleCfg?.permissions ?? [],
       modules:        roleCfg?.modules ?? [],
       filterByFloors: roleCfg?.filterByFloors ?? false,
+      // Si el rol lo permite, el front saltea la validación de ubicación (IP/GPS).
+      bypassLocationCheck: roleCfg?.bypassLocationCheck ?? false,
       // NombreRol_RT crudo, usado para reverse-lookup desde push-utils.
       roleName:       roleCfg?.name ?? perfilU,
     };

@@ -159,6 +159,9 @@ export interface User {
   permissions?: Permission[];
   modules?: RoleModule[];
   filterByFloors?: boolean;
+  // Si el rol lo permite, se saltea la validación de ubicación (IP/GPS) en login y
+  // en la revalidación periódica. BypassUbicacion_RT en 99.ABMRoles_Traslados.
+  bypassLocationCheck?: boolean;
   // Nombre original del rol en SP (NombreRol_RT). Usado para enlazar la suscripción
   // push con la config del rol en el server (push-utils.getRoleByName).
   roleName?: string;

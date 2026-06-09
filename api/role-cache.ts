@@ -19,6 +19,9 @@ export interface RoleConfig {
   modules: string[];      // Acceso_RT split por '/'
   permissions: string[];  // Permisos_RT split por ';'
   filterByFloors: boolean;
+  // Si está activo, los usuarios de este rol pueden entrar sin validación de
+  // ubicación (IP/GPS). BypassUbicacion_RT en SP.
+  bypassLocationCheck: boolean;
 }
 
 let cache: { roles: RoleConfig[]; exp: number } | null = null;
@@ -49,6 +52,7 @@ async function fetchRolesFromSP(): Promise<RoleConfig[]> {
       modules: String(f.Acceso_RT ?? '').split('/').map(s => s.trim()).filter(Boolean),
       permissions: String(f.Permisos_RT ?? '').split(';').map(s => s.trim()).filter(Boolean),
       filterByFloors: parseBool(f.FiltrarPisos_RT),
+      bypassLocationCheck: parseBool(f.BypassUbicacion_RT),
     };
   });
 }

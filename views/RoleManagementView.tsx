@@ -20,6 +20,7 @@ interface SPRole {
   access: string; // "Home/Operativa/Historial/Mapa de Camas/Configuracion"
   permissions: Permission[];
   filterByFloors: boolean;
+  bypassLocationCheck: boolean;
   status: string;
 }
 
@@ -77,9 +78,10 @@ interface FormState {
   selectedModules: Set<string>;
   selectedPermissions: Set<Permission>;
   filterByFloors: boolean;
+  bypassLocationCheck: boolean;
 }
 
-const emptyForm: FormState = { name: '', selectedModules: new Set(), selectedPermissions: new Set(), filterByFloors: false };
+const emptyForm: FormState = { name: '', selectedModules: new Set(), selectedPermissions: new Set(), filterByFloors: false, bypassLocationCheck: false };
 
 export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentUser }) => {
   const [roles, setRoles] = useState<SPRole[]>([]);
@@ -154,6 +156,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
       selectedModules: new Set(role.access.split('/').filter(Boolean)),
       selectedPermissions: new Set(perms),
       filterByFloors: !!role.filterByFloors,
+      bypassLocationCheck: !!role.bypassLocationCheck,
     });
     setOriginalPermissions(perms);
     setExpandedGroups(new Set());
@@ -211,6 +214,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
         access: accessStr,
         permissions: permsArr,
         filterByFloors: form.filterByFloors,
+        bypassLocationCheck: form.bypassLocationCheck,
       };
       if (editingRole) {
         const r = await authFetch('/api/roles', {
@@ -338,6 +342,11 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                   Filtra pisos
                 </Badge>
               )}
+              {role.bypassLocationCheck && (
+                <Badge variant="outline" className="text-[8px] font-bold uppercase bg-sky-50 text-sky-700 border-sky-200">
+                  Sin ubicación
+                </Badge>
+              )}
             </div>
           </Card>
         ))}
@@ -352,13 +361,14 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
               <TableHead className="font-bold text-[9px] uppercase tracking-widest text-slate-400 h-10">Módulos</TableHead>
               <TableHead className="font-bold text-[9px] uppercase tracking-widest text-slate-400 h-10">Permisos</TableHead>
               <TableHead className="font-bold text-[9px] uppercase tracking-widest text-slate-400 h-10">Filtra pisos</TableHead>
+              <TableHead className="font-bold text-[9px] uppercase tracking-widest text-slate-400 h-10">Sin ubicación</TableHead>
               <TableHead className="text-right font-bold text-[9px] uppercase tracking-widest text-slate-400 pr-6 h-10">Acciones</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="h-32 text-center text-slate-400">
+                <TableCell colSpan={6} className="h-32 text-center text-slate-400">
                   <p className="text-sm font-bold">Sin roles</p>
                 </TableCell>
               </TableRow>
@@ -394,6 +404,13 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                       <span className="text-[10px] font-bold uppercase text-slate-400">No</span>
                     )}
                   </TableCell>
+                  <TableCell>
+                    {role.bypassLocationCheck ? (
+                      <Badge variant="outline" className="text-[10px] font-bold uppercase bg-sky-50 text-sky-700 border-sky-200 rounded-lg px-3 py-1">Sí</Badge>
+                    ) : (
+                      <span className="text-[10px] font-bold uppercase text-slate-400">No</span>
+                    )}
+                  </TableCell>
                   <TableCell className="text-right pr-6">
                     <div className="flex items-center justify-end gap-1">
                       <button onClick={() => openEdit(role)} className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors" title="Editar">
@@ -413,7 +430,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
 
       {/* Create/Edit Modal */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-        <DialogContent className="sm:max-w-[520px] rounded-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-[680px] rounded-3xl max-h-[95vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-xl">{editingRole ? 'Editar Rol' : 'Nuevo Rol'}</DialogTitle>
           </DialogHeader>
@@ -435,7 +452,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                   {MODULES.every(m => form.selectedModules.has(m.value)) ? 'Deseleccionar todo' : 'Seleccionar todo'}
                 </button>
               </div>
-              <div className="space-y-1.5">
+              <div className="grid grid-cols-2 gap-1.5">
                 {MODULES.map(mod => {
                   const selected = form.selectedModules.has(mod.value);
                   return (
@@ -470,7 +487,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                 que es cross-module). El header muestra "N/total" para feedback rápido. */}
             <div className="grid gap-2">
               <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Permisos de Acciones</Label>
-              <div className="space-y-2">
+              <div className="columns-2 gap-2 [&>div]:mb-2 [&>div]:break-inside-avoid">
                 {PERMISSION_GROUPS.map(group => {
                   const moduleEnabled = group.module === '__cross__' || form.selectedModules.has(group.module);
                   if (!moduleEnabled) return null;
@@ -530,6 +547,8 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
               </div>
             </div>
 
+            {/* Los dos toggles en 2 columnas para acortar el modal. */}
+            <div className="grid grid-cols-2 gap-4">
             {/* Toggle FiltraPisos. Si está activo, los usuarios con este rol arrancan
                 filtrados por sus pisos asignados (Azafata, Catering, etc.). */}
             <div className="grid gap-2">
@@ -555,6 +574,34 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                    );
                  })}
               </div>
+            </div>
+
+            {/* Toggle BypassUbicacion. Si está activo, los usuarios de este rol entran
+                sin validación de IP/GPS (no hace falta estar en el HPR). */}
+            <div className="grid gap-2">
+              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Acceso sin restricción de ubicación (IP/GPS)</Label>
+              <div className="grid grid-cols-2 gap-2">
+                {[{ val: true, label: 'Sí', sub: 'Puede entrar desde cualquier red/ubicación' },
+                  { val: false, label: 'No', sub: 'Debe estar en una red/ubicación autorizada' }
+                 ].map(opt => {
+                   const selected = form.bypassLocationCheck === opt.val;
+                   return (
+                     <button
+                       key={String(opt.val)}
+                       type="button"
+                       onClick={() => setForm(prev => ({ ...prev, bypassLocationCheck: opt.val }))}
+                       className={cn(
+                         "p-3 rounded-xl border text-left transition-all",
+                         selected ? "bg-emerald-50 border-emerald-300" : "bg-white border-slate-200 hover:border-slate-300"
+                       )}
+                     >
+                       <div className={cn("text-sm font-black mb-0.5", selected ? "text-emerald-700" : "text-slate-700")}>{opt.label}</div>
+                       <div className="text-[9px] text-slate-500 leading-tight">{opt.sub}</div>
+                     </button>
+                   );
+                 })}
+              </div>
+            </div>
             </div>
           </div>
           <DialogFooter className="gap-2">

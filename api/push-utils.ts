@@ -86,6 +86,24 @@ async function fetchSubscriptions(sede?: string): Promise<Subscription[]> {
   }
 }
 
+// HRA = Sala de Espera (Recepción Admisión). Replicado de lib/utils.isHraArea
+// porque el server compila aparte (mismo patrón que NOTIF_TYPE_TO_PERMISSION).
+// Mantener en sync con el cliente.
+function isHraAreaName(area?: string | null): boolean {
+  if (!area) return false;
+  const n = area.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return n.includes('recepcion') && n.includes('admision');
+}
+
+// Remapea el extremo HRA al piso real del otro extremo (ver lib/utils.effectiveHostessAreas).
+// La Sala de Espera la tienen todas las azafatas, así que matchear por HRA notificaría a
+// todas: cuando un extremo es HRA y el otro es un piso real, ese extremo se vuelve el piso real.
+export function effectiveAreaNames(originArea?: string, destinationArea?: string): { origin?: string; dest?: string } {
+  const remap = (self?: string, other?: string) =>
+    isHraAreaName(self) && other && !isHraAreaName(other) ? other : self;
+  return { origin: remap(originArea, destinationArea), dest: remap(destinationArea, originArea) };
+}
+
 // True if the given subscription's assignedAreas intersect any of the ticket's
 // origin/destination areas. Prefers the exact area names (originAreaName /
 // destinationAreaName) when provided, and falls back to the bed label matching
@@ -98,11 +116,19 @@ function subAreaMatches(sub: Subscription, params: PushParams): boolean {
 
   const { originArea, destinationArea, originAreaName, destinationAreaName } = params;
 
-  // Exact area match first (reliable)
-  if (originAreaName && sub.assignedAreas.includes(originAreaName)) return true;
-  if (destinationAreaName && sub.assignedAreas.includes(destinationAreaName)) return true;
+  // Si tenemos nombres de área reales (las notifs de cambio de estado y, ahora,
+  // también NEW_TICKET los mandan), usamos SOLO el match exacto con remapeo de HRA.
+  // No caemos al fuzzy por label de cama, que reintroduciría el cruce (la azafata
+  // tiene HRA en sus áreas y el label del extremo HRA matchearía igual).
+  if (originAreaName || destinationAreaName) {
+    const { origin, dest } = effectiveAreaNames(originAreaName, destinationAreaName);
+    return Boolean(
+      (origin && sub.assignedAreas.includes(origin)) ||
+      (dest && sub.assignedAreas.includes(dest)),
+    );
+  }
 
-  // Legacy fuzzy matching against bed labels (kept for backwards compat)
+  // Legacy fuzzy matching against bed labels (solo cuando no hay nombres de área)
   const matchesLegacy = (bedLabel?: string) => {
     if (!bedLabel) return false;
     return sub.assignedAreas.some(area => bedLabel.includes(area) || area.includes(bedLabel));

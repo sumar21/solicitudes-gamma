@@ -32,12 +32,21 @@ const STATUS = {
   DISABLED: 'Inhabilitada',
 } as const;
 
+// "inactiva": cama que el negocio ya NO usa (no se puede borrar en PROGAL) → se OCULTA
+// del mapa por completo (ver transformBeds). OJO: distinta de "inhabilitada", que es un
+// estado temporal fuera de servicio y SÍ se muestra (con su motivo en el tooltip).
+function isInactiveEstado(estado: string | undefined): boolean {
+  if (!estado) return false;
+  const e = estado.toLowerCase();
+  return e.includes('inact') && !e.includes('inhab');
+}
+
 function mapEstado(estado: string | undefined): string {
   if (!estado) return STATUS.AVAILABLE;
   const e = estado.toLowerCase();
   if (e.includes('ocup')) return STATUS.OCCUPIED;
   if (e.includes('prep')) return STATUS.PREPARATION;
-  if (e.includes('inhab') || e.includes('inact')) return STATUS.DISABLED;
+  if (e.includes('inhab')) return STATUS.DISABLED;
   return STATUS.OCCUPIED;
 }
 
@@ -60,6 +69,9 @@ function transformBeds(mapData: GammaSector[], occupiedData: GammaSector[]) {
       for (const bed of room.camas ?? []) {
         const occ = occLookup.get(`${sector.codigo}-${room.codigo}-${bed.codigo}`);
         const estado = bed.estado ?? occ?.estado;
+        // Camas "inactivas" ya no existen en el negocio (no se pueden borrar en PROGAL):
+        // se omiten por completo del mapa. Distinto de "inhabilitada", que sí se muestra.
+        if (isInactiveEstado(estado)) continue;
         const paciente = bed.paciente ?? occ?.paciente;
         const origenEvento = bed.origen_evento ?? occ?.origen_evento;
         const numeroEvento = bed.numero_evento ?? occ?.numero_evento;

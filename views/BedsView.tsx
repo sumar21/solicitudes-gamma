@@ -179,11 +179,20 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   });
   const [statusFilters, setStatusFilters] = useState<Set<string>>(new Set());
   const [showIsolatedOnly, setShowIsolatedOnly] = useState(false);
+  const [showDietOnly, setShowDietOnly] = useState(false);
   const [financierFilters, setFinancierFilters] = useState<Set<string>>(new Set());
   const [financierSearch, setFinancierSearch] = useState('');
 
   const [physicianFilters, setPhysicianFilters] = useState<Set<string>>(new Set());
   const [physicianSearch, setPhysicianSearch] = useState('');
+
+  // Camas con dieta cargada (al menos un tag: tipo de dieta o condición marcada "Sí").
+  // Análogo a `isolatedBeds` pero derivado del enrich que ya traen las camas (cron).
+  const dietBeds = useMemo(() => {
+    const s = new Set<string>();
+    for (const b of beds) if ((b.dietTags?.length ?? 0) > 0) s.add(b.label);
+    return s;
+  }, [beds]);
 
   const uniqueFinanciers = useMemo(() => [...new Set(beds.filter((b: Bed) => b.institution).map((b: Bed) => b.institution!))].sort(), [beds]);
   const uniquePhysicians = useMemo(() => [...new Set(beds.filter((b: Bed) => b.prescribingPhysician).map((b: Bed) => b.prescribingPhysician!))].sort(), [beds]);
@@ -249,6 +258,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     if (showIsolatedOnly) {
       result = result.filter(bed => isolatedBeds.has(bed.label));
     }
+    if (showDietOnly) {
+      result = result.filter(bed => dietBeds.has(bed.label));
+    }
     if (financierFilters.size > 0) {
       result = result.filter(bed => bed.institution && financierFilters.has(bed.institution));
     }
@@ -257,7 +269,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     }
 
     return result;
-  }, [beds, currentUser, searchFilter, areaFilters, statusFilters, allAreas.length, bedTicketMap, showIsolatedOnly, isolatedBeds, financierFilters, physicianFilters]);
+  }, [beds, currentUser, searchFilter, areaFilters, statusFilters, allAreas.length, bedTicketMap, showIsolatedOnly, isolatedBeds, showDietOnly, dietBeds, financierFilters, physicianFilters]);
 
   // Group beds by Area, ordered with HIT first.
   // Gamma a veces devuelve las camas de un piso en orden arbitrario (mezcla
@@ -1200,6 +1212,20 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
             >
               <ShieldAlert className="w-3 h-3" />
               Aislamiento ({isolatedBeds.size})
+            </button>
+          )}
+          {dietBeds.size > 0 && (
+            <button
+              onClick={() => setShowDietOnly(v => !v)}
+              className={cn(
+                "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
+                showDietOnly
+                  ? "bg-emerald-600 text-white border-emerald-600 shadow-sm"
+                  : "bg-white text-emerald-600 border-emerald-200 hover:bg-emerald-50"
+              )}
+            >
+              <UtensilsCrossed className="w-3 h-3" />
+              Dietas ({dietBeds.size})
             </button>
           )}
 

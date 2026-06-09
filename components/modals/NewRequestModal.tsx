@@ -250,7 +250,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
             {isolation && (
               <>
                 <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide px-1">Tocá para agregar/quitar uno o más tipos</p>
-                <div className="flex flex-wrap gap-1 px-1">
+                <div className="flex flex-wrap gap-1.5 px-1">
                   {Object.values(IsolationType).map(t => {
                     const selected = isolationTypes.includes(t);
                     return (
@@ -259,7 +259,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
                         type="button"
                         onClick={() => toggleType(t)}
                         aria-pressed={selected}
-                        className={`px-2 py-0.5 rounded-full border text-[8px] font-bold transition-all ${selected ? 'border-violet-400 bg-violet-500 text-white' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+                        className={`px-3 py-1.5 rounded-full border text-xs font-bold transition-all ${selected ? 'border-violet-400 bg-violet-500 text-white' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}
                       >
                         {t}
                       </button>

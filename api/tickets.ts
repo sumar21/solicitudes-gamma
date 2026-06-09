@@ -10,7 +10,9 @@
 import { graphFetch }  from './graph.js';
 import { requireAuth } from './jwt.js';
 import { Ticket, TicketStatus, WorkflowType, SedeType, BedStatus } from '../types.js';
-import { sendPushToSubscribers } from './push-utils.js';
+import { sendPushToSubscribers, effectiveAreaNames } from './push-utils.js';
+import { getRoleByName } from './role-cache.js';
+import { getUserAreasById } from './user-cache.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = 'c7417674-9084-416d-a955-7024161a3194'; // 07.Traslados
@@ -166,8 +168,12 @@ async function handler(req: any, res: any) {
       const data = (await spRes.json()) as { value: Record<string, unknown>[] };
       const tickets = (data.value ?? []).map(spToTicket);
 
-      // ETag: simple hash of ids + statuses so client can skip unchanged data
-      const etag = `"${simpleHash(tickets.map(t => `${t.id}:${t.status}:${t.destinationBedStatus ?? ''}:${t.intervenedByHostess ?? ''}`).join('|'))}"`;
+      // ETag: hash of ids + all editable/status fields so client can skip unchanged
+      // data. Incluye destination/observations/changeReason/workflow/financier además
+      // de status: una edición que solo cambia el destino o la observación (sin mover
+      // el status) DEBE invalidar el cache, sino el cliente queda en 304 y nunca ve el
+      // cambio (el mapa de camas sigue mostrando el destino viejo asignado).
+      const etag = `"${simpleHash(tickets.map(t => `${t.id}:${t.status}:${t.destination ?? ''}:${t.destinationBedStatus ?? ''}:${t.observations ?? ''}:${t.changeReason ?? ''}:${t.workflow ?? ''}:${t.financier ?? ''}:${t.intervenedByHostess ?? ''}`).join('|'))}"`;
       res.setHeader('ETag', etag);
 
       const clientEtag = req.headers?.['if-none-match'];
@@ -180,7 +186,13 @@ async function handler(req: any, res: any) {
 
     // ── POST ───────────────────────────────────────────────────────────────
     if (req.method === 'POST') {
-      const ticket = req.body as Ticket;
+      // originAreaName/destinationAreaName son los nombres reales de área (no se
+      // persisten en SP; ticketToFields los ignora) — solo para filtrar el push.
+      const { originAreaName, destinationAreaName, ...ticketBody } = req.body as Ticket & {
+        originAreaName?: string;
+        destinationAreaName?: string;
+      };
+      const ticket = ticketBody as Ticket;
 
       // Reject if destination bed is already targeted by another active ticket.
       // Active = not Consolidado and not Cancelado. Race-condition safe since SP is the source of truth.
@@ -229,8 +241,10 @@ async function handler(req: any, res: any) {
         body: `${ticket.patientName}: ${ticket.origin} → ${ticket.destination ?? '?'}`,
         ticketId: ticket.id,
         type: 'NEW_TICKET',
-        originArea: ticket.origin,       // area resolved by push-utils
+        originArea: ticket.origin,       // bed label (fallback fuzzy)
         destinationArea: ticket.destination,
+        originAreaName,                  // nombre de área real → match preciso + regla HRA
+        destinationAreaName,
         sede: ticket.sede,
         excludeUserId: (req as any).user?.id,
       }).catch((err: any) => console.error('[tickets] Push error:', err));
@@ -246,6 +260,35 @@ async function handler(req: any, res: any) {
         destinationArea?: string;
       };
       if (!spItemId) return res.status(400).json({ error: 'spItemId required' });
+
+      // ── Enforcement de piso para acciones de azafata ───────────────────────
+      // Una azafata solo puede ejecutar acciones de su(s) piso(s). Las 3 acciones de
+      // azafata se identifican porque marcan IntervinoAzafata_T = 'SI'. Cada una exige
+      // un extremo del traslado, aplicando la regla de HRA (Sala de Espera): si el
+      // extremo requerido es HRA, se usa el piso real del otro extremo (la azafata de
+      // destino maneja todo el flujo de un traslado HRA→Piso). Solo se enforcea para
+      // roles que filtran por pisos; admin/admisión (filterByFloors=false) quedan exentos.
+      const HOSTESS_ACTION_ENDPOINT: Partial<Record<TicketStatus, 'origin' | 'dest'>> = {
+        [TicketStatus.IN_TRANSIT]: 'dest',            // confirmar limpieza (azafata destino)
+        [TicketStatus.IN_TRANSPORT]: 'origin',        // iniciar traslado (azafata origen)
+        [TicketStatus.WAITING_CONSOLIDATION]: 'dest', // confirmar recepción (azafata destino)
+      };
+      const endpoint = updates.status ? HOSTESS_ACTION_ENDPOINT[updates.status] : undefined;
+      if (updates.intervenedByHostess === 'SI' && endpoint) {
+        const userId = String((req as any).user?.id ?? '');
+        const userAreas = await getUserAreasById(userId);
+        const roleCfg = userAreas?.perfil ? await getRoleByName(userAreas.perfil) : null;
+        const areas = userAreas?.assignedAreas ?? [];
+        const hasAll = areas.length >= 9; // mismo criterio "full access" que push-utils
+        if (roleCfg?.filterByFloors && areas.length && !hasAll) {
+          const { origin, dest } = effectiveAreaNames(originArea, destinationArea);
+          const requiredArea = endpoint === 'origin' ? origin : dest;
+          if (requiredArea && !areas.includes(requiredArea)) {
+            console.warn(`[tickets] PATCH 403 — user=${userId} areas=[${areas.join(',')}] requiredArea="${requiredArea}" status=${updates.status}`);
+            return res.status(403).json({ error: 'No autorizado: el traslado no pertenece a tus pisos asignados.' });
+          }
+        }
+      }
 
       // If destination is being changed (not just touched), verify no other active ticket holds that bed.
       // We only check when `destination` is in the patch payload; status-only updates skip this.

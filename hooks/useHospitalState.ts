@@ -7,6 +7,7 @@ import {
 } from '../types';
 import { MOCK_TICKETS } from '../lib/constants';
 import { can, hasModule, canReceiveNotif } from '../lib/permissions';
+import { effectiveHostessAreas } from '../lib/utils';
 
 // ── JWT helpers (client-side, solo lectura — sin verificar firma) ─────────────
 function parseJwtPayload(token: string): Record<string, unknown> | null {
@@ -538,9 +539,12 @@ export const useHospitalState = () => {
       if (!canReceiveNotif(currentUser, notif.type)) return false;
       if (!currentUser.filterByFloors) return true;
       if (!currentUser.assignedAreas?.length) return false;
+      // Áreas efectivas: si un extremo es Sala de Espera (HRA) se remapea al piso real
+      // del otro extremo, sino HRA (que todas las azafatas tienen) matchearía a todas.
+      const { origin, dest } = effectiveHostessAreas(notif.originArea, notif.destinationArea);
       return Boolean(
-        (notif.originArea      && currentUser.assignedAreas.includes(notif.originArea)) ||
-        (notif.destinationArea && currentUser.assignedAreas.includes(notif.destinationArea))
+        (origin && currentUser.assignedAreas.includes(origin)) ||
+        (dest   && currentUser.assignedAreas.includes(dest))
       );
     };
 
@@ -549,17 +553,20 @@ export const useHospitalState = () => {
     for (const t of tickets) {
       const prevKey = prev.get(t.id);
 
-      // Skip tickets the current user created (they already got a local notification)
-      if (t.createdById && String(t.createdById) === String(currentUser.id)) continue;
-
-      // Skip tickets that are already closed — no need to notify about old/finished tickets
-      if (t.status === TicketStatus.COMPLETED || t.status === TicketStatus.REJECTED) continue;
+      // No notificar sobre tickets ya cerrados que recién aparecen (ej: histórico al
+      // cargar). Una TRANSICIÓN a cerrado (Consolidado/Cancelado) sí se notifica más
+      // abajo — así admisión se entera de la finalización aunque el web-push falle.
+      if ((t.status === TicketStatus.COMPLETED || t.status === TicketStatus.REJECTED) && prevKey === undefined) continue;
 
       const originArea = areaOf(t.origin);
       const destArea   = areaOf(t.destination);
 
       if (prevKey === undefined) {
         // ── New ticket appeared ─────────────────────────────────────────
+        // El creador ya recibió una notif local al crear; no duplicar vía polling.
+        // (El skip aplica SOLO acá: para cambios de estado posteriores el creador —ej.
+        // admisión— sí debe recibir notif, sino se pierde la finalización si falla el push.)
+        if (t.createdById && String(t.createdById) === String(currentUser.id)) continue;
         const notif: Notification = {
           id: `NOTIF-POLL-${t.id}`, isRead: false,
           timestamp: timestampOfTicketEvent(t),
@@ -683,7 +690,14 @@ export const useHospitalState = () => {
 
   const spCreate = async (ticket: Ticket): Promise<{ spItemId?: string; conflict?: SpConflict }> => {
     try {
-      const r = await authFetch('/api/tickets', { method: 'POST', body: JSON.stringify(ticket) });
+      // Nombres de área reales (no labels de cama) para que el push de NEW_TICKET
+      // filtre por área con la regla de HRA (Sala de Espera) igual que los cambios de estado.
+      const originAreaName      = ticket.origin      ? rawBeds.find((b: Bed) => b.label === ticket.origin)?.area      : undefined;
+      const destinationAreaName = ticket.destination ? rawBeds.find((b: Bed) => b.label === ticket.destination)?.area : undefined;
+      const r = await authFetch('/api/tickets', {
+        method: 'POST',
+        body: JSON.stringify({ ...ticket, originAreaName, destinationAreaName }),
+      });
       if (r.status === 409) {
         const data = await r.json().catch(() => ({} as any));
         return { conflict: { error: data?.error ?? 'Cama destino ya asignada.', conflictingTicketId: data?.conflictingTicketId } };
@@ -793,8 +807,8 @@ export const useHospitalState = () => {
           .filter(s => areaValues.includes(s)) as Area[];
       }
 
-      // ── Location validation (skip for SUMAR superusers) ──────────────────
-      if (user.sede !== 'SUMAR') {
+      // ── Location validation (skip for SUMAR superusers o roles con bypass) ──
+      if (user.sede !== 'SUMAR' && !user.bypassLocationCheck) {
         const postValidateLogin = (coords: GeoCoords | null) =>
           fetch('/api/validate-location', {
             method: 'POST',
@@ -922,8 +936,10 @@ export const useHospitalState = () => {
       if (!canReceiveNotif(currentUser, n.type)) return false;
       if (!currentUser.filterByFloors) return true;
       if (!currentUser.assignedAreas?.length) return false;
-      const isOrigin = n.originArea && currentUser.assignedAreas?.includes(n.originArea);
-      const isDest   = n.destinationArea && currentUser.assignedAreas?.includes(n.destinationArea);
+      // Áreas efectivas: HRA (Sala de Espera) se remapea al piso real del otro extremo.
+      const { origin, dest } = effectiveHostessAreas(n.originArea, n.destinationArea);
+      const isOrigin = origin && currentUser.assignedAreas?.includes(origin);
+      const isDest   = dest   && currentUser.assignedAreas?.includes(dest);
       return Boolean(isOrigin || isDest);
     });
   }, [notifications, currentUser]);
@@ -948,8 +964,11 @@ export const useHospitalState = () => {
 
         result = result.filter(t => {
           // Try matching by label first, then by area prefix in the ticket origin/destination
-          const originArea = areaByLabel.get(t.origin) ?? beds.find(b => t.origin?.includes(b.area))?.area;
-          const destArea   = t.destination ? (areaByLabel.get(t.destination) ?? beds.find(b => t.destination?.includes(b.area))?.area) : undefined;
+          const rawOriginArea = areaByLabel.get(t.origin) ?? beds.find(b => t.origin?.includes(b.area))?.area;
+          const rawDestArea   = t.destination ? (areaByLabel.get(t.destination) ?? beds.find(b => t.destination?.includes(b.area))?.area) : undefined;
+          // Áreas efectivas: HRA (Sala de Espera) se remapea al piso real del otro
+          // extremo, sino la azafata vería traslados desde HRA hacia pisos ajenos.
+          const { origin: originArea, dest: destArea } = effectiveHostessAreas(rawOriginArea, rawDestArea);
           const originInArea = originArea ? currentUser.assignedAreas?.includes(originArea) : false;
           const destInArea   = destArea   ? currentUser.assignedAreas?.includes(destArea)   : false;
           return originInArea || destInArea;
@@ -1404,6 +1423,14 @@ export const useHospitalState = () => {
           ticketsEtagRef.current = null;
           fetchTickets();
         }, 1000);
+        // Segundo refetch diferido: SharePoint tiene latencia de read-after-write, así
+        // que el fetch a 1s puede leer el ticket viejo. Reintentamos a ~4.5s (mismo
+        // patrón que handleConsolidate) y refrescamos camas para recomputar el mapa.
+        setTimeout(() => {
+          ticketsEtagRef.current = null;
+          fetchTickets();
+          fetchBeds();
+        }, 4500);
       }
     } else {
       writingRef.current = false;
@@ -1666,7 +1693,7 @@ export const useHospitalState = () => {
   // Fail-open en errores de red: solo patea cuando el server responde
   // explícitamente allowed:false.
   useEffect(() => {
-    if (!token || !currentUser || currentUser.sede === 'SUMAR') return;
+    if (!token || !currentUser || currentUser.sede === 'SUMAR' || currentUser.bypassLocationCheck) return;
 
     let cancelled = false;
     const REVALIDATE_MS = 60 * 1000;
@@ -1712,7 +1739,7 @@ export const useHospitalState = () => {
 
     const interval = setInterval(revalidate, REVALIDATE_MS);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [token, currentUser?.id, currentUser?.sede, handleLogout]);
+  }, [token, currentUser?.id, currentUser?.sede, currentUser?.bypassLocationCheck, handleLogout]);
 
   // ── Push tap handling: marca como leída la notif SP correspondiente ──────────
   // El SW dispara dos rutas según si la app estaba abierta:

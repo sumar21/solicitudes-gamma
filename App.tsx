@@ -6,6 +6,7 @@ import {
 } from './components/Icons';
 import { Globe, MapPin as MapPinIcon, RefreshCw } from 'lucide-react';
 import { GammaLogo } from './components/GammaLogo';
+import { IS_TESTING } from './lib/env';
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
@@ -289,6 +290,12 @@ export default function App() {
           </div>
 
           <div className="mt-6 pt-5 border-t border-slate-100 text-center">
+            {IS_TESTING && (
+              <span className="mb-2 inline-flex items-center gap-1.5 rounded-md bg-slate-600 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-white shadow-sm">
+                <span className="h-1.5 w-1.5 rounded-full bg-slate-300 animate-pulse" />
+                Entorno de prueba
+              </span>
+            )}
             <p className="text-xs text-slate-400 font-medium">Grupo Gamma &bull; Red de Salud</p>
             <p className="text-[10px] text-slate-300 mt-0.5">MediFlow v1.0</p>
           </div>
@@ -318,12 +325,18 @@ export default function App() {
         </div>
       )}
       {/* Sidebar Desktop */}
-      <aside className="hidden md:flex w-48 text-white flex-col shrink-0 z-30" style={{ background: 'linear-gradient(180deg, #022C22 0%, #034334 100%)' }}>
+      <aside className="hidden md:flex w-48 text-white flex-col shrink-0 z-30" style={{ background: IS_TESTING ? 'linear-gradient(180deg, #1e293b 0%, #475569 100%)' : 'linear-gradient(180deg, #022C22 0%, #034334 100%)' }}>
         <div className="h-20 flex items-center px-4 border-b border-white/10 shrink-0">
-          <GammaLogo size={22} className="text-emerald-400 mr-3" />
+          <GammaLogo size={22} className={cn("mr-3", IS_TESTING ? "text-slate-300" : "text-emerald-400")} />
           <div className="flex flex-col">
             <span className="font-bold text-white tracking-tight leading-none text-lg">Gamma</span>
-            <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest mt-1">Sede {state.currentUser.sede}</span>
+            <span className={cn("text-[9px] font-bold uppercase tracking-widest mt-1", IS_TESTING ? "text-slate-300" : "text-emerald-400")}>Sede {state.currentUser.sede}</span>
+            {IS_TESTING && (
+              <span className="mt-1 inline-flex items-center gap-1 self-start rounded-md bg-slate-600 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-white">
+                <span className="h-1.5 w-1.5 rounded-full bg-slate-300 animate-pulse" />
+                Entorno de prueba
+              </span>
+            )}
           </div>
         </div>
         <nav className="flex-1 p-3 flex flex-col">
@@ -377,9 +390,9 @@ export default function App() {
       <div className="flex-1 flex flex-col min-w-0 min-h-0 relative">
         <header className="h-16 md:h-14 bg-white border-b border-slate-200 flex items-center justify-between px-2 md:px-8 shrink-0 z-20 shadow-sm relative">
           <div className="flex items-center gap-1.5">
-            <button 
+            <button
               className="md:hidden p-2 rounded-xl text-white hover:opacity-90 transition-colors shadow-lg active:scale-95"
-              style={{ backgroundColor: '#022C22' }}
+              style={{ backgroundColor: IS_TESTING ? '#334155' : '#022C22' }}
               onClick={() => setIsMobileMenuOpen(true)}
             >
               <GammaLogo size={20} />
@@ -387,6 +400,13 @@ export default function App() {
             <h1 className="text-lg md:text-xl font-black text-slate-900 tracking-tight truncate max-w-[100px] xs:max-w-[180px] sm:max-w-none">
               {state.currentView === 'HOME' ? 'Monitor' : state.currentView === 'REQUESTS' ? 'Operativa' : state.currentView === 'BEDS' ? 'Mapa de Camas' : state.currentView === 'USERS' ? 'Usuarios' : (state.currentView as string) === 'ROLES' ? 'Roles' : 'Historial'}
             </h1>
+            {IS_TESTING && (
+              <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-600 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-white shadow-sm shrink-0">
+                <span className="h-1.5 w-1.5 rounded-full bg-slate-300 animate-pulse" />
+                <span className="hidden xs:inline">Entorno de prueba</span>
+                <span className="xs:hidden">Test</span>
+              </span>
+            )}
           </div>
           
           {/* Mobile Sidebar Overlay */}
@@ -401,13 +421,20 @@ export default function App() {
           <div className={cn(
             "fixed inset-y-0 left-0 w-64 text-white flex flex-col z-50 md:hidden transition-transform duration-300 ease-in-out shadow-2xl",
             isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
-          )} style={{ background: 'linear-gradient(180deg, #022C22 0%, #034334 100%)' }}>
+          )} style={{ background: IS_TESTING ? 'linear-gradient(180deg, #1e293b 0%, #475569 100%)' : 'linear-gradient(180deg, #022C22 0%, #034334 100%)' }}>
             <div className="h-14 flex items-center justify-between px-4 border-b border-white/10 shrink-0">
               <div className="flex items-center">
-                <GammaLogo size={22} className="text-emerald-400 mr-3" />
+                <GammaLogo size={22} className={cn("mr-3", IS_TESTING ? "text-slate-300" : "text-emerald-400")} />
                 <div className="flex flex-col">
                   <span className="font-bold text-white tracking-tight leading-none text-lg">Gamma</span>
-                  <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest mt-1">Sede {state.currentUser.sede}</span>
+                  {IS_TESTING ? (
+                    <span className="inline-flex items-center gap-1 self-start rounded bg-slate-600 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-white mt-0.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-slate-300 animate-pulse" />
+                      Entorno de prueba
+                    </span>
+                  ) : (
+                    <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest mt-1">Sede {state.currentUser.sede}</span>
+                  )}
                 </div>
               </div>
               <button 

@@ -15,7 +15,7 @@ import { Badge } from '../components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table';
 import { StatusBadge } from '../components/StatusBadge';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
-import { cn, formatBedName, formatDateTime } from '../lib/utils';
+import { cn, formatBedName, formatDateTime, effectiveHostessAreas } from '../lib/utils';
 
 interface RequestsViewProps {
   tickets: Ticket[];
@@ -145,8 +145,14 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       const originBed = beds.find(b => b.label === ticket.origin);
       const destBed = ticket.destination ? beds.find(b => b.label === ticket.destination) : null;
 
-      const isOriginHostess = hasAllAreas || !!(originBed && currentUser?.assignedAreas?.includes(originBed.area));
-      const isDestHostess   = hasAllAreas || !!(destBed   && currentUser?.assignedAreas?.includes(destBed.area));
+      // Áreas efectivas: la Sala de Espera (HRA), que todas las azafatas tienen en sus
+      // pisos, se remapea al piso real del otro extremo. Así, en un traslado HRA→Piso la
+      // azafata de destino queda como dueña de origen Y destino (inicia y recibe) y las
+      // demás no ven nada; en Piso→Piso cada una conserva su etapa.
+      const { origin: effOriginArea, dest: effDestArea } = effectiveHostessAreas(originBed?.area, destBed?.area);
+
+      const isOriginHostess = hasAllAreas || !!(effOriginArea && currentUser?.assignedAreas?.includes(effOriginArea));
+      const isDestHostess   = hasAllAreas || !!(effDestArea   && currentUser?.assignedAreas?.includes(effDestArea));
 
       if (!isOriginHostess && !isDestHostess) return null;
 

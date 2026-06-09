@@ -51,6 +51,7 @@ async function handler(req: any, res: any) {
           access: String(f.Acceso_RT ?? ''),
           permissions: String(f.Permisos_RT ?? '').split(';').map(s => s.trim()).filter(Boolean),
           filterByFloors: parseBool(f.FiltrarPisos_RT),
+          bypassLocationCheck: parseBool(f.BypassUbicacion_RT),
           status: String(f.Status_RT ?? ''),
         };
       });
@@ -63,7 +64,7 @@ async function handler(req: any, res: any) {
 
   // ── POST ────────────────────────────────────────────────────────────────
   if (req.method === 'POST') {
-    const { name, access, permissions, filterByFloors } = req.body ?? {};
+    const { name, access, permissions, filterByFloors, bypassLocationCheck } = req.body ?? {};
     if (!name) return res.status(400).json({ error: 'name is required' });
 
     try {
@@ -77,6 +78,8 @@ async function handler(req: any, res: any) {
             Acceso_RT: String(access ?? ''),
             Permisos_RT: permsArr.join(';'),
             FiltrarPisos_RT: filterByFloors ? 'Sí' : 'No',
+            // BypassUbicacion_RT es columna boolean (Sí/No) en SP → enviar true/false, no string.
+            BypassUbicacion_RT: !!bypassLocationCheck,
             Status_RT: 'Activo',
           },
         }),
@@ -98,10 +101,10 @@ async function handler(req: any, res: any) {
 
   // ── PATCH ───────────────────────────────────────────────────────────────
   if (req.method === 'PATCH') {
-    const { spItemId, name, access, permissions, filterByFloors } = req.body ?? {};
+    const { spItemId, name, access, permissions, filterByFloors, bypassLocationCheck } = req.body ?? {};
     if (!spItemId) return res.status(400).json({ error: 'spItemId required' });
 
-    const fields: Record<string, string> = {};
+    const fields: Record<string, unknown> = {};
     if (name !== undefined) fields.NombreRol_RT = String(name);
     if (access !== undefined) fields.Acceso_RT = String(access);
     if (permissions !== undefined) {
@@ -113,6 +116,10 @@ async function handler(req: any, res: any) {
     }
     if (filterByFloors !== undefined) {
       fields.FiltrarPisos_RT = filterByFloors ? 'Sí' : 'No';
+    }
+    if (bypassLocationCheck !== undefined) {
+      // Columna boolean (Sí/No) en SP → enviar true/false, no string.
+      fields.BypassUbicacion_RT = !!bypassLocationCheck;
     }
 
     try {

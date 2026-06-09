@@ -64,9 +64,20 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
     setIsolationTypes(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]);
   };
 
+  // Guarda el ticket.id ya prefileado para no re-prefilear en cada actualización
+  // del objeto `ticket` por polling (sino se pisa lo que el usuario está tipeando).
+  const prefilledTicketIdRef = React.useRef<string | null>(null);
+
   // Prefill when ticket changes / modal opens
   React.useEffect(() => {
-    if (!open || !ticket) return;
+    if (!open || !ticket) {
+      if (!open) prefilledTicketIdRef.current = null; // reset al cerrar para re-prefilear en la próxima apertura
+      return;
+    }
+    // Solo prefilea en la apertura o al cambiar de ticket; NO en cada poll que
+    // refresque el objeto ticket mientras el modal está abierto.
+    if (prefilledTicketIdRef.current === ticket.id) return;
+    prefilledTicketIdRef.current = ticket.id;
     // Tickets legacy con workflow ROOM_CHANGE se editan como INTERNAL (fusionado).
     const effectiveWorkflow = ticket.workflow === WorkflowType.ROOM_CHANGE
       ? WorkflowType.INTERNAL
@@ -239,7 +250,7 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
             {isolation && (
               <>
                 <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide px-1">Tocá para agregar/quitar uno o más tipos</p>
-                <div className="flex flex-wrap gap-1 px-1">
+                <div className="flex flex-wrap gap-1.5 px-1">
                   {Object.values(IsolationType).map(t => {
                     const selected = isolationTypes.includes(t);
                     return (
@@ -248,7 +259,7 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
                         type="button"
                         onClick={() => toggleType(t)}
                         aria-pressed={selected}
-                        className={`px-2 py-0.5 rounded-full border text-[8px] font-bold transition-all ${selected ? 'border-violet-400 bg-violet-500 text-white' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+                        className={`px-3 py-1.5 rounded-full border text-xs font-bold transition-all ${selected ? 'border-violet-400 bg-violet-500 text-white' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}
                       >
                         {t}
                       </button>

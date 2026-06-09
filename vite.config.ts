@@ -1,9 +1,20 @@
 import path from 'path';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  // ENTORNO: la MISMA variable que usa el backend. Se lee de .env.local (loadEnv con
+  // prefijo '' = todas las vars) y, en build de Vercel, de process.env. Se inyecta al
+  // cliente como `__APP_ENTORNO__` (ver lib/env.ts) para diferenciar visualmente el
+  // entorno de prueba. Producción intacta si ENTORNO !== 'TESTING'.
+  const env = loadEnv(mode, process.cwd(), '');
+  const ENTORNO = env.ENTORNO ?? process.env.ENTORNO ?? '';
+
+  return {
+  define: {
+    __APP_ENTORNO__: JSON.stringify(ENTORNO),
+  },
   server: {
     port: 5173,
     host: '0.0.0.0',
@@ -54,4 +65,5 @@ export default defineConfig({
       '@': path.resolve(__dirname, '.'),
     },
   },
+  };
 });

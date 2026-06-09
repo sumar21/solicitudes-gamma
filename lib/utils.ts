@@ -32,6 +32,32 @@ export function isHraArea(area?: string | null): boolean {
 }
 
 /**
+ * Áreas "efectivas" de un traslado a los fines del matching de azafatas.
+ *
+ * Regla: la Sala de Espera (HRA) NO discrimina — todas las azafatas la tienen en
+ * sus pisos, así que matchear por HRA notificaría/habilitaría a todas. Cuando un
+ * extremo es HRA y el otro es un piso real, el extremo HRA se remapea al piso real:
+ * la azafata de ese piso pasa a ser dueña de origen Y destino del traslado.
+ *
+ *   HRA → Piso 7   ⇒ { origin: Piso 7, dest: Piso 7 }  (solo azafata Piso 7)
+ *   Piso 5 → Piso 7 ⇒ { origin: Piso 5, dest: Piso 7 }  (cada una su etapa)
+ *   Piso 5 → HRA   ⇒ { origin: Piso 5, dest: Piso 5 }
+ *
+ * Si ambos extremos son HRA (caso raro) se dejan tal cual.
+ */
+export function effectiveHostessAreas<T extends string | null | undefined>(
+  originArea: T,
+  destinationArea: T,
+): { origin: T; dest: T } {
+  const remap = (self: T, other: T): T =>
+    isHraArea(self) && other && !isHraArea(other) ? other : self;
+  return {
+    origin: remap(originArea, destinationArea),
+    dest: remap(destinationArea, originArea),
+  };
+}
+
+/**
  * Formatea una fecha ISO (YYYY-MM-DD o full ISO datetime) a formato legible
  */
 export function formatDateReadable(isoDate: string | undefined): string {
