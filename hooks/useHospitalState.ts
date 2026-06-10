@@ -7,7 +7,7 @@ import {
 } from '../types';
 import { MOCK_TICKETS } from '../lib/constants';
 import { can, hasModule, canReceiveNotif } from '../lib/permissions';
-import { effectiveHostessAreas } from '../lib/utils';
+import { effectiveHostessAreas, formatDateTime } from '../lib/utils';
 
 // ── JWT helpers (client-side, solo lectura — sin verificar firma) ─────────────
 function parseJwtPayload(token: string): Record<string, unknown> | null {
@@ -345,6 +345,7 @@ export const useHospitalState = () => {
   const [sortConfig, setSortConfig]                = useState<SortConfig>({ key: 'createdAt', direction: 'desc' });
   const [requestsSearchTerm, setRequestsSearchTerm]= useState('');
   const [notifications, setNotifications]          = useState<Notification[]>([]);
+  const [notificationHistory, setNotificationHistory] = useState<Notification[]>([]); // historial 24h desde SP (campanita)
   const [toasts, setToasts]                        = useState<{ id: string; notification: Notification }[]>([]);
   const [loginEmail, setLoginEmail]                = useState('');
   const [loginPass, setLoginPass]                  = useState('');
@@ -944,6 +945,23 @@ export const useHospitalState = () => {
     });
   }, [notifications, currentUser]);
 
+  // Campanita: historial 24h de SP (persistente, sobrevive refresh) + notis en vivo de
+  // la sesión que todavía no estén en SP (dedup por ticketId+type → SP gana porque trae
+  // el id real para marcar leída). Sin tope de cantidad: se muestran todas las de 24h
+  // (el panel ya es scrolleable por max-h, así que no se expande infinito).
+  const bellNotifications = useMemo<Notification[]>(() => {
+    const seen = new Set(
+      notificationHistory.filter(n => n.ticketId).map(n => `${n.ticketId}|${n.type}`),
+    );
+    const liveExtra = filteredNotifications.filter(
+      n => !(n.ticketId && seen.has(`${n.ticketId}|${n.type}`)),
+    );
+    const history = currentUser
+      ? notificationHistory.filter(n => canReceiveNotif(currentUser, n.type)) // defensivo si cambió el rol
+      : notificationHistory;
+    return [...liveExtra, ...history];
+  }, [notificationHistory, filteredNotifications, currentUser]);
+
   const filteredTickets = useMemo(() => {
     let result = tickets;
     if (currentUser?.sede !== SedeType.SUMAR)
@@ -1537,6 +1555,29 @@ export const useHospitalState = () => {
     }
   }, [authFetch]);
 
+  // Historial 24h desde SP (10.Notificaciones) para la campanita. Persiste tras refresh,
+  // a diferencia de las notis en vivo (generadas por polling, se pierden al recargar).
+  const fetchNotificationHistory = useCallback(async () => {
+    try {
+      const r = await authFetch('/api/notifications?window=24h');
+      if (!r.ok) return;
+      const data = await r.json();
+      const mapped: Notification[] = (data.notifications ?? []).map((n: any) => ({
+        id: String(n.id),
+        type: (n.type || NotificationType.SYSTEM) as NotificationType,
+        title: String(n.title ?? ''),
+        message: String(n.message ?? ''),
+        timestamp: formatDateTime(String(n.fecha ?? '')),
+        isRead: String(n.status) === 'Leida',
+        ticketId: n.ticketId ? String(n.ticketId) : undefined,
+        sede: (currentUser?.sede ?? SedeType.HPR) as SedeType,
+      }));
+      setNotificationHistory(mapped);
+    } catch (err) {
+      console.error('[notifications] history fetch failed:', err);
+    }
+  }, [authFetch, currentUser?.sede]);
+
   // Local notification IDs are prefixed with "NOTIF-" (generated client-side).
   // SharePoint notifications carry the SP item ID (numeric string).
   // Only SP IDs should hit the PATCH endpoint; local-only ones just flip state.
@@ -1588,6 +1629,7 @@ export const useHospitalState = () => {
     const id = isObject ? notifOrId.id : notifOrId;
 
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+    setNotificationHistory(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
 
     if (isSpNotificationId(id)) {
       // Camino legacy: marcar por id explícito (notifs del banner SP).
@@ -1625,6 +1667,7 @@ export const useHospitalState = () => {
   // (`remaining`), repetimos. Optimistic local; refetch final para sincronizar.
   const handleMarkAllNotificationsRead = async () => {
     setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+    setNotificationHistory(prev => prev.map(n => ({ ...n, isRead: true })));
     // Limpiar TODAS las notifs del SO (lock screen / bandeja).
     closeOsNotifications();
     // Optimistic: limpiamos el banner. Si falla, el refetch lo restaura.
@@ -1651,6 +1694,14 @@ export const useHospitalState = () => {
       checkUnreadNotifications();
     }
   };
+
+  // Al abrir la campanita: refrescar el historial 24h y marcar todo como leído.
+  // El badge se limpia, pero los ítems quedan visibles (en gris) en el historial.
+  const handleOpenNotifications = async () => {
+    await fetchNotificationHistory();
+    handleMarkAllNotificationsRead();
+  };
+
   const handleDismissToast = (id: string) => {
     // Find the notification associated with this toast and mark it as read.
     // Pasamos el objeto completo para que mark-by-event funcione en notifs locales.
@@ -1667,9 +1718,13 @@ export const useHospitalState = () => {
   useEffect(() => {
     if (!token || !currentUser) return;
     checkUnreadNotifications();
-    const interval = setInterval(checkUnreadNotifications, 30_000);
+    fetchNotificationHistory();
+    const interval = setInterval(() => {
+      checkUnreadNotifications();
+      fetchNotificationHistory();
+    }, 30_000);
     return () => clearInterval(interval);
-  }, [token, currentUser, checkUnreadNotifications]);
+  }, [token, currentUser, checkUnreadNotifications, fetchNotificationHistory]);
 
   // ── Revalidación periódica de ubicación (cada 1 min) ─────────────────────────
   // Reemplaza la validación per-request (que generaba kicks por flake de
@@ -1778,7 +1833,7 @@ export const useHospitalState = () => {
   return {
     state: {
       currentUser, currentView, activeRole, sortConfig, requestsSearchTerm,
-      notifications, filteredNotifications, toasts, tickets,
+      notifications, filteredNotifications, bellNotifications, toasts, tickets,
       filteredTickets: filteredTickets.sorted,
       historyTickets: filteredTickets.baseFiltered,
       loginEmail, loginPass, loginError, loginLoading, bedsLoading, bedsError, ticketActionLoading, beds,
@@ -1793,7 +1848,7 @@ export const useHospitalState = () => {
       handleLogin, handleLogout,
       handleCreateTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
       fetchBeds, enrichBed, refreshAll,
-      handleUpdateUserAreas, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleDismissToast,
+      handleUpdateUserAreas, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleOpenNotifications, handleDismissToast,
       handleStartTransport,
       handleRejectTicket,
       handleEditTicket,

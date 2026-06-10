@@ -146,12 +146,6 @@ export const NotificationsDropdown: React.FC<NotificationsDropdownProps> = ({
           </div>
         )}
       </div>
-      
-      <div className="p-4 bg-slate-50/50 border-t border-slate-100 shrink-0">
-        <Button variant="ghost" className="w-full text-[10px] h-10 text-slate-500 hover:text-slate-900 font-black uppercase tracking-[0.2em] transition-all hover:bg-white border border-slate-200 rounded-xl shadow-sm">
-          Ver Actividad Completa
-        </Button>
-      </div>
     </Card>
   );
 };

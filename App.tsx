@@ -504,11 +504,11 @@ export default function App() {
                 || can(state.currentUser, 'notif_status_update')
                 || can(state.currentUser, 'notif_reception_confirmed')
                 || can(state.currentUser, 'notif_diet_change')) && (
-                <Popover open={isNotificationsOpen} onOpenChange={setIsNotificationsOpen}>
+                <Popover open={isNotificationsOpen} onOpenChange={(open) => { setIsNotificationsOpen(open); if (open) actions.handleOpenNotifications(); }}>
                   <PopoverTrigger asChild>
                     <Button variant="ghost" size="icon" className="relative w-10 h-10 sm:w-9 sm:h-9 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 active:bg-slate-200">
                       <Bell className="w-5 h-5 sm:w-4 sm:h-4" />
-                      {state.filteredNotifications.filter(n => !n.isRead).length > 0 && (
+                      {state.bellNotifications.filter(n => !n.isRead).length > 0 && (
                         <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white" />
                       )}
                     </Button>
@@ -519,7 +519,7 @@ export default function App() {
                     className="p-0 w-[calc(100vw-1.5rem)] sm:w-[380px] border-none shadow-[0_20px_50px_rgba(0,0,0,0.3)] rounded-2xl z-[9999] outline-none animate-in fade-in zoom-in-95 duration-200 origin-top-right"
                   >
                     <NotificationsDropdown
-                      notifications={state.filteredNotifications}
+                      notifications={state.bellNotifications}
                       onNotificationClick={(n) => {
                         // Pasamos la notif completa para que mark-by-event pueda linkear
                         // la notif local (NOTIF-*) con su contrapartida SP por ticketId+type.

@@ -4,7 +4,7 @@ import { can } from '../lib/permissions';
 import { hasLiveFasting, liveUpcoming, formatART, fastingHoursForToday } from '../lib/fasting';
 import { Input } from '../components/ui/input';
 import { cn } from '../lib/utils';
-import { BedDouble, User as UserIcon, Info, Search, X, ChevronDown, Check, AlertTriangle, CheckCircle2, ShieldAlert, RefreshCw, UtensilsCrossed, FileText, ArrowDownAZ } from 'lucide-react';
+import { BedDouble, User as UserIcon, Info, Search, X, ChevronDown, Check, AlertTriangle, CheckCircle2, ShieldAlert, RefreshCw, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical } from 'lucide-react';
 import { Dialog, DialogContent } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
@@ -180,6 +180,8 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   const [statusFilters, setStatusFilters] = useState<Set<string>>(new Set());
   const [showIsolatedOnly, setShowIsolatedOnly] = useState(false);
   const [showDietOnly, setShowDietOnly] = useState(false);
+  const [showFastingOnly, setShowFastingOnly] = useState(false);
+  const [showFilters, setShowFilters] = useState(false); // colapsa los chips en mobile (desktop siempre visibles)
   const [financierFilters, setFinancierFilters] = useState<Set<string>>(new Set());
   const [financierSearch, setFinancierSearch] = useState('');
 
@@ -193,6 +195,22 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     for (const b of beds) if ((b.dietTags?.length ?? 0) > 0) s.add(b.label);
     return s;
   }, [beds]);
+
+  // Camas con ayuno vigente (mismo criterio que el indicador de la celda: hasLiveFasting).
+  const fastingBeds = useMemo(() => {
+    const s = new Set<string>();
+    for (const b of beds) if (hasLiveFasting(b.fasting)) s.add(b.label);
+    return s;
+  }, [beds]);
+
+  // Cantidad de filtros activos (chips) — feedback en el botón "Filtros" de mobile.
+  const activeFilterCount =
+    statusFilters.size +
+    (showIsolatedOnly ? 1 : 0) +
+    (showDietOnly ? 1 : 0) +
+    (showFastingOnly ? 1 : 0) +
+    financierFilters.size +
+    physicianFilters.size;
 
   const uniqueFinanciers = useMemo(() => [...new Set(beds.filter((b: Bed) => b.institution).map((b: Bed) => b.institution!))].sort(), [beds]);
   const uniquePhysicians = useMemo(() => [...new Set(beds.filter((b: Bed) => b.prescribingPhysician).map((b: Bed) => b.prescribingPhysician!))].sort(), [beds]);
@@ -261,6 +279,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     if (showDietOnly) {
       result = result.filter(bed => dietBeds.has(bed.label));
     }
+    if (showFastingOnly) {
+      result = result.filter(bed => fastingBeds.has(bed.label));
+    }
     if (financierFilters.size > 0) {
       result = result.filter(bed => bed.institution && financierFilters.has(bed.institution));
     }
@@ -269,7 +290,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     }
 
     return result;
-  }, [beds, currentUser, searchFilter, areaFilters, statusFilters, allAreas.length, bedTicketMap, showIsolatedOnly, isolatedBeds, showDietOnly, dietBeds, financierFilters, physicianFilters]);
+  }, [beds, currentUser, searchFilter, areaFilters, statusFilters, allAreas.length, bedTicketMap, showIsolatedOnly, isolatedBeds, showDietOnly, dietBeds, showFastingOnly, fastingBeds, financierFilters, physicianFilters]);
 
   // Group beds by Area, ordered with HIT first.
   // Gamma a veces devuelve las camas de un piso en orden arbitrario (mezcla
@@ -292,7 +313,11 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   // ── Batch enrich for PDF export (concurrency limited) ──────────────────────
   const enrichBedsForPdf = useCallback(async (bedsToExport: Bed[], type: 'normal' | 'alpha' | 'dietas' = 'normal'): Promise<Bed[]> => {
     if (!onEnrichBed) return bedsToExport;
-    const occupied = bedsToExport.filter(b => b.status === BedStatus.OCCUPIED && b.patientCode && !b.dni);
+    // Solo enriquecemos on-demand (Gamma) las camas que el cron AÚN no procesó. Las que
+    // ya traen el enrich de SP (`enriched=true`) tienen diagnóstico/dieta/ayuno/DNI listos
+    // → no se vuelven a pedir. Gatear por `!b.dni` re-consultaba a Gamma por cada paciente
+    // sin DNI aunque ya estuviera enriquecido, y por eso el PDF tardaba.
+    const occupied = bedsToExport.filter(b => b.status === BedStatus.OCCUPIED && b.patientCode && !b.enriched);
     if (occupied.length === 0) return bedsToExport;
 
     setPdfExporting(type);
@@ -942,13 +967,22 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       return horas.map(h => `${String(h).padStart(2, '0')}:00`).join(', ');
     };
 
-    // Observación textual: respuestas de `diets` con texto largo (>25 chars).
-    // Se concatenan precedidas del rótulo (ej. "Observaciones: ...") separadas por " · ".
+    // Observación textual: TODAS las respuestas de `diets` que sean texto libre — no
+    // 'sí'/'no' (ya van como chips en la columna Dieta) ni el "tipo" (también va en Dieta).
+    // Antes solo incluía las >25 chars, así que notas cortas como "más puré mixto" o
+    // "almuerzo" se perdían en el PDF aunque sí aparecen en la tarjeta del paciente.
     const observationsText = (bed: Bed): string => {
       const ds = bed.diets;
       if (!ds || ds.length === 0) return '';
-      const longs = ds.filter(d => (d.respuesta ?? '').trim().length > 25);
-      return longs.map(d => `${d.descripcion}: ${(d.respuesta ?? '').trim()}`).join(' · ');
+      const notes = ds.filter(d => {
+        const r = (d.respuesta ?? '').trim();
+        if (!r) return false;
+        const rl = r.toLowerCase();
+        if (rl === 'si' || rl === 'sí' || rl === 'no') return false;            // ya representado en dietTags (chips)
+        if ((d.descripcion ?? '').trim().toLowerCase() === 'tipo') return false; // va en la columna Dieta
+        return true;
+      });
+      return notes.map(d => `${d.descripcion}: ${(d.respuesta ?? '').trim()}`).join(' · ');
     };
 
     // Filtramos a OCUPADAS con AL MENOS UNO de: dietTags, fasting, observaciones.
@@ -1096,7 +1130,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
           {/* Area multi-select */}
           <Popover>
             <PopoverTrigger asChild>
-              <button className="flex items-center gap-1.5 h-9 px-3 text-xs rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-colors min-w-[160px] justify-between">
+              <button className="flex items-center gap-1.5 h-9 px-3 text-xs rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-colors min-w-[130px] md:min-w-[160px] justify-between">
                 <span>{areaFilterLabel}</span>
                 <ChevronDown className="h-3.5 w-3.5 text-slate-400 ml-1" />
               </button>
@@ -1133,54 +1167,92 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
             </PopoverContent>
           </Popover>
 
-          {/* Bed count + data source + PDF */}
+          {/* Bed count + actions */}
           <div className="flex items-center gap-1.5 ml-auto">
             <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-50 border border-slate-100 text-[10px] md:text-xs font-black text-slate-500 uppercase tracking-wider">
               <BedDouble className="h-3 w-3 text-slate-400" />
               <span>{filteredBeds.length} camas</span>
             </div>
-            {/* Data source indicator — hidden for production, set to false to enable */}
-            {false && (bedsError ? (
-              <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-50 border border-amber-200 text-[10px] font-bold text-amber-700 uppercase tracking-wider" title={bedsError}>
-                <AlertTriangle className="h-3 w-3" />
-                <span className="hidden sm:inline">Datos Mock</span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-[10px] font-bold text-emerald-700 uppercase tracking-wider">
-                <CheckCircle2 className="h-3 w-3" />
-                <span className="hidden sm:inline">PROGAL</span>
-              </div>
-            ))}
-            {onRefresh && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onRefresh()}
-                disabled={bedsLoading}
-                title="Forzar actualización del mapa de camas"
-                className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50 disabled:opacity-50"
-              >
-                <RefreshCw className={cn("h-3 w-3", bedsLoading && "animate-spin")} />
-                <span className="hidden sm:inline">Refrescar</span>
+
+            {/* Mobile: toggle de filtros — colapsa los chips para no ocupar media pantalla.
+                Muestra el conteo de filtros activos como feedback aunque esté cerrado. */}
+            <button
+              onClick={() => setShowFilters(v => !v)}
+              aria-expanded={showFilters}
+              className={cn(
+                "md:hidden flex items-center gap-1.5 h-8 px-3 rounded-lg border text-[10px] font-bold uppercase tracking-tight transition-all",
+                activeFilterCount > 0 ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+              )}
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              Filtros{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
+              <ChevronDown className={cn("h-3 w-3 transition-transform", showFilters && "rotate-180")} />
+            </button>
+
+            {/* Desktop: acciones inline (sin cambios) */}
+            <div className="hidden md:flex items-center gap-1.5">
+              {onRefresh && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onRefresh()}
+                  disabled={bedsLoading}
+                  title="Forzar actualización del mapa de camas"
+                  className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  <RefreshCw className={cn("h-3 w-3", bedsLoading && "animate-spin")} />
+                  <span className="hidden sm:inline">Refrescar</span>
+                </Button>
+              )}
+              <Button variant="outline" size="sm" onClick={exportPDF} disabled={!!pdfExporting} title="PDF por sector" aria-label="Exportar PDF por sector" className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50 disabled:opacity-50">
+                {pdfExporting === 'normal' ? <span className="inline-block w-3 h-3 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+                <span className="hidden sm:inline">{pdfExporting === 'normal' ? `${pdfProgress.done}/${pdfProgress.total}` : 'PDF'}</span>
               </Button>
-            )}
-            <Button variant="outline" size="sm" onClick={exportPDF} disabled={!!pdfExporting} title="PDF por sector" aria-label="Exportar PDF por sector" className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50 disabled:opacity-50">
-              {pdfExporting === 'normal' ? <span className="inline-block w-3 h-3 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
-              <span className="hidden sm:inline">{pdfExporting === 'normal' ? `${pdfProgress.done}/${pdfProgress.total}` : 'PDF'}</span>
-            </Button>
-            <Button variant="outline" size="sm" onClick={exportPDFAlpha} disabled={!!pdfExporting} title="PDF alfabético por paciente" aria-label="Exportar PDF alfabético" className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50 disabled:opacity-50">
-              {pdfExporting === 'alpha' ? <span className="inline-block w-3 h-3 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : <ArrowDownAZ className="h-3.5 w-3.5" />}
-              <span className="hidden sm:inline">{pdfExporting === 'alpha' ? `${pdfProgress.done}/${pdfProgress.total}` : 'PDF A-Z'}</span>
-            </Button>
-            <Button variant="outline" size="sm" onClick={exportPDFDietas} disabled={!!pdfExporting} title="PDF de dietas y ayunos" aria-label="Exportar PDF de dietas" className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50 disabled:opacity-50">
-              {pdfExporting === 'dietas' ? <span className="inline-block w-3 h-3 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : <UtensilsCrossed className="h-3.5 w-3.5" />}
-              <span className="hidden sm:inline">{pdfExporting === 'dietas' ? `${pdfProgress.done}/${pdfProgress.total}` : 'Dietas'}</span>
-            </Button>
+              <Button variant="outline" size="sm" onClick={exportPDFAlpha} disabled={!!pdfExporting} title="PDF alfabético por paciente" aria-label="Exportar PDF alfabético" className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50 disabled:opacity-50">
+                {pdfExporting === 'alpha' ? <span className="inline-block w-3 h-3 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : <ArrowDownAZ className="h-3.5 w-3.5" />}
+                <span className="hidden sm:inline">{pdfExporting === 'alpha' ? `${pdfProgress.done}/${pdfProgress.total}` : 'PDF A-Z'}</span>
+              </Button>
+              <Button variant="outline" size="sm" onClick={exportPDFDietas} disabled={!!pdfExporting} title="PDF de dietas y ayunos" aria-label="Exportar PDF de dietas" className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50 disabled:opacity-50">
+                {pdfExporting === 'dietas' ? <span className="inline-block w-3 h-3 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : <UtensilsCrossed className="h-3.5 w-3.5" />}
+                <span className="hidden sm:inline">{pdfExporting === 'dietas' ? `${pdfProgress.done}/${pdfProgress.total}` : 'Dietas'}</span>
+              </Button>
+            </div>
+
+            {/* Mobile: acciones (refrescar + PDFs) en menú ⋯ para liberar la barra */}
+            <Popover>
+              <PopoverTrigger asChild>
+                <button className="md:hidden flex items-center justify-center h-8 w-8 rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50" aria-label="Más acciones">
+                  {pdfExporting ? <span className="inline-block w-3.5 h-3.5 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : <MoreVertical className="h-4 w-4" />}
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-56 p-1.5">
+                <div className="flex flex-col gap-0.5">
+                  {onRefresh && (
+                    <button onClick={() => onRefresh()} disabled={bedsLoading} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+                      <RefreshCw className={cn("h-4 w-4 text-slate-400", bedsLoading && "animate-spin")} /> Refrescar mapa
+                    </button>
+                  )}
+                  <button onClick={exportPDF} disabled={!!pdfExporting} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+                    <FileText className="h-4 w-4 text-slate-400" /> PDF por sector
+                  </button>
+                  <button onClick={exportPDFAlpha} disabled={!!pdfExporting} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+                    <ArrowDownAZ className="h-4 w-4 text-slate-400" /> PDF alfabético (A-Z)
+                  </button>
+                  <button onClick={exportPDFDietas} disabled={!!pdfExporting} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+                    <UtensilsCrossed className="h-4 w-4 text-slate-400" /> PDF dietas y ayunos
+                  </button>
+                  {!!pdfExporting && (
+                    <div className="px-2.5 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Generando {pdfProgress.done}/{pdfProgress.total}…</div>
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
         </div>
 
-        {/* Status multi-select buttons */}
-        <div className="flex flex-wrap gap-1.5">
+        {/* Status multi-select buttons + filtros especiales.
+            En mobile se colapsan detrás del botón "Filtros"; en desktop siempre visibles. */}
+        <div className={cn("flex-wrap gap-1.5", showFilters ? "flex" : "hidden md:flex")}>
           {Object.values(BedStatus).map(s => {
             const dot = s === BedStatus.AVAILABLE ? 'bg-emerald-500' : s === BedStatus.OCCUPIED ? 'bg-red-500' : s === BedStatus.PREPARATION ? 'bg-amber-500' : s === BedStatus.ASSIGNED ? 'bg-indigo-500' : 'bg-slate-400';
             const active = statusFilters.has(s);
@@ -1226,6 +1298,20 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
             >
               <UtensilsCrossed className="w-3 h-3" />
               Dietas ({dietBeds.size})
+            </button>
+          )}
+          {fastingBeds.size > 0 && (
+            <button
+              onClick={() => setShowFastingOnly(v => !v)}
+              className={cn(
+                "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
+                showFastingOnly
+                  ? "bg-amber-500 text-white border-amber-500 shadow-sm"
+                  : "bg-white text-amber-600 border-amber-200 hover:bg-amber-50"
+              )}
+            >
+              <Clock className="w-3 h-3" />
+              Ayunos ({fastingBeds.size})
             </button>
           )}
 

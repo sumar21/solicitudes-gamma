@@ -39,17 +39,52 @@ async function handler(req: any, res: any) {
   // y para que el cliente no tenga que filtrar nada (fuente única de verdad: SP).
   if (req.method === 'GET') {
     try {
-      const filter = encodeURIComponent(
-        `fields/UserId_N eq ${Number(user?.id) || 0} and fields/Entorno_N eq '${ENTORNO}' and fields/Status_N eq 'Enviada'`
-      );
-      const spRes = await graphFetch(
-        `${basePath}?$expand=fields&$filter=${filter}&$top=50&$orderby=fields/Fecha_N desc`,
-        { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
-      );
-      if (!spRes.ok) return res.status(200).json({ notifications: [] });
+      const userId = Number(user?.id) || 0;
+      // Modo historial: ?window=24h trae leídas + no-leídas de las últimas 24h (campanita).
+      // Sin el param: solo no-leídas (Status_N='Enviada') para el banner de pendientes.
+      const isHistory = String(req.query?.window ?? '').trim() === '24h';
 
-      const data = (await spRes.json()) as { value: Record<string, unknown>[] };
-      const notifications = (data.value ?? []).map((item: any) => {
+      const baseFilter = `fields/UserId_N eq ${userId} and fields/Entorno_N eq '${ENTORNO}'`;
+      const filter = encodeURIComponent(
+        isHistory ? baseFilter : `${baseFilter} and fields/Status_N eq 'Enviada'`
+      );
+
+      let rows: any[] = [];
+      if (isHistory) {
+        // Sin tope artificial: paginamos siguiendo @odata.nextLink y traemos TODAS las del
+        // usuario; el recorte a 24h se hace en memoria (Fecha_N no está indexada, no se
+        // puede filtrar por fecha de forma confiable en OData). MAX_SCAN es solo un
+        // backstop anti-runaway (la retención del cron es ~2 días, así que es acotado).
+        const MAX_SCAN = 5000;
+        let next: string | null =
+          `${basePath}?$expand=fields&$filter=${filter}&$top=500&$orderby=fields/Fecha_N desc`;
+        while (next && rows.length < MAX_SCAN) {
+          const page: any = await graphFetch(next, {
+            headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' },
+          });
+          if (!page.ok) break;
+          const pageData: any = await page.json();
+          for (const it of pageData.value ?? []) rows.push(it);
+          const raw = pageData['@odata.nextLink'] as string | undefined;
+          // nextLink es absoluta; graphFetch espera path relativo a /v1.0.
+          next = raw ? raw.replace(/^https:\/\/graph\.microsoft\.com\/v1\.0/, '') : null;
+        }
+        const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+        rows = rows.filter((item: any) => {
+          const t = new Date(String((item.fields as Record<string, unknown>).Fecha_N ?? '')).getTime();
+          return Number.isFinite(t) && t >= cutoff;
+        });
+      } else {
+        const spRes = await graphFetch(
+          `${basePath}?$expand=fields&$filter=${filter}&$top=50&$orderby=fields/Fecha_N desc`,
+          { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
+        );
+        if (!spRes.ok) return res.status(200).json({ notifications: [] });
+        const data = (await spRes.json()) as { value: Record<string, unknown>[] };
+        rows = data.value ?? [];
+      }
+
+      const notifications = rows.map((item: any) => {
         const f = item.fields as Record<string, unknown>;
         return {
           id: String(item.id),
