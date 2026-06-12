@@ -125,6 +125,19 @@ function reapplyEnrichFromMap(beds: Bed[], map: Map<string, PatientEnrichSnapsho
   return beds;
 }
 
+// Mantiene al paciente en la cama ORIGEN mientras el traslado NO arrancó (WAITING_ROOM /
+// IN_TRANSIT). En Piso→Piso Gamma sigue reportando al paciente en el origen, así que esto no
+// hace nada (la cama ya tiene patientName). Pero en Sala de Espera (HRA) Gamma libera el sillón
+// apenas se asigna la cama destino → sin esto el paciente "desaparece" del mapa antes de
+// moverse. Lo re-pintamos desde el ticket; reapplyEnrichFromMap luego restaura su dieta/ayuno
+// por patientCode si hay snapshot. No tocamos camas inhabilitadas.
+function keepPatientOnOrigin(origin: Bed | undefined, ticket: Ticket): void {
+  if (!origin || origin.patientName || origin.status === BedStatus.DISABLED) return;
+  origin.patientName = ticket.patientName;
+  origin.patientCode = ticket.patientCode;
+  origin.status = BedStatus.OCCUPIED;
+}
+
 function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[]): Bed[] {
   const result = gammaBeds.map(b => ({ ...b }));
   for (const ticket of activeTickets) {
@@ -132,11 +145,28 @@ function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[]): Bed[] {
     const dest   = ticket.destination ? result.find(b => b.label === ticket.destination) : null;
     switch (ticket.status) {
       case TicketStatus.WAITING_ROOM:
+        keepPatientOnOrigin(origin, ticket); // el paciente no se movió aún → sigue en el origen
         if (dest) dest.status = BedStatus.PREPARATION;
         break;
       case TicketStatus.IN_TRANSIT:
-      case TicketStatus.IN_TRANSPORT:
+        keepPatientOnOrigin(origin, ticket); // el paciente no se movió aún → sigue en el origen
         if (dest) dest.status = BedStatus.ASSIGNED;
+        break;
+      case TicketStatus.IN_TRANSPORT:
+        // El traslado ya comenzó: el paciente sale de la cama origen. Copiamos su ficha
+        // completa (dieta/ayuno/aislamiento/datos) a la cama destino —que sigue "Asignada",
+        // NO ocupada— para que esos indicadores acompañen al paciente en tránsito en lugar de
+        // desaparecer del mapa; y limpiamos el origen, dejándolo "En preparación".
+        if (dest && origin) {
+          copyPatientToBed(origin, dest);
+          dest.patientName = ticket.patientName; // fallback por si el origin venía vacío
+          dest.patientCode = dest.patientCode || ticket.patientCode; // si el origin venía vacío (HRA), habilita el reapply del enrich por patientCode
+        }
+        if (dest) dest.status = BedStatus.ASSIGNED;
+        if (origin) {
+          clearPatientFromBed(origin);
+          origin.status = BedStatus.PREPARATION;
+        }
         break;
       case TicketStatus.WAITING_CONSOLIDATION:
         // Hasta que Admin consolide en PROGAL, Gamma todavía apunta el paciente a
@@ -147,6 +177,7 @@ function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[]): Bed[] {
           copyPatientToBed(origin, dest);
           dest.status = BedStatus.OCCUPIED;
           dest.patientName = ticket.patientName; // usar el del ticket por si el origin venía vacío
+          dest.patientCode = dest.patientCode || ticket.patientCode; // si el origin venía vacío (HRA), habilita el reapply del enrich por patientCode
         }
         if (origin) {
           clearPatientFromBed(origin);
@@ -1180,7 +1211,9 @@ export const useHospitalState = () => {
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket || ticket.status === TicketStatus.IN_TRANSPORT) return;
     const now     = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const updates = { status: TicketStatus.IN_TRANSPORT, transportStartedAt: now, intervenedByHostess: 'SI' } as const;
+    // originBedStatus → "En preparación": al iniciar el traslado el paciente sale de la
+    // cama origen (coherente con mergeBeds). Persistimos el cambio en SP para auditoría.
+    const updates = { status: TicketStatus.IN_TRANSPORT, transportStartedAt: now, originBedStatus: BedStatus.PREPARATION, intervenedByHostess: 'SI' } as const;
     setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
     addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Traslado en Curso',
       message: `${ticket.patientName} está en camino hacia ${ticket.destination}.`,
@@ -1234,8 +1267,16 @@ export const useHospitalState = () => {
   };
 
   const handleRejectTicket = async (ticketId: string, reason: string) => {
+    // Solo Admisión/Admin pueden cancelar, en cualquier etapa activa y sin importar si la
+    // azafata ya intervino. Rol fijo + permiso (cinturón de seguridad sobre la config de SP).
+    if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) {
+      alert('Solo Admisión o Admin pueden cancelar traslados.'); return;
+    }
     if (!can(currentUser, 'cancelar_ticket')) {
       alert('Tu rol no tiene permiso para cancelar traslados.'); return;
+    }
+    if (!reason || !reason.trim()) {
+      alert('La observación es obligatoria para cancelar el traslado.'); return;
     }
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket || ticket.status === TicketStatus.REJECTED || ticket.status === TicketStatus.COMPLETED) return;

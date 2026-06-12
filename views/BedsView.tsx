@@ -875,8 +875,8 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   }, [filteredBeds, bedTicketMap, currentUser, enrichBedsForPdf]);
 
   // ── PDF Export (dietas / ayunos / observaciones) ──────────────────────────
-  // Listado pensado para Catering: solo camas ocupadas con datos nutricionales.
-  // Columnas: Habitación · Cama · Sector · Paciente · Dieta · Ayuno · Observaciones.
+  // Planilla para Catering: TODAS las camas del Mapa de Camas (respeta filtros y orden).
+  // Columnas: Habitación · Cama · Sector · Estado · Paciente · Dieta · Ayuno · Observaciones.
   // Observaciones admite varias líneas; el alto de fila se ajusta dinámicamente.
   const exportPDFDietas = useCallback(async () => {
     const enrichedBeds = await enrichBedsForPdf(filteredBeds, 'dietas');
@@ -930,13 +930,12 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       doc.line(margin, 19, pageW - margin, 19);
     };
 
-    // Total = 270mm; A4 landscape 277mm útil → cabe.
-    // Hab(12) | Cama(10) | Sector(15) | Paciente(45) | Dieta(55) | Ayuno(45) | Observaciones(88)
-    // Dieta y Ayuno suelen tener listas largas que se truncaban — ahora ganan ancho a costa del
-    // sector (valores cortos tipo "Piso 4") y observaciones (mantiene 88mm, suficiente para
-    // notas tipo "Observaciones: NADA POR BOCA 00:00 (08/01)"). Dieta/Ayuno/Obs wrap en múltiples líneas.
-    const colWidths  = [12, 10, 15, 45, 55, 45, 88];
-    const colHeaders = ['Hab.', 'Cama', 'Sector', 'Paciente', 'Dieta', 'Ayuno', 'Observaciones'];
+    // Total = 268mm; A4 landscape 277mm útil → cabe.
+    // Hab(12) | Cama(10) | Sector(14) | Estado(22) | Paciente(38) | Dieta(54) | Ayuno(44) | Observaciones(74)
+    // Reflejamos TODAS las camas del mapa como planilla; la col. Estado lleva un punto de color
+    // como en el Mapa de Camas. Dieta/Ayuno/Obs wrap en múltiples líneas.
+    const colWidths  = [12, 10, 14, 22, 38, 54, 44, 74];
+    const colHeaders = ['Hab.', 'Cama', 'Sector', 'Estado', 'Paciente', 'Dieta', 'Ayuno', 'Observaciones'];
     const rowHBase = 6;
     const tableWidth = colWidths.reduce((s, w) => s + w, 0);
     const colX: number[] = [];
@@ -985,38 +984,55 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       return notes.map(d => `${d.descripcion}: ${(d.respuesta ?? '').trim()}`).join(' · ');
     };
 
-    // Filtramos a OCUPADAS con AL MENOS UNO de: dietTags, fasting, observaciones.
+    // Planilla de catering: incluimos TODAS las camas del mapa (las mismas que se ven en
+    // pantalla, respetando los filtros activos) y en el mismo orden (sector según AREA_ORDER,
+    // luego cama). Las ocupadas y las "en traslado" traen dieta/ayuno; el resto va en blanco.
     interface DietaRow {
+      status: BedStatus; estado: string;
       roomCode: string; bedCode: string; area: string; patientName: string;
       dieta: string; ayuno: string; obs: string;
     }
-    const rows: DietaRow[] = enrichedBeds
-      .map((bed: Bed): DietaRow | null => {
-        if (bed.status !== BedStatus.OCCUPIED) return null;
-        const dietTags = bed.dietTags ?? [];
-        const ayuno = fastingSummary(bed);
-        const obs = observationsText(bed);
-        if (dietTags.length === 0 && !ayuno && !obs) return null;
-        return {
-          roomCode:    bed.roomCode ?? '',
-          bedCode:     bed.bedCode ?? '',
-          area:        AREA_LABELS[bed.area] ?? bed.area,
-          patientName: bed.patientName ?? '',
-          dieta:       dietTags.join(', '),
-          ayuno:       ayuno || '—',
-          obs,
-        };
-      })
-      .filter((r: DietaRow | null): r is DietaRow => r !== null)
-      .sort((a, b) => {
-        const byArea = a.area.localeCompare(b.area, 'es');
-        if (byArea !== 0) return byArea;
-        return a.roomCode.localeCompare(b.roomCode, 'es', { numeric: true });
-      });
+    const estadoLabel: Record<string, string> = {
+      [BedStatus.AVAILABLE]:   'Disponible',
+      [BedStatus.OCCUPIED]:    'Ocupada',
+      [BedStatus.PREPARATION]: 'En prep.',
+      [BedStatus.ASSIGNED]:    'Asignada',
+      [BedStatus.DISABLED]:    'Inhabilit.',
+    };
+    const orderedBeds = [...enrichedBeds].sort((a, b) => {
+      const ia = AREA_ORDER.indexOf(a.area); const ib = AREA_ORDER.indexOf(b.area);
+      const oa = ia === -1 ? 999 : ia;       const ob = ib === -1 ? 999 : ib;
+      if (oa !== ob) return oa - ob;
+      return a.label.localeCompare(b.label, 'es', { numeric: true });
+    });
+    const rows: DietaRow[] = orderedBeds.map((bed: Bed): DietaRow => {
+      const ticket = bedTicketMap.get(bed.label);
+      const isOccupied = bed.status === BedStatus.OCCUPIED;
+      // "En traslado": destino de un traslado en curso (IN_TRANSPORT) — mergeBeds copió la
+      // ficha del paciente al destino, detectable por tener patientCode aún sin estar ocupada.
+      const inTransit = bed.status === BedStatus.ASSIGNED && !!bed.patientCode;
+      const hasPatientData = isOccupied || inTransit;
+      // Nombre: ocupada → de la cama; asignada/en prep. (destino de traslado) → del ticket.
+      const patientName = isOccupied ? (bed.patientName ?? '') : (ticket?.patientName ?? '');
+      const dietTags = hasPatientData ? (bed.dietTags ?? []) : [];
+      const ayuno = hasPatientData ? fastingSummary(bed) : '';
+      const obs = hasPatientData ? observationsText(bed) : '';
+      return {
+        status:      bed.status,
+        estado:      inTransit ? 'En traslado' : (estadoLabel[bed.status] ?? bed.status),
+        roomCode:    bed.roomCode ?? '',
+        bedCode:     bed.bedCode ?? '',
+        area:        AREA_LABELS[bed.area] ?? bed.area,
+        patientName,
+        dieta:       hasPatientData ? (dietTags.join(', ') || '—') : '',
+        ayuno:       hasPatientData ? (ayuno || '—') : '',
+        obs,
+      };
+    });
 
     if (rows.length === 0) {
       doc.setFontSize(9); doc.setFont('helvetica', 'italic'); doc.setTextColor(100, 116, 139);
-      doc.text('Sin camas con datos nutricionales para exportar.', margin, curY + 6);
+      doc.text('No hay camas para exportar con los filtros actuales.', margin, curY + 6);
       doc.save(`dietas-${new Date().toISOString().slice(0, 10)}.pdf`);
       return;
     }
@@ -1027,17 +1043,23 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       return text.length > maxChars ? text.substring(0, maxChars - 1) + '…' : text;
     };
 
+    // Colores de estado (mismo criterio que el Mapa de Camas) para el punto de la col. Estado.
+    const statusDot: Record<string, [number, number, number]> = {
+      [BedStatus.AVAILABLE]:   [16, 185, 129],
+      [BedStatus.OCCUPIED]:    [220, 38, 38],
+      [BedStatus.PREPARATION]: [245, 158, 11],
+      [BedStatus.ASSIGNED]:    [99, 102, 241],
+      [BedStatus.DISABLED]:    [148, 163, 184],
+    };
+
     rows.forEach((row, i) => {
-      if (!row) return;
-      // Wrap multi-línea para Dieta, Ayuno y Observaciones (las 3 columnas que pueden
-      // exceder el ancho). Hab/Cama/Sector/Paciente quedan en una sola línea.
-      // La altura de la fila se calcula como el máximo entre las tres columnas wrapeadas.
+      // Wrap multi-línea para Dieta, Ayuno y Observaciones (las 3 columnas que pueden exceder
+      // el ancho). El resto queda en una sola línea. La altura de la fila se calcula como el
+      // máximo entre las tres columnas wrapeadas.
       doc.setFontSize(6.5);
-      const dietaLines: string[] = doc.splitTextToSize(row.dieta || '—', colWidths[4] - 3);
-      const ayunoLines: string[] = doc.splitTextToSize(row.ayuno,         colWidths[5] - 3);
-      const obsLines:   string[] = row.obs
-        ? doc.splitTextToSize(row.obs, colWidths[6] - 3)
-        : [''];
+      const dietaLines: string[] = row.dieta ? doc.splitTextToSize(row.dieta, colWidths[5] - 3) : [''];
+      const ayunoLines: string[] = row.ayuno ? doc.splitTextToSize(row.ayuno, colWidths[6] - 3) : [''];
+      const obsLines:   string[] = row.obs   ? doc.splitTextToSize(row.obs,   colWidths[7] - 3) : [''];
       const maxLines = Math.max(dietaLines.length, ayunoLines.length, obsLines.length);
       const rowH = Math.max(rowHBase, maxLines * 3.2 + 2.5);
 
@@ -1052,35 +1074,45 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       doc.setFontSize(6.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(30, 41, 59);
       const textY = curY + rowHBase - 1.8;
 
-      doc.text(row.roomCode,                            colX[0] + 1.5, textY);
-      doc.text(row.bedCode,                             colX[1] + 1.5, textY);
-      doc.text(truncate(row.area,        colWidths[2]), colX[2] + 1.5, textY);
-      doc.text(truncate(row.patientName, colWidths[3]), colX[3] + 1.5, textY);
+      doc.text(row.roomCode,                     colX[0] + 1.5, textY);
+      doc.text(row.bedCode,                      colX[1] + 1.5, textY);
+      doc.text(truncate(row.area, colWidths[2]), colX[2] + 1.5, textY);
+
+      // Estado — punto de color (como el Mapa de Camas) + texto
+      const dot = statusDot[row.status] ?? [148, 163, 184];
+      doc.setFillColor(dot[0], dot[1], dot[2]);
+      doc.circle(colX[3] + 2, curY + rowHBase / 2, 1, 'F');
+      doc.setTextColor(71, 85, 105);
+      doc.text(truncate(row.estado, colWidths[3] - 4), colX[3] + 4.5, textY);
+
+      // Paciente
+      doc.setTextColor(30, 41, 59);
+      doc.text(truncate(row.patientName, colWidths[4]), colX[4] + 1.5, textY);
 
       // Dieta — verde, multi-línea
       doc.setTextColor(4, 120, 87);
       dietaLines.forEach((line, li) => {
-        doc.text(line, colX[4] + 1.5, curY + 3 + li * 3.2);
+        doc.text(line, colX[5] + 1.5, curY + 3 + li * 3.2);
       });
 
-      // Ayuno — ámbar si hay horas, gris si "—", multi-línea
-      if (row.ayuno !== '—') doc.setTextColor(146, 64, 14);
-      else                    doc.setTextColor(148, 163, 184);
+      // Ayuno — ámbar si hay horas, gris si "—" o vacío, multi-línea
+      if (row.ayuno && row.ayuno !== '—') doc.setTextColor(146, 64, 14);
+      else                                 doc.setTextColor(148, 163, 184);
       ayunoLines.forEach((line, li) => {
-        doc.text(line, colX[5] + 1.5, curY + 3 + li * 3.2);
+        doc.text(line, colX[6] + 1.5, curY + 3 + li * 3.2);
       });
 
       // Observaciones — multi-línea
       doc.setTextColor(30, 41, 59);
       obsLines.forEach((line, li) => {
-        doc.text(line, colX[6] + 1.5, curY + 3 + li * 3.2);
+        doc.text(line, colX[7] + 1.5, curY + 3 + li * 3.2);
       });
 
       curY += rowH;
     });
 
     doc.save(`dietas-${new Date().toISOString().slice(0, 10)}.pdf`);
-  }, [filteredBeds, currentUser, enrichBedsForPdf]);
+  }, [filteredBeds, currentUser, enrichBedsForPdf, bedTicketMap]);
 
   // ── Status helpers ────────────────────────────────────────────────────────
   const getStatusColor = (status: BedStatus) => {

@@ -203,10 +203,14 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     // ── Acciones de Admisión/Admin (tab activeRole=ADMIN/ADMISSION) ──────────
     // Cada botón gateado por su permiso fino.
     if (activeRole === Role.ADMISSION || activeRole === Role.ADMIN) {
-      const canMutate = ticket.status !== TicketStatus.COMPLETED && ticket.status !== TicketStatus.REJECTED && ticket.canCancel !== false;
+      // notTerminal: el traslado sigue activo (no Consolidado ni Cancelado).
+      const notTerminal = ticket.status !== TicketStatus.COMPLETED && ticket.status !== TicketStatus.REJECTED;
+      // Editar sigue bloqueado tras intervención de azafata (canCancel === false).
+      const canMutate = notTerminal && ticket.canCancel !== false;
       const showConsolidate = ticket.status === TicketStatus.WAITING_CONSOLIDATION && can(currentUser, 'consolidar');
       const showEdit        = canMutate && can(currentUser, 'editar_ticket')   && !!onEdit;
-      const showCancel      = canMutate && can(currentUser, 'cancelar_ticket') && !!onReject;
+      // Cancelar disponible en cualquier etapa activa (independiente de la intervención).
+      const showCancel      = notTerminal && can(currentUser, 'cancelar_ticket') && !!onReject;
       if (!showConsolidate && !showEdit && !showCancel) return null;
       return (
         <div className={cn("flex gap-1.5", isMobile ? "flex-col" : "flex-row")}>
