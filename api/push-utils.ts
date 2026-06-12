@@ -282,8 +282,17 @@ export async function sendPushToSubscribers(params: PushParams): Promise<void> {
   if (SITE_ID && NOTIF_LIST_ID) {
     const notifPath = `/sites/${SITE_ID}/lists/${NOTIF_LIST_ID}/items`;
     const now = new Date().toISOString();
+    // Una sola fila por USUARIO por evento (no por suscripción). La ENTREGA de push
+    // sí va a todos los endpoints del usuario (loop de arriba), pero el registro in-app
+    // de la campanita debe ser único: un user con N navegadores/dispositivos suscriptos
+    // no debe ver la misma notif N veces. Dedup por userId conservando la primera sub
+    // relevante (Title/Message solo varían por rol CATERING, que es per-usuario, así que
+    // cualquier representante del usuario produce la misma fila).
+    const notifTargets = Array.from(
+      new Map(relevant.map(s => [String(s.userId), s])).values(),
+    );
     Promise.allSettled(
-      relevant.map(async (sub) => {
+      notifTargets.map(async (sub) => {
         try {
           const isCatering = sub.role.toUpperCase() === 'CATERING';
           const notifTitle = isCatering ? (params.cateringTitle ?? params.title) : params.title;

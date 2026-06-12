@@ -1133,3 +1133,27 @@ Resultado del bug: Catering recibía "Nueva Solicitud de Traslado" (NEW_TICKET) 
 **Qué:** la dieta solo notifica cuando una fila existente cambia de hash; NO usa la rama "admisión ≤24h" que sí tiene el ayuno (§18.11).
 
 **Por qué:** decisión de negocio confirmada con el cliente — el ayuno recién cargado es operativamente urgente para catering (preparar/suspender comida según horario), la dieta de un ingreso no agrega valor como alerta. Mantener la dieta en bootstrap silencioso evita ruido innecesario.
+
+## 20. Decisiones recientes (2026-06-12)
+
+### 20.1. Una fila de `10.Notificaciones` por usuario, no por suscripción
+
+**Qué:** `sendPushToSubscribers` deduplica `relevant` por `userId` antes de escribir en `10.Notificaciones` (una fila por usuario por evento). La ENTREGA de push se mantiene por endpoint.
+
+**Por qué:** el loop de guardado reusaba el array de suscripciones (una por endpoint en `09.PushSubscriptions`), generando N filas idénticas por evento para usuarios multi-dispositivo → campanita duplicada/triplicada (565 filas de exceso sobre 257 eventos reales en un día, confirmado con query read-only). El registro in-app es conceptualmente **por-usuario**; la entrega es **por-dispositivo**. Separar ambas dimensiones arregla la campanita sin perder pushes en ningún dispositivo.
+
+**Alternativas descartadas:**
+- **Deduplicar también la entrega de push:** un usuario con celular + PC recibiría el aviso del SO en un solo dispositivo. Operativamente indeseable (tablets compartidas de azafatas, admin multi-dispositivo). El default seguro es deduplicar **solo la escritura**.
+- **Solo arreglar el render (sin tocar el write):** dejaría `10.Notificaciones` creciendo con basura y el badge server-side (`Status_N='Enviada'`) inflado. El render-dedup se suma como defensa, no como cura.
+
+### 20.2. Dedup defensivo en el render de la campanita (defense-in-depth)
+
+**Qué:** el memo `bellNotifications` colapsa filas duplicadas por `ticketId|type|minuto` (fallback `type|title|message|minuto` cuando no hay `ticketId`), conservando el id de SP y haciendo OR del flag `isRead`.
+
+**Por qué:** aunque el fix write-side (20.1) corta la fuente, las filas ya escritas —y cualquier duplicado en vuelo durante el deploy— seguirían visibles. El render-dedup garantiza que el usuario nunca vea un duplicado, sin depender de limpiar SP. **Trade-off aceptado:** el bucket de minuto puede fusionar dos transiciones reales del mismo ticket en el mismo minuto (caso raro); timestamps espaciados se preservan.
+
+### 20.3. Limpieza de duplicados: read+delete conservador por `Fecha_N` exacto
+
+**Qué:** el one-off borra solo filas con `UserId_N|TicketId_N|Type_N|Fecha_N` idéntico (el fanout por suscripción), conservando 1 por grupo. Hard delete, con dry-run obligatorio antes de `--apply`.
+
+**Por qué:** los duplicados de fanout son byte-idénticos salvo el id de SP — no son registros de negocio a preservar (la regla de **soft-delete** aplica a tickets/usuarios/aislamientos, no a copias redundantes de notificaciones ni a tokens efímeros). Usar `Fecha_N` **exacto** (no por minuto) evita borrar eventos legítimamente separados en el tiempo (cambios reales de dieta/status a lo largo del día); esos los colapsa el render-dedup en la UI sin tocarlos en SP.

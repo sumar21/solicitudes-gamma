@@ -2628,3 +2628,35 @@ Evita notis falsas ("X removido") y que un payload vacío pise el cache bueno.
 ### Mobile cards: `break-words` en vez de `truncate`
 
 En tarjetas (no tablas) donde el ancho es limitado, preferir que el texto baje de línea antes que cortarlo con `…`. `truncate` esconde info crítica (ej. el destino de un traslado en mobile); `break-words leading-tight` la muestra completa creciendo en alto. Las tablas de desktop sí mantienen `whitespace-nowrap` a propósito. Aplicado en las tarjetas mobile de [views/RequestsView.tsx](views/RequestsView.tsx) y [views/HistoryView.tsx](views/HistoryView.tsx).
+
+## Nuevos patrones (2026-06-12)
+
+### Dedup de fanout: una escritura lógica aunque el loop recorra N destinatarios
+
+Cuando un loop itera sobre destinatarios de ENTREGA (suscripciones push) pero además persiste un REGISTRO lógico (fila in-app), separar ambas dimensiones: la entrega es por destinatario, el registro es por entidad lógica (usuario). Deduplicar **antes** de la escritura:
+
+```ts
+// Entrega: sigue siendo por endpoint (todos los dispositivos reciben el push)
+relevant.map(sub => webpush.sendNotification(...));
+// Registro: uno por usuario (no por endpoint) — evita N filas idénticas en la campanita
+const notifTargets = Array.from(new Map(relevant.map(s => [String(s.userId), s])).values());
+notifTargets.map(sub => graphFetch(notifPath, { method: 'POST', ... }));
+```
+
+Aplicado en `sendPushToSubscribers` ([api/push-utils.ts](api/push-utils.ts)). Regla general: si dos dimensiones (entregar vs. registrar, notificar vs. auditar) comparten el mismo array por comodidad, revisar si una de ellas necesita dedup por su clave lógica.
+
+### Dedup defensivo en el render por clave de evento (con fallback sin id)
+
+En listas que vienen de SP sin garantía de unicidad lógica, colapsar en el render por una clave de evento estable. Si algunas filas no tienen id natural (ej. `DIET_CHANGE`/`FASTING_CHANGE` sin `ticketId`), usar un fallback por contenido:
+
+```ts
+const dedupKey = (n: Notification) => n.ticketId
+  ? `${n.ticketId}|${n.type}|${n.timestamp}`
+  : `${n.type}|${n.title}|${n.message}|${n.timestamp}`;
+```
+
+Conservar el id real de SP (para acciones como marcar-leída) y combinar flags (OR de `isRead`). El bucket temporal sale del string ya truncado a minuto por `formatDateTime`. Aplicado en `bellNotifications` ([hooks/useHospitalState.ts](hooks/useHospitalState.ts)). Es defensa en profundidad: protege al usuario aunque la fuente (write-side) escriba un duplicado.
+
+### Scripts de diagnóstico/limpieza read-only contra SP con dry-run + `--apply`
+
+Para investigar o remediar datos en SharePoint sin depender de la app: scripts `.mjs` standalone en [scripts/](scripts/) que parsean `.env.local` a mano (tsx/node no lo auto-cargan), obtienen token Graph por `client_credentials` y consultan vía REST con `Prefer: HonorNonIndexedQueriesWarningMayFailRandomly`. Convención de seguridad: **read-only por default** (agrupan y reportan); las mutaciones van detrás de un flag explícito `--apply` (sin él, **dry-run** que solo imprime qué haría y un sample de ids). Hora AR = `UTC-3` para alinear con los timestamps que ve el usuario. Ejemplos: `_diag-notif-dupes.mjs` (diagnóstico de duplicados + subs por usuario) y `_cleanup-notif-dupes.mjs` (limpieza conservadora por `Fecha_N` exacto).

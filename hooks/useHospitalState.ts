@@ -990,7 +990,27 @@ export const useHospitalState = () => {
     const history = currentUser
       ? notificationHistory.filter(n => canReceiveNotif(currentUser, n.type)) // defensivo si cambió el rol
       : notificationHistory;
-    return [...liveExtra, ...history];
+    // Defensa en profundidad: colapsar filas duplicadas que el fanout por suscripción
+    // (un POST a 10.Notificaciones por endpoint) pudo haber dejado en SP. Key por evento:
+    // ticketId|type|minuto, con fallback type|title|message|minuto para DIET/FASTING
+    // (que no llevan ticketId). El "minuto" sale del timestamp ya truncado a minuto por
+    // formatDateTime ("DD/MM/YY HH:mm"), así que duplicados con idéntico Fecha_N colapsan.
+    // Conserva el id REAL de SP (para marcar-como-leída) y queda no-leída si CUALQUIER
+    // duplicada está no-leída. Ambas listas vienen newest-first → se conserva la más nueva.
+    const dedupKey = (n: Notification) =>
+      n.ticketId
+        ? `${n.ticketId}|${n.type}|${n.timestamp}`
+        : `${n.type}|${n.title}|${n.message}|${n.timestamp}`;
+    const merged = new Map<string, Notification>();
+    for (const n of [...liveExtra, ...history]) {
+      const k = dedupKey(n);
+      const prev = merged.get(k);
+      if (!prev) { merged.set(k, n); continue; }
+      const keepId = !prev.id.startsWith('NOTIF-') ? prev.id
+                   : (!n.id.startsWith('NOTIF-') ? n.id : prev.id);
+      merged.set(k, { ...prev, id: keepId, isRead: prev.isRead && n.isRead });
+    }
+    return [...merged.values()];
   }, [notificationHistory, filteredNotifications, currentUser]);
 
   const filteredTickets = useMemo(() => {
