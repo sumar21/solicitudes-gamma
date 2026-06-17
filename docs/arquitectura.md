@@ -238,6 +238,7 @@ Verifica que el usuario acceda desde una ubicación autorizada:
 | `api/roles.ts` | `99.ABMRoles_Traslados` | CRUD de roles con permisos por módulo |
 | `api/isolations.ts` | `08.Aislamientos` | Activar/desactivar aislamiento por paciente |
 | `api/ticket-events.ts` | `08.DetalleTraslados` | Log de movimientos por ticket |
+| `api/ticket-observations.ts` | `13.ObservacionesTraslados` | Observaciones por traslado ligadas al status (auditoría) |
 | `api/notifications.ts` | `10.Notificaciones` | Historial de notificaciones por usuario |
 | `api/push-subscribe.ts` | `09.PushSubscriptions` | Registro de suscripciones Web Push |
 
@@ -380,6 +381,7 @@ Las suscripciones expiradas (HTTP 404/410) se limpian automáticamente.
 | `08.Aislamientos` | `0a36e3e2-1ca2-4951-86f9-afd288465022` | Aislamientos activos por paciente |
 | `09.PushSubscriptions` | `648fde7b-89d2-40ac-bc4a-63661508b50a` | Suscripciones Web Push |
 | `10.Notificaciones` | `240f00dd-715b-4c78-9661-3147b7650a0f` | Historial de notificaciones |
+| `13.ObservacionesTraslados` | `1c524476-f88f-47c8-ad22-4b3f7f429e46` | Observaciones por traslado ligadas al status (auditoría) |
 | `99.ABMRoles_Traslados` | `68836bbe-18c5-4cb2-8cc6-e21ecae96710` | Roles y permisos |
 | `99.ABM_GeoIPS` | `c30a13f0-070a-45bf-9ff2-415b36325af5` | IPs y geolocalizaciones permitidas |
 
@@ -635,6 +637,7 @@ Para permitir que producción y testing convivan en las **mismas listas SharePoi
 | `09.PushSubscriptions` | `Entorno_PS` | [api/push-subscribe.ts](api/push-subscribe.ts) y [api/push-utils.ts](api/push-utils.ts) `fetchSubscriptions` |
 | `10.Notificaciones` | `Entorno_N` | [api/notifications.ts](api/notifications.ts) GET y POST desde push-utils |
 | `11.DietaSnapshot` | `Entorno_DS` | [api/cron-diet-changes.ts](api/cron-diet-changes.ts) bulk read y upsert |
+| `13.ObservacionesTraslados` | `Entorno_OBS` | [api/ticket-observations.ts](api/ticket-observations.ts) GET y POST |
 
 `08.DetalleTraslados` no tiene columna propia — filtrado por transitividad vía `IDUnivocoTraslado_DT` (los IDs son únicos globales y el frontend solo conoce los del entorno actual).
 

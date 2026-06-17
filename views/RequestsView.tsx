@@ -1,18 +1,19 @@
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Ticket, Role, TicketStatus, SortConfig, SortKey, WorkflowType, User, Bed, BedStatus, Area, IsolationType } from '../types';
 import { can } from '../lib/permissions';
 import {
   Search, Plus, Timer, Clock, ArrowRightLeft,
   ChevronUp, ChevronDown, CheckCircle2, BedDouble, Users, ClipboardCheck, AlertCircle, X, XCircle, Info, MapPin, Pencil
 } from '../components/Icons';
-import { ShieldAlert } from 'lucide-react';
+import { ShieldAlert, MessageSquarePlus } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Card } from '../components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Badge } from '../components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table';
+import { Dialog, DialogContent, DialogTitle } from '../components/ui/dialog';
 import { StatusBadge } from '../components/StatusBadge';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { cn, formatBedName, formatDateTime, effectiveHostessAreas } from '../lib/utils';
@@ -37,6 +38,7 @@ interface RequestsViewProps {
   onConsolidate: (id: string) => void;
   onReject?: (id: string) => void;
   onEdit?: (id: string) => void;
+  onAddObservation?: (id: string, texto: string) => Promise<boolean>;
   currentUser: User | null;
   beds: Bed[];
   isolatedPatients?: Map<string, IsolationType[]>;
@@ -67,8 +69,49 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   searchTerm, setSearchTerm, sortConfig, onSort,
   onNewRequest, onValidateReason, onAssignBed,
   onHousekeepingAction, onStartTransport, onCompleteTransport,
-  onRoomReady, onConfirmReception, onConsolidate, onReject, onEdit, currentUser, beds, isolatedPatients
+  onRoomReady, onConfirmReception, onConsolidate, onReject, onEdit, onAddObservation, currentUser, beds, isolatedPatients
 }) => {
+
+  // Observaciones por traslado: modal para que las azafatas dejen una nota ligada al
+  // status actual del ticket (se ve luego en la auditoría del historial).
+  const [obsTicket, setObsTicket] = useState<Ticket | null>(null);
+  const [obsText, setObsText]     = useState('');
+  const [obsSaving, setObsSaving] = useState(false);
+  const [obsError, setObsError]   = useState('');
+
+  const openObs = (ticket: Ticket) => { setObsTicket(ticket); setObsText(''); setObsError(''); };
+  const closeObs = () => { if (!obsSaving) { setObsTicket(null); setObsText(''); setObsError(''); } };
+  const submitObs = async () => {
+    if (!obsTicket || !onAddObservation) return;
+    const text = obsText.trim();
+    if (!text) { setObsError('Escribí una observación.'); return; }
+    setObsSaving(true); setObsError('');
+    const ok = await onAddObservation(obsTicket.id, text);
+    setObsSaving(false);
+    if (ok) { setObsTicket(null); setObsText(''); }
+    else setObsError('No se pudo guardar. Reintentá.');
+  };
+
+  // Botón "Observación" — disponible en tickets activos (no consolidados ni cancelados).
+  const renderObsButton = (ticket: Ticket, isMobile = false) => {
+    if (!onAddObservation) return null;
+    const active = ticket.status !== TicketStatus.COMPLETED && ticket.status !== TicketStatus.REJECTED;
+    if (!active) return null;
+    const size = isMobile ? 'default' : 'sm';
+    const btnClass = isMobile
+      ? 'w-full h-11 text-xs font-black uppercase tracking-widest rounded-xl'
+      : 'h-8 text-[10px] uppercase font-bold tracking-tight';
+    return (
+      <Button
+        size={size}
+        variant="outline"
+        className={cn(btnClass, 'border-slate-200 text-slate-600 hover:bg-slate-50')}
+        onClick={() => openObs(ticket)}
+      >
+        <MessageSquarePlus className="w-3.5 h-3.5 mr-2" /> Observación
+      </Button>
+    );
+  };
 
   const getTicketIsolationTypes = (ticket: Ticket): IsolationType[] => {
     if (!isolatedPatients?.size) return [];
@@ -401,6 +444,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
               )}
 
               {renderActionButtons(ticket, true)}
+              {renderObsButton(ticket, true)}
             </Card>
           ))
         )}
@@ -522,7 +566,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                         )}
                       </div>
                     </TableCell>
-                    <TableCell className="text-right pr-6"><div className="flex justify-end gap-2">{renderActionButtons(ticket)}</div></TableCell>
+                    <TableCell className="text-right pr-6"><div className="flex justify-end gap-2">{renderActionButtons(ticket)}{renderObsButton(ticket)}</div></TableCell>
                   </TableRow>
                 ))
               )}
@@ -530,6 +574,51 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
           </Table>
         </div>
       </Card>
+
+      {/* Modal: agregar observación ligada al status actual del ticket */}
+      <Dialog open={!!obsTicket} onOpenChange={(open) => { if (!open) closeObs(); }}>
+        <DialogContent className="sm:max-w-[480px] p-0 overflow-hidden rounded-2xl">
+          <div className="px-5 py-4 border-b border-slate-100">
+            <DialogTitle className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <MessageSquarePlus className="w-4 h-4 text-slate-500" /> Nueva observación
+            </DialogTitle>
+            {obsTicket && (
+              <p className="text-[11px] text-slate-400 font-medium mt-1">
+                {obsTicket.patientName} · {obsTicket.id} · <span className="font-semibold text-slate-600">{obsTicket.status}</span>
+              </p>
+            )}
+          </div>
+          <div className="p-5 space-y-3">
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Anotá por qué se demora o cualquier detalle de este paso (ej.: familiar ausente, faltan
+              prendas del paciente anterior). Queda guardada con el estado actual para la auditoría.
+            </p>
+            <textarea
+              value={obsText}
+              onChange={e => setObsText(e.target.value)}
+              maxLength={500}
+              rows={4}
+              placeholder="Escribí la observación…"
+              autoFocus
+              className="w-full rounded-xl border border-slate-200 p-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none resize-none"
+            />
+            {obsError && <p className="text-red-500 text-xs font-bold">{obsError}</p>}
+          </div>
+          <div className="px-5 py-3 bg-slate-50/80 flex items-center justify-end gap-2 border-t border-slate-100">
+            <Button variant="outline" size="sm" className="h-9 rounded-xl" onClick={closeObs} disabled={obsSaving}>
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              className="h-9 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white"
+              onClick={submitObs}
+              disabled={obsSaving || !obsText.trim()}
+            >
+              {obsSaving ? 'Guardando…' : 'Guardar observación'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

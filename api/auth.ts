@@ -82,14 +82,18 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    // Buscar usuario activo (internal field names from SP list)
+    // Buscar usuario activo (internal field names from SP list). Aceptamos tanto el
+    // usuario de app (UsuarioApp_Usr) como el correo (Mail_U) en el mismo campo, así
+    // los directores pueden ingresar con su mail sin saber su "usuario".
+    const safeValue = String(username).replace(/'/g, "''");
     const filter = [
       `fields/Status_U eq 'Activo'`,
-      `fields/UsuarioApp_Usr eq '${String(username).replace(/'/g, "''")}'`,
+      `(fields/UsuarioApp_Usr eq '${safeValue}' or fields/Mail_U eq '${safeValue}')`,
     ].join(' and ');
 
+    // $top=2 para detectar ambigüedad (UsuarioApp_Usr y Mail_U deberían ser únicos).
     const spRes = await graphFetch(
-      `/sites/${SITE_ID}/lists/${LIST_ID}/items?$expand=fields&$filter=${encodeURIComponent(filter)}&$top=1`,
+      `/sites/${SITE_ID}/lists/${LIST_ID}/items?$expand=fields&$filter=${encodeURIComponent(filter)}&$top=2`,
       { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
     );
 
@@ -105,8 +109,14 @@ export default async function handler(req: any, res: any) {
       return res.status(401).json({ error: 'Usuario no encontrado o inactivo' });
     }
 
-    const fields = items[0].fields as Record<string, unknown>;
-    const spId   = String(items[0].id);
+    // Si hay más de una coincidencia (dato inconsistente en SP), priorizamos el match
+    // exacto por usuario de app sobre el de correo para que el login sea determinístico.
+    const norm  = String(username).trim().toLowerCase();
+    const match = items.length > 1
+      ? (items.find(it => String((it.fields as Record<string, unknown>)?.UsuarioApp_Usr ?? '').trim().toLowerCase() === norm) ?? items[0])
+      : items[0];
+    const fields = match.fields as Record<string, unknown>;
+    const spId   = String(match.id);
 
     // Verificar contraseña
     if (String(fields.Password_Usr ?? '') !== password) {

@@ -205,13 +205,13 @@ export default function App() {
 
           <form onSubmit={actions.handleLogin} className="space-y-5">
             <div className="space-y-1.5">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest ml-1">Correo Electrónico</Label>
+              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest ml-1">Usuario o Correo Electrónico</Label>
               <div className="relative">
                 <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <Input
                   type="text"
                   autoComplete="username"
-                  placeholder="nombre@grupogamma.com"
+                  placeholder="azafatap5 o correo@grupogamma.com"
                   value={state.loginEmail}
                   onChange={e => actions.setLoginEmail(e.target.value)}
                   className="h-12 pl-11 rounded-xl border-emerald-200 focus:border-emerald-500 focus:ring-emerald-500/20"
@@ -601,6 +601,7 @@ export default function App() {
               onConsolidate={actions.handleConsolidate}
               onReject={(id) => { setRejectTicketId(id); setIsRejectOpen(true); }}
               onEdit={(id) => setEditTicketId(id)}
+              onAddObservation={actions.handleAddObservation}
               currentUser={state.currentUser}
               beds={state.beds}
               isolatedPatients={state.isolatedPatients}

@@ -292,6 +292,14 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     return result;
   }, [beds, currentUser, searchFilter, areaFilters, statusFilters, allAreas.length, bedTicketMap, showIsolatedOnly, isolatedBeds, showDietOnly, dietBeds, showFastingOnly, fastingBeds, financierFilters, physicianFilters]);
 
+  // Conteo de camas para el badge del header: excluimos HRA ("Sala de Espera"),
+  // que son sillones de pre-internación y no camas reales. El grid y los PDFs
+  // siguen mostrando HRA; solo el número del contador la deja afuera.
+  const bedCount = useMemo(
+    () => filteredBeds.filter(bed => bed.area !== Area.HRA).length,
+    [filteredBeds],
+  );
+
   // Group beds by Area, ordered with HIT first.
   // Gamma a veces devuelve las camas de un piso en orden arbitrario (mezcla
   // 405-1 antes de 401-2, etc.). Forzamos el orden interno por label con
@@ -354,9 +362,15 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       if (!enrichedByArea[bed.area]) enrichedByArea[bed.area] = [];
       enrichedByArea[bed.area].push(bed);
     });
+    // Orden por área (AREA_ORDER) y, DENTRO de cada área, por label con collator numérico.
+    // PROGAL devuelve las camas de algunos pisos (ej. Piso 8) en orden arbitrario; este sort
+    // las normaliza igual que el grid en pantalla (401, 402, … 805, 806).
     const enrichedAreaEntries = AREA_ORDER
       .filter(a => enrichedByArea[a])
-      .map(a => [a, enrichedByArea[a]] as [string, Bed[]]);
+      .map(a => [
+        a,
+        [...enrichedByArea[a]].sort((x, y) => x.label.localeCompare(y.label, 'es', { numeric: true })),
+      ] as [string, Bed[]]);
 
     // Inline helper: rasterise the SVG logo to a PNG data-URL
     const svgToLogoPng = (): Promise<string | null> => {
@@ -448,10 +462,10 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     };
 
     // ── Column layout ────────────────────────────────────────────────────────
-    // Total = 268mm; A4 landscape with 10mm margins leaves 277mm useful → cabe.
-    // Hab.(13) | Cama(9) | Estado(20) | Paciente(40) | DNI(19) | Edad(9) | Sexo(8) | Tipo(11) | Ingreso(22) | Días(9) | Cirugía(18) | Evento(18) | Profesional(36) | Financiador(36)
-    const colWidths  = [13, 9, 20, 40, 19, 9, 8, 11, 22, 9, 18, 18, 36, 36];
-    const colHeaders = ['Hab.', 'Cama', 'Estado', 'Paciente', 'DNI', 'Edad', 'Sexo', 'Tipo', 'Ingreso', 'Días', 'Cirugía', 'Evento', 'Profesional', 'Financiador'];
+    // Total = 272mm; A4 landscape with 10mm margins leaves 277mm useful → cabe.
+    // Hab.(13) | Cama(9) | Estado(20) | Paciente(34) | DNI(18) | Edad(8) | Sexo(8) | Tipo(11) | Ingreso(20) | Días(8) | Cirugía(16) | Evento(16) | Profesional(28) | Financiador(28) | Diagnóstico(35)
+    const colWidths  = [13, 9, 20, 34, 18, 8, 8, 11, 20, 8, 16, 16, 28, 28, 35];
+    const colHeaders = ['Hab.', 'Cama', 'Estado', 'Paciente', 'DNI', 'Edad', 'Sexo', 'Tipo', 'Ingreso', 'Días', 'Cirugía', 'Evento', 'Profesional', 'Financiador', 'Diagnóstico'];
     const rowH = 6;
     const tableWidth = colWidths.reduce((s, w) => s + w, 0);
 
@@ -638,6 +652,11 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
           // Col 13: Financiador
           const maxFinChars = Math.floor(colWidths[13] / 1.6);
           doc.text(financier.substring(0, maxFinChars), colX[13] + 1.5, textY);
+
+          // Col 14: Diagnóstico (del enrich; puede ser largo → se trunca al ancho de columna)
+          const diag = isOccupied ? (bed.diagnosis ?? '—') : '';
+          const maxDiagChars = Math.floor(colWidths[14] / 1.6);
+          doc.text(diag.substring(0, maxDiagChars), colX[14] + 1.5, textY);
         } else {
           // Non-occupied: just show bed code in patient column (dimmed)
           doc.setTextColor(148, 163, 184);
@@ -722,10 +741,10 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       doc.line(margin, 19, pageW - margin, 19);
     };
 
-    // Total = 269mm; A4 landscape with 10mm margins leaves 277mm useful → cabe con margen.
-    // Paciente(38) | Hab.(12) | Cama(9) | Sector(20) | Estado(18) | DNI(19) | Edad(9) | Sexo(8) | Tipo(10) | Ingreso(22) | Días(9) | Cirugía(18) | Evento(18) | Profesional(32) | Financiador(27)
-    const colWidths  = [38, 12, 9, 20, 18, 19, 9, 8, 10, 22, 9, 18, 18, 32, 27];
-    const colHeaders = ['Paciente', 'Hab.', 'Cama', 'Sector', 'Estado', 'DNI', 'Edad', 'Sexo', 'Tipo', 'Ingreso', 'Días', 'Cirugía', 'Evento', 'Profesional', 'Financiador'];
+    // Total = 274mm; A4 landscape with 10mm margins leaves 277mm useful → cabe con margen.
+    // Paciente(32) | Hab.(12) | Cama(9) | Sector(17) | Estado(18) | DNI(17) | Edad(9) | Sexo(8) | Tipo(10) | Ingreso(20) | Días(9) | Cirugía(15) | Evento(15) | Profesional(26) | Financiador(22) | Diagnóstico(35)
+    const colWidths  = [32, 12, 9, 17, 18, 17, 9, 8, 10, 20, 9, 15, 15, 26, 22, 35];
+    const colHeaders = ['Paciente', 'Hab.', 'Cama', 'Sector', 'Estado', 'DNI', 'Edad', 'Sexo', 'Tipo', 'Ingreso', 'Días', 'Cirugía', 'Evento', 'Profesional', 'Financiador', 'Diagnóstico'];
     const rowH = 6;
     const tableWidth = colWidths.reduce((s, w) => s + w, 0);
     const colX: number[] = [];
@@ -810,6 +829,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
           physician: isOccupied ? (bed.attendingPhysician ?? '') : '',
           prescriptor: isOccupied ? (bed.prescribingPhysician ?? '') : '',
           financier: isOccupied ? (bed.institution ?? '') : (ticket?.financier ?? ''),
+          diagnosis: isOccupied ? (bed.diagnosis ?? '—') : '',
         };
       })
       .filter(Boolean)
@@ -867,6 +887,8 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       doc.text(prof.substring(0, Math.floor(colWidths[13] / 1.6)), colX[13] + 1.5, textY);
       // Financiador
       doc.text(row.financier.substring(0, Math.floor(colWidths[14] / 1.6)), colX[14] + 1.5, textY);
+      // Diagnóstico (del enrich; puede ser largo → truncado al ancho de columna)
+      doc.text(row.diagnosis.substring(0, Math.floor(colWidths[15] / 1.6)), colX[15] + 1.5, textY);
 
       curY += rowH;
     });
@@ -931,12 +953,16 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     };
 
     // Total = 268mm; A4 landscape 277mm útil → cabe.
-    // Hab(12) | Cama(10) | Sector(14) | Estado(22) | Paciente(38) | Dieta(54) | Ayuno(44) | Observaciones(74)
-    // Reflejamos TODAS las camas del mapa como planilla; la col. Estado lleva un punto de color
-    // como en el Mapa de Camas. Dieta/Ayuno/Obs wrap en múltiples líneas.
-    const colWidths  = [12, 10, 14, 22, 38, 54, 44, 74];
-    const colHeaders = ['Hab.', 'Cama', 'Sector', 'Estado', 'Paciente', 'Dieta', 'Ayuno', 'Observaciones'];
-    const rowHBase = 6;
+    // Hab(12) | Cama(10) | Sector(20) | Estado(26) | Paciente(40) | Dieta(122) | Ayuno(38)
+    // La columna Dieta es UNIFICADA: dieta base + requisitos + detalles (consistencias, notas)
+    // en un solo bloque ordenado (ya no hay columna Observaciones separada). Es ancha y con
+    // fuente más grande (BODY_FONT) para que el texto se lea, admitiendo varias líneas.
+    const colWidths  = [12, 10, 20, 26, 40, 122, 38];
+    const colHeaders = ['Hab.', 'Cama', 'Sector', 'Estado', 'Paciente', 'Dieta', 'Ayuno'];
+    const rowHBase = 6.5;
+    // Tamaño de fuente del cuerpo (antes 6.5pt, recortaba la dieta). Multi-línea en Dieta/Ayuno.
+    const BODY_FONT = 7.5;
+    const LINE_STEP = 3.4; // mm entre líneas wrapeadas a BODY_FONT
     const tableWidth = colWidths.reduce((s, w) => s + w, 0);
     const colX: number[] = [];
     { let cx = margin; for (const w of colWidths) { colX.push(cx); cx += w; } }
@@ -948,7 +974,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     const drawTableHeader = () => {
       doc.setFillColor(226, 232, 240);
       doc.rect(margin, curY, tableWidth, rowHBase, 'F');
-      doc.setFontSize(6); doc.setFont('helvetica', 'bold'); doc.setTextColor(71, 85, 105);
+      doc.setFontSize(7); doc.setFont('helvetica', 'bold'); doc.setTextColor(71, 85, 105);
       colHeaders.forEach((h, i) => { doc.text(h, colX[i] + 1.5, curY + rowHBase - 1.8); });
       curY += rowHBase;
     };
@@ -966,22 +992,44 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       return horas.map(h => `${String(h).padStart(2, '0')}:00`).join(', ');
     };
 
-    // Observación textual: TODAS las respuestas de `diets` que sean texto libre — no
-    // 'sí'/'no' (ya van como chips en la columna Dieta) ni el "tipo" (también va en Dieta).
-    // Antes solo incluía las >25 chars, así que notas cortas como "más puré mixto" o
-    // "almuerzo" se perdían en el PDF aunque sí aparecen en la tarjeta del paciente.
-    const observationsText = (bed: Bed): string => {
+    // Texto UNIFICADO y ordenado de la dieta para el PDF (pedido del cliente: primero la
+    // dieta, luego los requisitos). Reúne en un solo bloque lo que antes estaba partido
+    // entre la columna Dieta (chips) y Observaciones:
+    //   1) Dieta base (entrada "Tipo", ej. "General" / "Liviana con pollo").
+    //   2) Requisitos / condiciones (respuesta "Sí", ej. "Hipertenso", "Renal").
+    //   3) Detalles de texto libre (ej. "Consistencia: Blanda", notas).
+    // Las respuestas "No"/vacías no aportan y se omiten. La "post-procedimiento" se excluye
+    // SOLO de este PDF (pedido del cliente); en la tarjeta y las notificaciones se mantiene.
+    const isPostProc = (desc: string): boolean => {
+      const f = desc.normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      return f === 'post procedimiento' || f === 'progresion post procedimiento';
+    };
+    const formatDietForPDF = (bed: Bed): string => {
       const ds = bed.diets;
       if (!ds || ds.length === 0) return '';
-      const notes = ds.filter(d => {
-        const r = (d.respuesta ?? '').trim();
-        if (!r) return false;
-        const rl = r.toLowerCase();
-        if (rl === 'si' || rl === 'sí' || rl === 'no') return false;            // ya representado en dietTags (chips)
-        if ((d.descripcion ?? '').trim().toLowerCase() === 'tipo') return false; // va en la columna Dieta
-        return true;
-      });
-      return notes.map(d => `${d.descripcion}: ${(d.respuesta ?? '').trim()}`).join(' · ');
+      let base = '';
+      const requisitos: string[] = [];
+      const detalles: string[] = [];
+      for (const d of ds) {
+        const desc = (d.descripcion ?? '').trim();
+        const resp = (d.respuesta ?? '').trim();
+        if (!desc || isPostProc(desc)) continue;
+        const dl = desc.toLowerCase();
+        const rl = resp.toLowerCase();
+        if (dl === 'tipo') {
+          if (resp && rl !== 'no') base = resp;
+        } else if (rl === 'sí' || rl === 'si') {
+          requisitos.push(desc);
+        } else if (rl === 'no' || !resp) {
+          /* respuesta negativa o vacía: no se muestra */
+        } else {
+          detalles.push(`${desc}: ${resp}`);
+        }
+      }
+      const head = [base, ...requisitos].filter(Boolean).join(', ');
+      const tail = detalles.join(' · ');
+      return [head, tail].filter(Boolean).join('  ·  ');
     };
 
     // Planilla de catering: incluimos TODAS las camas del mapa (las mismas que se ven en
@@ -990,7 +1038,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     interface DietaRow {
       status: BedStatus; estado: string;
       roomCode: string; bedCode: string; area: string; patientName: string;
-      dieta: string; ayuno: string; obs: string;
+      dieta: string; ayuno: string;
     }
     const estadoLabel: Record<string, string> = {
       [BedStatus.AVAILABLE]:   'Disponible',
@@ -1014,9 +1062,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       const hasPatientData = isOccupied || inTransit;
       // Nombre: ocupada → de la cama; asignada/en prep. (destino de traslado) → del ticket.
       const patientName = isOccupied ? (bed.patientName ?? '') : (ticket?.patientName ?? '');
-      const dietTags = hasPatientData ? (bed.dietTags ?? []) : [];
       const ayuno = hasPatientData ? fastingSummary(bed) : '';
-      const obs = hasPatientData ? observationsText(bed) : '';
       return {
         status:      bed.status,
         estado:      inTransit ? 'En traslado' : (estadoLabel[bed.status] ?? bed.status),
@@ -1024,9 +1070,8 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
         bedCode:     bed.bedCode ?? '',
         area:        AREA_LABELS[bed.area] ?? bed.area,
         patientName,
-        dieta:       hasPatientData ? (dietTags.join(', ') || '—') : '',
+        dieta:       hasPatientData ? (formatDietForPDF(bed) || '—') : '',
         ayuno:       hasPatientData ? (ayuno || '—') : '',
-        obs,
       };
     });
 
@@ -1037,9 +1082,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       return;
     }
 
-    // Helper: trunca un texto al ancho de columna (chars aprox a fontSize=6.5).
+    // Helper: trunca un texto al ancho de columna (chars aprox a BODY_FONT=7.5pt).
     const truncate = (text: string, colWidth: number): string => {
-      const maxChars = Math.floor(colWidth / 1.4);
+      const maxChars = Math.floor(colWidth / 1.7);
       return text.length > maxChars ? text.substring(0, maxChars - 1) + '…' : text;
     };
 
@@ -1053,15 +1098,14 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     };
 
     rows.forEach((row, i) => {
-      // Wrap multi-línea para Dieta, Ayuno y Observaciones (las 3 columnas que pueden exceder
-      // el ancho). El resto queda en una sola línea. La altura de la fila se calcula como el
-      // máximo entre las tres columnas wrapeadas.
-      doc.setFontSize(6.5);
+      // Wrap multi-línea para Dieta y Ayuno (las columnas que pueden exceder el ancho). El
+      // resto queda en una sola línea. La altura de la fila se calcula como el máximo entre
+      // las columnas wrapeadas. La Dieta usa BODY_FONT (más grande) y una columna ancha.
+      doc.setFontSize(BODY_FONT);
       const dietaLines: string[] = row.dieta ? doc.splitTextToSize(row.dieta, colWidths[5] - 3) : [''];
       const ayunoLines: string[] = row.ayuno ? doc.splitTextToSize(row.ayuno, colWidths[6] - 3) : [''];
-      const obsLines:   string[] = row.obs   ? doc.splitTextToSize(row.obs,   colWidths[7] - 3) : [''];
-      const maxLines = Math.max(dietaLines.length, ayunoLines.length, obsLines.length);
-      const rowH = Math.max(rowHBase, maxLines * 3.2 + 2.5);
+      const maxLines = Math.max(dietaLines.length, ayunoLines.length);
+      const rowH = Math.max(rowHBase, maxLines * LINE_STEP + 3);
 
       ensurePage(rowH);
 
@@ -1071,8 +1115,10 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.1);
       doc.line(margin, curY + rowH, margin + tableWidth, curY + rowH);
 
-      doc.setFontSize(6.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(30, 41, 59);
-      const textY = curY + rowHBase - 1.8;
+      doc.setFontSize(BODY_FONT); doc.setFont('helvetica', 'normal'); doc.setTextColor(30, 41, 59);
+      const textY = curY + rowHBase - 1.9;
+      // Inicio vertical de las celdas multi-línea (Dieta/Ayuno).
+      const lineY0 = curY + 3.2;
 
       doc.text(row.roomCode,                     colX[0] + 1.5, textY);
       doc.text(row.bedCode,                      colX[1] + 1.5, textY);
@@ -1089,23 +1135,17 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       doc.setTextColor(30, 41, 59);
       doc.text(truncate(row.patientName, colWidths[4]), colX[4] + 1.5, textY);
 
-      // Dieta — verde, multi-línea
+      // Dieta — verde, unificada y multi-línea
       doc.setTextColor(4, 120, 87);
       dietaLines.forEach((line, li) => {
-        doc.text(line, colX[5] + 1.5, curY + 3 + li * 3.2);
+        doc.text(line, colX[5] + 1.5, lineY0 + li * LINE_STEP);
       });
 
       // Ayuno — ámbar si hay horas, gris si "—" o vacío, multi-línea
       if (row.ayuno && row.ayuno !== '—') doc.setTextColor(146, 64, 14);
       else                                 doc.setTextColor(148, 163, 184);
       ayunoLines.forEach((line, li) => {
-        doc.text(line, colX[6] + 1.5, curY + 3 + li * 3.2);
-      });
-
-      // Observaciones — multi-línea
-      doc.setTextColor(30, 41, 59);
-      obsLines.forEach((line, li) => {
-        doc.text(line, colX[7] + 1.5, curY + 3 + li * 3.2);
+        doc.text(line, colX[6] + 1.5, lineY0 + li * LINE_STEP);
       });
 
       curY += rowH;
@@ -1203,7 +1243,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
           <div className="flex items-center gap-1.5 ml-auto">
             <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-50 border border-slate-100 text-[10px] md:text-xs font-black text-slate-500 uppercase tracking-wider">
               <BedDouble className="h-3 w-3 text-slate-400" />
-              <span>{filteredBeds.length} camas</span>
+              <span>{bedCount} camas</span>
             </div>
 
             {/* Mobile: toggle de filtros — colapsa los chips para no ocupar media pantalla.

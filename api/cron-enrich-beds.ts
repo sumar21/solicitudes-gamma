@@ -16,6 +16,7 @@ import { getToken, fetchWithTimeout, simpleHash, GammaSector } from './gamma-cli
 import { buildEnrich, type EnrichResult } from './enrich-core.js';
 import type { FastingSummary } from './ayunos.js';
 import { sendPushToSubscribers } from './push-utils.js';
+import { formatRoomForCatering } from './room-formatter.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = '443c4ff0-bc98-43ef-a49c-7fd91cc63734'; // 12.EnrichCamas
@@ -209,7 +210,7 @@ export default async function handler(req: any, res: any) {
     // área y necesita el nombre legible).
     interface OccBed {
       patientCode: string; eventOrigin: string; eventNumber: number;
-      areaName: string; patientName: string;
+      areaName: string; patientName: string; roomName: string;
     }
     const beds: OccBed[] = [];
     for (const sector of occData) {
@@ -223,6 +224,10 @@ export default async function handler(req: any, res: any) {
             patientCode: code, eventOrigin: origen, eventNumber: numero,
             areaName: String(sector.nombre ?? '').trim(),
             patientName: String(bed.paciente ?? '').trim(),
+            // Habitación legible para el cuerpo del push a Catering. NO entra al hash
+            // de detección de cambios (ver pushBody/dietPushBody) para que un cambio
+            // de cama del paciente no dispare una re-notificación de dieta/ayuno.
+            roomName: String(room.nombre ?? '').trim(),
           });
         }
       }
@@ -325,12 +330,18 @@ export default async function handler(req: any, res: any) {
           }
           stats.upserted++;
 
+          // Para Catering agregamos la ubicación al cuerpo (no abren la app para ubicar
+          // al paciente). El resto de roles sigue viendo el body genérico (sin habitación).
+          const roomLabel = formatRoomForCatering(b.roomName, b.areaName);
+
           if (pushBody && !silent) {
             await sendPushToSubscribers({
               title: 'Ayuno actualizado',
               body:  pushBody,
               type:  'FASTING_CHANGE',
               originAreaName: b.areaName, destinationAreaName: b.areaName, sede: 'HPR',
+              cateringTitle: 'Ayuno actualizado',
+              cateringBody:  roomLabel ? `${pushBody} — ${roomLabel}` : pushBody,
             });
             fastingNotified++;
           }
@@ -341,6 +352,8 @@ export default async function handler(req: any, res: any) {
               body:  dietPushBody,
               type:  'DIET_CHANGE',
               originAreaName: b.areaName, destinationAreaName: b.areaName, sede: 'HPR',
+              cateringTitle: 'Dieta actualizada',
+              cateringBody:  roomLabel ? `${dietPushBody} — ${roomLabel}` : dietPushBody,
             });
             dietNotified++;
           }

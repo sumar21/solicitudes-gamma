@@ -783,6 +783,36 @@ export const useHospitalState = () => {
     } catch { /* non-blocking */ }
   };
 
+  // Registra una observación ligada al STATUS actual del ticket (lista 09.ObservacionesTraslados).
+  // Sirve para que al auditar el historial se entienda por qué se demoró cada paso.
+  const spLogObservation = async (ticketId: string, status: string, texto: string): Promise<boolean> => {
+    try {
+      const r = await authFetch('/api/ticket-observations', {
+        method: 'POST',
+        body: JSON.stringify({
+          ticketId,
+          status,
+          texto,
+          usuario: currentUser?.name ?? '',
+          usuarioId: currentUser?.id ?? '',
+        }),
+      });
+      return r.ok;
+    } catch { return false; }
+  };
+
+  // Las azafatas (u otros roles operativos) cargan observaciones en cualquier momento mientras
+  // el ticket esté activo. La observación snapshotea el status del ticket en ese instante.
+  const handleAddObservation = async (ticketId: string, texto: string): Promise<boolean> => {
+    const clean = (texto ?? '').trim();
+    if (!clean) return false;
+    const ticket = tickets.find((t: Ticket) => t.id === ticketId);
+    if (!ticket) return false;
+    // No se cargan observaciones en tickets ya cerrados (consolidados o cancelados).
+    if (ticket.status === TicketStatus.COMPLETED || ticket.status === TicketStatus.REJECTED) return false;
+    return spLogObservation(ticket.id, ticket.status, clean);
+  };
+
   // ── Auth ──────────────────────────────────────────────────────────────────────
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1913,6 +1943,7 @@ export const useHospitalState = () => {
       handleStartTransport,
       handleRejectTicket,
       handleEditTicket,
+      handleAddObservation,
       toggleIsolation,
       handleValidateTicket:    (_id: string) => {},
       handleAssignBedAction:   (_id: string, _bed: string) => {},

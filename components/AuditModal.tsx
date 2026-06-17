@@ -4,6 +4,7 @@ import { Ticket, WorkflowType, TicketStatus, BedStatus } from '../types';
 import {
   X, MapPin, Plus, TrendingUp, Activity, CheckCircle2, Calendar, Info, SprayCan, Hash, XCircle, ArrowRightLeft, Pencil
 } from './Icons';
+import { MessageSquare } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -17,6 +18,28 @@ interface TicketEvent {
   usuario: string;
   usuarioId: string;
 }
+
+interface Observation {
+  id: string;
+  ticketId: string;
+  status: string;
+  texto: string;
+  usuario: string;
+  usuarioId: string;
+  fecha: string;
+}
+
+// Cada hito del timeline da comienzo a un STATUS del ticket. Las observaciones se guardan
+// con el status vigente al momento de escribirlas, así que las mostramos en el hito que
+// abre ese status (ej.: una demora en limpieza se anotó en "Esperando Habitacion" y aparece
+// bajo "Solicitud Creada / Cama Asignada", que es cuando arranca esa etapa).
+const EVENT_TIPO_TO_STATUS: Record<string, TicketStatus> = {
+  'Solicitud Creada':     TicketStatus.WAITING_ROOM,
+  'Habitacion Preparada': TicketStatus.IN_TRANSIT,
+  'Inicio Traslado':      TicketStatus.IN_TRANSPORT,
+  'Paciente Recibido':    TicketStatus.WAITING_CONSOLIDATION,
+  'Consolidado Progal':   TicketStatus.COMPLETED,
+};
 
 interface AuditModalProps {
   ticket: Ticket | null;
@@ -65,20 +88,40 @@ function diffMinutes(a: string, b: string): string {
 
 export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose, workflowLabels }) => {
   const [events, setEvents] = useState<TicketEvent[]>([]);
+  const [observations, setObservations] = useState<Observation[]>([]);
   const [loading, setLoading] = useState(false);
+  // Status cuyas observaciones se están viendo en el sub-modal (null = cerrado).
+  const [obsStatusOpen, setObsStatusOpen] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isOpen || !ticket) { setEvents([]); return; }
+    if (!isOpen || !ticket) { setEvents([]); setObservations([]); setObsStatusOpen(null); return; }
     setLoading(true);
+    setObsStatusOpen(null);
     const token = localStorage.getItem('mediflow_token');
-    fetch(`/api/ticket-events?ticketId=${encodeURIComponent(ticket.id)}`, {
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    })
+    const headers = { ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+    fetch(`/api/ticket-events?ticketId=${encodeURIComponent(ticket.id)}`, { headers })
       .then(r => r.ok ? r.json() : { events: [] })
       .then(data => setEvents(data.events ?? []))
       .catch(() => setEvents([]))
       .finally(() => setLoading(false));
+    // Observaciones — carga on-demand al abrir el modal (no bloquea el render de hitos).
+    fetch(`/api/ticket-observations?ticketId=${encodeURIComponent(ticket.id)}`, { headers })
+      .then(r => r.ok ? r.json() : { observations: [] })
+      .then(data => setObservations(data.observations ?? []))
+      .catch(() => setObservations([]));
   }, [isOpen, ticket]);
+
+  // Observaciones agrupadas por el status del ticket en que se escribieron.
+  const obsByStatus = React.useMemo(() => {
+    const map = new Map<string, Observation[]>();
+    for (const o of observations) {
+      const list = map.get(o.status) ?? [];
+      list.push(o);
+      map.set(o.status, list);
+    }
+    return map;
+  }, [observations]);
+  const openObs = obsStatusOpen ? (obsByStatus.get(obsStatusOpen) ?? []) : [];
 
   if (!ticket) return null;
 
@@ -106,6 +149,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
     ? diffMinutes(receivedEvt.fecha, consolidatedEvt.fecha) : '0m';
 
   return (
+    <>
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-[1000px] w-[94vw] md:w-full p-0 overflow-hidden border border-slate-200 shadow-2xl rounded-2xl md:rounded-3xl bg-white [&>button]:hidden">
         <div className="flex flex-col max-h-[90vh] min-h-0">
@@ -297,6 +341,21 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                                 )}
                               </div>
                             )}
+                            {/* Tag de observaciones del status que abre este hito */}
+                            {(() => {
+                              const st = EVENT_TIPO_TO_STATUS[evt.tipo];
+                              const obs = st ? obsByStatus.get(st) : undefined;
+                              if (!obs || obs.length === 0) return null;
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => setObsStatusOpen(st)}
+                                  className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200 text-[10px] font-bold uppercase tracking-wide hover:bg-amber-200 transition-colors"
+                                >
+                                  <MessageSquare className="w-3 h-3" /> Observaciones ({obs.length})
+                                </button>
+                              );
+                            })()}
                           </div>
                           {isFinal ? (
                             <Badge className="bg-emerald-950 text-white font-mono font-medium px-2 py-0.5 rounded-md tabular-nums border-none text-[11px] shrink-0">
@@ -322,5 +381,39 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
         </div>
       </DialogContent>
     </Dialog>
+
+    {/* Sub-modal: observaciones del status seleccionado */}
+    <Dialog open={!!obsStatusOpen} onOpenChange={(open) => { if (!open) setObsStatusOpen(null); }}>
+      <DialogContent className="sm:max-w-[520px] p-0 overflow-hidden rounded-2xl">
+        <div className="px-5 py-4 border-b border-slate-100">
+          <DialogTitle className="text-base font-bold text-slate-900 flex items-center gap-2">
+            <MessageSquare className="w-4 h-4 text-amber-600" /> Observaciones
+          </DialogTitle>
+          <p className="text-[11px] text-slate-400 font-medium mt-1">Estado: <span className="font-semibold text-slate-600">{obsStatusOpen}</span></p>
+        </div>
+        <div className="p-5 space-y-3 max-h-[60vh] overflow-y-auto">
+          {openObs.length === 0 ? (
+            <p className="text-sm text-slate-400 text-center py-6">Sin observaciones</p>
+          ) : (
+            openObs.map(o => (
+              <div key={o.id} className="p-3 bg-amber-50/60 border border-amber-100 rounded-xl">
+                <p className="text-sm text-slate-800 leading-snug whitespace-pre-wrap break-words">{o.texto}</p>
+                <p className="text-[10px] text-slate-400 font-medium mt-2 flex items-center gap-2">
+                  <span className="font-semibold text-slate-600">{o.usuario || 'Usuario'}</span>
+                  <span>·</span>
+                  <span>{formatDateTime(o.fecha)}</span>
+                </p>
+              </div>
+            ))
+          )}
+        </div>
+        <div className="px-5 py-3 bg-slate-50/80 flex items-center justify-end border-t border-slate-100">
+          <Button onClick={() => setObsStatusOpen(null)} variant="outline" className="h-8 px-5 rounded-xl font-semibold text-xs uppercase tracking-widest">
+            Cerrar
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 };
