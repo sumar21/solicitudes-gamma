@@ -1,19 +1,19 @@
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Ticket, Role, TicketStatus, SortConfig, SortKey, WorkflowType, User, Bed, BedStatus, Area, IsolationType } from '../types';
 import { can } from '../lib/permissions';
 import {
   Search, Plus, Timer, Clock, ArrowRightLeft,
   ChevronUp, ChevronDown, CheckCircle2, BedDouble, Users, ClipboardCheck, AlertCircle, X, XCircle, Info, MapPin, Pencil
 } from '../components/Icons';
-import { ShieldAlert, MessageSquarePlus } from 'lucide-react';
+import { ShieldAlert, MessageSquare } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Card } from '../components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Badge } from '../components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table';
-import { Dialog, DialogContent, DialogTitle } from '../components/ui/dialog';
+import { Dialog, DialogContent, DialogTitle, DialogHeader, DialogFooter } from '../components/ui/dialog';
 import { StatusBadge } from '../components/StatusBadge';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { cn, formatBedName, formatDateTime, effectiveHostessAreas } from '../lib/utils';
@@ -44,6 +44,15 @@ interface RequestsViewProps {
   isolatedPatients?: Map<string, IsolationType[]>;
 }
 
+// Observación cargada por la azafata, ligada al status del ticket (lista 13.ObservacionesTraslados).
+interface ObsItem {
+  id: string;
+  status: string;
+  texto: string;
+  usuario: string;
+  fecha: string;
+}
+
 const ROLE_LABELS: Partial<Record<Role, string>> = {
   [Role.ADMIN]: 'Admin',
   [Role.ADMISSION]: 'Admisión',
@@ -72,15 +81,39 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   onRoomReady, onConfirmReception, onConsolidate, onReject, onEdit, onAddObservation, currentUser, beds, isolatedPatients
 }) => {
 
-  // Observaciones por traslado: modal para que las azafatas dejen una nota ligada al
-  // status actual del ticket (se ve luego en la auditoría del historial).
-  const [obsTicket, setObsTicket] = useState<Ticket | null>(null);
-  const [obsText, setObsText]     = useState('');
-  const [obsSaving, setObsSaving] = useState(false);
-  const [obsError, setObsError]   = useState('');
+  // Observaciones por traslado: UN solo modal (hilo + redactor). Todos los roles ven el
+  // historial y pueden cargar una nota nueva en el mismo lugar. La nota queda ligada al
+  // status actual del ticket → se audita luego en el Historial (ahí es solo-lectura).
+  const [obsTicket, setObsTicket]   = useState<Ticket | null>(null);
+  const [obsList, setObsList]       = useState<ObsItem[]>([]);
+  const [obsLoading, setObsLoading] = useState(false);
+  const [obsText, setObsText]       = useState('');
+  const [obsSaving, setObsSaving]   = useState(false);
+  const [obsError, setObsError]     = useState('');
+  const obsThreadRef = useRef<HTMLDivElement>(null);
 
-  const openObs = (ticket: Ticket) => { setObsTicket(ticket); setObsText(''); setObsError(''); };
-  const closeObs = () => { if (!obsSaving) { setObsTicket(null); setObsText(''); setObsError(''); } };
+  const openObs  = (ticket: Ticket) => { setObsTicket(ticket); setObsText(''); setObsError(''); };
+  const closeObs = () => { if (!obsSaving) { setObsTicket(null); setObsList([]); setObsText(''); setObsError(''); } };
+
+  // Trae el hilo al abrir el modal.
+  useEffect(() => {
+    if (!obsTicket) { setObsList([]); return; }
+    setObsLoading(true);
+    const token = localStorage.getItem('mediflow_token');
+    const headers = { ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+    fetch(`/api/ticket-observations?ticketId=${encodeURIComponent(obsTicket.id)}`, { headers })
+      .then(r => (r.ok ? r.json() : { observations: [] }))
+      .then(data => setObsList(data.observations ?? []))
+      .catch(() => setObsList([]))
+      .finally(() => setObsLoading(false));
+  }, [obsTicket]);
+
+  // Mantiene el scroll del hilo al final (lo más nuevo, pegado al redactor).
+  useEffect(() => {
+    const el = obsThreadRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [obsList, obsLoading]);
+
   const submitObs = async () => {
     if (!obsTicket || !onAddObservation) return;
     const text = obsText.trim();
@@ -88,19 +121,34 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     setObsSaving(true); setObsError('');
     const ok = await onAddObservation(obsTicket.id, text);
     setObsSaving(false);
-    if (ok) { setObsTicket(null); setObsText(''); }
-    else setObsError('No se pudo guardar. Reintentá.');
+    if (ok) {
+      // Append optimista: la nota aparece al instante en el hilo y NO cerramos el modal.
+      // Al reabrir se refresca con la versión canónica (id/fecha del server).
+      const optimistic: ObsItem = {
+        id:      `local-${Date.now()}`,
+        status:  obsTicket.status,
+        texto:   text,
+        usuario: currentUser?.name ?? '',
+        fecha:   new Date().toISOString(),
+      };
+      setObsList(prev => [...prev, optimistic]);
+      setObsText('');
+    } else {
+      setObsError('No se pudo guardar. Reintentá.');
+    }
   };
 
-  // Botón "Observación" — disponible en tickets activos (no consolidados ni cancelados).
+  // Botón "Observaciones" — único para todos los roles. Abre el modal con el hilo + redactor.
+  // Disponible en tickets activos (no consolidados ni cancelados); en cerrados se consulta
+  // desde Historial → Auditar (solo-lectura).
   const renderObsButton = (ticket: Ticket, isMobile = false) => {
-    if (!onAddObservation) return null;
     const active = ticket.status !== TicketStatus.COMPLETED && ticket.status !== TicketStatus.REJECTED;
-    if (!active) return null;
+    if (!active || !onAddObservation) return null;
     const size = isMobile ? 'default' : 'sm';
     const btnClass = isMobile
       ? 'w-full h-11 text-xs font-black uppercase tracking-widest rounded-xl'
       : 'h-8 text-[10px] uppercase font-bold tracking-tight';
+
     return (
       <Button
         size={size}
@@ -108,7 +156,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
         className={cn(btnClass, 'border-slate-200 text-slate-600 hover:bg-slate-50')}
         onClick={() => openObs(ticket)}
       >
-        <MessageSquarePlus className="w-3.5 h-3.5 mr-2" /> Observación
+        <MessageSquare className="w-3.5 h-3.5 mr-2" /> Observaciones
       </Button>
     );
   };
@@ -566,7 +614,20 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                         )}
                       </div>
                     </TableCell>
-                    <TableCell className="text-right pr-6"><div className="flex justify-end gap-2">{renderActionButtons(ticket)}{renderObsButton(ticket)}</div></TableCell>
+                    <TableCell className="text-right pr-6">
+                      {/* Admin/Admisión suman un 3er botón (Observaciones) que ensancha la
+                          columna y achata la grilla → los apilamos en 2 filas. La Azafata
+                          tiene menos botones, así que se queda en una sola fila. */}
+                      <div className={cn(
+                        "flex",
+                        (activeRole === Role.ADMIN || activeRole === Role.ADMISSION)
+                          ? "flex-col items-end gap-1.5"
+                          : "justify-end gap-2"
+                      )}>
+                        {renderActionButtons(ticket)}
+                        {renderObsButton(ticket)}
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))
               )}
@@ -575,48 +636,83 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
         </div>
       </Card>
 
-      {/* Modal: agregar observación ligada al status actual del ticket */}
+      {/* Modal único de Observaciones: hilo (historial) arriba + redactor abajo.
+          Mismo lugar para leer y cargar; la nota queda ligada al status actual. */}
       <Dialog open={!!obsTicket} onOpenChange={(open) => { if (!open) closeObs(); }}>
-        <DialogContent className="sm:max-w-[480px] p-0 overflow-hidden rounded-2xl">
-          <div className="px-5 py-4 border-b border-slate-100">
-            <DialogTitle className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <MessageSquarePlus className="w-4 h-4 text-slate-500" /> Nueva observación
+        <DialogContent className="sm:max-w-[480px] rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold text-slate-900 flex items-center gap-2 pr-6">
+              <MessageSquare className="w-4 h-4 text-emerald-600" /> Observaciones
+              {!obsLoading && obsList.length > 0 && (
+                <span className="text-[11px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5 tabular-nums">{obsList.length}</span>
+              )}
             </DialogTitle>
             {obsTicket && (
-              <p className="text-[11px] text-slate-400 font-medium mt-1">
-                {obsTicket.patientName} · {obsTicket.id} · <span className="font-semibold text-slate-600">{obsTicket.status}</span>
+              <p className="text-[11px] text-slate-400 font-medium">
+                {obsTicket.patientName} · <span className="font-semibold text-slate-600">{obsTicket.status}</span>
               </p>
             )}
+          </DialogHeader>
+
+          {/* HILO — historial cronológico (lo más nuevo abajo, pegado al redactor) */}
+          <div ref={obsThreadRef} className="grid gap-2 content-start max-h-[42vh] min-h-[88px] overflow-y-auto pr-0.5">
+            {obsLoading ? (
+              <p className="text-sm text-slate-400 text-center py-6">Cargando…</p>
+            ) : obsList.length === 0 ? (
+              <div className="text-center py-6">
+                <MessageSquare className="w-7 h-7 text-slate-200 mx-auto mb-2" />
+                <p className="text-sm text-slate-400">Todavía no hay observaciones.</p>
+                <p className="text-xs text-slate-300">Escribí la primera abajo.</p>
+              </div>
+            ) : (
+              obsList.map(o => (
+                <div key={o.id} className="p-3 bg-amber-50/60 border border-amber-100 rounded-xl">
+                  <p className="text-sm text-slate-800 leading-snug whitespace-pre-wrap break-words">{o.texto}</p>
+                  <p className="text-[10px] text-slate-400 font-medium mt-2 flex items-center gap-1.5 flex-wrap">
+                    <span className="font-semibold text-slate-600">{o.usuario || 'Usuario'}</span>
+                    <span>·</span>
+                    <span>{formatDateTime(o.fecha)}</span>
+                    {o.status && (<><span>·</span><span className="italic">{o.status}</span></>)}
+                  </p>
+                </div>
+              ))
+            )}
           </div>
-          <div className="p-5 space-y-3">
-            <p className="text-xs text-slate-500 leading-relaxed">
-              Anotá por qué se demora o cualquier detalle de este paso (ej.: familiar ausente, faltan
-              prendas del paciente anterior). Queda guardada con el estado actual para la auditoría.
+
+          {/* REDACTOR — disponible mientras el ticket esté activo. La Azafata deja de cargar
+              al llegar a "Por Consolidar" (su parte operativa terminó); igual lee el hilo. */}
+          {activeRole === Role.HOSTESS && obsTicket?.status === TicketStatus.WAITING_CONSOLIDATION ? (
+            <p className="text-[11px] text-slate-400 border-t border-slate-100 pt-3 text-center">
+              El traslado ya está <span className="font-semibold text-slate-600">Por Consolidar</span>. La carga de observaciones se cierra para la azafata.
             </p>
-            <textarea
-              value={obsText}
-              onChange={e => setObsText(e.target.value)}
-              maxLength={500}
-              rows={4}
-              placeholder="Escribí la observación…"
-              autoFocus
-              className="w-full rounded-xl border border-slate-200 p-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none resize-none"
-            />
-            {obsError && <p className="text-red-500 text-xs font-bold">{obsError}</p>}
-          </div>
-          <div className="px-5 py-3 bg-slate-50/80 flex items-center justify-end gap-2 border-t border-slate-100">
-            <Button variant="outline" size="sm" className="h-9 rounded-xl" onClick={closeObs} disabled={obsSaving}>
-              Cancelar
-            </Button>
-            <Button
-              size="sm"
-              className="h-9 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white"
-              onClick={submitObs}
-              disabled={obsSaving || !obsText.trim()}
-            >
-              {obsSaving ? 'Guardando…' : 'Guardar observación'}
-            </Button>
-          </div>
+          ) : (
+            <div className="grid gap-2 border-t border-slate-100 pt-3">
+              {obsTicket && (
+                <p className="text-[10px] text-slate-400">
+                  Se guardará en: <span className="font-semibold text-slate-600">{obsTicket.status}</span>
+                </p>
+              )}
+              <textarea
+                value={obsText}
+                onChange={e => setObsText(e.target.value)}
+                maxLength={500}
+                rows={3}
+                placeholder="Escribí una observación… (ej.: familiar ausente, faltan prendas)"
+                className="w-full min-h-[72px] rounded-xl border border-slate-200 p-3 text-sm leading-relaxed focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none resize-y"
+              />
+              {obsError && <p className="text-red-500 text-xs font-bold">{obsError}</p>}
+              <div className="flex items-center justify-end gap-3">
+                <span className="text-[11px] text-slate-300 tabular-nums">{obsText.length}/500</span>
+                <Button
+                  onClick={submitObs}
+                  disabled={obsSaving || !obsText.trim()}
+                  className="rounded-xl h-10 px-6"
+                >
+                  {obsSaving ? 'Guardando…' : 'Agregar'}
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

@@ -808,8 +808,12 @@ export const useHospitalState = () => {
     if (!clean) return false;
     const ticket = tickets.find((t: Ticket) => t.id === ticketId);
     if (!ticket) return false;
-    // No se cargan observaciones en tickets ya cerrados (consolidados o cancelados).
+    // Tickets ya cerrados (consolidados/cancelados): no se cargan desde Operativa; sus notas
+    // post-cierre se agregan desde Historial → Auditar (path directo, no este handler).
     if (ticket.status === TicketStatus.COMPLETED || ticket.status === TicketStatus.REJECTED) return false;
+    // La Azafata deja de cargar al llegar a "Por Consolidar": ya recibió al paciente, su parte
+    // operativa terminó. Admisión/Admin sí pueden seguir anotando en esa etapa.
+    if (currentUser?.role === Role.HOSTESS && ticket.status === TicketStatus.WAITING_CONSOLIDATION) return false;
     return spLogObservation(ticket.id, ticket.status, clean);
   };
 

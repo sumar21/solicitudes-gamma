@@ -330,30 +330,32 @@ export default async function handler(req: any, res: any) {
           }
           stats.upserted++;
 
-          // Para Catering agregamos la ubicación al cuerpo (no abren la app para ubicar
-          // al paciente). El resto de roles sigue viendo el body genérico (sin habitación).
+          // La habitación se agrega en TODOS los avisos de dieta/ayuno (no solo Catering):
+          // ayuda a ubicar al paciente sin abrir la app. roomLabel ej. "Habitación 413 (Piso 4)".
           const roomLabel = formatRoomForCatering(b.roomName, b.areaName);
 
           if (pushBody && !silent) {
+            const body = roomLabel ? `${pushBody} — ${roomLabel}` : pushBody;
             await sendPushToSubscribers({
               title: 'Ayuno actualizado',
-              body:  pushBody,
+              body,
               type:  'FASTING_CHANGE',
               originAreaName: b.areaName, destinationAreaName: b.areaName, sede: 'HPR',
               cateringTitle: 'Ayuno actualizado',
-              cateringBody:  roomLabel ? `${pushBody} — ${roomLabel}` : pushBody,
+              cateringBody:  body,
             });
             fastingNotified++;
           }
 
           if (dietPushBody && !silent) {
+            const body = roomLabel ? `${dietPushBody} — ${roomLabel}` : dietPushBody;
             await sendPushToSubscribers({
               title: 'Dieta actualizada',
-              body:  dietPushBody,
+              body,
               type:  'DIET_CHANGE',
               originAreaName: b.areaName, destinationAreaName: b.areaName, sede: 'HPR',
               cateringTitle: 'Dieta actualizada',
-              cateringBody:  roomLabel ? `${dietPushBody} — ${roomLabel}` : dietPushBody,
+              cateringBody:  body,
             });
             dietNotified++;
           }

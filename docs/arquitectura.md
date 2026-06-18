@@ -1235,3 +1235,25 @@ Ambos crons corrían en `*/15` (mismo minuto) y saturaban la VM simultáneamente
 **Limpieza one-off:** [scripts/_cleanup-notif-dupes.mjs](scripts/_cleanup-notif-dupes.mjs) borra (read+delete; dry-run por default, mutación tras `--apply`) las filas exactamente duplicadas (`UserId_N|TicketId_N|Type_N|Fecha_N` idéntico), conservando 1 por grupo — **nunca fusiona timestamps distintos** (eventos potencialmente reales). [scripts/_diag-notif-dupes.mjs](scripts/_diag-notif-dupes.mjs) es el diagnóstico read-only que agrupa y reporta el histograma de duplicados + suscripciones por usuario; reutilizable para verificar el deploy.
 
 > **Nota operativa:** el fix write-side corta los duplicados nuevos solo una vez **deployado**; mientras producción corra el código viejo, se siguen escribiendo. La acumulación de endpoints por usuario (SW sin handler `pushsubscriptionchange`, logout que borra solo el endpoint actual, limpieza solo ante push 404/410) queda como **hardening pendiente**, junto con hacer idempotente el push del `PATCH` de estado (hoy reenvía aunque el status no cambie de verdad).
+
+## 44. Observaciones de traslado: carga + auditoría (2026-06-18)
+
+Feature para que **cualquier rol** deje notas ligadas a un ticket de traslado, persistidas para auditoría. Backend: lista SP `13.ObservacionesTraslados` ([api/ticket-observations.ts](api/ticket-observations.ts) — `GET ?ticketId=`, `POST`). Cada observación **snapshotea el status del ticket** al momento de escribirla (`StatusDelTicket_OBS`) + autor + fecha.
+
+### Dos superficies, un mismo dato
+
+- **Operativa** ([views/RequestsView.tsx](views/RequestsView.tsx)) — **un solo botón "Observaciones"** para todos los roles (antes había split cargar/ver por rol). Abre un modal **hilo + redactor**: arriba el historial cronológico (auto-scroll al fondo + contador en el header), abajo el textarea. La nota nueva aparece **al instante** (append optimista) y el modal **no se cierra** → cargar y ver en el mismo lugar. Disponible mientras el ticket esté activo.
+- **Auditoría** ([components/AuditModal.tsx](components/AuditModal.tsx), Historial → Auditar) — las observaciones se renderizan como **nodos propios en la misma línea de tiempo de los hitos**, intercaladas por fecha (no como badge colgado de un hito). Incluye un redactor para notas **post-cierre** (el ticket en auditoría siempre está cerrado), marcadas distinto ("Post cierre", violeta). En desktop el redactor va inline al pie; en mobile es un **botón que abre un modal** aparte (libera alto para ver más trazabilidad). El composer queda **fijo** mientras la trazabilidad scrollea (modal acotado a `max-h-[92vh]`).
+
+### Línea de tiempo unificada (auditoría) — fix del bug de obs huérfanas
+
+Antes cada observación se anclaba al evento que "abría" su status (mapa `EVENT_TIPO_TO_STATUS`). Eso dejaba **huérfanas** las notas cuyo evento no existía: un **traslado directo** (cama destino `AVAILABLE`) nace en `Habitacion Lista` (IN_TRANSIT) **sin** registrar el hito `Habitacion Preparada`, y los tickets `Cancelado` ni figuran en el mapa. Esas observaciones nunca se mostraban. Ahora se **mergean eventos + observaciones en un solo array ordenado por `fecha`** (`TimelineItem = {kind:'event'} | {kind:'obs'}`) → toda observación siempre aparece, sin depender de qué eventos existan. Ver decisión §21.1.
+
+### Reglas de carga (`handleAddObservation` en [useHospitalState.ts](hooks/useHospitalState.ts))
+
+- Bloqueada en tickets cerrados (`COMPLETED`/`REJECTED`) desde Operativa — las notas post-cierre se cargan **solo desde Auditoría** (POST directo, no pasa por este handler).
+- La **Azafata** deja de cargar al llegar a `WAITING_CONSOLIDATION` (ya recibió al paciente, su parte operativa terminó); Admisión/Admin sí pueden seguir anotando en esa etapa.
+
+## 45. Habitación en notificaciones de dieta/ayuno para todos los roles (2026-06-18)
+
+`cron-enrich-beds` agregaba la habitación (`formatRoomForCatering(roomName, areaName)`, ej. `"Habitación 413 (Piso 4)"`) **solo** al `cateringBody` de los push `DIET_CHANGE`/`FASTING_CHANGE`; el `body` genérico que veían los demás roles iba sin ubicación. Ahora la habitación va en el `body` genérico también (un solo texto para `body` y `cateringBody`), así **todos los roles** ubican al paciente sin abrir la app. Ver [api/cron-enrich-beds.ts](api/cron-enrich-beds.ts). (`cron-diet-changes` sigue desprogramado — §42 — por eso no requirió el mismo cambio.)

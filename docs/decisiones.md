@@ -1157,3 +1157,39 @@ Resultado del bug: Catering recibía "Nueva Solicitud de Traslado" (NEW_TICKET) 
 **Qué:** el one-off borra solo filas con `UserId_N|TicketId_N|Type_N|Fecha_N` idéntico (el fanout por suscripción), conservando 1 por grupo. Hard delete, con dry-run obligatorio antes de `--apply`.
 
 **Por qué:** los duplicados de fanout son byte-idénticos salvo el id de SP — no son registros de negocio a preservar (la regla de **soft-delete** aplica a tickets/usuarios/aislamientos, no a copias redundantes de notificaciones ni a tokens efímeros). Usar `Fecha_N` **exacto** (no por minuto) evita borrar eventos legítimamente separados en el tiempo (cambios reales de dieta/status a lo largo del día); esos los colapsa el render-dedup en la UI sin tocarlos en SP.
+
+## 21. Decisiones recientes (observaciones de traslado + notif habitación, 2026-06-18)
+
+### 21.1. Auditoría: línea de tiempo cronológica vs. anclar cada obs al evento de su status
+
+**Qué:** En el `AuditModal`, las observaciones se renderizan como nodos propios mergeados con los eventos y ordenados por `fecha`, en vez de colgarlas del hito que "abre" su status (mapa `EVENT_TIPO_TO_STATUS`, que se eliminó).
+
+**Por qué:** El mapa anclaba cada obs al evento que abría su status. Pero hay flujos donde ese evento **no existe**: un **traslado directo** (cama destino `AVAILABLE`) nace en `Habitacion Lista` (IN_TRANSIT) sin registrar `Habitacion Preparada` ([useHospitalState.ts](hooks/useHospitalState.ts) — `createTicket` setea el status directo), y los tickets `Cancelado` no tienen entrada en el mapa. Resultado: la obs quedaba **huérfana, nunca se mostraba** (bug reportado). El merge cronológico elimina el hueco de raíz —no depende de qué eventos existan— y es más fiel al "cuándo pasó cada cosa".
+
+**Alternativa descartada:** fallback "anclar al hito anterior existente". Más código y sigue siendo un mapa frágil; el merge por fecha es más simple y correcto. **Validación:** se replicó `formatDietForPDF`/el merge sobre los casos reportados para confirmar el orden y la inclusión antes de cerrar.
+
+### 21.2. Un solo modal "hilo + redactor" para observaciones (no split cargar/ver por rol)
+
+**Qué:** Botón único "Observaciones" para **todos** los roles que abre un modal con el historial (hilo) arriba y el redactor abajo. Se carga y se ve en el mismo lugar; la nota nueva se agrega optimista sin cerrar el modal.
+
+**Por qué:** una observación es un comentario sobre la línea de tiempo del ticket; el modelo mental correcto es un **hilo de comentarios** (chat/Jira), no un formulario. El diseño previo tenía dos botones/modales (cargar vs. ver, partidos por rol) → fricción, y quien escribía no veía el contexto de lo ya anotado. La auditoría mantiene el **mismo hilo** pero con redactor solo para notas post-cierre.
+
+**Alternativa descartada:** notas inline expandibles en la fila de la grilla. La grilla ya es densa (se venía peleando el ancho de la columna de acciones); no hay lugar.
+
+### 21.3. Azafata: corte de carga de observaciones en "Por Consolidar"
+
+**Qué:** una vez que el ticket pasa a `WAITING_CONSOLIDATION`, la Azafata ya no puede cargar observaciones (el redactor se oculta; sigue leyendo el hilo). Admisión/Admin sí pueden. Gateado en UI (por `activeRole`) y en `handleAddObservation` (por `currentUser.role`).
+
+**Por qué:** en "Por Consolidar" la azafata ya recibió al paciente — su parte operativa terminó y el ticket queda en manos de Admisión. Cargar notas ahí no le corresponde. (En la práctica la azafata real ni ve esos tickets por el filtro de pisos a estados operativos; el gate cubre el caso "admin actuando como azafata".)
+
+### 21.4. Habitación en TODAS las notificaciones de dieta/ayuno (no solo Catering)
+
+**Qué:** el `body` genérico de los push `DIET_CHANGE`/`FASTING_CHANGE` ahora incluye la habitación, no solo el `cateringBody`.
+
+**Por qué:** el diseño previo agregaba la ubicación solo para Catering (asumiendo que el resto abría la app para ubicar al paciente). Pedido explícito: que cualquier rol vea la habitación en el aviso. Es un solo texto reutilizado para `body` y `cateringBody`.
+
+### 21.5. Redactor de obs en mobile: botón → modal (no input fijo a la vista)
+
+**Qué:** en el `AuditModal` mobile, el redactor no está fijo a la vista; hay un botón compacto que abre un modal de carga. En desktop sigue inline al pie.
+
+**Por qué:** el input fijo + su footer comían ~80px de alto en pantallas chicas, dejando ver muy poca trazabilidad y obligando a scrollear para llegar a él. El botón libera ese espacio; el modal enfocado es mejor para escribir en mobile. El composer (desktop) y la trazabilidad quedan en zonas separadas: trazabilidad scrollea, composer fijo (ver convención).

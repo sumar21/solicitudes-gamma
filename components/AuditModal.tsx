@@ -1,11 +1,11 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Ticket, WorkflowType, TicketStatus, BedStatus } from '../types';
 import {
   X, MapPin, Plus, TrendingUp, Activity, CheckCircle2, Calendar, Info, SprayCan, Hash, XCircle, ArrowRightLeft, Pencil
 } from './Icons';
 import { MessageSquare } from 'lucide-react';
-import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
+import { Dialog, DialogContent, DialogTitle, DialogHeader, DialogFooter } from './ui/dialog';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { cn, formatDateTime, formatTime } from '../lib/utils';
@@ -29,17 +29,16 @@ interface Observation {
   fecha: string;
 }
 
-// Cada hito del timeline da comienzo a un STATUS del ticket. Las observaciones se guardan
-// con el status vigente al momento de escribirlas, así que las mostramos en el hito que
-// abre ese status (ej.: una demora en limpieza se anotó en "Esperando Habitacion" y aparece
-// bajo "Solicitud Creada / Cama Asignada", que es cuando arranca esa etapa).
-const EVENT_TIPO_TO_STATUS: Record<string, TicketStatus> = {
-  'Solicitud Creada':     TicketStatus.WAITING_ROOM,
-  'Habitacion Preparada': TicketStatus.IN_TRANSIT,
-  'Inicio Traslado':      TicketStatus.IN_TRANSPORT,
-  'Paciente Recibido':    TicketStatus.WAITING_CONSOLIDATION,
-  'Consolidado Progal':   TicketStatus.COMPLETED,
-};
+// Las observaciones se renderizan como nodos propios en la MISMA línea de tiempo que los
+// hitos, ordenadas por fecha. Antes se anclaban al evento que "abría" su status (mapeo
+// frágil): si ese evento no existía —p. ej. traslado directo con cama limpia, que arranca
+// en "Habitacion Lista" sin hito "Habitacion Preparada", o un ticket cancelado— la obs
+// quedaba huérfana y no se mostraba. Con el merge cronológico, toda obs aparece siempre.
+
+// Una observación es "post cierre" si se cargó con el ticket ya cerrado (Consolidado/
+// Cancelado) — típicamente desde esta misma auditoría. Se marca distinto.
+const isPostCloseObs = (status: string) =>
+  status === TicketStatus.COMPLETED || status === TicketStatus.REJECTED;
 
 interface AuditModalProps {
   ticket: Ticket | null;
@@ -90,13 +89,19 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
   const [events, setEvents] = useState<TicketEvent[]>([]);
   const [observations, setObservations] = useState<Observation[]>([]);
   const [loading, setLoading] = useState(false);
-  // Status cuyas observaciones se están viendo en el sub-modal (null = cerrado).
-  const [obsStatusOpen, setObsStatusOpen] = useState<string | null>(null);
+  // Redactor para cargar una observación post-cierre desde la auditoría.
+  const [obsText, setObsText]     = useState('');
+  const [obsSaving, setObsSaving] = useState(false);
+  const [obsError, setObsError]   = useState('');
+  // En mobile la carga abre un modal aparte (botón) para no comer espacio del timeline.
+  const [obsComposerOpen, setObsComposerOpen] = useState(false);
+  const auditScrollRef = useRef<HTMLDivElement>(null);
+  const pendingScrollRef = useRef(false); // true tras agregar → scrollea el timeline al fondo
 
   useEffect(() => {
-    if (!isOpen || !ticket) { setEvents([]); setObservations([]); setObsStatusOpen(null); return; }
+    if (!isOpen || !ticket) { setEvents([]); setObservations([]); setObsText(''); setObsError(''); setObsComposerOpen(false); return; }
     setLoading(true);
-    setObsStatusOpen(null);
+    setObsText(''); setObsError(''); setObsComposerOpen(false);
     const token = localStorage.getItem('mediflow_token');
     const headers = { ...(token ? { Authorization: `Bearer ${token}` } : {}) };
     fetch(`/api/ticket-events?ticketId=${encodeURIComponent(ticket.id)}`, { headers })
@@ -111,17 +116,61 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
       .catch(() => setObservations([]));
   }, [isOpen, ticket]);
 
-  // Observaciones agrupadas por el status del ticket en que se escribieron.
-  const obsByStatus = React.useMemo(() => {
-    const map = new Map<string, Observation[]>();
-    for (const o of observations) {
-      const list = map.get(o.status) ?? [];
-      list.push(o);
-      map.set(o.status, list);
+  // Línea de tiempo unificada: hitos + observaciones, ordenados por fecha. Cada obs es un
+  // nodo propio → siempre se muestra, sin depender de que exista el evento de su etapa.
+  type TimelineItem =
+    | { kind: 'event'; key: string; fecha: string; evt: TicketEvent }
+    | { kind: 'obs';   key: string; fecha: string; obs: Observation };
+  const timeline: TimelineItem[] = React.useMemo(() => {
+    const items: TimelineItem[] = [
+      ...events.map(e => ({ kind: 'event' as const, key: `e-${e.id}`, fecha: e.fecha, evt: e })),
+      ...observations.map(o => ({ kind: 'obs' as const, key: `o-${o.id}`, fecha: o.fecha, obs: o })),
+    ];
+    items.sort((a, b) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime());
+    return items;
+  }, [events, observations]);
+
+  // Tras agregar una observación, scrollea el timeline al fondo (NO en la carga inicial).
+  useEffect(() => {
+    if (pendingScrollRef.current && auditScrollRef.current) {
+      auditScrollRef.current.scrollTop = auditScrollRef.current.scrollHeight;
+      pendingScrollRef.current = false;
     }
-    return map;
-  }, [observations]);
-  const openObs = obsStatusOpen ? (obsByStatus.get(obsStatusOpen) ?? []) : [];
+  }, [timeline]);
+
+  // Carga una observación post-cierre desde la auditoría. La API ya acepta cualquier estado;
+  // posteamos directo (como el resto de la auditoría) con el usuario de la sesión.
+  const submitObs = async () => {
+    const text = obsText.trim();
+    if (!ticket || !text) return;
+    setObsSaving(true); setObsError('');
+    let usuario = '', usuarioId = '';
+    try {
+      const u = JSON.parse(localStorage.getItem('mediflow_user') || 'null');
+      usuario = u?.name ?? ''; usuarioId = u?.id ?? '';
+    } catch { /* sesión sin user → se guarda sin autor */ }
+    try {
+      const token = localStorage.getItem('mediflow_token');
+      const r = await fetch('/api/ticket-observations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ ticketId: ticket.id, status: ticket.status, texto: text, usuario, usuarioId }),
+      });
+      if (!r.ok) throw new Error('post failed');
+      // Append optimista: aparece al instante en la línea de tiempo (marcada post-cierre).
+      setObservations(prev => [...prev, {
+        id: `local-${Date.now()}`, ticketId: ticket.id, status: ticket.status,
+        texto: text, usuario, usuarioId, fecha: new Date().toISOString(),
+      }]);
+      setObsText('');
+      setObsComposerOpen(false); // cierra el modal de carga (mobile); en desktop ya está false
+      pendingScrollRef.current = true; // scrollea el timeline al fondo para ver la nota nueva
+    } catch {
+      setObsError('No se pudo guardar. Reintentá.');
+    } finally {
+      setObsSaving(false);
+    }
+  };
 
   if (!ticket) return null;
 
@@ -151,8 +200,8 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
   return (
     <>
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-[1000px] w-[94vw] md:w-full p-0 overflow-hidden border border-slate-200 shadow-2xl rounded-2xl md:rounded-3xl bg-white [&>button]:hidden">
-        <div className="flex flex-col max-h-[90vh] min-h-0">
+      <DialogContent className="sm:max-w-[1000px] w-[94vw] md:w-full max-h-[92vh] p-0 overflow-hidden border border-slate-200 shadow-2xl rounded-2xl md:rounded-3xl bg-white [&>button]:hidden">
+        <div className="flex flex-col max-h-[92vh] min-h-0 min-w-0 overflow-hidden">
 
           {/* HEADER */}
           <div className="bg-white px-5 py-3 md:px-6 md:py-4 flex flex-col border-b border-slate-100 shrink-0">
@@ -172,10 +221,10 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                 <DialogTitle className="text-lg md:text-2xl font-bold text-slate-900 tracking-tight truncate">
                   {ticket.patientName}
                 </DialogTitle>
-                <div className="flex items-center gap-3 md:gap-4 text-[10px] md:text-[11px] text-slate-400 font-medium">
-                  <span className="flex items-center gap-1"><Hash className="w-3 h-3" /> {ticket.id}</span>
-                  <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> {formatDateTime(ticket.createdAt)}</span>
-                  <span className="flex items-center gap-1 font-semibold text-slate-900"><Activity className="w-3 h-3" /> {workflowLabels[ticket.workflow]}</span>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 md:gap-x-4 text-[10px] md:text-[11px] text-slate-400 font-medium">
+                  <span className="flex items-center gap-1 min-w-0"><Hash className="w-3 h-3 shrink-0" /> <span className="truncate">{ticket.id}</span></span>
+                  <span className="flex items-center gap-1"><Calendar className="w-3 h-3 shrink-0" /> {formatDateTime(ticket.createdAt)}</span>
+                  <span className="flex items-center gap-1 font-semibold text-slate-900"><Activity className="w-3 h-3 shrink-0" /> {workflowLabels[ticket.workflow]}</span>
                 </div>
               </div>
               <button onClick={onClose} className="h-9 w-9 md:h-10 md:w-10 bg-slate-50 hover:bg-slate-100 text-slate-400 rounded-xl transition-colors border border-slate-100 flex items-center justify-center shrink-0 ml-2">
@@ -183,16 +232,16 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
               </button>
             </div>
 
-            {/* SOLO MÓVIL: TRAYECTORIA */}
-            <div className="md:hidden mt-4 p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between gap-2">
-               <div className="flex flex-col min-w-0">
+            {/* SOLO MÓVIL: TRAYECTORIA — doble fila apilada (origen arriba, destino abajo).
+                Texto completo que envuelve; nada de truncar ni cruzarse en pantallas chicas. */}
+            <div className="md:hidden mt-4 p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-2">
+               <div className="min-w-0">
                  <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Origen</span>
-                 <span className="text-[11px] font-bold text-slate-700 truncate">{ticket.origin}</span>
+                 <p className="text-[11px] font-bold text-slate-700 break-words leading-tight">{ticket.origin}</p>
                </div>
-               <ArrowRightLeft className="w-3 h-3 text-slate-300 shrink-0" />
-               <div className="flex flex-col items-end min-w-0 text-right">
+               <div className="min-w-0 pt-2 border-t border-slate-200/60">
                  <span className="text-[8px] font-bold text-blue-400 uppercase tracking-widest">Destino</span>
-                 <span className="text-[11px] font-black text-blue-900 truncate">{ticket.destination || (isRejected ? 'ANULADO' : 'Pendiente')}</span>
+                 <p className="text-[11px] font-black text-blue-900 break-words leading-tight">{ticket.destination || (isRejected ? 'ANULADO' : 'Pendiente')}</p>
                </div>
             </div>
           </div>
@@ -269,12 +318,15 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
               )}
             </div>
 
-            {/* CONTENIDO PRINCIPAL (TIMELINE) */}
-            <div className="flex-1 bg-white p-5 md:p-6 overflow-y-auto min-h-0">
+            {/* CONTENIDO PRINCIPAL: trazabilidad scrolleable + redactor fijo abajo */}
+            <div className="flex-1 flex flex-col min-h-0 min-w-0 bg-white">
+
+              {/* SCROLL — sólo la trazabilidad (y métricas en móvil) scrollea */}
+              <div ref={auditScrollRef} className="flex-1 overflow-y-auto overflow-x-hidden p-5 md:p-6 min-h-0 min-w-0">
 
               {/* SOLO MÓVIL: MÉTRICAS */}
               <div className="md:hidden grid grid-cols-2 gap-3 mb-6">
-                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                 <div className={cn("bg-slate-50 p-3 rounded-xl border border-slate-100", isRejected && "col-span-2")}>
                     <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1">Tiempo Total</span>
                     <span className={cn("text-2xl font-bold tabular-nums", isRejected ? "text-red-600" : "text-slate-900")}>{loading ? '...' : totalCycleTime}</span>
                  </div>
@@ -299,22 +351,56 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                 <div className="flex items-center justify-center py-12">
                   <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
                 </div>
-              ) : events.length === 0 ? (
+              ) : timeline.length === 0 ? (
                 <p className="text-sm text-slate-400 text-center py-12">Sin movimientos registrados</p>
               ) : (
                 <div className="relative pl-8 space-y-5 before:content-[''] before:absolute before:left-[11px] before:top-2 before:bottom-2 before:w-[1px] before:bg-slate-100">
-                  {events.map((evt, i) => {
+                  {timeline.map((item) => {
+                    // ── Nodo de OBSERVACIÓN ───────────────────────────────────
+                    if (item.kind === 'obs') {
+                      const o = item.obs;
+                      const post = isPostCloseObs(o.status);
+                      return (
+                        <div key={item.key} className="relative">
+                          <div className={cn(
+                            "absolute -top-0.5 -left-[31px] flex items-center justify-center z-10 w-5 h-5 rounded-full border",
+                            post ? "bg-violet-100 border-violet-200" : "bg-amber-100 border-amber-200"
+                          )}>
+                            <MessageSquare className={cn("w-2.5 h-2.5", post ? "text-violet-600" : "text-amber-600")} />
+                          </div>
+                          <div className={cn(
+                            "rounded-xl border p-3",
+                            post ? "bg-violet-50/70 border-violet-200" : "bg-amber-50/60 border-amber-100"
+                          )}>
+                            {post && (
+                              <span className="inline-flex items-center gap-1 mb-1.5 px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200 text-[9px] font-bold uppercase tracking-wider">
+                                Post cierre
+                              </span>
+                            )}
+                            <p className="text-sm text-slate-800 leading-snug whitespace-pre-wrap break-words">{o.texto}</p>
+                            <p className="text-[10px] text-slate-400 font-medium mt-2 flex items-center gap-1.5 flex-wrap">
+                              <span className="font-semibold text-slate-600">{o.usuario || 'Usuario'}</span>
+                              <span>·</span>
+                              <span>{formatDateTime(o.fecha)}</span>
+                              {o.status && !post && (<><span>·</span><span className="italic">{o.status}</span></>)}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    // ── Nodo de HITO (evento) ─────────────────────────────────
+                    const evt = item.evt;
                     const modification = parseModification(evt.tipo);
                     const isModification = !!modification;
                     const config = isModification
                       ? { label: 'Modificación de Traslado', sublabel: 'Admisión', icon: Pencil }
                       : (EVENT_CONFIG[evt.tipo] ?? { label: evt.tipo, sublabel: evt.usuario, icon: Plus });
                     const Icon = config.icon;
-                    const isLast = i === events.length - 1;
                     const isFinal = evt.tipo === 'Consolidado Progal';
 
                     return (
-                      <div key={evt.id} className="relative">
+                      <div key={item.key} className="relative">
                         <div className={cn(
                           "absolute -top-0.5 flex items-center justify-center z-10",
                           isFinal ? "-left-[36px] w-8 h-8 rounded-full bg-emerald-950 shadow-lg"
@@ -341,21 +427,6 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                                 )}
                               </div>
                             )}
-                            {/* Tag de observaciones del status que abre este hito */}
-                            {(() => {
-                              const st = EVENT_TIPO_TO_STATUS[evt.tipo];
-                              const obs = st ? obsByStatus.get(st) : undefined;
-                              if (!obs || obs.length === 0) return null;
-                              return (
-                                <button
-                                  type="button"
-                                  onClick={() => setObsStatusOpen(st)}
-                                  className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200 text-[10px] font-bold uppercase tracking-wide hover:bg-amber-200 transition-colors"
-                                >
-                                  <MessageSquare className="w-3 h-3" /> Observaciones ({obs.length})
-                                </button>
-                              );
-                            })()}
                           </div>
                           {isFinal ? (
                             <Badge className="bg-emerald-950 text-white font-mono font-medium px-2 py-0.5 rounded-md tabular-nums border-none text-[11px] shrink-0">
@@ -370,6 +441,44 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                   })}
                 </div>
               )}
+
+              </div>{/* /SCROLL trazabilidad */}
+
+              {/* BARRA FIJA abajo. Desktop: composer inline (hay espacio). Mobile: botón
+                  que abre un modal → libera alto y se ve más trazabilidad. */}
+              {!loading && (
+                <div className="shrink-0 border-t border-slate-100 px-5 py-3 md:px-6 md:py-4 bg-white">
+                  {/* DESKTOP: composer inline */}
+                  <div className="hidden md:block space-y-2">
+                    <textarea
+                      value={obsText}
+                      onChange={e => setObsText(e.target.value)}
+                      maxLength={500}
+                      rows={2}
+                      placeholder="Agregar observación post-cierre… (ej.: faltó firma del parte)"
+                      className="w-full min-h-[44px] max-h-[120px] rounded-xl border border-slate-200 p-2.5 text-sm leading-relaxed focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-none resize-y"
+                    />
+                    {obsError && <p className="text-red-500 text-xs font-bold">{obsError}</p>}
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <span className="text-[10px] text-slate-400">Quedará marcada como <span className="font-semibold text-violet-600">post cierre</span>.</span>
+                      <div className="flex items-center gap-3">
+                        <span className="text-[11px] text-slate-300 tabular-nums">{obsText.length}/500</span>
+                        <Button onClick={submitObs} disabled={obsSaving || !obsText.trim()} className="rounded-xl h-9 px-5 bg-violet-600 hover:bg-violet-700 text-white">
+                          {obsSaving ? 'Guardando…' : 'Agregar'}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                  {/* MOBILE: botón compacto → abre el modal de carga */}
+                  <button
+                    type="button"
+                    onClick={() => { setObsError(''); setObsComposerOpen(true); }}
+                    className="md:hidden w-full flex items-center justify-center gap-2 h-11 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 font-bold text-xs uppercase tracking-wide active:scale-[0.98] transition-transform"
+                  >
+                    <MessageSquare className="w-4 h-4" /> Agregar observación
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -382,36 +491,43 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
       </DialogContent>
     </Dialog>
 
-    {/* Sub-modal: observaciones del status seleccionado */}
-    <Dialog open={!!obsStatusOpen} onOpenChange={(open) => { if (!open) setObsStatusOpen(null); }}>
-      <DialogContent className="sm:max-w-[520px] p-0 overflow-hidden rounded-2xl">
-        <div className="px-5 py-4 border-b border-slate-100">
-          <DialogTitle className="text-base font-bold text-slate-900 flex items-center gap-2">
-            <MessageSquare className="w-4 h-4 text-amber-600" /> Observaciones
+    {/* MOBILE: modal de carga de observación post-cierre (se abre desde el botón) */}
+    <Dialog open={obsComposerOpen} onOpenChange={(open) => { if (!open && !obsSaving) setObsComposerOpen(false); }}>
+      <DialogContent className="sm:max-w-[440px] rounded-2xl">
+        <DialogHeader>
+          <DialogTitle className="text-base font-bold text-slate-900 flex items-center gap-2 pr-6">
+            <MessageSquare className="w-4 h-4 text-violet-600" /> Agregar observación
           </DialogTitle>
-          <p className="text-[11px] text-slate-400 font-medium mt-1">Estado: <span className="font-semibold text-slate-600">{obsStatusOpen}</span></p>
+          <p className="text-[11px] text-slate-400 font-medium">
+            <span className="font-semibold text-violet-600">Post cierre</span> · {ticket.patientName}
+          </p>
+        </DialogHeader>
+
+        <div className="grid gap-2">
+          <textarea
+            value={obsText}
+            onChange={e => setObsText(e.target.value)}
+            maxLength={500}
+            rows={5}
+            autoFocus
+            placeholder="Nota post-cierre… (ej.: faltó firma del parte, corrección administrativa)"
+            className="w-full min-h-[120px] rounded-xl border border-slate-200 p-3 text-sm leading-relaxed focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-none resize-y"
+          />
+          <div className="flex items-center justify-between gap-2 px-0.5">
+            <span className="text-[11px] text-slate-400">Queda en la auditoría del traslado.</span>
+            <span className="text-[11px] text-slate-300 tabular-nums shrink-0">{obsText.length}/500</span>
+          </div>
+          {obsError && <p className="text-red-500 text-xs font-bold">{obsError}</p>}
         </div>
-        <div className="p-5 space-y-3 max-h-[60vh] overflow-y-auto">
-          {openObs.length === 0 ? (
-            <p className="text-sm text-slate-400 text-center py-6">Sin observaciones</p>
-          ) : (
-            openObs.map(o => (
-              <div key={o.id} className="p-3 bg-amber-50/60 border border-amber-100 rounded-xl">
-                <p className="text-sm text-slate-800 leading-snug whitespace-pre-wrap break-words">{o.texto}</p>
-                <p className="text-[10px] text-slate-400 font-medium mt-2 flex items-center gap-2">
-                  <span className="font-semibold text-slate-600">{o.usuario || 'Usuario'}</span>
-                  <span>·</span>
-                  <span>{formatDateTime(o.fecha)}</span>
-                </p>
-              </div>
-            ))
-          )}
-        </div>
-        <div className="px-5 py-3 bg-slate-50/80 flex items-center justify-end border-t border-slate-100">
-          <Button onClick={() => setObsStatusOpen(null)} variant="outline" className="h-8 px-5 rounded-xl font-semibold text-xs uppercase tracking-widest">
-            Cerrar
+
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={() => setObsComposerOpen(false)} disabled={obsSaving} className="rounded-xl h-10 px-6">
+            Cancelar
           </Button>
-        </div>
+          <Button onClick={submitObs} disabled={obsSaving || !obsText.trim()} className="rounded-xl h-10 px-6 bg-violet-600 hover:bg-violet-700 text-white">
+            {obsSaving ? 'Guardando…' : 'Agregar'}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
     </>

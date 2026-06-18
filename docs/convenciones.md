@@ -2660,3 +2660,46 @@ Conservar el id real de SP (para acciones como marcar-leída) y combinar flags (
 ### Scripts de diagnóstico/limpieza read-only contra SP con dry-run + `--apply`
 
 Para investigar o remediar datos en SharePoint sin depender de la app: scripts `.mjs` standalone en [scripts/](scripts/) que parsean `.env.local` a mano (tsx/node no lo auto-cargan), obtienen token Graph por `client_credentials` y consultan vía REST con `Prefer: HonorNonIndexedQueriesWarningMayFailRandomly`. Convención de seguridad: **read-only por default** (agrupan y reportan); las mutaciones van detrás de un flag explícito `--apply` (sin él, **dry-run** que solo imprime qué haría y un sample de ids). Hora AR = `UTC-3` para alinear con los timestamps que ve el usuario. Ejemplos: `_diag-notif-dupes.mjs` (diagnóstico de duplicados + subs por usuario) y `_cleanup-notif-dupes.mjs` (limpieza conservadora por `Fecha_N` exacto).
+
+## Nuevos patrones (observaciones + UI responsive, 2026-06-18)
+
+### Merge de items heterogéneos en una línea de tiempo por `fecha` (no lookup-map frágil)
+
+Cuando hay que mostrar dos colecciones distintas en una misma línea de tiempo (ej. hitos del ticket + observaciones), **mergearlas en un array discriminado y ordenar por fecha**, en vez de "colgar" una de la otra por una clave de correlación. Esto evita que un item quede huérfano si su "ancla" no existe.
+
+```ts
+type TimelineItem =
+  | { kind: 'event'; key: string; fecha: string; evt: TicketEvent }
+  | { kind: 'obs';   key: string; fecha: string; obs: Observation };
+
+const timeline = useMemo<TimelineItem[]>(() => [
+  ...events.map(e => ({ kind: 'event' as const, key: `e-${e.id}`, fecha: e.fecha, evt: e })),
+  ...observations.map(o => ({ kind: 'obs' as const, key: `o-${o.id}`, fecha: o.fecha, obs: o })),
+].sort((a, b) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime()), [events, observations]);
+```
+
+Se descartó el mapa previo `EVENT_TIPO_TO_STATUS` que anclaba cada obs al evento de su status (dejaba huérfanas las obs cuyo evento no existía). Aplicado en [components/AuditModal.tsx](components/AuditModal.tsx).
+
+### Append optimista + modal abierto para "cargar y ver en el mismo lugar"
+
+En un modal hilo+redactor, al guardar no cerrar el modal ni re-fetchear: agregar la fila optimista al estado local (con `id` `local-…` y fecha de cliente) y limpiar el input. La fila aparece al instante en el hilo; al reabrir, el fetch trae la versión canónica de SP. Para feedback, scrollear el hilo al fondo **solo tras agregar** (flag `pendingScrollRef`), no en la carga inicial:
+
+```ts
+const pendingScrollRef = useRef(false);
+useEffect(() => {
+  if (pendingScrollRef.current && scrollRef.current) {
+    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    pendingScrollRef.current = false;
+  }
+}, [timeline]); // dep en la lista, no en un contador de submits
+```
+
+Aplicado en [views/RequestsView.tsx](views/RequestsView.tsx) (Operativa) y [components/AuditModal.tsx](components/AuditModal.tsx).
+
+### Redactor responsive: inline en desktop, botón→modal en mobile
+
+Cuando un composer fijo come demasiado alto en pantallas chicas, partir por breakpoint: `hidden md:block` para el composer inline (desktop, hay espacio) y `md:hidden` para un botón compacto que abre un `<Dialog>` aparte (mobile). Ambos comparten el mismo estado (`obsText`, `submitObs`); el modal se cierra solo en el `submit` exitoso. Patrón en el redactor post-cierre de [components/AuditModal.tsx](components/AuditModal.tsx).
+
+### Modal acotado: zona scrolleable + footer/composer fijo (`flex-col` + `min-h-0`)
+
+Para que dentro de un modal una zona scrollee y otra quede fija, hacer el contenedor `flex flex-col min-h-0` con la zona scrolleable en `flex-1 overflow-y-auto min-h-0` y el footer/composer en `shrink-0`. El alto del modal se sube con `max-h-[92vh]` pasado por className (el `cn`/`twMerge` lo sobreescribe sobre el `max-h-[85vh]` por defecto del `DialogContent` sin tocar el componente compartido). En mobile, además, prevenir overflow horizontal con `min-w-0`/`overflow-x-hidden` en los hijos flex y `flex-wrap` en filas de meta (id/fecha), y apilar pares label/valor largos (origen→destino) en doble fila con `break-words` en vez de `truncate` lado a lado. Aplicado en [components/AuditModal.tsx](components/AuditModal.tsx).
