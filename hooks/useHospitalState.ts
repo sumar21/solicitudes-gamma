@@ -439,21 +439,23 @@ export const useHospitalState = () => {
   // ── Data fetchers ─────────────────────────────────────────────────────────────
   const fetchBeds = useCallback(async (force = false) => {
     setBedsLoading(true);
-    setBedsError(null);
+    // NO limpiamos bedsError acá: si limpiáramos al inicio de cada poll, el cartel
+    // parpadearía cada ciclo. Se limpia solo cuando una respuesta llega OK (éxito real)
+    // y se setea en cada rama de falla con un código de debug para soporte.
     try {
       const headers: Record<string, string> = {};
       if (!force && bedsEtagRef.current) headers['If-None-Match'] = bedsEtagRef.current;
 
       const r = await authFetch('/api/beds', { headers });
       if (r.status === 401) { handleLogout(); return; }
-      if (r.status === 304) return; // no changes
-      if (!r.ok) return; // keep previous data
+      if (r.status === 304) { setBedsError(null); return; } // sin cambios = saludable
+      if (!r.ok) { setBedsError(`HTTP ${r.status}`); return; } // mantiene data previa
 
       const etag = r.headers.get('etag');
       if (etag) bedsEtagRef.current = etag;
 
       const data = await r.json();
-      if (data.error) return;
+      if (data.error) { setBedsError(`API: ${String(data.error)}`); return; }
 
       if (Array.isArray(data.beds) && data.beds.length > 0) {
         // Skip partial failures (all beds available when we know some are occupied)
@@ -471,9 +473,14 @@ export const useHospitalState = () => {
         }
         setBedsError(null);
         setRawBeds(data.beds);
+      } else if (rawBeds.length === 0) {
+        // Respuesta OK pero sin camas y no tenemos data previa → Progal no devolvió nada.
+        // Sin esto el mapa quedaba en blanco sin explicación (el caso que reportó el cliente).
+        setBedsError('SIN_DATOS: Progal no devolvió camas');
       }
     } catch (e: any) {
       console.error('[fetchBeds] error:', e);
+      setBedsError(`NETWORK: ${e?.message ?? 'fallo de red'}`);
     }
     finally { setBedsLoading(false); }
   // eslint-disable-next-line react-hooks/exhaustive-deps

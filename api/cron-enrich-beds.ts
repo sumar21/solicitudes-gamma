@@ -24,13 +24,6 @@ const CRON_SECRET = process.env.CRON_SECRET ?? '';
 const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 const GAMMA_BASE = process.env.GAMMA_VM_URL ?? 'http://35.224.5.114/proxy/index.php';
 
-// Interruptor de notificaciones del cron (sin apagar el cron). Cuando es true, el cron
-// SIGUE actualizando 12.EnrichCamas (refresca/migra baselines) pero NO envía ningún push
-// de ayuno/dieta — igual que ?silent=1 pero para los ticks PROGRAMADos (que no llevan
-// query param). Uso: migraciones de formato (ej. nuevo formato de AYUNOS de Progal).
-// Setear ENRICH_PUSH_PAUSED=1, deployar, esperar a que SP migre, luego quitarlo y redeployar.
-const PUSH_PAUSED = ['1', 'true', 'yes'].includes((process.env.ENRICH_PUSH_PAUSED ?? '').trim().toLowerCase());
-
 const WORKERS = 8;
 const STALE_MS = 60 * 60 * 1000; // filas no vistas + sin update hace >1h → Inactivo
 
@@ -188,11 +181,10 @@ export default async function handler(req: any, res: any) {
   if (!SITE_ID) return res.status(503).json({ error: 'SHAREPOINT_SITE_ID no configurado' });
   if (!LIST_ID) return res.status(503).json({ error: '12.EnrichCamas LIST_ID no configurado' });
 
-  // Re-baseline silencioso: reescribe todos los payloads pero NO envía push. Se activa
-  // por ?silent=1 (disparo MANUAL) o por el env var ENRICH_PUSH_PAUSED (ticks PROGRAMADos,
-  // para migraciones de formato — ver constante arriba). Sirve para re-sincronizar
-  // baselines tras un deploy que cambie el formato del hash sin disparar una catarata.
-  const silent = PUSH_PAUSED || ['1', 'true', 'yes'].includes(
+  // Re-baseline silencioso (disparo MANUAL): reescribe todos los payloads pero NO
+  // envía ningún push de fasting. Para re-sincronizar baselines tras un deploy que
+  // cambie el formato del hash. Uso: ?silent=1.
+  const silent = ['1', 'true', 'yes'].includes(
     String(req.query?.silent ?? req.query?.rebaseline ?? '').toLowerCase(),
   );
 

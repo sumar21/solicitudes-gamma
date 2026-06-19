@@ -10,7 +10,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { StatCard } from '../components/dashboard/StatCard';
 import { VolumeBarChart } from '../components/dashboard/VolumeBarChart';
 import { StatusDonutChart } from '../components/dashboard/StatusDonutChart';
-import { calculateTicketMetrics, formatBedName, formatDateReadable, cn } from '../lib/utils';
+import { calculateTicketMetrics, formatBedName, formatDateReadable, formatDateTime, cn } from '../lib/utils';
 
 interface DashboardViewProps {
   tickets: Ticket[];
@@ -257,7 +257,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ tickets }) => {
                       </p>
                     </div>
                     <div className="flex flex-col items-end gap-2">
-                      <span className="text-[10px] font-black text-slate-400 tabular-nums">{t.createdAt}</span>
+                      <span className="text-[10px] font-black text-slate-400 tabular-nums">{formatDateTime(t.createdAt)}</span>
                     </div>
                   </div>
                 </Card>
@@ -303,7 +303,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ tickets }) => {
                         <Badge variant="success" className="text-[8px] font-black uppercase tracking-widest py-0">Limpia</Badge> :
                         <Badge variant="destructive" className="text-[8px] font-black uppercase tracking-widest py-0">Sucia</Badge>
                       }
-                      <span className="text-[10px] font-black text-slate-400 tabular-nums">{t.createdAt}</span>
+                      <span className="text-[10px] font-black text-slate-400 tabular-nums">{formatDateTime(t.createdAt)}</span>
                     </div>
                   </div>
                 </Card>

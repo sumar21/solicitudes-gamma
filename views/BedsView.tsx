@@ -1507,6 +1507,41 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
         </div>
       )}
 
+      {/* Error sin datos: antes el mapa quedaba en blanco. Cartel + código de debug + recargar. */}
+      {bedsError && beds.length === 0 && !bedsLoading && (
+        <div className="flex flex-col items-center justify-center gap-4 py-16 px-4 text-center">
+          <div className="flex items-center justify-center w-14 h-14 rounded-2xl bg-rose-50 border border-rose-100">
+            <AlertTriangle className="w-7 h-7 text-rose-500" />
+          </div>
+          <div className="space-y-1">
+            <p className="text-sm font-black text-slate-800">No se pudo cargar el mapa de camas</p>
+            <p className="text-xs text-slate-500 max-w-sm">Hubo un problema al consultar la información a Progal. Reintentá; si el error persiste, pasá el código de abajo a soporte.</p>
+          </div>
+          <code className="text-[10px] font-mono text-slate-400 bg-slate-50 border border-slate-200 rounded-md px-2 py-1">debug: {bedsError}</code>
+          {onRefresh && (
+            <Button onClick={() => onRefresh()} disabled={bedsLoading} className="gap-2 rounded-xl">
+              <RefreshCw className={cn("h-4 w-4", bedsLoading && "animate-spin")} />
+              Recargar
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* Error con datos previos: aviso discreto, sin tapar el mapa (sigue mostrando lo último). */}
+      {bedsError && beds.length > 0 && (
+        <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs font-semibold">
+          <span className="flex items-center gap-2 min-w-0">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">No se pudo actualizar el mapa (mostrando últimos datos). <span className="font-mono opacity-70">debug: {bedsError}</span></span>
+          </span>
+          {onRefresh && (
+            <button onClick={() => onRefresh()} disabled={bedsLoading} className="flex items-center gap-1.5 font-bold hover:underline disabled:opacity-50 shrink-0">
+              <RefreshCw className={cn("h-3.5 w-3.5", bedsLoading && "animate-spin")} /> Reintentar
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="flex flex-col gap-3 md:gap-4">
         {sortedAreaEntries.map(([areaName, areaBeds]) => (
           <div key={areaName} className="space-y-3">
