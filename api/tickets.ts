@@ -158,15 +158,32 @@ async function handler(req: any, res: any) {
         ? `&$filter=${entornoClause}`
         : `&$filter=${entornoClause} and ${statusClause}`;
 
-      const spRes = await graphFetch(
-        `/sites/${SITE_ID}/lists/${LIST_ID}/items?$expand=fields&$top=500${filter}`,
-        { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } as any },
-      );
+      // Sin tope: paginamos siguiendo @odata.nextLink y traemos TODOS los tickets del
+      // entorno (mismo patrón que api/notifications.ts). El `$top=500` es solo el tamaño
+      // de página (máximo que Graph devuelve por request con $expand), NO un límite del
+      // total. MAX_SCAN es un backstop anti-runaway (no un recorte esperable); si se
+      // alcanza, se loguea para que no sea un tope silencioso.
+      const MAX_SCAN = 50_000;
+      const rows: Record<string, unknown>[] = [];
+      let next: string | null =
+        `/sites/${SITE_ID}/lists/${LIST_ID}/items?$expand=fields&$top=500${filter}`;
+      while (next && rows.length < MAX_SCAN) {
+        const page = await graphFetch(next, {
+          headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } as any,
+        });
+        if (!page.ok) throw new Error(`SP GET failed (${page.status}): ${await page.text()}`);
+        const pageData = (await page.json()) as {
+          value?: Record<string, unknown>[];
+          '@odata.nextLink'?: string;
+        };
+        for (const it of pageData.value ?? []) rows.push(it);
+        const raw = pageData['@odata.nextLink'];
+        // nextLink es absoluta; graphFetch espera path relativo a /v1.0.
+        next = raw ? raw.replace(/^https:\/\/graph\.microsoft\.com\/v1\.0/, '') : null;
+      }
+      if (next) console.warn(`[tickets] MAX_SCAN (${MAX_SCAN}) alcanzado — quedaron tickets sin traer`);
 
-      if (!spRes.ok) throw new Error(`SP GET failed (${spRes.status}): ${await spRes.text()}`);
-
-      const data = (await spRes.json()) as { value: Record<string, unknown>[] };
-      const tickets = (data.value ?? []).map(spToTicket);
+      const tickets = rows.map(spToTicket);
 
       // ETag: hash of ids + all editable/status fields so client can skip unchanged
       // data. Incluye destination/observations/changeReason/workflow/financier además

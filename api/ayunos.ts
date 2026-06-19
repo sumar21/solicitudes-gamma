@@ -1,175 +1,90 @@
 /**
- * Parseo y cálculo de ocurrencias de ayunos a partir del campo AYUNOS[] del evento Gamma.
+ * Procesamiento del campo AYUNOS[] del evento Gamma.
  *
- * Cada elemento del array es UNA fila (planificación, hora). Filas con el mismo
- * PEA_ID_PLANIFICACION + PEA_FECHA_HORA_INICIO componen una indicación con N horas.
+ * Desde la migración de Progal (jun-2026), la API devuelve los ayunos NO ejecutados
+ * (vigentes) ya resueltos: cada fila es UNA ocurrencia concreta con su fecha/hora exacta
+ * en `PAT_FECHA_HORA`. El front YA NO calcula ocurrencias a partir de horas + repeticiones
+ * (eso ocultaba suspensiones individuales, recargas, etc.) — solo agrupa por indicación
+ * y muestra/almacena lo recibido.
  *
- * PEA_CANTIDAD_REPETICIONES es el TOTAL de ocurrencias de la indicación
- * (ciclando por las horas en orden cronológico, día por día) — NO "veces por hora".
- * Si falta (la carga en origen lo dejó vacío), `total` queda en null y mostramos
- * solo el primer ciclo (día de inicio) para no ocultar el ayuno por completo.
+ * Cada fila trae:
+ *   · PEA_ID_PLANIFICACION — identifica la indicación (agrupa sus ocurrencias).
+ *     Aceptamos PEA_ID_INDICACION como fallback por compatibilidad de nombre.
+ *   · PAT_FECHA_HORA — fecha y hora de la ocurrencia (hora Argentina, naive sin tz).
+ *   · PEA_FECHA_HORA_INICIO — cuándo se cargó la indicación; informativo, NO se usa.
  *
- * Ejemplos:
- *   - startISO=2026-05-18 09:42, hours=[10,11,12,13], total=4
- *     → 4 ocurrencias: 18 10:00, 18 11:00, 18 12:00, 18 13:00.
- *
- *   - startISO=2026-05-19 14:51, hours=[0,22,23], total=12
- *     → 12 ocurrencias en orden: 19 00:00, 19 22:00, 19 23:00, 20 00:00, 20 22:00,
- *       20 23:00, 21 00:00, 21 22:00, 21 23:00, 22 00:00, 22 22:00, 22 23:00.
- *     (La membresía se decide por la FECHA de inicio, no por su hora-del-día: la 19 00:00
- *      cuenta aunque sea previa a las 14:51. Ver nota en generateOccurrences.)
+ * Ejemplo (un paciente con dos indicaciones, plan 2 y plan 3):
+ *   plan 3 → 2026-06-10 12:00, 14:00, 16:00; 2026-06-11 12:00
+ *   plan 2 → 2026-06-10 18:00, 19:00;        2026-06-11 19:00, 20:00
  */
 
 import { simpleHash, type GammaEvent } from './gamma-client.js';
 
 export interface FastingIndication {
   indicationId: number;
-  startISO: string;
-  hours: number[];                 // ordenadas asc
-  totalOccurrences: number | null; // null = repeticiones no especificadas en origen
-  upcoming: string[];              // próximas hasta 5 ocurrencias futuras (ISO), para el modal
+  // Ocurrencias (PAT_FECHA_HORA) en ISO naive ART, ordenadas asc y sin duplicados.
+  occurrences: string[];
 }
 
 export interface FastingSummary {
-  hasUpcoming: boolean;
-  nextAt?: string;
+  hasUpcoming: boolean;   // true si hay al menos una ocurrencia (todas vigentes)
+  nextAt?: string;        // primera ocurrencia (ISO), para ordenar/mostrar "próximo"
   indications: FastingIndication[];
 }
 
-type Raw = NonNullable<GammaEvent['AYUNOS']>[number];
-
-/** Agrupa filas crudas por (PEA_ID_PLANIFICACION, PEA_FECHA_HORA_INICIO). */
-function groupRaws(rows: Raw[]): Map<string, { id: number; startISO: string; hours: number[]; total: number | null }> {
-  const out = new Map<string, { id: number; startISO: string; hours: number[]; total: number | null }>();
-  for (const r of rows) {
-    // La API devuelve PEA_ID_PLANIFICACION; aceptamos PEA_ID_INDICACION como fallback.
-    const planId = r?.PEA_ID_PLANIFICACION ?? r?.PEA_ID_INDICACION;
-    if (planId == null || r?.PEA_FECHA_HORA_INICIO == null || r?.PAH_HORA == null) continue;
-    const key = `${planId}|${r.PEA_FECHA_HORA_INICIO}`;
-    let entry = out.get(key);
-    if (!entry) {
-      // total null cuando la carga en origen no especificó repeticiones.
-      const rawTotal = r.PEA_CANTIDAD_REPETICIONES;
-      entry = {
-        id: Number(planId),
-        startISO: String(r.PEA_FECHA_HORA_INICIO),
-        hours: [],
-        total: (rawTotal == null || Number(rawTotal) <= 0) ? null : Number(rawTotal),
-      };
-      out.set(key, entry);
-    }
-    if (!entry.hours.includes(Number(r.PAH_HORA))) entry.hours.push(Number(r.PAH_HORA));
-  }
-  for (const v of out.values()) v.hours.sort((a, b) => a - b);
-  return out;
-}
-
 /**
- * Genera la secuencia de timestamps de una indicación, en orden cronológico,
- * hasta llegar a `total` ocurrencias.
- *
- * El "día 0" es el día calendario de startISO. Cada día siguiente reinicia el ciclo
- * de horas. La membresía se decide por la FECHA de inicio, NO por su hora-del-día:
- * todas las horas listadas del día 0 cuentan aunque sean previas a la hora de inicio.
- *
- * Por qué: con `inicio=8/6 02:00, horas=[1..8], total=8`, descartar la 01:00 por ser
- * previa a las 02:00 dejaba 7 ocurrencias y obligaba a rellenar la 8ª rodando al día
- * siguiente (9/6 01:00) — un horario fantasma que el ayuno no tiene. Manteniéndolas
- * todas el 8/6, las ya pasadas simplemente no figuran como futuras (las filtra
- * summarizeFasting con `now`).
+ * Agrupa las ocurrencias crudas por indicación y arma el summary que persistimos en
+ * 12.EnrichCamas y consume el front. Devuelve `undefined` cuando no hay ayunos vigentes.
  */
-function generateOccurrences(startISO: string, hours: number[], total: number | null): Date[] {
-  if (hours.length === 0) return [];
-
-  const start = new Date(startISO);
-  if (Number.isNaN(start.getTime())) return [];
-
-  // Base del día 0 = startISO normalizado a 00:00 LOCAL del mismo día calendario.
-  const day0 = new Date(start.getFullYear(), start.getMonth(), start.getDate(), 0, 0, 0, 0);
-
-  // Sin repeticiones conocidas → solo el primer ciclo (día de inicio).
-  const effectiveTotal = total ?? hours.length;
-  const maxDays = total === null ? 1 : 365;
-
-  const out: Date[] = [];
-  // Tope de seguridad: no recorrer más allá de N días razonables aunque "total" sea grande.
-  for (let d = 0; out.length < effectiveTotal && d < maxDays; d++) {
-    for (const h of hours) {
-      const t = new Date(day0);
-      t.setDate(day0.getDate() + d);
-      t.setHours(h, 0, 0, 0);
-      out.push(t);
-      if (out.length >= effectiveTotal) break;
-    }
-  }
-  return out;
-}
-
-/** Resumen para el ícono de la tarjeta + lista de indicaciones para el modal. */
 export function summarizeFasting(
   ayunos: GammaEvent['AYUNOS'] | undefined,
-  now: Date = new Date(),
 ): FastingSummary | undefined {
   if (!Array.isArray(ayunos) || ayunos.length === 0) return undefined;
 
-  const groups = groupRaws(ayunos);
-  if (groups.size === 0) return undefined;
-
-  // Umbral: el ícono no debe parpadear durante la hora del ayuno. Toleramos 1h hacia atrás.
-  const graceMs = 60 * 60 * 1000;
-  const cutoff = now.getTime() - graceMs;
+  // indicationId → set de PAT_FECHA_HORA (dedupe por si la API repite filas).
+  const byPlan = new Map<number, Set<string>>();
+  for (const r of ayunos) {
+    const planId = r?.PEA_ID_PLANIFICACION ?? r?.PEA_ID_INDICACION;
+    const when = r?.PAT_FECHA_HORA;
+    if (planId == null || when == null) continue;
+    const id = Number(planId);
+    let set = byPlan.get(id);
+    if (!set) { set = new Set(); byPlan.set(id, set); }
+    set.add(String(when));
+  }
+  if (byPlan.size === 0) return undefined;
 
   const indications: FastingIndication[] = [];
-  let nextAtMs = Infinity;
-
-  for (const g of groups.values()) {
-    const occ = generateOccurrences(g.startISO, g.hours, g.total);
-    // Próximas ocurrencias respecto a "now" (no respecto al cutoff con gracia).
-    const future = occ.filter(d => d.getTime() >= now.getTime());
-    if (future.length > 0) {
-      const firstMs = future[0].getTime();
-      if (firstMs < nextAtMs) nextAtMs = firstMs;
-    }
-    // Para el modal: las próximas 5 ocurrencias dentro de la indicación.
-    // Si no hay futuras, mostramos las últimas 5 históricas (puede haber gracia).
-    const display = (future.length > 0 ? future : occ.slice(-5)).slice(0, 5);
-
-    indications.push({
-      indicationId: g.id,
-      startISO: g.startISO,
-      hours: g.hours,
-      totalOccurrences: g.total,
-      upcoming: display.map(d => d.toISOString()),
-    });
+  let nextAt: string | undefined;
+  for (const [indicationId, set] of byPlan) {
+    // ISO naive con mismo formato → orden lexicográfico == cronológico.
+    const occurrences = Array.from(set).sort();
+    if (occurrences.length === 0) continue;
+    indications.push({ indicationId, occurrences });
+    if (nextAt === undefined || occurrences[0] < nextAt) nextAt = occurrences[0];
   }
+  if (indications.length === 0) return undefined;
 
-  // hasUpcoming: alguna indicación tiene una ocurrencia ≥ cutoff (now - 1h).
-  const hasUpcoming = Array.from(groups.values()).some(g => {
-    const occ = generateOccurrences(g.startISO, g.hours, g.total);
-    return occ.some(d => d.getTime() >= cutoff);
-  });
+  // Orden estable de indicaciones (por id) para que el hash no dependa del orden del Map.
+  indications.sort((a, b) => a.indicationId - b.indicationId);
 
-  return {
-    hasUpcoming,
-    nextAt: nextAtMs === Infinity ? undefined : new Date(nextAtMs).toISOString(),
-    indications,
-  };
+  return { hasUpcoming: true, nextAt, indications };
 }
 
 /**
- * Hash estable del estado de ayunos de un evento — para detectar cambios entre
- * corridas del cron (análogo a hashTags de dietas).
+ * Hash estable del estado de ayunos de un evento — para detectar cambios entre corridas
+ * del cron (análogo a hashTags de dietas).
  *
  * Devuelve `'none'` cuando no hay ayunos (centinela explícito): así el cron puede
- * distinguir "sin ayunos" de "snapshot nunca inicializado" (campo SP vacío `''`)
- * y no spamear el primer ciclo. Usa solo campos estables (id de planificación,
- * horas, inicio, repeticiones) → no depende de `now`.
+ * distinguir "sin ayunos" de "snapshot nunca inicializado" (campo SP vacío) y no spamear
+ * el primer ciclo. Usa solo campos estables (id de indicación + ocurrencias) → no depende
+ * de `now`.
  */
 export function fastingHash(ayunos: GammaEvent['AYUNOS'] | undefined): string {
   const summary = summarizeFasting(ayunos);
   if (!summary || summary.indications.length === 0) return 'none';
   const sig = summary.indications
-    .map(i => `${i.indicationId}:${i.hours.join(',')}:${i.startISO}:${i.totalOccurrences ?? 'n'}`)
+    .map(i => `${i.indicationId}:${i.occurrences.join(',')}`)
     .sort()
     .join('|');
   return simpleHash(sig);

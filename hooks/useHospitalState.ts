@@ -947,23 +947,26 @@ export const useHospitalState = () => {
   };
 
   const handleLogout = useCallback(() => {
-    // Unsubscribe push notifications for this user
+    // Baja de push de este dispositivo. Robusto a propósito:
+    //  · NO depende del token (el DELETE ya no exige auth) → funciona también en el
+    //    auto-logout por token vencido / revocación de ubicación.
+    //  · `keepalive: true` → la request sobrevive si la PWA se cierra justo después.
+    //  · Borra la fila en SP ANTES de `unsubscribe()` (mientras tenemos el endpoint).
     const t = localStorage.getItem(TOKEN_KEY);
-    if (t && 'serviceWorker' in navigator && 'PushManager' in window) {
-      navigator.serviceWorker.ready.then(reg => {
-        reg.pushManager.getSubscription().then(sub => {
-          if (sub) {
-            // Delete subscription from SP
-            fetch('/api/push-subscribe', {
-              method: 'DELETE',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${t}` },
-              body: JSON.stringify({ endpoint: sub.endpoint }),
-            }).catch(() => {});
-            // Unsubscribe from browser
-            sub.unsubscribe().catch(() => {});
-          }
-        }).catch(() => {});
-      }).catch(() => {});
+    if ('serviceWorker' in navigator && 'PushManager' in window) {
+      navigator.serviceWorker.ready
+        .then(reg => reg.pushManager.getSubscription())
+        .then(sub => {
+          if (!sub) return;
+          fetch('/api/push-subscribe', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) },
+            body: JSON.stringify({ endpoint: sub.endpoint }),
+            keepalive: true,
+          }).catch(() => {});
+          sub.unsubscribe().catch(() => {});
+        })
+        .catch(() => {});
     }
 
     // Reset refs de detección de cambios. Sin esto, al re-loguear en la misma pestaña
@@ -1890,6 +1893,30 @@ export const useHospitalState = () => {
     const interval = setInterval(revalidate, REVALIDATE_MS);
     return () => { cancelled = true; clearInterval(interval); };
   }, [token, currentUser?.id, currentUser?.sede, currentUser?.bypassLocationCheck, handleLogout]);
+
+  // ── Heartbeat de la suscripción push ─────────────────────────────────────────
+  // Refresca el `lastModifiedDateTime` de la sub en SP mientras la sesión está activa:
+  // al montar, al volver a foreground y cada 6h. El server-side saltea (y limpia) las
+  // subs no refrescadas en >36h → un dispositivo deslogueado/cerrado deja de recibir push.
+  // Solo "toca" si ya hay suscripción (no pide permiso ni crea una nueva).
+  useEffect(() => {
+    if (!token || !currentUser) return;
+    let cancelled = false;
+    const touch = () => {
+      import('../lib/pushSubscription').then(({ touchPushSubscription }) => {
+        if (cancelled) return;
+        touchPushSubscription(
+          token, currentUser.id, currentUser.roleName ?? currentUser.role,
+          currentUser.assignedAreas ?? [], currentUser.sede,
+        );
+      }).catch(() => {});
+    };
+    touch(); // al montar / loguear
+    const onVisible = () => { if (document.visibilityState === 'visible') touch(); };
+    document.addEventListener('visibilitychange', onVisible);
+    const id = setInterval(touch, 6 * 60 * 60 * 1000); // cada 6h mientras esté abierta
+    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVisible); clearInterval(id); };
+  }, [token, currentUser?.id]);
 
   // ── Push tap handling: marca como leída la notif SP correspondiente ──────────
   // El SW dispara dos rutas según si la app estaba abierta:

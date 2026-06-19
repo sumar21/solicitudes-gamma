@@ -50,6 +50,22 @@ interface Subscription {
   role: string;
   assignedAreas: string[];
   sede: string;
+  lastModified: string;  // lastModifiedDateTime de SP (se bumpea en cada alta/heartbeat)
+}
+
+// Suscripción "vigente": refrescada hace ≤ STALE_SUB_MS. El cliente hace un heartbeat
+// (re-POST de la sub) al abrir la app, al pasar a foreground y cada 6h mientras esté
+// abierta. Una sub no tocada en >36h = dispositivo que dejó de usar la app (logout que
+// no llegó a limpiar, token vencido con la app cerrada, PWA abandonada). NO le mandamos
+// push: es la causa de "recibo notis deslogueado". Fail-open: si no hay timestamp, se
+// envía igual (nunca cortamos por un dato faltante).
+const STALE_SUB_MS = 36 * 60 * 60 * 1000;
+
+function isFresh(lastModified: string, now: number): boolean {
+  if (!lastModified) return true; // fail-open
+  const t = Date.parse(lastModified);
+  if (!Number.isFinite(t)) return true;
+  return now - t <= STALE_SUB_MS;
 }
 
 async function fetchSubscriptions(sede?: string): Promise<Subscription[]> {
@@ -66,7 +82,8 @@ async function fetchSubscriptions(sede?: string): Promise<Subscription[]> {
     if (!spRes.ok) return [];
 
     const data = (await spRes.json()) as { value: Record<string, unknown>[] };
-    return (data.value ?? []).map((item: any) => {
+    const now = Date.now();
+    const all = (data.value ?? []).map((item: any) => {
       const f = item.fields as Record<string, unknown>;
       let keys = { p256dh: '', auth: '' };
       try { keys = JSON.parse(String(f.Keys_PS ?? '{}')); } catch { /* invalid */ }
@@ -78,8 +95,14 @@ async function fetchSubscriptions(sede?: string): Promise<Subscription[]> {
         role: String(f.UserRole_PS ?? ''),
         assignedAreas: String(f.AssignedAreas_PS ?? '').split(';').filter(Boolean),
         sede: String(f.Sede_PS ?? ''),
+        lastModified: String(item.lastModifiedDateTime ?? ''),
       };
     }).filter(s => s.endpoint && s.keys.p256dh);
+
+    const fresh = all.filter(s => isFresh(s.lastModified, now));
+    const stale = all.length - fresh.length;
+    if (stale > 0) console.log(`[push-utils] skipped ${stale} stale subscription(s) (>36h sin refresco)`);
+    return fresh;
   } catch (err) {
     console.error('[push-utils] fetchSubscriptions error:', err);
     return [];

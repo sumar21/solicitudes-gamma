@@ -1,116 +1,64 @@
 /**
- * Cálculo de ocurrencias de ayuno en tiempo real, client-side, en hora Argentina.
+ * Helpers de presentación de ayunos, client-side, en hora Argentina.
  *
- * Por qué client-side: las "próximas" precalculadas por el cron quedan congeladas al
- * momento del cron (no sirven para "ocultar las que ya pasaron"), y además el cron corre
- * en Vercel (UTC) — calcular ahí con setHours interpretaba las horas de Gamma (que son
- * hora Argentina) como UTC, corriendo todo 3hs. Recalcular acá con el `now` del cliente
- * y offset ART fijo resuelve ambas cosas.
+ * Desde la migración de Progal (jun-2026) la API devuelve las ocurrencias de ayuno NO
+ * ejecutadas ya resueltas (`PAT_FECHA_HORA` por fila). El front YA NO calcula ocurrencias
+ * a partir de horas + repeticiones: solo formatea y agrupa lo recibido.
  *
- * Argentina = UTC-3 fijo (no tiene DST). Los timestamps se construyen con Date.UTC
- * (que normaliza overflow de hora/día) y se muestran con timeZone explícito.
+ * Las fechas de Gamma son naive ("2026-06-10T12:00:00") = hora Argentina. Las parseamos
+ * por partes para NO depender de la TZ del dispositivo (`new Date` la aplicaría) y las
+ * mostramos tal cual llegan (ya vienen en ART, no hay que convertir nada).
  */
 
 import type { Bed } from '../types';
 
-const ART_OFFSET_H = 3;          // UTC-3
-const GRACE_MS = 60 * 60 * 1000; // una ocurrencia sigue "vigente" 1h (la de las 15 se ve hasta las 16)
+type Indication = { occurrences: string[] };
 
-type Indication = { startISO: string; hours: number[]; totalOccurrences: number | null };
-
-// Gamma manda PEA_FECHA_HORA_INICIO naive ("2026-05-28T09:57:00") = hora Argentina.
-// Lo parseamos por partes para NO depender de la TZ del runtime (new Date lo haría).
 function parseArtParts(iso: string): { Y: number; M: number; D: number; h: number; min: number } | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(iso);
   if (!m) return null;
   return { Y: +m[1], M: +m[2], D: +m[3], h: +m[4], min: +m[5] };
 }
 
-/**
- * Epochs (ms UTC) de las ocurrencias de una indicación, en orden cronológico, en hora
- * Argentina. Empieza el día de startISO, cicla por TODAS las horas listadas día a día,
- * hasta llegar a `total` (o un ciclo si total es null).
- *
- * La membresía se decide por la FECHA de inicio, no por su hora-del-día: si Gamma manda
- * `inicio=8/6 02:00, horas=[1..8], total=8`, las 8 ocurrencias caen todas el 8/6
- * (01:00–08:00). NO descartamos la 01:00 por ser previa a las 02:00 — hacerlo obligaba a
- * rellenar la 8ª ocurrencia rodando al día siguiente (9/6 01:00 fantasma). Las horas ya
- * pasadas simplemente no aparecen como "próximas" (las filtra `liveUpcoming`).
- */
-export function fastingOccurrenceEpochs(startISO: string, hours: number[], total: number | null): number[] {
-  if (!hours.length) return [];
-  const p = parseArtParts(startISO);
-  if (!p) return [];
+const pad = (n: number) => String(n).padStart(2, '0');
 
-  const sortedHours = [...hours].sort((a, b) => a - b);
-  const effectiveTotal = total ?? sortedHours.length;
-  const maxDays = total === null ? 1 : 365;
-
-  const out: number[] = [];
-  for (let d = 0; out.length < effectiveTotal && d < maxDays; d++) {
-    for (const H of sortedHours) {
-      const epoch = Date.UTC(p.Y, p.M - 1, p.D + d, H + ART_OFFSET_H, 0, 0);
-      out.push(epoch);
-      if (out.length >= effectiveTotal) break;
-    }
-  }
-  return out;
+/** Formatea una ocurrencia (PAT_FECHA_HORA naive ART) a "DD/MM HH:MM". */
+export function formatFastingDateTime(iso: string): string {
+  const p = parseArtParts(iso);
+  if (!p) return iso;
+  return `${pad(p.D)}/${pad(p.M)} ${pad(p.h)}:${pad(p.min)}`;
 }
 
-/** Próximas ocurrencias vigentes/futuras de una indicación (con gracia de 1h). */
-export function liveUpcoming(ind: Indication, now: number = Date.now(), max = 5): number[] {
-  return fastingOccurrenceEpochs(ind.startISO, ind.hours, ind.totalOccurrences)
-    .filter(e => e + GRACE_MS > now)
-    .slice(0, max);
+/** Ocurrencias de una indicación, ordenadas asc (ISO). Para el modal de la cama. */
+export function fastingOccurrences(ind: Indication): string[] {
+  return [...(ind.occurrences ?? [])].sort();
 }
 
-/** ¿El paciente tiene algún ayuno vigente o por venir? (para el ícono de la tarjeta) */
-export function hasLiveFasting(fasting: Bed['fasting'] | undefined, now: number = Date.now()): boolean {
-  if (!fasting?.indications?.length) return false;
-  return fasting.indications.some(i => liveUpcoming(i, now, 1).length > 0);
-}
-
-/** Formatea un epoch en hora Argentina (robusto ante la TZ del dispositivo). */
-export function formatART(epochMs: number): string {
-  return new Date(epochMs).toLocaleString('es-AR', {
-    timeZone: 'America/Argentina/Buenos_Aires',
-    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
-    hour12: false,  // 24h para coincidir con el header "Horas: HH:00" del modal
-  });
+/** ¿El paciente tiene algún ayuno vigente? (para el ícono de la tarjeta y el filtro) */
+export function hasLiveFasting(fasting: Bed['fasting'] | undefined): boolean {
+  return !!fasting?.indications?.some(i => (i.occurrences?.length ?? 0) > 0);
 }
 
 /**
- * Horas únicas de ayuno (en ART) programadas para HOY, ordenadas asc. Útil para
- * listados/PDFs "del día" — distinto de `liveUpcoming` que solo mira lo que está
- * por venir desde ahora. Acá tomamos TODA la jornada ART [00:00, 24:00).
- *
- * Ejemplo: si Gamma manda una indicación con `hours=[10,12,18]` y otra con `[10,15]`,
- * ambas para hoy → devuelve `[10, 12, 15, 18]`. Ocurrencias de otros días se descartan.
+ * Ayunos de HOY (ART) formateados "HH:MM", únicos y ordenados. Útil para listados/PDFs
+ * "del día" — la API puede devolver ocurrencias de varios días (ver ejemplo en
+ * api/ayunos.ts); acá filtramos solo las de la jornada ART actual.
  */
-export function fastingHoursForToday(
+export function fastingTimesForToday(
   fasting: Bed['fasting'] | undefined,
   now: number = Date.now(),
-): number[] {
+): string[] {
   if (!fasting?.indications?.length) return [];
-  // Inicio del día ART (00:00 ART = 03:00 UTC del mismo día calendario ART).
-  // Usamos toLocaleDateString con timeZone para obtener Y-M-D del "hoy" del usuario.
-  const artYMD = new Date(now).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' });
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(artYMD);
-  if (!m) return [];
-  const [, Y, M, D] = m;
-  const dayStart = Date.UTC(+Y, +M - 1, +D, ART_OFFSET_H, 0, 0);
-  const dayEnd   = dayStart + 24 * 60 * 60 * 1000;
+  // Y-M-D del "hoy" del usuario en ART (en-CA da formato YYYY-MM-DD).
+  const todayYMD = new Date(now).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' });
 
-  const horas = new Set<number>();
+  const times = new Set<string>();
   for (const ind of fasting.indications) {
-    const occs = fastingOccurrenceEpochs(ind.startISO, ind.hours, ind.totalOccurrences);
-    for (const epoch of occs) {
-      if (epoch >= dayStart && epoch < dayEnd) {
-        // Recuperar la hora ART del epoch (UTC - 3, normalizado mod 24).
-        const artHour = (new Date(epoch).getUTCHours() - ART_OFFSET_H + 24) % 24;
-        horas.add(artHour);
-      }
+    for (const occ of ind.occurrences ?? []) {
+      const p = parseArtParts(occ);
+      if (!p) continue;
+      if (`${p.Y}-${pad(p.M)}-${pad(p.D)}` === todayYMD) times.add(`${pad(p.h)}:${pad(p.min)}`);
     }
   }
-  return Array.from(horas).sort((a, b) => a - b);
+  return Array.from(times).sort();
 }

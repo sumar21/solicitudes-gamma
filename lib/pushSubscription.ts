@@ -82,3 +82,43 @@ export async function subscribeToPush(
     return false;
   }
 }
+
+/**
+ * "Heartbeat" de la suscripción: re-envía la sub existente al backend para refrescar su
+ * `lastModifiedDateTime` en SP. El server-side usa ese timestamp para saltear (y luego
+ * limpiar) suscripciones abandonadas — así un dispositivo deslogueado/cerrado deja de
+ * recibir push a las ~36h sin tener que crear columnas nuevas en SharePoint.
+ *
+ * A diferencia de `subscribeToPush`, NO pide permiso ni crea una sub nueva: si el browser
+ * no tiene una suscripción activa, es no-op (evita prompts sorpresa en background).
+ * Usa `keepalive` para sobrevivir si la pestaña se cierra justo después.
+ */
+export async function touchPushSubscription(
+  token: string,
+  userId: string,
+  userRole: string,
+  assignedAreas: string[],
+  sede: string,
+): Promise<void> {
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription();
+    if (!subscription) return; // sin sub activa → no-op, no prompt
+
+    const subJSON = subscription.toJSON();
+    await fetch('/api/push-subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        endpoint: subJSON.endpoint,
+        keys: subJSON.keys,
+        userId,
+        role: userRole,
+        assignedAreas: assignedAreas.join(';'),
+        sede,
+      }),
+      keepalive: true,
+    });
+  } catch { /* el heartbeat nunca debe romper nada */ }
+}

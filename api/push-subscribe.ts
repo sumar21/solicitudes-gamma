@@ -1,8 +1,16 @@
 /**
- * POST /api/push-subscribe
- * Saves or updates a Web Push subscription in SharePoint list "09.PushSubscriptions".
+ * /api/push-subscribe — alta/baja de suscripciones Web Push en SP "09.PushSubscriptions".
  *
- * Body: { endpoint, keys: { p256dh, auth }, userId, role, assignedAreas, sede }
+ * POST   (requiere auth): body { endpoint, keys:{p256dh,auth}, userId, role, assignedAreas, sede }
+ *        Crea o actualiza la fila por endpoint+entorno. Idempotente: si hubiera filas
+ *        duplicadas del mismo endpoint (carrera/throttle en un alta previa), conserva una
+ *        y borra el resto.
+ * DELETE (SIN auth): body { endpoint }. Borra TODAS las filas de ese endpoint en el entorno.
+ *        No exige token porque el logout también ocurre con la sesión ya expirada (auto-logout
+ *        por vencimiento / revocación de ubicación) — si exigiéramos auth, esos casos nunca
+ *        limpiarían la suscripción y el dispositivo seguiría recibiendo push. El endpoint es
+ *        un secreto inadivinable (URL larga aleatoria del push service), así que identificar
+ *        por endpoint es seguro.
  */
 
 import { graphFetch } from './graph.js';
@@ -16,62 +24,42 @@ const LIST_ID = '648fde7b-89d2-40ac-bc4a-63661508b50a'; // 09.PushSubscriptions
 // Default seguro 'TESTING'.
 const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 
-async function handler(req: any, res: any) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+const PREFER_HDR = { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } as const;
 
-  if (req.method === 'OPTIONS') return res.status(200).end();
-  if (!SITE_ID || !LIST_ID) return res.status(503).json({ error: 'SharePoint not configured' });
+// Devuelve todas las filas (id) de un endpoint en el entorno actual.
+async function findRowsByEndpoint(basePath: string, endpoint: string): Promise<string[]> {
+  const filter = encodeURIComponent(
+    `fields/Endpoint_PS eq '${endpoint.replace(/'/g, "''")}' and fields/Entorno_PS eq '${ENTORNO}'`,
+  );
+  const r = await graphFetch(`${basePath}?$expand=fields&$filter=${filter}&$top=100`, { headers: PREFER_HDR });
+  if (!r.ok) return [];
+  const data = (await r.json()) as { value?: Record<string, unknown>[] };
+  return (data.value ?? []).map(it => String(it.id));
+}
 
-  const basePath = `/sites/${SITE_ID}/lists/${LIST_ID}/items`;
-
-  // ── DELETE — remove subscription on logout ─────────────────────────────
-  if (req.method === 'DELETE') {
-    const { endpoint } = req.body ?? {};
-    if (!endpoint) return res.status(400).json({ error: 'endpoint required' });
-    try {
-      // Acotado al entorno actual: si el mismo browser está suscripto en otro
-      // entorno, esa sub no se toca.
-      const filter = encodeURIComponent(
-        `fields/Endpoint_PS eq '${endpoint.replace(/'/g, "''")}' and fields/Entorno_PS eq '${ENTORNO}'`
-      );
-      const existing = await graphFetch(
-        `${basePath}?$expand=fields&$filter=${filter}&$top=1`,
-        { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
-      );
-      if (existing.ok) {
-        const data = (await existing.json()) as { value: Record<string, unknown>[] };
-        if (data.value?.length > 0) {
-          const itemId = String(data.value[0].id);
-          await graphFetch(`${basePath}/${itemId}`, { method: 'DELETE' });
-          console.log(`[push-subscribe] Deleted subscription for endpoint`);
-        }
-      }
-      return res.status(200).json({ ok: true });
-    } catch (err: any) {
-      console.error('[push-subscribe] DELETE error:', err);
-      return res.status(200).json({ ok: true }); // don't block logout
+// ── DELETE — baja en logout (sin auth) ────────────────────────────────────────
+async function handleDelete(req: any, res: any, basePath: string) {
+  const { endpoint } = req.body ?? {};
+  if (!endpoint) return res.status(400).json({ error: 'endpoint required' });
+  try {
+    const ids = await findRowsByEndpoint(basePath, endpoint);
+    for (const id of ids) {
+      await graphFetch(`${basePath}/${id}`, { method: 'DELETE' });
     }
+    if (ids.length) console.log(`[push-subscribe] Deleted ${ids.length} subscription row(s) for endpoint`);
+    return res.status(200).json({ ok: true, deleted: ids.length });
+  } catch (err: any) {
+    console.error('[push-subscribe] DELETE error:', err);
+    return res.status(200).json({ ok: true }); // nunca bloquear el logout
   }
+}
 
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-
+// ── POST — alta/actualización (requiere auth) ─────────────────────────────────
+async function handlePost(req: any, res: any, basePath: string) {
   const { endpoint, keys, userId, role, assignedAreas, sede } = req.body ?? {};
   if (!endpoint || !keys) return res.status(400).json({ error: 'endpoint and keys required' });
 
   try {
-    // Check if subscription with this endpoint already exists IN THIS ENTORNO.
-    // Un mismo browser puede tener una sub en testing y otra en prod simultáneamente:
-    // cada server-side filtra por su entorno, así que no hay cruce.
-    const filter = encodeURIComponent(
-      `fields/Endpoint_PS eq '${endpoint.replace(/'/g, "''")}' and fields/Entorno_PS eq '${ENTORNO}'`
-    );
-    const existing = await graphFetch(
-      `${basePath}?$expand=fields&$filter=${filter}&$top=1`,
-      { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
-    );
-
     const fields = {
       Endpoint_PS: endpoint,
       Keys_PS: JSON.stringify(keys),
@@ -82,32 +70,24 @@ async function handler(req: any, res: any) {
       Entorno_PS: ENTORNO,
     };
 
-    if (existing.ok) {
-      const data = (await existing.json()) as { value: Record<string, unknown>[] };
-      if (data.value?.length > 0) {
-        // Update existing subscription
-        const itemId = String(data.value[0].id);
-        await graphFetch(`${basePath}/${itemId}/fields`, {
-          method: 'PATCH',
-          body: JSON.stringify(fields),
-        });
-        console.log(`[push-subscribe] Updated subscription for user ${userId}`);
-        return res.status(200).json({ ok: true, updated: true });
+    const ids = await findRowsByEndpoint(basePath, endpoint);
+    if (ids.length > 0) {
+      // Actualiza la primera fila y elimina duplicados si los hubiera (idempotencia).
+      await graphFetch(`${basePath}/${ids[0]}/fields`, { method: 'PATCH', body: JSON.stringify(fields) });
+      for (const dupId of ids.slice(1)) {
+        await graphFetch(`${basePath}/${dupId}`, { method: 'DELETE' });
       }
+      if (ids.length > 1) console.log(`[push-subscribe] Deduped ${ids.length - 1} duplicate row(s) for user ${userId}`);
+      return res.status(200).json({ ok: true, updated: true, deduped: ids.length - 1 });
     }
 
-    // Create new subscription
-    const spRes = await graphFetch(basePath, {
-      method: 'POST',
-      body: JSON.stringify({ fields }),
-    });
-
+    // No existía: crear.
+    const spRes = await graphFetch(basePath, { method: 'POST', body: JSON.stringify({ fields }) });
     if (!spRes.ok) {
       const errText = await spRes.text();
       console.error('[push-subscribe] SP create failed:', spRes.status, errText);
       return res.status(500).json({ error: 'Failed to save subscription' });
     }
-
     console.log(`[push-subscribe] Created subscription for user ${userId}`);
     return res.status(200).json({ ok: true, created: true });
   } catch (err: any) {
@@ -116,4 +96,18 @@ async function handler(req: any, res: any) {
   }
 }
 
-export default requireAuth(handler);
+export default async function handler(req: any, res: any) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (!SITE_ID || !LIST_ID) return res.status(503).json({ error: 'SharePoint not configured' });
+
+  const basePath = `/sites/${SITE_ID}/lists/${LIST_ID}/items`;
+
+  // DELETE sin auth (ver cabecera del archivo). POST exige token válido.
+  if (req.method === 'DELETE') return handleDelete(req, res, basePath);
+  if (req.method === 'POST') return requireAuth((rq, rs) => handlePost(rq, rs, basePath))(req, res);
+  return res.status(405).json({ error: 'Method not allowed' });
+}

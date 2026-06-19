@@ -24,6 +24,13 @@ const CRON_SECRET = process.env.CRON_SECRET ?? '';
 const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 const GAMMA_BASE = process.env.GAMMA_VM_URL ?? 'http://35.224.5.114/proxy/index.php';
 
+// Interruptor de notificaciones del cron (sin apagar el cron). Cuando es true, el cron
+// SIGUE actualizando 12.EnrichCamas (refresca/migra baselines) pero NO envía ningún push
+// de ayuno/dieta — igual que ?silent=1 pero para los ticks PROGRAMADos (que no llevan
+// query param). Uso: migraciones de formato (ej. nuevo formato de AYUNOS de Progal).
+// Setear ENRICH_PUSH_PAUSED=1, deployar, esperar a que SP migre, luego quitarlo y redeployar.
+const PUSH_PAUSED = ['1', 'true', 'yes'].includes((process.env.ENRICH_PUSH_PAUSED ?? '').trim().toLowerCase());
+
 const WORKERS = 8;
 const STALE_MS = 60 * 60 * 1000; // filas no vistas + sin update hace >1h → Inactivo
 
@@ -48,7 +55,7 @@ interface EnrichRow {
 function hashFastingSummary(s: FastingSummary | undefined | null): string {
   if (!s || !s.indications || s.indications.length === 0) return 'none';
   const sig = s.indications
-    .map(i => `${i.indicationId}:${i.hours.join(',')}:${i.startISO}:${i.totalOccurrences ?? 'n'}`)
+    .map(i => `${i.indicationId}:${(i.occurrences ?? []).join(',')}`)
     .sort()
     .join('|');
   return simpleHash(sig);
@@ -61,13 +68,18 @@ function hashDietTags(tags: string[] | undefined): string {
   return simpleHash([...(tags ?? [])].sort().join('|'));
 }
 
-// Formato "HH:00, HH:00, ..." con horas únicas y ordenadas para el body del push.
+// Formato "DD/MM HH:MM, ..." con ocurrencias únicas y ordenadas para el body del push.
+// Las fechas son naive ART → se formatean por partes (no Date, que aplicaría la TZ del
+// runtime Vercel/UTC). Si hay muchas, se acota para no inflar el cuerpo de la notif.
 function formatFastingHours(s: FastingSummary | undefined | null): string {
   if (!s) return '';
-  return Array.from(new Set(s.indications.flatMap(i => i.hours)))
-    .sort((a, b) => a - b)
-    .map(h => `${String(h).padStart(2, '0')}:00`)
-    .join(', ');
+  const all = Array.from(new Set(s.indications.flatMap(i => i.occurrences ?? []))).sort();
+  const fmt = (iso: string): string => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(iso);
+    return m ? `${m[3]}/${m[2]} ${m[4]}:${m[5]}` : iso;
+  };
+  const parts = all.map(fmt);
+  return parts.length <= 4 ? parts.join(', ') : `${parts.slice(0, 3).join(', ')} y ${parts.length - 3} más`;
 }
 
 // True si la fecha de ingreso es ≤24h atrás. Se usa para distinguir
@@ -176,10 +188,11 @@ export default async function handler(req: any, res: any) {
   if (!SITE_ID) return res.status(503).json({ error: 'SHAREPOINT_SITE_ID no configurado' });
   if (!LIST_ID) return res.status(503).json({ error: '12.EnrichCamas LIST_ID no configurado' });
 
-  // Re-baseline silencioso (disparo MANUAL): reescribe todos los payloads pero NO
-  // envía ningún push de fasting. Para re-sincronizar baselines tras un deploy que
-  // cambie el formato del hash. Uso: ?silent=1.
-  const silent = ['1', 'true', 'yes'].includes(
+  // Re-baseline silencioso: reescribe todos los payloads pero NO envía push. Se activa
+  // por ?silent=1 (disparo MANUAL) o por el env var ENRICH_PUSH_PAUSED (ticks PROGRAMADos,
+  // para migraciones de formato — ver constante arriba). Sirve para re-sincronizar
+  // baselines tras un deploy que cambie el formato del hash sin disparar una catarata.
+  const silent = PUSH_PAUSED || ['1', 'true', 'yes'].includes(
     String(req.query?.silent ?? req.query?.rebaseline ?? '').toLowerCase(),
   );
 

@@ -960,17 +960,17 @@ Click en cama → /api/bed-enrich (sin fresh=1):
 
 ### 29.4. Ayunos en el mapa de camas
 
-Gamma expone `AYUNOS[]` en `obtenereventointernacion`. Cada entrada es un par (indicación, hora):
-- `PEA_ID_INDICACION` — identifica la indicación
-- `PEA_FECHA_HORA_INICIO` — desde cuándo aplica (ISO datetime)
-- `PAH_HORA` — hora del día (0–23)
-- `PEA_CANTIDAD_REPETICIONES` — total de ocurrencias (ciclando por las horas, día por día)
+Gamma expone `AYUNOS[]` en `obtenereventointernacion`. Desde la migración de Progal (jun-2026), la API devuelve los ayunos **no ejecutados (vigentes) ya resueltos**: cada entrada es UNA ocurrencia concreta. El front NO calcula nada (repeticiones, suspensiones individuales, etc. ya las resolvió la API), solo agrupa y muestra:
+- `PEA_ID_PLANIFICACION` — identifica la indicación (agrupa sus ocurrencias). Fallback: `PEA_ID_INDICACION`.
+- `PAT_FECHA_HORA` — fecha y hora exacta de la ocurrencia (ISO naive = hora Argentina).
+- `PEA_FECHA_HORA_INICIO` — cuándo se cargó la indicación; informativo, **no se usa**.
 
-El helper `summarizeFasting()` agrupa por indicación, genera la secuencia de timestamps, y devuelve `{ hasUpcoming, nextAt, indications[].upcoming[] }`.
+El helper `summarizeFasting()` agrupa las ocurrencias por indicación y devuelve `{ hasUpcoming, nextAt, indications[].occurrences[] }`.
 
 **UI:**
-- **Tarjeta de cama**: ícono `UtensilsCrossed` (lucide-react) en círculo ámbar abajo-derecha cuando `bed.fasting.hasUpcoming`. Tooltip con próximo horario.
-- **Modal de detalle**: pestaña "Ayunos" con tarjetas por indicación mostrando horas programadas y próximas 5 ocurrencias.
+- **Tarjeta de cama**: ícono `UtensilsCrossed` (lucide-react) en círculo ámbar abajo-derecha cuando hay ayunos vigentes (`hasLiveFasting`).
+- **Modal de detalle**: pestaña "Ayunos" con tarjetas por indicación listando cada ocurrencia formateada `DD/MM HH:MM` (`formatFastingDateTime`).
+- **PDF de dietas/ayunos**: `fastingTimesForToday()` muestra los horarios `HH:MM` de la jornada ART actual.
 
 ### 29.5. Cron de dieta cada 5 minutos
 
@@ -1234,7 +1234,20 @@ Ambos crons corrían en `*/15` (mismo minuto) y saturaban la VM simultáneamente
 
 **Limpieza one-off:** [scripts/_cleanup-notif-dupes.mjs](scripts/_cleanup-notif-dupes.mjs) borra (read+delete; dry-run por default, mutación tras `--apply`) las filas exactamente duplicadas (`UserId_N|TicketId_N|Type_N|Fecha_N` idéntico), conservando 1 por grupo — **nunca fusiona timestamps distintos** (eventos potencialmente reales). [scripts/_diag-notif-dupes.mjs](scripts/_diag-notif-dupes.mjs) es el diagnóstico read-only que agrupa y reporta el histograma de duplicados + suscripciones por usuario; reutilizable para verificar el deploy.
 
-> **Nota operativa:** el fix write-side corta los duplicados nuevos solo una vez **deployado**; mientras producción corra el código viejo, se siguen escribiendo. La acumulación de endpoints por usuario (SW sin handler `pushsubscriptionchange`, logout que borra solo el endpoint actual, limpieza solo ante push 404/410) queda como **hardening pendiente**, junto con hacer idempotente el push del `PATCH` de estado (hoy reenvía aunque el status no cambie de verdad).
+> **Nota operativa:** el fix write-side corta los duplicados nuevos solo una vez **deployado**; mientras producción corra el código viejo, se siguen escribiendo.
+
+### 43.x. Fix "llegan notis con la sesión deslogueada" (2026-06-19)
+
+**Causa raíz:** la entrega de push es independiente de la sesión de la app (depende solo de la fila en `09.PushSubscriptions` + el endpoint vivo). Si el logout no limpiaba la fila, el dispositivo seguía recibiendo — y los **crons** (`cron-enrich-beds`, `cron-diet-changes`) le pegaban cada 15 min sin sesión de por medio. Los casos que fallaban: logout por **token vencido** (el `DELETE` exigía auth → 401 → fila no borrada), logout cortado al cerrar la PWA (fetch fire-and-forget), token expirado con la **app cerrada** (no corre código de cliente), y **duplicados** de endpoint (POST creaba fila nueva ante throttle; DELETE borraba solo `$top=1`).
+
+**Solución (sin tocar el esquema SP):**
+- **DELETE sin `requireAuth`** ([api/push-subscribe.ts](api/push-subscribe.ts)): identifica por endpoint (secreto inadivinable), así el logout por vencimiento/ubicación SÍ limpia. Borra **todas** las filas del endpoint (no `$top=1`).
+- **POST idempotente:** si hay filas duplicadas del endpoint, actualiza una y borra el resto.
+- **Logout robusto** ([hooks/useHospitalState.ts](hooks/useHospitalState.ts) `handleLogout`): `keepalive: true`, sin depender del token, borra la fila antes de `unsubscribe()`.
+- **Staleness en el sender** ([api/push-utils.ts](api/push-utils.ts) `fetchSubscriptions`): saltea subs con `lastModifiedDateTime` > 36h (fail-open si falta el dato). Resuelve el caso "app cerrada + token vencido".
+- **Heartbeat del cliente:** mientras la sesión está activa, re-POSTea la sub (refresca `lastModifiedDateTime`) al montar, al foreground y cada 6h (`touchPushSubscription`, no pide permiso ni crea sub nueva). Mantiene "vivas" solo las subs de dispositivos en uso.
+
+**Hardening pendiente:** handler `pushsubscriptionchange` en el SW + endpoint "rotate" (frena la acumulación por rotación de endpoint en origen), y un cron de limpieza que borre las filas con `lastModifiedDateTime` viejo (hoy el sender ya las ignora, pero quedan en la lista). Además, hacer idempotente el push del `PATCH` de estado (hoy reenvía aunque el status no cambie de verdad).
 
 ## 44. Observaciones de traslado: carga + auditoría (2026-06-18)
 

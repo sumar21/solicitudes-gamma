@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { Bed, BedStatus, Ticket, TicketStatus, User, Area, IsolationType } from '../types';
 import { can } from '../lib/permissions';
-import { hasLiveFasting, liveUpcoming, formatART, fastingHoursForToday } from '../lib/fasting';
+import { hasLiveFasting, fastingOccurrences, formatFastingDateTime, fastingTimesForToday } from '../lib/fasting';
 import { Input } from '../components/ui/input';
 import { cn } from '../lib/utils';
 import { BedDouble, User as UserIcon, Info, Search, X, ChevronDown, Check, AlertTriangle, CheckCircle2, ShieldAlert, RefreshCw, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical } from 'lucide-react';
@@ -983,14 +983,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     drawTableHeader();
 
     // Resumen legible de ayuno DEL DÍA DE HOY (en ART): "15:00, 16:00, 17:00".
-    // Filtra ocurrencias por jornada [00:00, 24:00) ART — sino se mezclaban horas de
-    // indicaciones de otros días (ej. ayuno cargado el 28/05 con total=4 sumaba sus
-    // horas a un paciente cuyo ayuno de hoy era distinto).
-    const fastingSummary = (bed: Bed): string => {
-      const horas = fastingHoursForToday(bed.fasting);
-      if (horas.length === 0) return '';
-      return horas.map(h => `${String(h).padStart(2, '0')}:00`).join(', ');
-    };
+    // Filtra ocurrencias por jornada [00:00, 24:00) ART — la API puede devolver ayunos
+    // de varios días, y el PDF es del día actual.
+    const fastingSummary = (bed: Bed): string => fastingTimesForToday(bed.fasting).join(', ');
 
     // Texto UNIFICADO y ordenado de la dieta para el PDF (pedido del cliente: primero la
     // dieta, luego los requisitos). Reúne en un solo bloque lo que antes estaba partido
@@ -1676,11 +1671,11 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                       displayBed?.authorizedDays != null ||
                       !!displayBed?.expectedSurgeryDate;
                     const hasDietData = !!(displayBed?.diets && displayBed.diets.length > 0);
-                    // Reloj inteligente: solo indicaciones con ocurrencias vigentes/futuras
-                    // (recalculadas en hora Argentina con el now del cliente).
+                    // La API ya devuelve solo ayunos vigentes (no ejecutados); mostramos
+                    // las ocurrencias tal cual, agrupadas por indicación.
                     const liveFastingInds = (displayBed?.fasting?.indications ?? [])
-                      .map(ind => ({ ind, prox: liveUpcoming(ind) }))
-                      .filter(x => x.prox.length > 0);
+                      .map(ind => ({ ind, occ: fastingOccurrences(ind) }))
+                      .filter(x => x.occ.length > 0);
                     const hasFastingData = liveFastingInds.length > 0;
 
                     // All tabs always navigable. If the enrich didn't return data
@@ -1909,24 +1904,18 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                           <>
                             {hasFastingData && (
                               <div className="space-y-2">
-                                {liveFastingInds.map(({ ind, prox }) => (
+                                {liveFastingInds.map(({ ind, occ }) => (
                                   <div key={ind.indicationId} className="bg-amber-50/60 rounded-xl p-3 border border-amber-100">
                                     <div className="flex items-center justify-between mb-1.5">
                                       <p className="text-[8px] font-bold uppercase text-amber-700">Indicación #{ind.indicationId}</p>
                                       <span className="text-[10px] font-bold text-amber-800">
-                                        {ind.totalOccurrences != null
-                                          ? `${ind.totalOccurrences} ocurrencia${ind.totalOccurrences === 1 ? '' : 's'}`
-                                          : 'Repeticiones no especificadas'}
+                                        {occ.length} ayuno{occ.length === 1 ? '' : 's'}
                                       </span>
                                     </div>
-                                    <p className="text-[11px] text-slate-600 mb-1.5">
-                                      Horas: <span className="font-bold text-slate-800">{ind.hours.map(h => `${String(h).padStart(2, '0')}:00`).join(', ')}</span>
-                                    </p>
-                                    <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Próximas</p>
                                     <ul className="space-y-0.5">
-                                      {prox.map((epoch, idx) => (
+                                      {occ.map((iso, idx) => (
                                         <li key={idx} className="text-[11px] text-slate-700">
-                                          {formatART(epoch)}
+                                          {formatFastingDateTime(iso)}
                                         </li>
                                       ))}
                                     </ul>
@@ -1935,7 +1924,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                               </div>
                             )}
                             {!enrichLoading && !hasFastingData && (
-                              <p className="text-xs text-slate-400 italic text-center py-2">Sin ayunos próximos</p>
+                              <p className="text-xs text-slate-400 italic text-center py-2">Sin ayunos vigentes</p>
                             )}
                             {enrichLoading && (
                               <p className="text-xs text-slate-400 italic text-center py-2">Cargando...</p>

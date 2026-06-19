@@ -100,17 +100,15 @@ export interface Bed {
   // True si /api/beds le aplicó el enrich precomputado de SP (12.EnrichCamas).
   // El modal lo usa para no pegar a Gamma on-click cuando ya tiene los datos.
   enriched?: boolean;
-  // Ayunos programados del paciente. `hasUpcoming` controla el ícono de la tarjeta.
-  // `indications[].upcoming` trae las próximas (hasta 5) ocurrencias en ISO para el modal.
+  // Ayunos vigentes (no ejecutados) del paciente. La API los devuelve ya resueltos:
+  // cada indicación trae su lista de ocurrencias (fecha/hora exacta). `hasUpcoming`
+  // controla el ícono de la tarjeta. Ver api/ayunos.ts (summarizeFasting).
   fasting?: {
     hasUpcoming: boolean;
     nextAt?: string;
     indications: Array<{
       indicationId: number;
-      startISO: string;
-      hours: number[];
-      totalOccurrences: number | null;
-      upcoming: string[];
+      occurrences: string[];  // PAT_FECHA_HORA (ISO ART), ordenadas asc
     }>;
   };
 }

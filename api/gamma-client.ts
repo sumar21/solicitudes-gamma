@@ -98,16 +98,18 @@ export interface GammaEvent {
     HCG_DESCRIPCION?: string;
     EIP_RESPUESTA_VALOR?: string;
   }>;
-  // Indicaciones de ayuno. Una indicación = N filas que comparten PEA_ID_INDICACION
-  // y PEA_FECHA_HORA_INICIO, donde cada fila aporta una PAH_HORA (hora del día).
-  // PEA_CANTIDAD_REPETICIONES es el total de aplicaciones a lo largo de TODAS las
-  // horas de esa indicación, ciclando por día desde PEA_FECHA_HORA_INICIO.
+  // Ayunos NO ejecutados (vigentes). Cada fila es UNA ocurrencia concreta ya calculada
+  // por Progal: la API resuelve repeticiones, suspensiones individuales, modificaciones,
+  // etc. y devuelve directamente cada fecha/hora pendiente. El front NO calcula nada,
+  // solo agrupa por indicación y muestra/almacena lo recibido.
+  //   · PEA_ID_PLANIFICACION — identifica la indicación (agrupa sus ocurrencias).
+  //   · PAT_FECHA_HORA — fecha y hora exacta de la ocurrencia (hora Argentina, naive).
+  //   · PEA_FECHA_HORA_INICIO — cuándo se cargó la indicación; informativo, NO se usa.
   AYUNOS?: Array<{
     PEA_ID_INDICACION?: number;
     PEA_ID_PLANIFICACION?: number;
     PEA_FECHA_HORA_INICIO?: string;
-    PAH_HORA?: number;
-    PEA_CANTIDAD_REPETICIONES?: number;
+    PAT_FECHA_HORA?: string;
   }>;
 }
 
