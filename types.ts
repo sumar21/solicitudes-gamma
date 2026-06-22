@@ -1,13 +1,12 @@
 
-export enum IsolationType {
-  NEUTROPENICO = 'Neutropénico',
-  TRASPLANTE = 'Trasplante',
-  RESPIRATORIO = 'Respiratorio',
-  GOTAS = 'Por Gotas',
-  COVID = 'Covid',
-  ENTOMOLOGICO = 'Entomológico/Dengue',
-  CONTACTO = 'Contacto',
-  CD = 'CD',
+// Aislamiento de un paciente. Desde jun-2026 la fuente única es PROGAL (Gamma): vienen
+// en el enrich del evento y se muestran sobre la cama. Ya NO se cargan/editan desde la app.
+// `color` es una clave semántica (green/pink/teal/…) que BedsView mapea a clases Tailwind.
+// Ver api/isolations-summary.ts (normalización Gamma → nombre canónico + color).
+export interface IsolationEntry {
+  name: string;
+  color: string;
+  observation?: string;
 }
 
 export enum WorkflowType {
@@ -111,6 +110,9 @@ export interface Bed {
       occurrences: string[];  // PAT_FECHA_HORA (ISO ART), ordenadas asc
     }>;
   };
+  // Aislamientos prescriptos al paciente (PROGAL). Vienen en el enrich y "siguen" al
+  // paciente como el resto del enrich (ENRICH_FIELDS en useHospitalState).
+  isolations?: IsolationEntry[];
 }
 
 export type ViewMode = 'HOME' | 'REQUESTS' | 'USERS' | 'HISTORY' | 'BEDS';
@@ -128,7 +130,6 @@ export interface SortConfig {
 export const PERMISSIONS = [
   'crear_ticket','editar_ticket','cancelar_ticket','asignar_cama',
   'confirmar_limpieza','iniciar_traslado','confirmar_recepcion','consolidar',
-  'editar_aislamiento',
   'abm_usuarios','abm_roles',
   // Notificaciones granulares por tipo (antes había un solo `recibe_push`).
   // Cada permiso gobierna que el usuario reciba push + in-app de ese tipo.

@@ -126,6 +126,7 @@ function applyEnrichToBed(bed: any, e: EnrichResult): void {
   if (e.diets != null) bed.diets = e.diets;
   if (e.dietTags != null) bed.dietTags = e.dietTags;
   if (e.fasting != null) bed.fasting = e.fasting;
+  if (e.isolations != null) bed.isolations = e.isolations;
   bed.enriched = true; // marca "enrich de SP aplicado" → el modal no necesita pegar a Gamma
 }
 

@@ -111,6 +111,14 @@ export interface GammaEvent {
     PEA_FECHA_HORA_INICIO?: string;
     PAT_FECHA_HORA?: string;
   }>;
+  // Aislamientos prescriptos al paciente. Misma forma que DIETAS: cada fila es una
+  // pregunta del form de enfermería (HCG_DESCRIPCION) con su respuesta
+  // (EIP_RESPUESTA_VALOR). El tipo base trae "Prescribe"; la observación llega como
+  // una fila aparte "<Tipo> - Observaciones" con el texto libre. Ver api/isolations-summary.ts.
+  AISLAMIENTOS?: Array<{
+    HCG_DESCRIPCION?: string;
+    EIP_RESPUESTA_VALOR?: string;
+  }>;
 }
 
 // ── Token cache (survives warm invocations) ──────────────────────────────────

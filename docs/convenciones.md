@@ -2703,3 +2703,21 @@ Cuando un composer fijo come demasiado alto en pantallas chicas, partir por brea
 ### Modal acotado: zona scrolleable + footer/composer fijo (`flex-col` + `min-h-0`)
 
 Para que dentro de un modal una zona scrollee y otra quede fija, hacer el contenedor `flex flex-col min-h-0` con la zona scrolleable en `flex-1 overflow-y-auto min-h-0` y el footer/composer en `shrink-0`. El alto del modal se sube con `max-h-[92vh]` pasado por className (el `cn`/`twMerge` lo sobreescribe sobre el `max-h-[85vh]` por defecto del `DialogContent` sin tocar el componente compartido). En mobile, además, prevenir overflow horizontal con `min-w-0`/`overflow-x-hidden` en los hijos flex y `flex-wrap` en filas de meta (id/fecha), y apilar pares label/valor largos (origen→destino) en doble fila con `break-words` en vez de `truncate` lado a lado. Aplicado en [components/AuditModal.tsx](components/AuditModal.tsx).
+
+## Nuevos patrones (aislamientos desde enrich, 2026-06-22)
+
+### Helper `summarize*` por cada array del evento Gamma
+
+Cada lista que Gamma agrega al evento (`DIETAS`, `AYUNOS`, ahora `AISLAMIENTOS`) tiene su helper puro en `api/` que la procesa: [api/diet-tags.ts](api/diet-tags.ts) (`parseDiets`), [api/ayunos.ts](api/ayunos.ts) (`summarizeFasting`), [api/isolations-summary.ts](api/isolations-summary.ts) (`summarizeIsolations`). Convención del helper:
+- Recibe el array crudo (`GammaEvent['AISLAMIENTOS']`), devuelve la forma procesada o `undefined` si está vacío.
+- Normaliza strings con `s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/\s+/g,' ').trim()` (sin acentos, lower, espacios colapsados) para comparar contra una tabla de mapeo.
+- Expone un `*Hash()` estable (campos ordenados + `simpleHash`) para que el cron detecte cambios; devuelve un centinela (`'none'`) cuando no hay datos.
+- Se invoca desde `buildEventData` ([api/enrich-core.ts](api/enrich-core.ts)) y el resultado entra a `EnrichResult`.
+
+### Agregar un campo nuevo de enrich = un solo lugar (`ENRICH_FIELDS`)
+
+Para que un dato nuevo del evento "siga al paciente" en los traslados, agregarlo a `ENRICH_FIELDS` ([hooks/useHospitalState.ts](hooks/useHospitalState.ts)) — `clear/copy/snapshot/reapply` se sincronizan solos. Además: campo en `EnrichResult` (api), merge en `applyEnrichToBed` ([api/beds.ts](api/beds.ts)), y campo en `Bed` ([types.ts](types.ts)). No hace falta un poll ni un `Map` aparte: derivá los sets de UI (ej. `isolatedBeds`) de `beds` con `useMemo`.
+
+### Color como clave semántica en el dato; clases Tailwind en el front
+
+El backend devuelve una **clave de color** (`'green'`, `'teal'`, `'fuchsia'`…), no clases CSS. El front tiene un único mapa keyed por esa clave (`ISOLATION_COLORS[color] → { ring, bg, text, dot, pill }`) con las clases como **literales** (para que el JIT de Tailwind las incluya en el build) y un `DEFAULT` de fallback. Así la presentación queda en el front y el mapeo nombre→color en un solo lugar del backend.

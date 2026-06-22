@@ -1193,3 +1193,29 @@ Resultado del bug: Catering recibía "Nueva Solicitud de Traslado" (NEW_TICKET) 
 **Qué:** en el `AuditModal` mobile, el redactor no está fijo a la vista; hay un botón compacto que abre un modal de carga. En desktop sigue inline al pie.
 
 **Por qué:** el input fijo + su footer comían ~80px de alto en pantallas chicas, dejando ver muy poca trazabilidad y obligando a scrollear para llegar a él. El botón libera ese espacio; el modal enfocado es mejor para escribir en mobile. El composer (desktop) y la trazabilidad quedan en zonas separadas: trazabilidad scrollea, composer fijo (ver convención).
+
+## 22. Aislamientos: migración a PROGAL como fuente única (2026-06-22)
+
+### 22.1. Aislamientos desde el enrich (PROGAL), no carga manual
+
+**Qué:** los aislamientos dejan de cargarse/editarse desde la app y pasan a tomarse del array `AISLAMIENTOS` del evento Gamma (`obtenereventointernacion`), procesados en el enrich y persistidos en `12.EnrichCamas`. Se elimina la edición manual (toggle en mapa, modales, permiso `editar_aislamiento`) y deja de usarse `/api/isolations` + `08.Aislamientos`.
+
+**Por qué:** Gamma empezó a exponer los aislamientos prescriptos en enfermería; mantenerlos a mano en la app duplicaba un dato que ahora es autoritativo en PROGAL y quedaba desincronizado. Una sola fuente de verdad elimina el doble registro.
+
+**Alternativas descartadas:**
+- **Híbrido (Gamma + override manual):** había que resolver precedencia/conflictos entre lo cargado a mano y lo de PROGAL. Más complejo y con riesgo de mostrar info contradictoria.
+- **Dejar la carga manual en paralelo:** perpetúa la desincronización que justamente se quiere eliminar.
+
+**Impacto:** `08.Aislamientos`, `/api/isolations` y el enum `IsolationType` quedan sin uso. La migración fue validada con un probe contra PROGAL (estructura, nombres y 0 desconocidos) antes de cablear — ver [scripts/probe-isolations.mts](scripts/probe-isolations.mts).
+
+### 22.2. `isolations` como campo de enrich que "sigue al paciente" (no `Map<patientCode>` aparte)
+
+**Qué:** el aislamiento se modela como `bed.isolations: IsolationEntry[]` y se suma a `ENRICH_FIELDS`. Se descartó el `isolatedPatients: Map<patientCode, ...>` con su polling independiente.
+
+**Por qué:** al vivir en el enrich, el aislamiento se beneficia del mismo mecanismo que dieta/ayuno (`mergeBeds`/`reapplyEnrichFromMap`): acompaña al paciente en los traslados sin lógica extra de "seguir al ticket", y se refresca con `/api/beds` (sin un segundo poll). `isolatedBeds` se deriva directo de las camas. Menos estado, menos requests, comportamiento consistente con el resto del enrich.
+
+### 22.3. Normalización Gamma→canónico + color en el backend; el front solo mapea color→clases
+
+**Qué:** `summarizeIsolations` ([api/isolations-summary.ts](api/isolations-summary.ts)) traduce el `HCG_DESCRIPCION` de Gamma a `{ name, color }` canónico (color = clave semántica: `green`/`teal`/`fuchsia`/…). El front mapea esa clave a clases Tailwind en un único `ISOLATION_COLORS` keyed por color.
+
+**Por qué:** los nombres de Gamma no coinciden con los de la app ("De contacto"→"Contacto", "COVID 19"→"Covid", "De contacto C. Difficile"→"C. Difficile") y apareció un tipo nuevo ("Contacto preventivo"). Centralizar el mapeo nombre+color en un solo lugar (backend) evita duplicarlo; el front queda solo con presentación. Un tipo no mapeado cae a `violet` (default) en vez de desaparecer.

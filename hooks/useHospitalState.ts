@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
   WorkflowType, Role, SedeType, Ticket, TicketStatus, User, Area,
-  Notification, NotificationType, ViewMode, SortConfig, Bed, BedStatus, IsolationType,
+  Notification, NotificationType, ViewMode, SortConfig, Bed, BedStatus,
   RoleModule,
 } from '../types';
 import { MOCK_TICKETS } from '../lib/constants';
@@ -74,7 +74,7 @@ const ENRICH_FIELDS = [
   'diagnosis', 'prescribingPhysician',
   'admissionType', 'admissionTypeCode', 'admissionDate', 'expectedSurgeryDate', 'authorizedDays',
   'medicalPlan', 'medicalPlanCode', 'medicalPlanDescription',
-  'diets', 'dietTags', 'fasting',
+  'diets', 'dietTags', 'fasting', 'isolations',
   'enriched',
 ] as const;
 type EnrichField = typeof ENRICH_FIELDS[number];
@@ -191,7 +191,6 @@ function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[]): Bed[] {
 
 const POLL_TICKETS_MS     = 8_000;   // tickets: poll every 8s
 const POLL_BEDS_MS        = 60_000;  // beds: poll every 60s
-const POLL_ISOLATIONS_MS  = 30_000;  // isolations: poll every 30s (SP write → other clients see change)
 
 /** Human-readable labels for status transitions (for poll-based notifications) */
 function statusChangeLabel(_from: string, to: string): { title: string } | null {
@@ -398,9 +397,6 @@ export const useHospitalState = () => {
   const geoCacheRef = React.useRef<{ coords: { lat: number; lng: number } | null; ts: number }>({ coords: null, ts: 0 });
   const [rawBeds, setRawBeds]                      = useState<Bed[]>([]);
   const [tickets, setTickets]                      = useState<Ticket[]>(MOCK_TICKETS);
-  // Isolation: stored by patientCode, derived to bed labels via beds data
-  // A patient may have multiple isolation types active at once (e.g. Covid + Contacto).
-  const [isolatedPatients, setIsolatedPatients]    = useState<Map<string, IsolationType[]>>(new Map()); // patientCode → isolation types
 
   // Snapshot del enrich por patientCode — se actualiza en cada fetchBeds con los beds
   // cuyo enriched===true. Permite que la pill de ayuno/dieta/diagnóstico "siga" al
@@ -414,27 +410,17 @@ export const useHospitalState = () => {
     return reapplyEnrichFromMap(merged, patientEnrichMapRef.current);
   }, [rawBeds, tickets]);
 
-  // Derive isolatedBeds (bed labels) from isolatedPatients (patientCodes) + beds + active tickets
+  // Derive isolatedBeds (bed labels) directly from the enrich. Los aislamientos vienen
+  // de PROGAL en `bed.isolations` y "siguen" al paciente como el resto del enrich
+  // (mergeBeds copia/limpia ENRICH_FIELDS al mover de cama), así que basta con marcar
+  // las camas que tienen al menos un aislamiento activo.
   const isolatedBeds = useMemo(() => {
     const set = new Set<string>();
-    // 1. Check beds directly (from Gamma data)
     for (const bed of beds) {
-      if (bed.patientCode && isolatedPatients.has(bed.patientCode)) set.add(bed.label);
-    }
-    // 2. Check active tickets — if an isolated patient is being transferred,
-    //    mark the destination bed (patient follows the ticket, not the old bed)
-    for (const t of tickets) {
-      if (t.status === TicketStatus.COMPLETED || t.status === TicketStatus.REJECTED) continue;
-      if (!t.destination) continue;
-      // Find patientCode from the origin bed
-      const originBed = rawBeds.find(b => b.label === t.origin);
-      if (originBed?.patientCode && isolatedPatients.has(originBed.patientCode)) {
-        set.add(t.destination); // mark destination as isolated
-        set.delete(t.origin);  // origin is no longer isolated (patient is moving)
-      }
+      if (bed.isolations && bed.isolations.length > 0) set.add(bed.label);
     }
     return set;
-  }, [beds, rawBeds, tickets, isolatedPatients]);
+  }, [beds]);
 
   // ── Data fetchers ─────────────────────────────────────────────────────────────
   const fetchBeds = useCallback(async (force = false) => {
@@ -536,14 +522,11 @@ export const useHospitalState = () => {
     if (!token) return;
     fetchBeds();
     fetchTickets();
-    fetchIsolations();
     const ticketPoll    = setInterval(fetchTickets, POLL_TICKETS_MS);
     const bedPoll       = setInterval(fetchBeds, POLL_BEDS_MS);
-    const isolationPoll = setInterval(fetchIsolations, POLL_ISOLATIONS_MS);
     return () => {
       clearInterval(ticketPoll);
       clearInterval(bedPoll);
-      clearInterval(isolationPoll);
     };
   }, [token, fetchBeds, fetchTickets]);
 
@@ -930,9 +913,6 @@ export const useHospitalState = () => {
       fetchBeds();
       fetchTickets();
 
-      // Load isolations from SharePoint
-      fetchIsolations();
-
       // Subscribe to Web Push notifications
       if ('Notification' in window) {
         if (window.Notification.permission === 'default') {
@@ -1123,7 +1103,7 @@ export const useHospitalState = () => {
     }, ...prev]);
   };
 
-  const handleCreateTicket = async (data: Partial<Ticket> & { isolation?: boolean; reason?: string }) => {
+  const handleCreateTicket = async (data: Partial<Ticket> & { reason?: string }) => {
     if (!can(currentUser, 'crear_ticket')) {
       alert('Tu rol no tiene permiso para crear solicitudes.'); return;
     }
@@ -1134,34 +1114,8 @@ export const useHospitalState = () => {
     setTicketActionLoading(true);
     writingRef.current = true;
 
-    // If isolation requested, activate or update types
-    if (data.isolation) {
-      const sourceBed = beds.find(b => b.label === data.origin);
-      const payloadTypes = (data as any).isolationTypes as IsolationType[] | undefined;
-      const payloadType  = (data as any).isolationType  as IsolationType | undefined;
-      const requested: IsolationType[] = payloadTypes?.length
-        ? payloadTypes
-        : payloadType ? [payloadType] : [];
-      if (sourceBed?.patientCode) {
-        const code = sourceBed.patientCode.trim();
-        const current = isolatedPatients.get(code) ?? [];
-        const newTypes = requested.length ? requested : [IsolationType.CONTACTO];
-        const changed = current.length !== newTypes.length ||
-          current.some((t: IsolationType, i: number) => t !== newTypes[i]);
-        if (changed) {
-          setIsolatedPatients(prev => { const next = new Map(prev); next.set(code, newTypes); return next; });
-          authFetch('/api/isolations', {
-            method: 'POST',
-            body: JSON.stringify({
-              patientCode: sourceBed.patientCode,
-              patientName: sourceBed.patientName || data.patientName || '',
-              userName: currentUser?.name || '',
-              tipos: newTypes,
-            }),
-          }).catch(() => {});
-        }
-      }
-    }
+    // Los aislamientos ya NO se cargan desde la app: la fuente única es PROGAL (vienen
+    // en el enrich de la cama). El traslado solo crea el ticket.
 
     try { await _createTicket(data); } finally {
       // wait a beat then unlock polling and sync
@@ -1375,8 +1329,6 @@ export const useHospitalState = () => {
     reason?: string;
     itrSource?: string;
     observations?: string;
-    isolation: boolean;
-    isolationTypes: IsolationType[];
     modificationReason: string;
   }) => {
     if (!can(currentUser, 'editar_ticket')) {
@@ -1454,34 +1406,8 @@ export const useHospitalState = () => {
       changes.push(`Destino: ${ticket.destination ?? '—'} → ${payload.destination}`);
     }
 
-    // ── Isolation (applies globally to the patient, not just this ticket) ──
-    const patientCode = ticket.patientCode?.trim();
-    const currentIsoTypes = patientCode ? (isolatedPatients.get(patientCode) ?? []) : [];
-    const nextIsoTypes   = payload.isolation ? payload.isolationTypes : [];
-    const sortedCur  = [...currentIsoTypes].sort();
-    const sortedNext = [...nextIsoTypes].sort();
-    const isoChanged = sortedCur.length !== sortedNext.length
-      || sortedCur.some((t: IsolationType, i: number) => t !== sortedNext[i]);
-    if (isoChanged) {
-      changes.push(`Aislamiento: ${currentIsoTypes.join(', ') || '—'} → ${nextIsoTypes.join(', ') || '—'}`);
-      if (patientCode) {
-        setIsolatedPatients((prev: Map<string, IsolationType[]>) => {
-          const next = new Map(prev);
-          if (nextIsoTypes.length === 0) next.delete(patientCode);
-          else next.set(patientCode, nextIsoTypes);
-          return next;
-        });
-        authFetch('/api/isolations', {
-          method: nextIsoTypes.length === 0 ? 'DELETE' : 'POST',
-          body: JSON.stringify({
-            patientCode,
-            patientName: ticket.patientName,
-            userName: currentUser?.name || '',
-            tipos: nextIsoTypes,
-          }),
-        }).catch(() => {});
-      }
-    }
+    // Los aislamientos ya NO se editan desde la app (fuente única: PROGAL). Editar el
+    // ticket solo cambia destino/workflow/observaciones.
 
     if (changes.length === 0) {
       alert('No hay cambios para guardar.'); return;
@@ -1573,72 +1499,12 @@ export const useHospitalState = () => {
     localStorage.setItem(USER_KEY, JSON.stringify(updatedUser));
   };
 
-  // ── Isolation toggle (Admission/Admin only) ────────────────────────────────
-  // nextTypes:
-  //   undefined / [] → remove isolation entirely
-  //   [t1, t2, ...]  → set the active isolation types (replaces previous set)
-  const toggleIsolation = (bedLabel: string, nextTypes?: IsolationType[]) => {
-    if (!can(currentUser, 'editar_aislamiento')) return;
-    const bed = beds.find(b => b.label === bedLabel);
-    if (!bed?.patientCode) return;
-    const code = bed.patientCode.trim();
-    const prevTypes = isolatedPatients.get(code) ?? [];
-    const shouldClear = !nextTypes || nextTypes.length === 0;
-
-    // Optimistic update
-    setIsolatedPatients(prev => {
-      const next = new Map(prev);
-      if (shouldClear) next.delete(code);
-      else next.set(code, nextTypes!);
-      return next;
-    });
-
-    // Persist to SharePoint
-    authFetch('/api/isolations', {
-      method: shouldClear ? 'DELETE' : 'POST',
-      body: JSON.stringify({
-        patientCode: code,
-        patientName: bed.patientName || '',
-        userName: currentUser?.name || '',
-        tipos: shouldClear ? [] : nextTypes,
-      }),
-    }).catch(() => {
-      // Rollback on error
-      setIsolatedPatients(prev => {
-        const next = new Map(prev);
-        if (prevTypes.length) next.set(code, prevTypes);
-        else next.delete(code);
-        return next;
-      });
-    });
-  };
-
-  // Fetch isolations on login
-  const fetchIsolations = async () => {
-    try {
-      const res = await authFetch('/api/isolations');
-      if (!res.ok) return;
-      const data = await res.json();
-      const validTypes = Object.values(IsolationType) as IsolationType[];
-      const map = new Map<string, IsolationType[]>();
-      for (const i of (data.isolations ?? [])) {
-        const raw: string[] = Array.isArray(i.tipos)
-          ? i.tipos
-          : String(i.tipo ?? '').split(';');
-        const tipos = raw
-          .map((t: string) => String(t).trim())
-          .filter((t: string): t is IsolationType => validTypes.includes(t as IsolationType));
-        if (tipos.length) map.set(String(i.patientCode).trim(), tipos as IsolationType[]);
-      }
-      setIsolatedPatients(map);
-    } catch { /* silent */ }
-  };
-
   // Manual full refresh — invalidates caches and refetches everything.
+  // Los aislamientos vienen dentro de /api/beds (enrich), así que refrescar camas alcanza.
   const refreshAll = useCallback(async () => {
     bedsEtagRef.current = null;
     ticketsEtagRef.current = null;
-    await Promise.all([fetchBeds(true), fetchTickets(), fetchIsolations()]);
+    await Promise.all([fetchBeds(true), fetchTickets()]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchBeds, fetchTickets]);
 
@@ -1968,7 +1834,6 @@ export const useHospitalState = () => {
       loginEmail, loginPass, loginError, loginLoading, bedsLoading, bedsError, ticketActionLoading, beds,
       tokenExpirySoon, tokenMinutesLeft,
       isolatedBeds,
-      isolatedPatients,
       unreadSpNotifications,
     },
     actions: {
@@ -1982,7 +1847,6 @@ export const useHospitalState = () => {
       handleRejectTicket,
       handleEditTicket,
       handleAddObservation,
-      toggleIsolation,
       handleValidateTicket:    (_id: string) => {},
       handleAssignBedAction:   (_id: string, _bed: string) => {},
       handleHousekeepingAction:(_id: string) => {},

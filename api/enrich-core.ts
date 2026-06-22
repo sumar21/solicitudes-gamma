@@ -16,6 +16,7 @@ import {
 } from './gamma-client.js';
 import { parseDiets, type DietEntry } from './diet-tags.js';
 import { summarizeFasting, type FastingSummary } from './ayunos.js';
+import { summarizeIsolations, type IsolationEntry } from './isolations-summary.js';
 
 // Maps the EVE_TIPO_INTERNACION code to its human label.
 //   C = Clínica · CO = COVID-19 · H = Hemodinamia · K = Quemado
@@ -48,6 +49,7 @@ export interface EnrichResult {
   diets?: DietEntry[];
   dietTags?: string[];
   fasting?: FastingSummary;
+  isolations?: IsolationEntry[];  // Aislamientos prescriptos (PROGAL). Ver isolations-summary.ts.
 }
 
 /** Bloque "paciente" (DNI/edad/sexo/financiador) — datos que no cambian en la internación. */
@@ -92,6 +94,9 @@ export function buildEventData(
 
   const fasting = summarizeFasting(event.AYUNOS);
   if (fasting) out.fasting = fasting;
+
+  const isolations = summarizeIsolations(event.AISLAMIENTOS);
+  if (isolations) out.isolations = isolations;
 
   return out;
 }

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
-import { Bed, BedStatus, Ticket, TicketStatus, User, Area, IsolationType } from '../types';
+import { Bed, BedStatus, Ticket, TicketStatus, User, Area, IsolationEntry } from '../types';
 import { can } from '../lib/permissions';
 import { hasLiveFasting, fastingOccurrences, formatFastingDateTime, fastingTimesForToday } from '../lib/fasting';
 import { Input } from '../components/ui/input';
@@ -40,27 +40,28 @@ interface BedsViewProps {
   bedsLoading?: boolean;
   bedsError?: string | null;
   isolatedBeds?: Set<string>;
-  isolatedPatients?: Map<string, IsolationType[]>;
-  onToggleIsolation?: (bedLabel: string, nextTypes?: IsolationType[]) => void;
   onEnrichBed?: (bed: Bed) => Promise<Bed>;
   onRefresh?: () => void | Promise<void>;
 }
 
-// Color map for isolation types
-const ISOLATION_COLORS: Record<string, { ring: string; bg: string; text: string; dot: string }> = {
-  [IsolationType.NEUTROPENICO]:  { ring: 'ring-pink-400',   bg: 'bg-pink-500',   text: 'text-pink-700',   dot: 'bg-pink-500' },
-  [IsolationType.TRASPLANTE]:    { ring: 'ring-slate-400',  bg: 'bg-slate-500',  text: 'text-slate-700',  dot: 'bg-slate-500' },
-  [IsolationType.RESPIRATORIO]:  { ring: 'ring-green-400',  bg: 'bg-green-500',  text: 'text-green-700',  dot: 'bg-green-500' },
-  [IsolationType.GOTAS]:         { ring: 'ring-blue-400',   bg: 'bg-blue-500',   text: 'text-blue-700',   dot: 'bg-blue-500' },
-  [IsolationType.COVID]:         { ring: 'ring-yellow-400', bg: 'bg-yellow-500', text: 'text-yellow-700', dot: 'bg-yellow-500' },
-  [IsolationType.ENTOMOLOGICO]:  { ring: 'ring-violet-400', bg: 'bg-violet-500', text: 'text-violet-700', dot: 'bg-violet-500' },
-  [IsolationType.CONTACTO]:      { ring: 'ring-orange-400', bg: 'bg-orange-500', text: 'text-orange-700', dot: 'bg-orange-500' },
-  [IsolationType.CD]:            { ring: 'ring-amber-700',  bg: 'bg-amber-800',  text: 'text-amber-800',  dot: 'bg-amber-800' },
+// Mapa de clave de color (la define api/isolations-summary.ts) → clases Tailwind.
+// Las clases van como literales para que el JIT de Tailwind las incluya en el build.
+const ISOLATION_COLORS: Record<string, { ring: string; bg: string; text: string; dot: string; pill: string }> = {
+  pink:    { ring: 'ring-pink-400',    bg: 'bg-pink-500',    text: 'text-pink-700',    dot: 'bg-pink-500',    pill: 'bg-pink-100 text-pink-700' },
+  slate:   { ring: 'ring-slate-400',   bg: 'bg-slate-500',   text: 'text-slate-700',   dot: 'bg-slate-500',   pill: 'bg-slate-100 text-slate-700' },
+  green:   { ring: 'ring-green-400',   bg: 'bg-green-500',   text: 'text-green-700',   dot: 'bg-green-500',   pill: 'bg-green-100 text-green-700' },
+  blue:    { ring: 'ring-blue-400',    bg: 'bg-blue-500',    text: 'text-blue-700',    dot: 'bg-blue-500',    pill: 'bg-blue-100 text-blue-700' },
+  yellow:  { ring: 'ring-yellow-400',  bg: 'bg-yellow-500',  text: 'text-yellow-700',  dot: 'bg-yellow-500',  pill: 'bg-yellow-100 text-yellow-700' },
+  orange:  { ring: 'ring-orange-400',  bg: 'bg-orange-500',  text: 'text-orange-700',  dot: 'bg-orange-500',  pill: 'bg-orange-100 text-orange-700' },
+  teal:    { ring: 'ring-teal-400',    bg: 'bg-teal-500',    text: 'text-teal-700',    dot: 'bg-teal-500',    pill: 'bg-teal-100 text-teal-700' },
+  amber:   { ring: 'ring-amber-700',   bg: 'bg-amber-800',   text: 'text-amber-800',   dot: 'bg-amber-800',   pill: 'bg-amber-100 text-amber-800' },
+  fuchsia: { ring: 'ring-fuchsia-400', bg: 'bg-fuchsia-500', text: 'text-fuchsia-700', dot: 'bg-fuchsia-500', pill: 'bg-fuchsia-100 text-fuchsia-700' },
+  violet:  { ring: 'ring-violet-400',  bg: 'bg-violet-500',  text: 'text-violet-700',  dot: 'bg-violet-500',  pill: 'bg-violet-100 text-violet-700' },
 };
-const DEFAULT_ISO_COLOR = { ring: 'ring-violet-400', bg: 'bg-violet-500', text: 'text-violet-700', dot: 'bg-violet-500' };
+const DEFAULT_ISO_COLOR = ISOLATION_COLORS.violet;
 
 
-export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), isolatedPatients = new Map(), onToggleIsolation, onEnrichBed, onRefresh }) => {
+export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onRefresh }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
   const [enrichedBed, setEnrichedBed] = useState<Bed | null>(null);
   const [enrichLoading, setEnrichLoading] = useState(false);
@@ -102,22 +103,14 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
 
   const displayBed = enrichedBed ?? selectedBed;
 
-  const canEditIsolation = can(currentUser, 'editar_aislamiento');
-
-  // Get isolation color for a bed (first active type drives the color)
+  // Color del aislamiento de una cama (el primer tipo activo define el color).
   const getIsolationColor = (bed: Bed) => {
-    if (!bed.patientCode) return DEFAULT_ISO_COLOR;
-    const tipos = isolatedPatients.get(bed.patientCode);
-    const primary = tipos?.[0];
+    const primary = bed.isolations?.[0]?.color;
     return primary ? (ISOLATION_COLORS[primary] ?? DEFAULT_ISO_COLOR) : DEFAULT_ISO_COLOR;
   };
 
-  // Returns the active isolation types for a bed (empty array if none).
-  // Used to render the multi-isolation tag in the bed cell corner.
-  const getIsolationTypes = (bed: Bed): IsolationType[] => {
-    if (!bed.patientCode) return [];
-    return isolatedPatients.get(bed.patientCode) ?? [];
-  };
+  // Aislamientos activos de una cama (vacío si no hay). Vienen del enrich (PROGAL).
+  const getIsolationTypes = (bed: Bed): IsolationEntry[] => bed.isolations ?? [];
 
   // Rooms that have an isolated patient — other beds in same room are blocked.
   // Excepción: áreas con cubículos/lugares físicamente independientes (UCO, UTI, ITR, HRA)
@@ -1567,7 +1560,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     title={
                       bed.status === BedStatus.DISABLED && bed.disabledReason
                         ? `Inhabilitada — ${bed.disabledReason}`
-                        : isMultiIso ? `Aislamientos: ${isoTipos.join(', ')}` : undefined
+                        : isMultiIso ? `Aislamientos: ${isoTipos.map(e => e.name).join(', ')}` : undefined
                     }
                     className={cn(
                       "relative flex flex-col items-center justify-center aspect-square rounded-lg border transition-all duration-200 overflow-hidden group",
@@ -1587,7 +1580,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                         that the patient has more than one precaution active. */}
                     {isMultiIso && (
                       <div className="absolute bottom-0.5 left-0.5 flex items-center gap-0.5 px-1 h-3 md:h-3.5 rounded-full bg-slate-900 text-white text-[7px] md:text-[8px] font-black ring-1 ring-white shadow-sm">
-                        <span className={cn("w-1.5 h-1.5 rounded-full", (ISOLATION_COLORS[isoTipos[1]] ?? DEFAULT_ISO_COLOR).bg)} />
+                        <span className={cn("w-1.5 h-1.5 rounded-full", (ISOLATION_COLORS[isoTipos[1].color] ?? DEFAULT_ISO_COLOR).bg)} />
                         <span>{isoTipos.length}</span>
                       </div>
                     )}
@@ -2031,28 +2024,40 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     </div>
                   )}
 
-                  {/* Isolation indicator */}
-                  {isolatedBeds.has(selectedBed.label) && (() => {
-                    const isoC = getIsolationColor(selectedBed);
-                    const tipos = selectedBed.patientCode ? isolatedPatients.get(selectedBed.patientCode) : undefined;
-                    return tipos && tipos.length > 0 ? (
-                      <div className="rounded-2xl p-3.5 border border-slate-200 flex items-start gap-3 bg-slate-50">
-                        <span className={cn("w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5", isoC.bg)}>
-                          <ShieldAlert className="w-3 h-3 text-white" strokeWidth={3} />
-                        </span>
-                        <div className="flex-1 min-w-0">
-                          <p className={cn("text-xs font-bold", isoC.text)}>Aislamiento{tipos.length > 1 ? 's' : ''}: {tipos.join(', ')}</p>
-                          <p className="text-[10px] text-slate-400">Camas de la habitación bloqueadas</p>
+                  {/* Aislamiento (PROGAL — solo lectura). Tipos + observaciones del evento.
+                      Usa displayBed (= enrichedBed ?? selectedBed) para mostrarlos también
+                      cuando la cama todavía no fue procesada por el cron y se enriquece on-demand. */}
+                  {displayBed?.isolations && displayBed.isolations.length > 0 && (() => {
+                    const bed = displayBed!;
+                    const isoC = getIsolationColor(bed);
+                    const tipos = bed.isolations!;
+                    const plural = tipos.length > 1;
+                    return (
+                      <div className="rounded-2xl p-3.5 border border-slate-200 bg-slate-50 space-y-2.5">
+                        <div className="flex items-start gap-3">
+                          <span className={cn("w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5", isoC.bg)}>
+                            <ShieldAlert className="w-3 h-3 text-white" strokeWidth={3} />
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-bold text-slate-700">Aislamiento{plural ? 's' : ''} activo{plural ? 's' : ''}</p>
+                            <p className="text-[10px] text-slate-400">Camas de la habitación bloqueadas</p>
+                          </div>
                         </div>
-                      </div>
-                    ) : (
-                      <div className="rounded-2xl p-3.5 border-2 border-red-300 flex items-center gap-3 bg-red-50 animate-pulse">
-                        <span className="w-5 h-5 rounded-full flex items-center justify-center shrink-0 bg-red-500">
-                          <AlertTriangle className="w-3 h-3 text-white" strokeWidth={3} />
-                        </span>
-                        <div>
-                          <p className="text-xs font-bold text-red-700">Aislamiento sin tipo asignado</p>
-                          <p className="text-[10px] text-red-500">Seleccioná un tipo de aislamiento abajo</p>
+                        <div className="space-y-1.5">
+                          {tipos.map((iso, i) => {
+                            const c = ISOLATION_COLORS[iso.color] ?? DEFAULT_ISO_COLOR;
+                            return (
+                              <div key={`${iso.name}-${i}`} className="flex flex-wrap items-center gap-1.5">
+                                <span className={cn("inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold", c.pill)}>
+                                  <span className={cn("w-2 h-2 rounded-full", c.dot)} />
+                                  {iso.name}
+                                </span>
+                                {iso.observation && (
+                                  <span className="text-[11px] text-slate-600 italic break-words">— {iso.observation}</span>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     );
@@ -2063,54 +2068,6 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                       <p className="text-xs font-bold text-violet-700">Bloqueada — paciente aislado en esta habitación</p>
                     </div>
                   )}
-
-                  {/* Toggle isolation — only Admission/Admin, only occupied beds */}
-                  {canEditIsolation && isOccupied && onToggleIsolation && (() => {
-                    const currentTypes = (selectedBed.patientCode ? isolatedPatients.get(selectedBed.patientCode) : undefined) ?? [];
-                    const hasAny = currentTypes.length > 0;
-                    return (
-                      <div className="space-y-1.5">
-                        <p className="text-[9px] font-bold uppercase text-slate-400 tracking-widest">
-                          {hasAny ? 'Tipos de aislamiento (tocá para agregar/quitar)' : 'Marcar Aislamiento'}
-                        </p>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5">
-                          {Object.values(IsolationType).map(tipo => {
-                            const color = ISOLATION_COLORS[tipo] ?? DEFAULT_ISO_COLOR;
-                            const isActive = currentTypes.includes(tipo);
-                            return (
-                              <button
-                                key={tipo}
-                                onClick={() => {
-                                  const nextTypes: IsolationType[] = isActive
-                                    ? currentTypes.filter((t: IsolationType) => t !== tipo)
-                                    : [...currentTypes, tipo];
-                                  onToggleIsolation(selectedBed.label, nextTypes);
-                                  setSelectedBed({ ...selectedBed });
-                                }}
-                                aria-pressed={isActive}
-                                title={tipo}
-                                className={cn(
-                                  "flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-[9px] font-bold transition-all min-w-0 text-left leading-tight",
-                                  isActive ? `${color.bg} text-white border-transparent shadow-sm` : `border-slate-200 hover:shadow-sm`
-                                )}
-                              >
-                                <span className={cn("w-2.5 h-2.5 rounded-full shrink-0", isActive ? "bg-white/40" : color.dot)} />
-                                <span className="break-words whitespace-normal">{tipo}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                        {hasAny && (
-                          <button
-                            onClick={() => { onToggleIsolation(selectedBed.label, []); setSelectedBed({ ...selectedBed }); }}
-                            className="w-full flex items-center justify-center gap-2 p-2.5 rounded-xl border-2 border-red-200 bg-red-50 text-red-700 hover:bg-red-100 transition-all text-xs font-bold"
-                          >
-                            <X className="w-3.5 h-3.5" /> Quitar Aislamiento
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })()}
 
                 </div>
               </div>

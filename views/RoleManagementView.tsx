@@ -49,12 +49,6 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
     ],
   },
   {
-    module: 'Mapa de Camas', label: 'Mapa de Camas',
-    perms: [
-      { code: 'editar_aislamiento', label: 'Editar aislamiento' },
-    ],
-  },
-  {
     module: 'Configuracion', label: 'Configuración',
     perms: [
       { code: 'abm_usuarios', label: 'ABM Usuarios' },

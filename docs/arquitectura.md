@@ -1270,3 +1270,23 @@ Antes cada observación se anclaba al evento que "abría" su status (mapa `EVENT
 ## 45. Habitación en notificaciones de dieta/ayuno para todos los roles (2026-06-18)
 
 `cron-enrich-beds` agregaba la habitación (`formatRoomForCatering(roomName, areaName)`, ej. `"Habitación 413 (Piso 4)"`) **solo** al `cateringBody` de los push `DIET_CHANGE`/`FASTING_CHANGE`; el `body` genérico que veían los demás roles iba sin ubicación. Ahora la habitación va en el `body` genérico también (un solo texto para `body` y `cateringBody`), así **todos los roles** ubican al paciente sin abrir la app. Ver [api/cron-enrich-beds.ts](api/cron-enrich-beds.ts). (`cron-diet-changes` sigue desprogramado — §42 — por eso no requirió el mismo cambio.)
+
+## 46. Aislamientos desde PROGAL como fuente única (2026-06-22)
+
+Hasta acá los aislamientos se **cargaban a mano** desde la app y vivían en la lista `08.Aislamientos` (`/api/isolations`), leídos por el front cada 30s a un `Map<patientCode, IsolationType[]>`. Grupo Gamma ahora los devuelve dentro del evento (`obtenereventointernacion`), así que pasan a tomarse **100% de PROGAL** vía el enrich. La app ya **no asigna ni quita** aislamientos.
+
+### Flujo de datos (espejo de `DIETAS`/`AYUNOS`)
+
+- `obtenereventointernacion` retorna `AISLAMIENTOS[]`, misma forma que `DIETAS`: `{ HCG_DESCRIPCION, EIP_RESPUESTA_VALOR }`. El tipo base trae `"Prescribe"`; la observación llega como fila aparte `"<Tipo> - Observaciones"` con el texto libre.
+- [api/isolations-summary.ts](api/isolations-summary.ts) (**nuevo**, análogo a [api/diet-tags.ts](api/diet-tags.ts)/[api/ayunos.ts](api/ayunos.ts)): `summarizeIsolations()` filtra los prescriptos, **normaliza** el nombre de Gamma a un nombre canónico + clave de color (la app los nombra distinto: "De contacto"→"Contacto", "COVID 19"→"Covid", etc.) y adjunta la observación. `hashIsolations()` para detección de cambios.
+- Se guarda como `isolations: IsolationEntry[]` (`{ name, color, observation? }`) en `EnrichResult` ([api/enrich-core.ts](api/enrich-core.ts) `buildEventData`) → `Payload_EC` de `12.EnrichCamas` → `bed.isolations` vía `applyEnrichToBed` ([api/beds.ts](api/beds.ts)). **El cron no necesitó cambios**: ya persiste el payload completo.
+
+### Front
+
+- `isolations` se sumó a `ENRICH_FIELDS` ([hooks/useHospitalState.ts](hooks/useHospitalState.ts), ahora 20 campos) → el aislamiento **viaja con el enrich y "sigue al paciente"** en los traslados, igual que dieta/ayuno (`mergeBeds`/`reapplyEnrichFromMap`).
+- `isolatedBeds` se **deriva de `bed.isolations`** (camas con ≥1 aislamiento). Se eliminaron: `isolatedPatients`, el polling de `/api/isolations` (`POLL_ISOLATIONS_MS`), `fetchIsolations`, `toggleIsolation`, los bloques de escritura en create/edit ticket, la UI de aislamiento en los modales y el permiso `editar_aislamiento`.
+- El color map de [views/BedsView.tsx](views/BedsView.tsx) pasó a estar **keyed por clave de color** (no por el enum). Tipo nuevo **Contacto preventivo** (`teal`); **Entomológico/Dengue** re-coloreado a `fuchsia` (antes `violet`, chocaba con el default). El detalle de cama muestra tipos + observaciones (solo lectura, usa `displayBed` para soportar enrich on-demand).
+
+### Deprecado
+
+`/api/isolations` + lista `08.Aislamientos` + enum `IsolationType` quedan **sin uso** (el archivo del endpoint sigue en el repo, inactivo). La fuente única es PROGAL.

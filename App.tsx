@@ -604,7 +604,6 @@ export default function App() {
               onAddObservation={actions.handleAddObservation}
               currentUser={state.currentUser}
               beds={state.beds}
-              isolatedPatients={state.isolatedPatients}
             />
           )}
           {/* Historial — gateado por Acceso_RT */}
@@ -614,7 +613,7 @@ export default function App() {
           {/* Roles — gateado por permiso abm_roles */}
           {canSeeRoles && (state.currentView as string) === 'ROLES' && <RoleManagementView currentUser={state.currentUser} />}
           {/* Mapa de Camas — gateado por Acceso_RT */}
-          {canViewBeds && state.currentView === 'BEDS' && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} isolatedPatients={state.isolatedPatients} onToggleIsolation={actions.toggleIsolation} onEnrichBed={actions.enrichBed} onRefresh={actions.refreshAll} />}
+          {canViewBeds && state.currentView === 'BEDS' && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} onEnrichBed={actions.enrichBed} onRefresh={actions.refreshAll} />}
         </main>
       </div>
 
@@ -624,7 +623,6 @@ export default function App() {
         onOpenChange={setIsNewRequestOpen}
         onCreate={onNewRequestCreated}
         beds={state.beds}
-        isolatedPatients={state.isolatedPatients}
         activeTransferOrigins={new Set(state.tickets.filter(t => t.status !== 'Consolidado' && t.status !== 'Cancelado').map(t => t.origin))}
         activeTransferDestinations={new Set(
           state.tickets
@@ -637,7 +635,6 @@ export default function App() {
         onOpenChange={(open) => { if (!open) setEditTicketId(null); }}
         ticket={editTicketId ? (state.tickets.find(t => t.id === editTicketId) ?? null) : null}
         beds={state.beds}
-        isolatedPatients={state.isolatedPatients}
         activeTransferDestinations={new Set(
           state.tickets
             .filter(t => t.id !== editTicketId && t.status !== 'Consolidado' && t.status !== 'Cancelado' && t.destination)
@@ -756,9 +753,10 @@ export default function App() {
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-green-500" /><span className="text-xs text-slate-600">Respiratorio</span></div>
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-500" /><span className="text-xs text-slate-600">Por Gotas</span></div>
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-yellow-500" /><span className="text-xs text-slate-600">Covid</span></div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-violet-500" /><span className="text-xs text-slate-600">Entomológico</span></div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-fuchsia-500" /><span className="text-xs text-slate-600">Entomológico/Dengue</span></div>
                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-orange-500" /><span className="text-xs text-slate-600">Contacto</span></div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-amber-800" /><span className="text-xs text-slate-600">CD</span></div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-teal-500" /><span className="text-xs text-slate-600">Contacto preventivo</span></div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-amber-800" /><span className="text-xs text-slate-600">C. Difficile</span></div>
               </div>
             </div>
           </div>

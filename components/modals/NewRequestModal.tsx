@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { Area, Bed, BedStatus, WorkflowType, IsolationType } from '../../types';
+import { Area, Bed, BedStatus, WorkflowType } from '../../types';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -30,14 +30,13 @@ const sortByAreaThenLabel = (a: Bed, b: Bed) => {
 interface NewRequestModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreate: (data: { patientName: string; origin: string; destination: string; workflow: WorkflowType; reason?: string; itrSource?: string; observations?: string; isolation?: boolean; isolationTypes?: IsolationType[] }) => void;
+  onCreate: (data: { patientName: string; origin: string; destination: string; workflow: WorkflowType; reason?: string; itrSource?: string; observations?: string }) => void;
   beds: Bed[];
-  isolatedPatients?: Map<string, IsolationType[]>;
   activeTransferOrigins?: Set<string>;
   activeTransferDestinations?: Set<string>;
 }
 
-export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenChange, onCreate, beds, isolatedPatients = new Map(), activeTransferOrigins = new Set(), activeTransferDestinations = new Set() }) => {
+export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenChange, onCreate, beds, activeTransferOrigins = new Set(), activeTransferDestinations = new Set() }) => {
   const [workflow, setWorkflow] = useState<WorkflowType>(WorkflowType.INTERNAL);
   const [patientName, setPatientName] = useState('');
   const [origin, setOrigin] = useState('');
@@ -45,12 +44,6 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
   const [reason, setReason] = useState('');
   const [itrSource, setItrSource] = useState('');
   const [observations, setObservations] = useState('');
-  const [isolation, setIsolation] = useState(false);
-  const [isolationTypes, setIsolationTypes] = useState<IsolationType[]>([]);
-
-  const toggleType = (t: IsolationType) => {
-    setIsolationTypes(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]);
-  };
 
   React.useEffect(() => {
     if (!open) {
@@ -61,8 +54,6 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
       setReason('');
       setItrSource('');
       setObservations('');
-      setIsolation(false);
-      setIsolationTypes([]);
     }
   }, [open]);
 
@@ -84,10 +75,8 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
       reason: workflow === WorkflowType.INTERNAL ? reason : undefined,
       itrSource: workflow === WorkflowType.ITR_TO_FLOOR ? itrSource : undefined,
       observations: observations.trim() !== '' ? observations : undefined,
-      isolation,
-      isolationTypes: isolation && isolationTypes.length ? isolationTypes : undefined,
     });
-    
+
     // Reset form
     setPatientName('');
     setOrigin('');
@@ -95,7 +84,6 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
     setReason('');
     setItrSource('');
     setObservations('');
-    setIsolation(false);
     onOpenChange(false);
   };
 
@@ -167,10 +155,6 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
                 const bed = beds.find(b => b.label === val);
                 if (bed?.patientName) setPatientName(bed.patientName);
                 if (bed?.institution) setItrSource(bed.institution);
-                if (bed?.patientCode && isolatedPatients.has(bed.patientCode)) {
-                  setIsolation(true);
-                  setIsolationTypes(isolatedPatients.get(bed.patientCode) ?? []);
-                }
               }}
               options={availableOrigins.map(bed => ({
                 label: `${bed.label} (${bed.patientName || 'Sin Nombre'})`,
@@ -239,36 +223,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
             </div>
           )}
 
-          <div className="grid gap-1.5">
-            <label className="flex items-center gap-2.5 px-3 py-2 rounded-xl border border-violet-200 bg-violet-50/50 cursor-pointer hover:bg-violet-50 transition-colors">
-              <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors ${isolation ? 'bg-violet-600 border-violet-600' : 'border-slate-300 bg-white'}`}>
-                {isolation && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
-              </div>
-              <span className="text-sm font-bold text-violet-800">Requiere Aislamiento</span>
-              <input type="checkbox" className="sr-only" checked={isolation} onChange={e => { setIsolation(e.target.checked); if (!e.target.checked) setIsolationTypes([]); }} />
-            </label>
-            {isolation && (
-              <>
-                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide px-1">Tocá para agregar/quitar uno o más tipos</p>
-                <div className="flex flex-wrap gap-1.5 px-1">
-                  {Object.values(IsolationType).map(t => {
-                    const selected = isolationTypes.includes(t);
-                    return (
-                      <button
-                        key={t}
-                        type="button"
-                        onClick={() => toggleType(t)}
-                        aria-pressed={selected}
-                        className={`px-3 py-1.5 rounded-full border text-xs font-bold transition-all ${selected ? 'border-violet-400 bg-violet-500 text-white' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}
-                      >
-                        {t}
-                      </button>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-          </div>
+          {/* Los aislamientos ya no se cargan desde la app: vienen de PROGAL y se ven en el mapa de camas. */}
 
           <div className="grid gap-2">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Observaciones (Opcional)</Label>

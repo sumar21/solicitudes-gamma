@@ -1,6 +1,6 @@
 
 import React, { useMemo, useState, useEffect, useRef } from 'react';
-import { Ticket, Role, TicketStatus, SortConfig, SortKey, WorkflowType, User, Bed, BedStatus, Area, IsolationType } from '../types';
+import { Ticket, Role, TicketStatus, SortConfig, SortKey, WorkflowType, User, Bed, BedStatus, Area, IsolationEntry } from '../types';
 import { can } from '../lib/permissions';
 import {
   Search, Plus, Timer, Clock, ArrowRightLeft,
@@ -41,7 +41,6 @@ interface RequestsViewProps {
   onAddObservation?: (id: string, texto: string) => Promise<boolean>;
   currentUser: User | null;
   beds: Bed[];
-  isolatedPatients?: Map<string, IsolationType[]>;
 }
 
 // Observación cargada por la azafata, ligada al status del ticket (lista 13.ObservacionesTraslados).
@@ -78,7 +77,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   searchTerm, setSearchTerm, sortConfig, onSort,
   onNewRequest, onValidateReason, onAssignBed,
   onHousekeepingAction, onStartTransport, onCompleteTransport,
-  onRoomReady, onConfirmReception, onConsolidate, onReject, onEdit, onAddObservation, currentUser, beds, isolatedPatients
+  onRoomReady, onConfirmReception, onConsolidate, onReject, onEdit, onAddObservation, currentUser, beds
 }) => {
 
   // Observaciones por traslado: UN solo modal (hilo + redactor). Todos los roles ven el
@@ -161,14 +160,14 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     );
   };
 
-  const getTicketIsolationTypes = (ticket: Ticket): IsolationType[] => {
-    if (!isolatedPatients?.size) return [];
+  // Aislamientos del paciente del ticket, leídos del enrich de la cama (PROGAL).
+  // Se busca por la cama de origen y, si no, por patientCode en cualquier cama.
+  const getTicketIsolationTypes = (ticket: Ticket): IsolationEntry[] => {
     const originBed = beds.find(b => b.label === ticket.origin);
-    if (originBed?.patientCode && isolatedPatients.has(originBed.patientCode)) {
-      return isolatedPatients.get(originBed.patientCode) ?? [];
-    }
-    if (ticket.patientCode && isolatedPatients.has(ticket.patientCode)) {
-      return isolatedPatients.get(ticket.patientCode) ?? [];
+    if (originBed?.isolations?.length) return originBed.isolations;
+    if (ticket.patientCode) {
+      const byCode = beds.find(b => b.patientCode === ticket.patientCode && b.isolations?.length);
+      if (byCode?.isolations?.length) return byCode.isolations;
     }
     return [];
   };
@@ -414,14 +413,14 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                   </div>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <h3 className="font-black text-slate-950 text-base leading-tight tracking-tight uppercase">{ticket.patientName}</h3>
-                    {getTicketIsolationTypes(ticket).map((iso: IsolationType) => (
+                    {getTicketIsolationTypes(ticket).map((iso: IsolationEntry, i: number) => (
                       <span
-                        key={iso}
+                        key={`${iso.name}-${i}`}
                         className="inline-flex items-center gap-1 rounded-full bg-violet-500 px-1.5 py-0.5 text-white shrink-0"
-                        title={`Aislamiento: ${iso}`}
+                        title={`Aislamiento: ${iso.name}${iso.observation ? ` — ${iso.observation}` : ''}`}
                       >
                         <ShieldAlert className="w-3 h-3" strokeWidth={3} />
-                        <span className="text-[9px] font-black uppercase tracking-wide leading-none">{iso}</span>
+                        <span className="text-[9px] font-black uppercase tracking-wide leading-none">{iso.name}</span>
                       </span>
                     ))}
                   </div>
@@ -554,14 +553,14 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                     <TableCell>
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="font-black text-slate-950 text-base uppercase tracking-tight">{ticket.patientName}</span>
-                        {getTicketIsolationTypes(ticket).map((iso: IsolationType) => (
+                        {getTicketIsolationTypes(ticket).map((iso: IsolationEntry, i: number) => (
                           <span
-                            key={iso}
+                            key={`${iso.name}-${i}`}
                             className="inline-flex items-center gap-1 rounded-full bg-violet-500 px-1.5 py-0.5 text-white shrink-0"
-                            title={`Aislamiento: ${iso}`}
+                            title={`Aislamiento: ${iso.name}${iso.observation ? ` — ${iso.observation}` : ''}`}
                           >
                             <ShieldAlert className="w-3 h-3" strokeWidth={3} />
-                            <span className="text-[9px] font-black uppercase tracking-wide leading-none">{iso}</span>
+                            <span className="text-[9px] font-black uppercase tracking-wide leading-none">{iso.name}</span>
                           </span>
                         ))}
                       </div>
