@@ -122,7 +122,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ tickets }) => {
   const live = useMemo(() => ({
     pending: tickets.filter(t => t.status === TicketStatus.WAITING_CONSOLIDATION),
     inProcess: tickets.filter(
-      t => t.status === TicketStatus.WAITING_ROOM || t.status === TicketStatus.IN_TRANSIT,
+      t => t.status === TicketStatus.WAITING_ROOM
+        || t.status === TicketStatus.IN_TRANSIT
+        || t.status === TicketStatus.IN_TRANSPORT, // "En Traslado": el ticket sigue en ejecución mientras la azafata lo traslada
     ),
   }), [tickets]);
 
@@ -137,6 +139,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ tickets }) => {
   const statusDistribution = useMemo(() => [
     { status: TicketStatus.WAITING_ROOM, count: current.set.filter(t => t.status === TicketStatus.WAITING_ROOM).length, color: '#f59e0b', label: 'Esperando Habitación' },
     { status: TicketStatus.IN_TRANSIT, count: current.set.filter(t => t.status === TicketStatus.IN_TRANSIT).length, color: '#3b82f6', label: 'En Tránsito' },
+    { status: TicketStatus.IN_TRANSPORT, count: current.set.filter(t => t.status === TicketStatus.IN_TRANSPORT).length, color: '#06b6d4', label: 'En Traslado' },
     { status: TicketStatus.WAITING_CONSOLIDATION, count: current.set.filter(t => t.status === TicketStatus.WAITING_CONSOLIDATION).length, color: '#8b5cf6', label: 'Por Consolidar' },
     { status: TicketStatus.COMPLETED, count: current.set.filter(t => t.status === TicketStatus.COMPLETED).length, color: '#10b981', label: 'Completados' },
   ], [current.set]);
