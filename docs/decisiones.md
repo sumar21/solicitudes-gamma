@@ -1219,3 +1219,13 @@ Resultado del bug: Catering recibía "Nueva Solicitud de Traslado" (NEW_TICKET) 
 **Qué:** `summarizeIsolations` ([api/isolations-summary.ts](api/isolations-summary.ts)) traduce el `HCG_DESCRIPCION` de Gamma a `{ name, color }` canónico (color = clave semántica: `green`/`teal`/`fuchsia`/…). El front mapea esa clave a clases Tailwind en un único `ISOLATION_COLORS` keyed por color.
 
 **Por qué:** los nombres de Gamma no coinciden con los de la app ("De contacto"→"Contacto", "COVID 19"→"Covid", "De contacto C. Difficile"→"C. Difficile") y apareció un tipo nuevo ("Contacto preventivo"). Centralizar el mapeo nombre+color en un solo lugar (backend) evita duplicarlo; el front queda solo con presentación. Un tipo no mapeado cae a `violet` (default) en vez de desaparecer.
+
+## 23. Enrich de TESTING vía Vercel Cron "forwarder" al Preview (2026-06-23)
+
+**Qué:** el enrich de la partición TESTING se dispara con un Vercel Cron mínimo ([api/cron-trigger-testing.ts](api/cron-trigger-testing.ts), `5,20,35,50`) que **no enriquece él mismo**: hace un POST al `/api/cron-enrich-beds` del deployment **Preview de develop** (env `TESTING_BASE_URL`, header `X-Cron-Secret`). Reemplaza al GitHub Action `enrich-testing.yml`, que se borra.
+
+**Por qué:** el scheduler de GitHub Actions es best-effort y se atrasa (la misma razón por la que prod se movió a Vercel). El de Vercel es confiable. Pero los Vercel Cron corren **solo en Production = código de `main`**, y el enrich de TESTING tiene que correr **código de develop** (para validar cambios de backend antes de mergear). El forwarder concilia ambas cosas: el scheduler confiable de Vercel dispara, pero el enrich sigue ocurriendo en el Preview (develop + `ENTORNO=TESTING` + PROGAL test).
+
+**Alternativa descartada — un segundo Vercel Cron que enriquezca TESTING en prod:** correría con código de main (no refleja cambios de develop sin mergear); además los caches de token/evento de [api/gamma-client.ts](api/gamma-client.ts) están keyed solo por `scope`/`origin-number` (no por URL base) → en una instancia tibia compartida un token de PROGAL prod podría reusarse contra PROGAL test; y `sendPushToSubscribers` filtra suscriptores por el `ENTORNO` del deployment (PRODUCTIVO) → habría que forzar push silencioso. El forwarder evita todo eso sin tocar la lógica del enrich.
+
+**Requiere:** env var `TESTING_BASE_URL` en Production (alias del Preview de develop) y `CRON_SECRET` presente en Production (Bearer que manda Vercel) y en Preview (lo valida el `/api/cron-enrich-beds`). El Preview no debe tener Deployment Protection. El cron se activa recién cuando el `vercel.json` está en `main`.

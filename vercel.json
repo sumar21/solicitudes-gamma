@@ -21,11 +21,16 @@
     {
       "path": "/api/cron-cleanup-notifs",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron-trigger-testing",
+      "schedule": "5,20,35,50 * * * *"
     }
   ],
   "functions": {
     "api/cron-diet-changes.ts": { "maxDuration": 300 },
     "api/cron-enrich-beds.ts": { "maxDuration": 300 },
-    "api/cron-cleanup-notifs.ts": { "maxDuration": 300 }
+    "api/cron-cleanup-notifs.ts": { "maxDuration": 300 },
+    "api/cron-trigger-testing.ts": { "maxDuration": 300 }
   }
 }

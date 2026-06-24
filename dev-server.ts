@@ -93,6 +93,7 @@ const routes: Record<string, () => Promise<any>> = {
   '/api/debug-subs':         () => import('./api/debug-subs'),
   '/api/cron-diet-changes':  () => import('./api/cron-diet-changes'),
   '/api/cron-enrich-beds':   () => import('./api/cron-enrich-beds'),
+  '/api/cron-trigger-testing': () => import('./api/cron-trigger-testing'),
   '/api/cron-cleanup-notifs': () => import('./api/cron-cleanup-notifs'),
   '/api/client-ip':          () => import('./api/client-ip'),
 };
