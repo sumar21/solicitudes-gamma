@@ -75,15 +75,27 @@ async function fetchSubscriptions(sede?: string): Promise<Subscription[]> {
   try {
     // Filtramos SP-side por entorno para no traer subs de otro entorno (y bajar payload).
     const filter = encodeURIComponent(`fields/Entorno_PS eq '${ENTORNO}'`);
-    const spRes = await graphFetch(
-      `${basePath}?$expand=fields&$filter=${filter}&$top=500`,
-      { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
-    );
-    if (!spRes.ok) return [];
+    // PAGINAR todas las subs del entorno (antes cortaba en $top=500 SIN paginar). Con la lista
+    // crecida (>3000 subs) y orden por id (más viejas primero), esas 500 eran dispositivos
+    // viejos: cuando TODAS superaron las 36h, fetchSubscriptions devolvía 0 frescas → push-utils
+    // no mandaba push NI escribía en 10.Notificaciones → "no llegan push" + campanita vacía.
+    // Las subs frescas reales quedaban fuera de la ventana de 500. $top sigue siendo el tamaño
+    // de página; el nextLink trae el resto. MAX_SCAN es backstop anti-runaway.
+    const MAX_SCAN = 20000;
+    const rows: Record<string, unknown>[] = [];
+    let next: string | null = `${basePath}?$expand=fields&$filter=${filter}&$top=500`;
+    while (next && rows.length < MAX_SCAN) {
+      const page = await graphFetch(next, { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } });
+      if (!page.ok) break;
+      const pageData = (await page.json()) as { value?: Record<string, unknown>[]; '@odata.nextLink'?: string };
+      for (const it of pageData.value ?? []) rows.push(it);
+      const raw = pageData['@odata.nextLink'];
+      // nextLink es absoluta; graphFetch espera path relativo a /v1.0.
+      next = raw ? raw.replace(/^https:\/\/graph\.microsoft\.com\/v1\.0/, '') : null;
+    }
 
-    const data = (await spRes.json()) as { value: Record<string, unknown>[] };
     const now = Date.now();
-    const all = (data.value ?? []).map((item: any) => {
+    const all = rows.map((item: any) => {
       const f = item.fields as Record<string, unknown>;
       let keys = { p256dh: '', auth: '' };
       try { keys = JSON.parse(String(f.Keys_PS ?? '{}')); } catch { /* invalid */ }

@@ -127,3 +127,38 @@ export async function graphBatchPatchFields(
   }
   return { updated, failed };
 }
+
+/**
+ * DELETE masivo vía Microsoft Graph `$batch` (hasta 20 ops por request).
+ * `itemsBasePath` es relativo a /v1.0, ej. `/sites/{site}/lists/{list}/items`.
+ * Un 404 se cuenta como borrado (la fila ya no existía → idempotente).
+ */
+export async function graphBatchDelete(
+  itemsBasePath: string,
+  ids: string[],
+): Promise<{ deleted: number; failed: number }> {
+  let deleted = 0;
+  let failed = 0;
+  for (let i = 0; i < ids.length; i += 20) {
+    const chunk = ids.slice(i, i + 20);
+    const requestBody = {
+      requests: chunk.map((id, idx) => ({
+        id: String(idx),
+        method: 'DELETE',
+        url: `${itemsBasePath}/${id}`,
+      })),
+    };
+    try {
+      const res = await graphFetch('/$batch', { method: 'POST', body: JSON.stringify(requestBody) });
+      if (!res.ok) { failed += chunk.length; continue; }
+      const data = (await res.json()) as { responses?: { status: number }[] };
+      for (const r of data.responses ?? []) {
+        if ((r.status >= 200 && r.status < 300) || r.status === 404) deleted++;
+        else failed++;
+      }
+    } catch {
+      failed += chunk.length;
+    }
+  }
+  return { deleted, failed };
+}
