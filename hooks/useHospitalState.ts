@@ -506,12 +506,17 @@ export const useHospitalState = () => {
       if (etag) ticketsEtagRef.current = etag;
       const data: { tickets: Ticket[] } = await r.json();
       if (Array.isArray(data.tickets) && !writingRef.current) {
+        // Dedup defensivo por id: si por una rara condición de carrera en SP llegaran dos
+        // filas con el mismo IDUnivocoTraslado_T, evitamos renderizar duplicados / romper las
+        // keys de React. Nos quedamos con la primera aparición.
+        const seenIds = new Set<string>();
+        const tickets = data.tickets.filter(t => seenIds.has(t.id) ? false : (seenIds.add(t.id), true));
         // On first API load, seed the snapshot so we don't fire notifications for existing tickets
         if (!initialLoadDoneRef.current) {
-          prevTicketSnapshotRef.current = new Map(data.tickets.map(t => [t.id, t.status]));
+          prevTicketSnapshotRef.current = new Map(tickets.map(t => [t.id, t.status]));
           initialLoadDoneRef.current = true;
         }
-        setTickets(data.tickets);
+        setTickets(tickets);
       }
     } catch { /* keep mock/current data */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -757,6 +762,43 @@ export const useHospitalState = () => {
       }
       return { ok: r.ok };
     } catch { return { ok: false }; /* next poll will reconcile */ }
+  };
+
+  // Persiste un cambio optimista de ticket y, si el guardado en SP falla, REVIERTE el ticket
+  // a su estado previo + avisa. Es la versión UPDATE del fix de creación: sin esto, un cambio
+  // de estado que no persiste queda "fantasma" en la grilla y el poll de 8s lo borra sin avisar
+  // (la azafata/admisión cree que la acción quedó y en realidad se perdió). Devuelve true si
+  // persistió (o si no había spItemId que persistir), false si falló (ya hizo rollback + alert).
+  const persistTicketUpdate = async (
+    ticket: Ticket,
+    updates: Partial<Ticket>,
+    failMsg: string,
+  ): Promise<boolean> => {
+    if (!ticket.spItemId) return true;
+    const snapshot: Ticket = { ...ticket };
+    // Pre-seed el snapshot de change-detection con la clave optimista (igual que
+    // handleEditTicket): así el effect de notificaciones no interpreta NUESTRO propio
+    // cambio optimista como una transición entrante (el handler ya disparó su addNotification).
+    prevTicketSnapshotRef.current.set(
+      ticket.id,
+      `${updates.status ?? ticket.status}|${updates.destination ?? ticket.destination ?? ''}`,
+    );
+    const { ok, conflict } = await spUpdate(ticket.spItemId, updates, ticket);
+    if (ok) return true;
+    // Rollback: re-seed el snapshot a la clave PREVIA ANTES del setTickets, para que el effect
+    // no emita una notif espuria de "transición inversa" al revertir el cambio.
+    prevTicketSnapshotRef.current.set(
+      ticket.id,
+      `${snapshot.status}|${snapshot.destination ?? ''}`,
+    );
+    setTickets(prev => prev.map(t => t.id === ticket.id ? snapshot : t));
+    if (conflict) {
+      const extra = conflict.conflictingTicketId ? ` (ticket ${conflict.conflictingTicketId})` : '';
+      alert(`${conflict.error}${extra}`);
+    } else {
+      alert(failMsg);
+    }
+    return false;
   };
 
   const spLogEvent = async (ticketId: string, tipo: string): Promise<void> => {
@@ -1125,6 +1167,10 @@ export const useHospitalState = () => {
         await fetchTickets();
         setTicketActionLoading(false);
       }, 1000);
+      // Segundo refetch diferido: SharePoint tiene latencia de read-after-write, así que el
+      // fetch a 1s puede no traer el ticket recién creado y el optimista parpadearía hasta el
+      // poll de 8s. Reintentamos a ~4.5s (mismo patrón que handleEditTicket/handleConsolidate).
+      setTimeout(() => { ticketsEtagRef.current = null; fetchTickets(); }, 4500);
     }
   };
 
@@ -1205,11 +1251,20 @@ export const useHospitalState = () => {
       alert(`${conflict.error}${extra}`);
       return;
     }
-    if (spItemId) setTickets(prev => prev.map(t => t.id === newTicket.id ? { ...t, spItemId } : t));
+    if (!spItemId) {
+      // El POST falló y NO fue conflicto (error de red, throttle agotado o 5xx tras los
+      // reintentos del server). Sin esto, el ticket optimista quedaba "fantasma" en la
+      // grilla y el poll de 8s lo borraba SIN avisar → el bug de traslados que
+      // "se cargan y desaparecen". Hacemos rollback + aviso para que la usuaria se entere.
+      setTickets((prev: Ticket[]) => prev.filter((t: Ticket) => t.id !== newTicket.id));
+      alert('No pudimos confirmar el guardado del traslado. Esperá unos segundos: si aparece en la grilla, ya quedó cargado; si NO aparece, volvé a cargarlo.');
+      return;
+    }
+    setTickets(prev => prev.map(t => t.id === newTicket.id ? { ...t, spItemId } : t));
     spLogEvent(newTicket.id, 'Solicitud Creada');
   };
 
-  const handleRoomReady = (ticketId: string) => {
+  const handleRoomReady = async (ticketId: string) => {
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket?.destination || ticket.status === TicketStatus.IN_TRANSIT) return;
     const now     = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -1221,11 +1276,12 @@ export const useHospitalState = () => {
       originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
       destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
     });
-    if (ticket.spItemId) spUpdate(ticket.spItemId, updates, ticket);
-    spLogEvent(ticket.id, 'Habitacion Preparada');
+    if (await persistTicketUpdate(ticket, updates, 'No se pudo guardar "Habitación Lista" (error de conexión o del servidor). Reintentá.')) {
+      spLogEvent(ticket.id, 'Habitacion Preparada');
+    }
   };
 
-  const handleStartTransport = (ticketId: string) => {
+  const handleStartTransport = async (ticketId: string) => {
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket || ticket.status === TicketStatus.IN_TRANSPORT) return;
     const now     = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -1239,11 +1295,12 @@ export const useHospitalState = () => {
       originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
       destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
     });
-    if (ticket.spItemId) spUpdate(ticket.spItemId, updates, ticket);
-    spLogEvent(ticket.id, 'Inicio Traslado');
+    if (await persistTicketUpdate(ticket, updates, 'No se pudo guardar "Iniciar Traslado" (error de conexión o del servidor). Reintentá.')) {
+      spLogEvent(ticket.id, 'Inicio Traslado');
+    }
   };
 
-  const handleConfirmReception = (ticketId: string) => {
+  const handleConfirmReception = async (ticketId: string) => {
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket?.destination) return;
     if (ticket.status !== TicketStatus.IN_TRANSPORT && ticket.status !== TicketStatus.IN_TRANSIT) return;
@@ -1256,8 +1313,9 @@ export const useHospitalState = () => {
       originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
       destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
     });
-    if (ticket.spItemId) spUpdate(ticket.spItemId, updates, ticket);
-    spLogEvent(ticket.id, 'Paciente Recibido');
+    if (await persistTicketUpdate(ticket, updates, 'No se pudo guardar "Recepción confirmada" (error de conexión o del servidor). Reintentá.')) {
+      spLogEvent(ticket.id, 'Paciente Recibido');
+    }
   };
 
   const handleConsolidate = async (ticketId: string) => {
@@ -1275,7 +1333,7 @@ export const useHospitalState = () => {
       originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
       destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
     });
-    if (ticket.spItemId) await spUpdate(ticket.spItemId, updates, ticket);
+    if (ticket.spItemId && !(await persistTicketUpdate(ticket, updates, 'No se pudo consolidar el traslado (error de conexión o del servidor). Reintentá.'))) return;
     spLogEvent(ticket.id, 'Consolidado Progal');
     // Refresh beds immediately + again after a few seconds (Gamma/PROGAL may take a moment)
     fetchBeds();
@@ -1306,7 +1364,7 @@ export const useHospitalState = () => {
       originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
       destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
     });
-    if (ticket.spItemId) await spUpdate(ticket.spItemId, updates, ticket);
+    if (ticket.spItemId && !(await persistTicketUpdate(ticket, updates, 'No se pudo cancelar el traslado (error de conexión o del servidor). Reintentá.'))) return;
     spLogEvent(ticket.id, `Cancelado: ${reason}`);
   };
 
@@ -1464,6 +1522,17 @@ export const useHospitalState = () => {
           );
           const extra = result.conflict.conflictingTicketId ? ` (ticket ${result.conflict.conflictingTicketId})` : '';
           alert(`${result.conflict.error}${extra}`);
+          return;
+        }
+        if (!result.ok) {
+          // Falla no-conflicto (red / 5xx tras los reintentos del server): rollback + aviso.
+          // Sin esto, el poll recargaba el ticket viejo y la edición se revertía en silencio.
+          setTickets((prev: Ticket[]) => prev.map((t: Ticket) => t.id === ticket.id ? ticketSnapshot : t));
+          prevTicketSnapshotRef.current.set(
+            ticket.id,
+            `${ticketSnapshot.status}|${ticketSnapshot.destination ?? ''}`,
+          );
+          alert('No se pudo guardar la modificación (error de conexión o del servidor). Revisá la grilla en unos segundos.');
           return;
         }
       } finally {

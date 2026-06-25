@@ -7,7 +7,7 @@
  * PATCH /api/tickets         → update ticket  { spItemId, ...fields to update }
  */
 
-import { graphFetch }  from './graph.js';
+import { graphFetch, graphFetchRetry }  from './graph.js';
 import { requireAuth } from './jwt.js';
 import { Ticket, TicketStatus, WorkflowType, SedeType, BedStatus } from '../types.js';
 import { sendPushToSubscribers, effectiveAreaNames } from './push-utils.js';
@@ -135,6 +135,69 @@ function ticketToFields(t: Partial<Ticket>): Record<string, unknown> {
   return fields;
 }
 
+// ── Idempotent create ─────────────────────────────────────────────────────────
+// graphFetchRetry reintenta 429/503/504, pero un POST NO es idempotente: si SharePoint
+// commitea la fila y el gateway igual devuelve 503/504 (timeout post-commit), un reintento
+// ciego insertaría una fila DUPLICADA (SP no impone unicidad sobre IDUnivocoTraslado_T).
+// Para evitarlo, ante un 503/504 chequeamos primero si la fila ya existe por
+// IDUnivocoTraslado_T (+ Entorno) y, si está, la devolvemos como éxito en vez de re-postear.
+// Un 429 nunca commitea → se reintenta sin chequear (es el caso común de throttling en ráfaga).
+// Presupuesto de retry más corto que los crons: hay un usuario esperando sincrónicamente.
+async function createTicketIdempotent(
+  fieldsPost: Record<string, unknown>,
+  unicoId: string,
+): Promise<{ ok: boolean; status: number; id?: string; errorText?: string }> {
+  const itemsPath = `/sites/${SITE_ID}/lists/${LIST_ID}/items`;
+  const body = JSON.stringify({ fields: fieldsPost });
+  const retries = 3;
+  const maxDelay = 4000;
+
+  const findExistingId = async (): Promise<string | undefined> => {
+    if (!unicoId) return undefined;
+    const escaped = String(unicoId).replace(/'/g, "''");
+    const url = `/sites/${SITE_ID}/lists/${LIST_ID}/items?$select=id&$top=1`
+      + `&$expand=fields($select=id)`
+      + `&$filter=fields/IDUnivocoTraslado_T eq '${escaped}' and fields/Entorno_T eq '${ENTORNO}'`;
+    // graphFetchRetry: que un throttle en el propio chequeo no lo colapse a undefined →
+    // eso dispararía un re-POST y la fila DUPLICADA que justamente queremos evitar.
+    const r = await graphFetchRetry(url, {
+      headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } as any,
+    }, { retries: 1, maxDelayMs: 1500 });
+    if (!r.ok) return undefined;
+    const d = (await r.json()) as { value?: { id: string }[] };
+    return d.value?.[0]?.id;
+  };
+
+  let res = await graphFetch(itemsPath, { method: 'POST', body });
+  for (let attempt = 0; !res.ok && (res.status === 429 || res.status === 503 || res.status === 504) && attempt < retries; attempt++) {
+    // 503/504 pueden haber commiteado antes de fallar → no dupliquemos.
+    if (res.status === 503 || res.status === 504) {
+      // Absorber el lag de indexación read-after-write de SP antes de chequear existencia,
+      // para no re-postear una fila que SÍ se commiteó pero todavía no es visible al $filter.
+      await new Promise<void>(r => setTimeout(r, 800));
+      const existing = await findExistingId();
+      if (existing) return { ok: true, status: 200, id: existing };
+    }
+    const retryAfter = Number(res.headers.get('Retry-After'));
+    const delay = Number.isFinite(retryAfter) && retryAfter > 0
+      ? Math.min(retryAfter * 1000, maxDelay)
+      : Math.min(400 * 2 ** attempt, maxDelay);
+    await new Promise<void>(r => setTimeout(r, delay));
+    res = await graphFetch(itemsPath, { method: 'POST', body });
+  }
+  if (res.ok) {
+    const d = (await res.json()) as { id: string };
+    return { ok: true, status: res.status, id: d.id };
+  }
+  // Último recurso: tal vez commiteó en el intento final fallido (503/504).
+  if (res.status === 503 || res.status === 504) {
+    await new Promise<void>(r => setTimeout(r, 800));
+    const late = await findExistingId();
+    if (late) return { ok: true, status: 200, id: late };
+  }
+  return { ok: false, status: res.status, errorText: await res.text() };
+}
+
 // ── Handler ──────────────────────────────────────────────────────────────────
 async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -221,9 +284,9 @@ async function handler(req: any, res: any) {
           + ` and fields/CamaDestino_T eq '${escaped}'`
           + ` and fields/Status_T ne '${TicketStatus.COMPLETED}'`
           + ` and fields/Status_T ne '${TicketStatus.REJECTED}'`;
-        const conflictRes = await graphFetch(conflictUrl, {
+        const conflictRes = await graphFetchRetry(conflictUrl, {
           headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } as any,
-        });
+        }, { retries: 1, maxDelayMs: 2000 }); // chequeo no-fatal (fail-open): retry barato
         if (conflictRes.ok) {
           const conflictData = (await conflictRes.json()) as { value: Record<string, unknown>[] };
           if ((conflictData.value ?? []).length > 0) {
@@ -239,17 +302,12 @@ async function handler(req: any, res: any) {
 
       // Estampar el entorno en el item nuevo (solo POST — los PATCH no deben pisarlo).
       const fieldsPost = { ...ticketToFields(ticket), Entorno_T: ENTORNO };
-      const spRes = await graphFetch(
-        `/sites/${SITE_ID}/lists/${LIST_ID}/items`,
-        {
-          method: 'POST',
-          body:   JSON.stringify({ fields: fieldsPost }),
-        },
-      );
+      // Creación idempotente con retry: reintenta el throttle transitorio de SharePoint
+      // (429/503/504) que hacía fallar el POST en silencio y "desaparecer" el ticket al
+      // siguiente poll, SIN duplicar la fila si SP commitea y aun así devuelve 503/504.
+      const created = await createTicketIdempotent(fieldsPost, ticket.id);
 
-      if (!spRes.ok) throw new Error(`SP POST failed (${spRes.status}): ${await spRes.text()}`);
-
-      const data = (await spRes.json()) as { id: string };
+      if (!created.ok) throw new Error(`SP POST failed (${created.status}): ${created.errorText ?? ''}`);
 
       // Send push notification for new ticket (non-blocking)
       console.log('[tickets] POST success, sending push notification...');
@@ -266,7 +324,7 @@ async function handler(req: any, res: any) {
         excludeUserId: (req as any).user?.id,
       }).catch((err: any) => console.error('[tickets] Push error:', err));
 
-      return res.status(201).json({ spItemId: data.id });
+      return res.status(201).json({ spItemId: created.id });
     }
 
     // ── PATCH ──────────────────────────────────────────────────────────────
@@ -317,9 +375,9 @@ async function handler(req: any, res: any) {
           + ` and fields/Status_T ne '${TicketStatus.COMPLETED}'`
           + ` and fields/Status_T ne '${TicketStatus.REJECTED}'`
           + ` and id ne ${spItemId}`;
-        const conflictRes = await graphFetch(conflictUrl, {
+        const conflictRes = await graphFetchRetry(conflictUrl, {
           headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } as any,
-        });
+        }, { retries: 1, maxDelayMs: 2000 }); // chequeo no-fatal (fail-open): retry barato
         if (conflictRes.ok) {
           const conflictData = (await conflictRes.json()) as { value: Record<string, unknown>[] };
           if ((conflictData.value ?? []).length > 0) {
@@ -333,12 +391,15 @@ async function handler(req: any, res: any) {
         }
       }
 
-      const spRes = await graphFetch(
+      // graphFetchRetry: el PATCH es idempotente (fija campos a valores concretos), así
+      // que reintentar un throttle transitorio es ganancia pura — sin riesgo de duplicar.
+      const spRes = await graphFetchRetry(
         `/sites/${SITE_ID}/lists/${LIST_ID}/items/${spItemId}`,
         {
           method: 'PATCH',
           body:   JSON.stringify({ fields: ticketToFields(updates) }),
         },
+        { retries: 2, maxDelayMs: 3000 }, // interactivo: presupuesto de retry acotado
       );
 
       if (!spRes.ok) throw new Error(`SP PATCH failed (${spRes.status}): ${await spRes.text()}`);
