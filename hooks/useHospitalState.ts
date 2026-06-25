@@ -138,6 +138,24 @@ function keepPatientOnOrigin(origin: Bed | undefined, ticket: Ticket): void {
   origin.status = BedStatus.OCCUPIED;
 }
 
+// ¿PROGAL sigue mostrando AL MISMO paciente del ticket en la cama origen?
+// La cama ORIGEN tiene a PROGAL como fuente de verdad: solo la "vaciamos" a EN PREPARACIÓN
+// mientras Gamma siga apuntando al paciente del ticket ahí (move ejecutado por la azafata pero
+// NO consolidado todavía en PROGAL). Si PROGAL ya cambió esa cama —la inhabilitó, la liberó o
+// la reasignó a otro paciente— la respetamos tal cual vino y NO la pisamos con "En preparación".
+// Esto evita el bug donde una cama origen inhabilitada en PROGAL seguía figurando "En
+// preparación" y podía reutilizarse como destino de otro traslado.
+function progalStillHasTicketPatientOnOrigin(origin: Bed, ticket: Ticket): boolean {
+  if (origin.status !== BedStatus.OCCUPIED) return false; // PROGAL ya la cambió (disabled/free/prep)
+  const op = origin.patientCode ? String(origin.patientCode).trim() : '';
+  const tp = ticket.patientCode ? String(ticket.patientCode).trim() : '';
+  if (op && tp) return op === tp; // criterio fuerte: mismo código de paciente
+  // Fallback por nombre solo si falta el código en alguno de los dos lados.
+  const on = (origin.patientName ?? '').trim().toLowerCase();
+  const tn = (ticket.patientName ?? '').trim().toLowerCase();
+  return !!on && on === tn;
+}
+
 function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[]): Bed[] {
   const result = gammaBeds.map(b => ({ ...b }));
   for (const ticket of activeTickets) {
@@ -168,22 +186,28 @@ function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[]): Bed[] {
           origin.status = BedStatus.PREPARATION;
         }
         break;
-      case TicketStatus.WAITING_CONSOLIDATION:
+      case TicketStatus.WAITING_CONSOLIDATION: {
         // Hasta que Admin consolide en PROGAL, Gamma todavía apunta el paciente a
         // la cama origen. Visualmente lo mostramos en destino: copiamos paciente +
         // enrich completo (fasting/dieta/diagnóstico/DNI) al destino, y limpiamos
         // TODO en el origen — sino la pill de ayuno y otros campos quedan fantasma.
+        // Origen = PROGAL como fuente de verdad (ver progalStillHasTicketPatientOnOrigin):
+        // si PROGAL ya inhabilitó/liberó/reasignó la cama origen, la respetamos y NO la
+        // forzamos a "En preparación" (sino reaparecería como destino reutilizable). El
+        // destino mantiene el TICKET como fuente de verdad.
+        const originHasPatient = !!origin && progalStillHasTicketPatientOnOrigin(origin, ticket);
         if (dest && origin) {
-          copyPatientToBed(origin, dest);
+          if (originHasPatient) copyPatientToBed(origin, dest);
           dest.status = BedStatus.OCCUPIED;
           dest.patientName = ticket.patientName; // usar el del ticket por si el origin venía vacío
           dest.patientCode = dest.patientCode || ticket.patientCode; // si el origin venía vacío (HRA), habilita el reapply del enrich por patientCode
         }
-        if (origin) {
+        if (origin && originHasPatient) {
           clearPatientFromBed(origin);
           origin.status = BedStatus.PREPARATION;
         }
         break;
+      }
     }
   }
   return result;

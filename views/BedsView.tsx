@@ -60,6 +60,23 @@ const ISOLATION_COLORS: Record<string, { ring: string; bg: string; text: string;
 };
 const DEFAULT_ISO_COLOR = ISOLATION_COLORS.violet;
 
+// Color de la cama CONTIGUA a un aislamiento "Contacto preventivo": no se inhabilita
+// (a diferencia de los demás aislamientos, que la bloquean en gris/violeta) sino que se
+// marca con un color propio que NO se usa para ningún estado de cama (Disponible/Ocupada/
+// En preparación/Asignada/Inhabilitada) ni para el bloqueo duro (violeta). Usamos cyan.
+const PREVENTIVE_ADJ_CELL = 'bg-cyan-50 border-cyan-300';
+const PREVENTIVE_ADJ_DOT  = 'bg-cyan-400';
+
+// Normalización para comparar nombres de aislamiento sin tildes/casing.
+const normIsoName = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+// "Contacto preventivo" (Gamma: "De contacto preventivo", color teal) es un aislamiento
+// de baja restricción → la cama contigua NO se inhabilita, solo se señaliza.
+const isPreventiveContact = (iso: IsolationEntry) => normIsoName(iso.name).includes('preventivo');
+// Una cama aislada es "solo preventiva" si TODOS sus tipos activos son Contacto preventivo.
+// (Si tiene además un aislamiento duro, la habitación se bloquea como siempre.)
+const isPreventiveOnlyBed = (bed: Bed) =>
+  (bed.isolations?.length ?? 0) > 0 && bed.isolations!.every(isPreventiveContact);
+
 
 export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onRefresh }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
@@ -116,8 +133,14 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   // Excepción: áreas con cubículos/lugares físicamente independientes (UCO, UTI, ITR, HRA)
   // no se bloquean entre sí cuando un paciente está aislado.
   const CRITICAL_AREAS_NO_BLOCK: Area[] = [Area.HUC, Area.HUT, Area.HIT, Area.HRA];
-  const blockedByIsolation = useMemo(() => {
+  // Dos conjuntos de camas según el aislamiento del compañero de habitación:
+  //  · blockedByIsolation       → bloqueo DURO (gris/violeta, "inhabilitada"): hay un
+  //    aislamiento que no es Contacto preventivo en la habitación.
+  //  · preventiveContactAdjacent → solo Contacto preventivo en la habitación: la cama NO
+  //    se inhabilita, se marca con color propio (cyan). El bloqueo duro tiene prioridad.
+  const { blockedByIsolation, preventiveContactAdjacent } = useMemo(() => {
     const blocked = new Set<string>();
+    const preventive = new Set<string>();
     // Group beds by roomCode
     const roomMap = new Map<string, Bed[]>();
     for (const bed of beds) {
@@ -131,14 +154,19 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       // (Una habitación vive entera en un solo sector, pero el check es defensivo.)
       const inCriticalArea = roomBeds.some(b => CRITICAL_AREAS_NO_BLOCK.includes(b.area));
       if (inCriticalArea) continue;
-      const hasIsolated = roomBeds.some(b => isolatedBeds.has(b.label));
-      if (hasIsolated) {
-        for (const b of roomBeds) {
-          if (!isolatedBeds.has(b.label)) blocked.add(b.label);
-        }
+      const isolatedInRoom = roomBeds.filter(b => isolatedBeds.has(b.label));
+      if (isolatedInRoom.length === 0) continue;
+      // Bloqueo duro si hay al menos un aislamiento que NO sea "solo preventivo" (incluye
+      // el caso de una cama sin info de tipos → se trata como duro, comportamiento previo).
+      const roomHasHard = isolatedInRoom.some(b => !isPreventiveOnlyBed(b));
+      const roomHasPreventive = isolatedInRoom.some(b => (b.isolations ?? []).some(isPreventiveContact));
+      for (const b of roomBeds) {
+        if (isolatedBeds.has(b.label)) continue;
+        if (roomHasHard) blocked.add(b.label);
+        else if (roomHasPreventive) preventive.add(b.label);
       }
     }
-    return blocked;
+    return { blockedByIsolation: blocked, preventiveContactAdjacent: preventive };
   }, [beds, isolatedBeds]);
 
   // Map beds to their assigned ticket (for "Asignada" beds)
@@ -1549,6 +1577,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                 const shortCode = `${bed.roomCode}-${bed.bedCode}`;
                 const isIsolated = isolatedBeds.has(bed.label);
                 const isBlocked = blockedByIsolation.has(bed.label);
+                const isPreventiveAdj = preventiveContactAdjacent.has(bed.label);
                 const isoColor = isIsolated ? getIsolationColor(bed) : DEFAULT_ISO_COLOR;
                 const isoTipos = isIsolated ? getIsolationTypes(bed) : [];
                 const isMultiIso = isoTipos.length >= 2;
@@ -1564,12 +1593,16 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     }
                     className={cn(
                       "relative flex flex-col items-center justify-center aspect-square rounded-lg border transition-all duration-200 overflow-hidden group",
-                      isBlocked ? "bg-violet-50 border-violet-300 opacity-60" : getStatusColor(bed.status),
+                      isBlocked
+                        ? "bg-violet-50 border-violet-300 opacity-60"
+                        : isPreventiveAdj
+                          ? PREVENTIVE_ADJ_CELL          // Contacto preventivo: color propio, NO inhabilitada
+                          : getStatusColor(bed.status),
                       // Ring color = first isolation type (works for single AND multi cases).
                       isIsolated && `ring-2 ${isoColor.ring} ring-offset-1`
                     )}
                   >
-                    <div className={cn("absolute top-1 right-1 w-1 h-1 md:w-1.5 md:h-1.5 rounded-full shadow-sm", isBlocked ? "bg-violet-400" : getStatusDot(bed.status))} />
+                    <div className={cn("absolute top-1 right-1 w-1 h-1 md:w-1.5 md:h-1.5 rounded-full shadow-sm", isBlocked ? "bg-violet-400" : isPreventiveAdj ? PREVENTIVE_ADJ_DOT : getStatusDot(bed.status))} />
                     {isIsolated && (
                       <div className={cn("absolute top-0.5 left-0.5 w-3 h-3 md:w-3.5 md:h-3.5 rounded-full flex items-center justify-center", isoColor.bg)}>
                         <ShieldAlert className="w-2 h-2 md:w-2.5 md:h-2.5 text-white" strokeWidth={3} />
@@ -1587,6 +1620,12 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     {isBlocked && (
                       <div className="absolute top-0.5 left-0.5 w-3 h-3 md:w-3.5 md:h-3.5 bg-violet-400 rounded-full flex items-center justify-center">
                         <X className="w-2 h-2 md:w-2.5 md:h-2.5 text-white" strokeWidth={3} />
+                      </div>
+                    )}
+                    {/* Contiguo a Contacto preventivo: marca de precaución (NO inhabilitada). */}
+                    {isPreventiveAdj && (
+                      <div className="absolute top-0.5 left-0.5 w-3 h-3 md:w-3.5 md:h-3.5 bg-cyan-400 rounded-full flex items-center justify-center" title="Contacto preventivo en la habitación">
+                        <ShieldAlert className="w-2 h-2 md:w-2.5 md:h-2.5 text-white" strokeWidth={3} />
                       </div>
                     )}
                     {hasLiveFasting(bed.fasting) && (
@@ -2032,6 +2071,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     const isoC = getIsolationColor(bed);
                     const tipos = bed.isolations!;
                     const plural = tipos.length > 1;
+                    // Si TODOS los aislamientos son Contacto preventivo, las camas contiguas
+                    // no se bloquean (solo se señalizan). Sino, la habitación queda bloqueada.
+                    const onlyPreventive = isPreventiveOnlyBed(bed);
                     return (
                       <div className="rounded-2xl p-3.5 border border-slate-200 bg-slate-50 space-y-2.5">
                         <div className="flex items-start gap-3">
@@ -2040,7 +2082,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                           </span>
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-bold text-slate-700">Aislamiento{plural ? 's' : ''} activo{plural ? 's' : ''}</p>
-                            <p className="text-[10px] text-slate-400">Camas de la habitación bloqueadas</p>
+                            <p className="text-[10px] text-slate-400">{onlyPreventive ? 'Camas contiguas señalizadas (no bloqueadas)' : 'Camas de la habitación bloqueadas'}</p>
                           </div>
                         </div>
                         <div className="space-y-1.5">
@@ -2066,6 +2108,12 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     <div className="bg-violet-50 rounded-2xl p-3.5 border border-violet-200 flex items-center gap-3">
                       <ShieldAlert className="w-5 h-5 text-violet-400 flex-shrink-0" />
                       <p className="text-xs font-bold text-violet-700">Bloqueada — paciente aislado en esta habitación</p>
+                    </div>
+                  )}
+                  {preventiveContactAdjacent.has(selectedBed.label) && (
+                    <div className="bg-cyan-50 rounded-2xl p-3.5 border border-cyan-200 flex items-center gap-3">
+                      <ShieldAlert className="w-5 h-5 text-cyan-500 flex-shrink-0" />
+                      <p className="text-xs font-bold text-cyan-700">Contacto preventivo en esta habitación — cama habilitada, usar con precaución</p>
                     </div>
                   )}
 

@@ -99,11 +99,17 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
   const isSalaEsperaFlow = workflow === WorkflowType.ITR_TO_FLOOR;
   const isIngresoItrFlow = workflow === WorkflowType.INGRESO_A_ITR;
 
+  // origen_evento del paciente (PROGAL, obtenermapacamasocupadas) → normalizado para comparar.
+  const normEventOrigin = (s?: string) => (s ?? '').trim().toUpperCase();
+
   const availableOrigins = beds
     .filter(b => b.status === BedStatus.OCCUPIED)
     .filter(b => {
       if (isSalaEsperaFlow) return isHraArea(b.area);
-      if (isIngresoItrFlow) return isHitArea(b.area);
+      // Ingreso a ITR: dentro de las camas de HIT, solo pacientes cuyo evento de internación
+      // sea HIN (internación definitiva), NO HIT (ya en transitoria). origen_evento viene de
+      // PROGAL en bed.eventOrigin.
+      if (isIngresoItrFlow) return isHitArea(b.area) && normEventOrigin(b.eventOrigin) === 'HIN';
       return !isHraArea(b.area) && !isHitArea(b.area); // INTERNAL
     })
     .sort(sortByAreaThenLabel);

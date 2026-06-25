@@ -1229,3 +1229,35 @@ Resultado del bug: Catering recibía "Nueva Solicitud de Traslado" (NEW_TICKET) 
 **Alternativa descartada — un segundo Vercel Cron que enriquezca TESTING en prod:** correría con código de main (no refleja cambios de develop sin mergear); además los caches de token/evento de [api/gamma-client.ts](api/gamma-client.ts) están keyed solo por `scope`/`origin-number` (no por URL base) → en una instancia tibia compartida un token de PROGAL prod podría reusarse contra PROGAL test; y `sendPushToSubscribers` filtra suscriptores por el `ENTORNO` del deployment (PRODUCTIVO) → habría que forzar push silencioso. El forwarder evita todo eso sin tocar la lógica del enrich.
 
 **Requiere:** env var `TESTING_BASE_URL` en Production (alias del Preview de develop) y `CRON_SECRET` presente en Production (Bearer que manda Vercel) y en Preview (lo valida el `/api/cron-enrich-beds`). El Preview no debe tener Deployment Protection. El cron se activa recién cuando el `vercel.json` está en `main`.
+
+## 24. Decisiones recientes (mapa de camas + traslados, 2026-06-25)
+
+> Tres cambios acotados pedidos por el cliente, validados con una revisión adversarial multi-agente (los tres cumplen la intención; 6 hallazgos refutados, 3 confirmados de severidad baja/nit en la cosmética del ítem de aislamiento).
+
+### 24.1. Contacto preventivo: la cama contigua se SEÑALIZA (cyan), no se bloquea
+
+**Qué:** Para los demás aislamientos, las camas no aisladas de la misma habitación quedan **bloqueadas** (violeta, `opacity-60`, ícono "X" — look "inhabilitada"). Para el tipo **Contacto preventivo** (Gamma "De contacto preventivo", color `teal`), las contiguas dejan de bloquearse y pasan a marcarse con un **color propio (`cyan`)** que no se usa para ningún estado de cama (Disponible/Ocupada/En preparación/Asignada/Inhabilitada) ni para el bloqueo duro (violeta). La cama queda **habilitada** (no inhabilitada); el modal muestra un aviso cyan "usar con precaución".
+
+**Por qué:** pedido del cliente — Contacto preventivo es una precaución de baja restricción; la cama de al lado sigue siendo usable y no debería verse como fuera de servicio. Un color distinto comunica "precaución cerca" sin sacar la cama de la operatoria.
+
+**Cómo ([views/BedsView.tsx](views/BedsView.tsx)):** el `useMemo` que devolvía un solo `blockedByIsolation` ahora devuelve `{ blockedByIsolation, preventiveContactAdjacent }`. Por habitación (excluyendo `CRITICAL_AREAS_NO_BLOCK`): `roomHasHard = isolatedInRoom.some(b => !isPreventiveOnlyBed(b))`. Si hay aislamiento duro → contiguas a `blocked` (**el bloqueo duro tiene prioridad**, aun si convive con un preventivo); si solo hay preventivo → a `preventive`. Detección por nombre canónico normalizado (`norm(name).includes('preventivo')`), robusto a tildes/casing.
+
+**Trade-off conocido (bajo, no regresión):** el cyan reemplaza el color de estado de la celda; una cama contigua **ocupada por otro paciente no aislado** (habitación compartida) muestra cyan en vez de su rojo "Ocupada". Mismo trade-off que ya tenía el bloqueo violeta; mitigado por el nombre del paciente visible en desktop y por el modal de detalle (la ocupación se lee al click). Otro detalle menor: en una habitación con aislamiento **mixto** (una cama solo-preventiva + otra dura), el subtítulo del modal de la cama solo-preventiva ("contiguas señalizadas, no bloqueadas") describe el efecto de ESE aislamiento, no el del cuarto (que sí queda bloqueado por el duro).
+
+### 24.2. `WAITING_CONSOLIDATION`: la cama ORIGEN toma PROGAL como fuente de verdad
+
+**Qué:** En `mergeBeds`, cuando un ticket está en `WAITING_CONSOLIDATION` (azafata completó, PROGAL aún sin consolidar), la cama **origen** ya no se fuerza incondicionalmente a "En preparación". Solo se limpia/prepara si PROGAL **sigue mostrando al mismo paciente del ticket** ahí (`progalStillHasTicketPatientOnOrigin`: status OCCUPIED + mismo `patientCode`, con fallback por nombre). Si PROGAL ya **inhabilitó / liberó / reasignó** la cama origen, se respeta su estado real de `gammaBeds`. La cama **destino** mantiene el **ticket** como fuente de verdad. `IN_TRANSPORT` **no se modifica** (queda con su comportamiento original).
+
+**Por qué:** caso real — movieron un paciente A→B, la azafata completó pero no consolidaron en PROGAL; desde PROGAL inhabilitaron A. Como el ticket forzaba A a "En preparación", el mapa la mostraba reutilizable y se la podía elegir como destino de otro traslado. Al respetar PROGAL, A queda "Inhabilitada" y `availableDestinations` (solo lista Disponible/En preparación) deja de ofrecerla.
+
+**Bonus (bug latente):** antes, si PROGAL reasignaba el origen a otro paciente antes de consolidar, `copyPatientToBed(origin, dest)` copiaba el enrich (dieta/diagnóstico) del paciente **equivocado** al destino. Ahora la copia se omite cuando el origen ya cambió; el destino toma su enrich de `reapplyEnrichFromMap` por `patientCode`.
+
+**Refina** [docs/arquitectura.md](docs/arquitectura.md) §38.2, que describía el comportamiento previo de `mergeBeds` en `WAITING_CONSOLIDATION`.
+
+### 24.3. "Ingreso a ITR": origen filtrado a `eventOrigin === 'HIN'` (no 'HIT')
+
+**Qué:** En `NewRequestModal`, el flujo `INGRESO_A_ITR` listaba como origen todas las camas ocupadas de HIT (las 8 de Internación Transitoria). Ahora además exige que el `origen_evento` del paciente sea **`HIN`** (internación definitiva): `isHitArea(b.area) && normEventOrigin(b.eventOrigin) === 'HIN'`. Quedan excluidos los pacientes con evento `HIT` (transitoria).
+
+**Por qué:** pedido del cliente — por este flujo solo deben poder moverse a piso los pacientes con internación definitiva (HIN) que ocupan transitoriamente una cama de ITR; los HIT (transitoria propiamente dicha) no.
+
+**Datos:** `bed.eventOrigin` viene de `origen_evento` de `obtenermapacamasocupadas` ([api/beds.ts](api/beds.ts) `transformBeds`), presente en toda cama ocupada de la fuente live. El filtro se aplica **solo** dentro de la rama `isIngresoItrFlow`; `INTERNAL` e `ITR_TO_FLOOR` no cambian. `EditRequestModal` no lo necesita (su origen es read-only).

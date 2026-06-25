@@ -2721,3 +2721,58 @@ Para que un dato nuevo del evento "siga al paciente" en los traslados, agregarlo
 ### Color como clave semántica en el dato; clases Tailwind en el front
 
 El backend devuelve una **clave de color** (`'green'`, `'teal'`, `'fuchsia'`…), no clases CSS. El front tiene un único mapa keyed por esa clave (`ISOLATION_COLORS[color] → { ring, bg, text, dot, pill }`) con las clases como **literales** (para que el JIT de Tailwind las incluya en el build) y un `DEFAULT` de fallback. Así la presentación queda en el front y el mapeo nombre→color en un solo lugar del backend.
+
+## Nuevos patrones (mapa de camas: preventivo + origen PROGAL + ITR HIN, 2026-06-25)
+
+### Color "fuera de la paleta de estados" para una categoría visual nueva
+
+Cuando una celda necesita un estado visual nuevo que NO debe confundirse con los estados de cama (emerald/red/amber/indigo/slate) ni con otro overlay (violeta del bloqueo), elegir un color que **no esté en ninguno de esos conjuntos** (acá `cyan`) y dejarlo como **literal** a nivel módulo para el JIT de Tailwind:
+
+```ts
+const PREVENTIVE_ADJ_CELL = 'bg-cyan-50 border-cyan-300';
+const PREVENTIVE_ADJ_DOT  = 'bg-cyan-400';
+```
+
+Precedencia en el className: `isBlocked ? violeta : isPreventiveAdj ? cyan : getStatusColor(status)`. Si la categoría nueva **no inhabilita** la cama, no aplicar `opacity-60` ni el ícono "X" del bloqueo — usar un badge propio (ShieldAlert cyan) para señalizar sin look de "fuera de servicio".
+
+### Un `useMemo` que devuelve varios sets cuando un cómputo se desdobla
+
+Al partir una clasificación en dos (ej. bloqueo duro vs. señalización suave), devolver un objeto y destructurarlo en vez de dos `useMemo` que recorren `beds` dos veces:
+
+```ts
+const { blockedByIsolation, preventiveContactAdjacent } = useMemo(() => {
+  const blocked = new Set<string>(); const preventive = new Set<string>();
+  // ... un solo recorrido por habitación; decide a cuál set va cada cama no aislada
+  return { blockedByIsolation: blocked, preventiveContactAdjacent: preventive };
+}, [beds, isolatedBeds]);
+```
+
+La prioridad se resuelve a **nivel grupo** (habitación): si hay un aislamiento duro, gana el bloqueo aunque conviva con uno preventivo.
+
+### PROGAL como fuente de verdad para la cama ORIGEN al consolidar
+
+En `mergeBeds`, no pisar el estado de la cama **origen** con el del ticket cuando PROGAL ya divergió. Gatear el "limpiar a En preparación" con un predicado que confirme que PROGAL **sigue mostrando al mismo paciente** ahí:
+
+```ts
+function progalStillHasTicketPatientOnOrigin(origin: Bed, ticket: Ticket): boolean {
+  if (origin.status !== BedStatus.OCCUPIED) return false;          // PROGAL ya la cambió
+  const op = (origin.patientCode ?? '').trim(), tp = (ticket.patientCode ?? '').trim();
+  if (op && tp) return op === tp;                                  // criterio fuerte: mismo código
+  // fallback por nombre solo si falta el código en algún lado
+  return !!origin.patientName && origin.patientName.trim().toLowerCase() === (ticket.patientName ?? '').trim().toLowerCase();
+}
+```
+
+Regla general: **origen = PROGAL, destino = ticket**. Aplicado solo en `WAITING_CONSOLIDATION` (no en `IN_TRANSPORT`). Beneficio: una cama que PROGAL inhabilitó no reaparece como "En preparación" reutilizable, y no se copia el enrich del paciente equivocado al destino.
+
+### Filtrar el origen de un workflow por un campo del evento (`eventOrigin`)
+
+Los filtros de origen/destino por workflow viven en una sola cadena `.filter()` en [components/modals/NewRequestModal.tsx](components/modals/NewRequestModal.tsx). Para restringir por un dato del **evento** (no solo por área), combinarlo dentro de la rama del workflow y normalizar el valor de Gamma:
+
+```ts
+const normEventOrigin = (s?: string) => (s ?? '').trim().toUpperCase();
+// dentro de availableOrigins:
+if (isIngresoItrFlow) return isHitArea(b.area) && normEventOrigin(b.eventOrigin) === 'HIN';
+```
+
+`eventOrigin` viene de `origen_evento` de `obtenermapacamasocupadas` (presente en toda cama ocupada). Mantener el filtro **dentro** de su rama para no tocar los otros flujos.

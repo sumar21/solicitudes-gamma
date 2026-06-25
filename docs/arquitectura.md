@@ -1290,3 +1290,19 @@ Hasta acá los aislamientos se **cargaban a mano** desde la app y vivían en la 
 ### Deprecado
 
 `/api/isolations` + lista `08.Aislamientos` + enum `IsolationType` quedan **sin uso** (el archivo del endpoint sigue en el repo, inactivo). La fuente única es PROGAL.
+
+## 47. Mapa de camas y traslados: ajustes finos (2026-06-25)
+
+Tres cambios acotados (pedido del cliente), validados con una revisión adversarial multi-agente: los tres cumplen la intención; sin bugs francos (solo cosmética menor en 47.3).
+
+### 47.1. `WAITING_CONSOLIDATION`: la cama origen respeta PROGAL (refina §38.2)
+
+`mergeBeds` ([hooks/useHospitalState.ts](hooks/useHospitalState.ts)) ya no fuerza la cama **origen** a "En preparación" en `WAITING_CONSOLIDATION` de forma incondicional. El helper `progalStillHasTicketPatientOnOrigin(origin, ticket)` decide: si PROGAL todavía muestra OCCUPIED con el **mismo `patientCode`** del ticket (move ejecutado pero no consolidado) → se limpia/prepara como antes; si PROGAL ya inhabilitó/liberó/reasignó la cama → se respeta su estado real (`gammaBeds`). Así una cama origen **inhabilitada** en PROGAL ya no reaparece como "En preparación" ni como destino reutilizable (`availableDestinations` en [NewRequestModal](components/modals/NewRequestModal.tsx)/[EditRequestModal](components/modals/EditRequestModal.tsx) solo lista Disponible/En preparación). El **destino** sigue con el ticket como fuente de verdad. `IN_TRANSPORT` queda **sin cambios**. Regla mnemónica: **origen = PROGAL, destino = ticket**.
+
+### 47.2. "Ingreso a ITR": origen solo pacientes con `eventOrigin === 'HIN'`
+
+El filtro de origen del workflow `INGRESO_A_ITR` ([components/modals/NewRequestModal.tsx](components/modals/NewRequestModal.tsx)) pasó de `isHitArea(b.area)` a `isHitArea(b.area) && normEventOrigin(b.eventOrigin) === 'HIN'`. `eventOrigin` (= `origen_evento` de `obtenermapacamasocupadas`, ver [api/beds.ts](api/beds.ts) `transformBeds`) distingue internación definitiva (`HIN`) de transitoria (`HIT`); solo las `HIN` se listan. Complementa las reglas de origen/destino por workflow (sección de workflows, más arriba). Los flujos `INTERNAL` e `ITR_TO_FLOOR` no se ven afectados (el filtro vive dentro de la rama `isIngresoItrFlow`).
+
+### 47.3. Aislamiento "Contacto preventivo": cama contigua señalizada, no bloqueada (extiende §46)
+
+`blockedByIsolation` ([views/BedsView.tsx](views/BedsView.tsx)) se desdobló en `{ blockedByIsolation, preventiveContactAdjacent }`. Las camas no aisladas de una habitación con **solo** Contacto preventivo van a `preventiveContactAdjacent` (celda `cyan` + badge ShieldAlert cyan, NO "inhabilitada"); si la habitación tiene algún aislamiento **duro**, las contiguas siguen en `blockedByIsolation` (violeta — el bloqueo duro tiene prioridad). El `cyan` no se solapa con ningún color de estado de cama ni con el violeta del bloqueo. El modal de la cama contigua muestra un aviso cyan "usar con precaución" en lugar del cartel "Bloqueada".
