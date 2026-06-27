@@ -113,6 +113,13 @@ export interface Bed {
   // Aislamientos prescriptos al paciente (PROGAL). Vienen en el enrich y "siguen" al
   // paciente como el resto del enrich (ENRICH_FIELDS en useHospitalState).
   isolations?: IsolationEntry[];
+  // Limpieza marcada por una azafata (overlay de la lista 14.Limpiezas sobre una cama
+  // que PROGAL reporta "En preparación"). mergeBeds la muestra como Disponible y BedsView
+  // pinta el chip "Limpia ✓". PROGAL es read-only: esto NO escribe a PROGAL, solo lo pisa
+  // visualmente. Se cierra sola cuando un traslado toma la cama o Gamma avanza su estado.
+  cleaned?: boolean;
+  cleanedBy?: string;   // nombre de la azafata que la marcó
+  cleanedAt?: string;   // ISO — cuándo se marcó limpia
 }
 
 export type ViewMode = 'HOME' | 'REQUESTS' | 'USERS' | 'HISTORY' | 'BEDS';

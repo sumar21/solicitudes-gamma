@@ -86,6 +86,7 @@ const routes: Record<string, () => Promise<any>> = {
   '/api/users':              () => import('./api/users'),
   '/api/validate-location':  () => import('./api/validate-location'),
   '/api/isolations':         () => import('./api/isolations'),
+  '/api/limpiezas':          () => import('./api/limpiezas'),
   '/api/push-subscribe':     () => import('./api/push-subscribe'),
   '/api/notifications':      () => import('./api/notifications'),
   '/api/bed-enrich':         () => import('./api/bed-enrich'),

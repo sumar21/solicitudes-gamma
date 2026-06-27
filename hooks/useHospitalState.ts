@@ -156,9 +156,17 @@ function progalStillHasTicketPatientOnOrigin(origin: Bed, ticket: Ticket): boole
   return !!on && on === tn;
 }
 
-function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[]): Bed[] {
+// Limpieza por azafata: label de cama → datos de quién/cuándo la marcó limpia.
+type CleaningInfo = { by: string; byId: string; at: string; spItemId: string };
+
+function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?: Map<string, CleaningInfo>): Bed[] {
   const result = gammaBeds.map(b => ({ ...b }));
+  // Camas que algún traslado activo está usando (origen o destino). El overlay del ticket
+  // tiene prioridad sobre el de limpieza: si un traslado tomó la cama, NO la mostramos limpia.
+  const ticketTouched = new Set<string>();
   for (const ticket of activeTickets) {
+    ticketTouched.add(ticket.origin);
+    if (ticket.destination) ticketTouched.add(ticket.destination);
     const origin = result.find(b => b.label === ticket.origin);
     const dest   = ticket.destination ? result.find(b => b.label === ticket.destination) : null;
     switch (ticket.status) {
@@ -210,6 +218,27 @@ function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[]): Bed[] {
       }
     }
   }
+
+  // ── Overlay de limpieza (Opción B) ──────────────────────────────────────────
+  // Una cama que PROGAL reporta "En preparación" (recién desocupada/sucia), que ningún
+  // traslado activo está usando y que una azafata marcó limpia → se muestra Disponible
+  // con el flag `cleaned`. "Pisa" visualmente a PROGAL (que es read-only). Si Gamma ya
+  // sacó la cama de preparación o un traslado la tomó, el overlay no aplica y la cama
+  // vuelve a su estado real (el auto-cierre cierra el registro en SP — ver useEffect).
+  if (cleanings && cleanings.size) {
+    for (let i = 0; i < result.length; i++) {
+      const bed = result[i];
+      const info = cleanings.get(bed.label);
+      if (!info) continue;
+      if (gammaBeds[i].status === BedStatus.PREPARATION && !ticketTouched.has(bed.label)) {
+        bed.status = BedStatus.AVAILABLE;
+        bed.cleaned = true;
+        bed.cleanedBy = info.by;
+        bed.cleanedAt = info.at;
+      }
+    }
+  }
+
   return result;
 }
 
@@ -421,6 +450,10 @@ export const useHospitalState = () => {
   const geoCacheRef = React.useRef<{ coords: { lat: number; lng: number } | null; ts: number }>({ coords: null, ts: 0 });
   const [rawBeds, setRawBeds]                      = useState<Bed[]>([]);
   const [tickets, setTickets]                      = useState<Ticket[]>(MOCK_TICKETS);
+  // Limpiezas activas (overlay de 14.Limpiezas), key = label de cama. Se pollea como las
+  // camas. closedCleaningsRef evita disparar el auto-cierre más de una vez por registro.
+  const [cleanings, setCleanings]                  = useState<Map<string, CleaningInfo>>(new Map());
+  const closedCleaningsRef                         = React.useRef<Set<string>>(new Set());
 
   // Snapshot del enrich por patientCode — se actualiza en cada fetchBeds con los beds
   // cuyo enriched===true. Permite que la pill de ayuno/dieta/diagnóstico "siga" al
@@ -430,9 +463,9 @@ export const useHospitalState = () => {
 
   const beds = useMemo(() => {
     const active = tickets.filter(t => t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED);
-    const merged = mergeBeds(rawBeds, active);
+    const merged = mergeBeds(rawBeds, active, cleanings);
     return reapplyEnrichFromMap(merged, patientEnrichMapRef.current);
-  }, [rawBeds, tickets]);
+  }, [rawBeds, tickets, cleanings]);
 
   // Derive isolatedBeds (bed labels) directly from the enrich. Los aislamientos vienen
   // de PROGAL en `bed.isolations` y "siguen" al paciente como el resto del enrich
@@ -496,6 +529,68 @@ export const useHospitalState = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authFetch]);
 
+  // ── Limpiezas de azafata (overlay 14.Limpiezas) ───────────────────────────
+  const fetchCleanings = useCallback(async () => {
+    try {
+      const r = await authFetch('/api/limpiezas');
+      if (!r.ok) return; // mantiene el estado actual ante fallo transitorio
+      const data = await r.json();
+      const map = new Map<string, CleaningInfo>();
+      for (const c of (data.cleanings ?? []) as any[]) {
+        if (!c.bedLabel) continue;
+        map.set(String(c.bedLabel), {
+          by: String(c.by ?? ''), byId: String(c.byId ?? ''),
+          at: String(c.at ?? ''), spItemId: String(c.spItemId ?? ''),
+        });
+      }
+      setCleanings(map);
+    } catch { /* keep current */ }
+  }, [authFetch]);
+
+  // Azafata marca una cama "En preparación" como limpia (optimista + POST).
+  const markBedClean = useCallback(async (bed: Bed) => {
+    if (!bed?.label) return;
+    const u = currentUser;
+    const at = new Date().toISOString();
+    setCleanings(prev => {
+      const n = new Map(prev);
+      n.set(bed.label, { by: u?.name ?? '', byId: u?.id ?? '', at, spItemId: prev.get(bed.label)?.spItemId ?? '' });
+      return n;
+    });
+    try {
+      const r = await authFetch('/api/limpiezas', {
+        method: 'POST',
+        body: JSON.stringify({
+          bedLabel: bed.label, bedCode: bed.bedCode ?? '', roomCode: bed.roomCode ?? '',
+          area: bed.area ?? '', userId: u?.id ?? '', userName: u?.name ?? '',
+        }),
+      });
+      if (r.ok) {
+        const data = await r.json().catch(() => ({} as any));
+        if (data?.spItemId) setCleanings(prev => {
+          const cur = prev.get(bed.label); if (!cur) return prev;
+          const n = new Map(prev); n.set(bed.label, { ...cur, spItemId: String(data.spItemId) }); return n;
+        });
+      } else {
+        setCleanings(prev => { const n = new Map(prev); n.delete(bed.label); return n; }); // rollback
+      }
+    } catch {
+      setCleanings(prev => { const n = new Map(prev); n.delete(bed.label); return n; }); // rollback
+    }
+  }, [authFetch, currentUser]);
+
+  // Azafata deshace una limpieza que marcó (optimista + PATCH ANULADA).
+  const undoBedClean = useCallback(async (bedLabel: string) => {
+    const info = cleanings.get(bedLabel);
+    setCleanings(prev => { const n = new Map(prev); n.delete(bedLabel); return n; });
+    try {
+      await authFetch('/api/limpiezas', {
+        method: 'PATCH',
+        body: JSON.stringify({ spItemId: info?.spItemId || undefined, bedLabel, reason: 'ANULADA' }),
+      });
+    } catch { /* best-effort */ }
+  }, [authFetch, cleanings]);
+
   // ── On-demand bed enrichment (single bed) ─────────────────────────────────
   const enrichBed = useCallback(async (bed: Bed): Promise<Bed> => {
     if (!bed.patientCode) return bed;
@@ -551,13 +646,42 @@ export const useHospitalState = () => {
     if (!token) return;
     fetchBeds();
     fetchTickets();
+    fetchCleanings();
     const ticketPoll    = setInterval(fetchTickets, POLL_TICKETS_MS);
     const bedPoll       = setInterval(fetchBeds, POLL_BEDS_MS);
+    const cleaningPoll  = setInterval(fetchCleanings, POLL_BEDS_MS); // ritmo de camas (cambian poco)
     return () => {
       clearInterval(ticketPoll);
       clearInterval(bedPoll);
+      clearInterval(cleaningPoll);
     };
-  }, [token, fetchBeds, fetchTickets]);
+  }, [token, fetchBeds, fetchTickets, fetchCleanings]);
+
+  // ── Auto-cierre de limpiezas (Opción B) ─────────────────────────────────────
+  // Cierra en SP las limpiezas que dejaron de aplicar: la cama ya no está "En preparación"
+  // en Gamma (PROGAL avanzó → motivo GAMMA) o un traslado activo la tomó (→ motivo TICKET).
+  // Así no depende de un "consolidar" manual que se pueda olvidar. Best-effort e idempotente
+  // (closedCleaningsRef evita repetir; el PATCH a Inactivo es idempotente del lado server).
+  useEffect(() => {
+    if (cleanings.size === 0 || rawBeds.length === 0) return;
+    const active = tickets.filter(t => t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED);
+    const touched = new Set<string>();
+    for (const t of active) { touched.add(t.origin); if (t.destination) touched.add(t.destination); }
+    const rawByLabel = new Map<string, Bed>(rawBeds.map(b => [b.label, b]));
+    for (const [label, info] of cleanings) {
+      if (!info.spItemId || closedCleaningsRef.current.has(info.spItemId)) continue;
+      const raw = rawByLabel.get(label);
+      const takenByTicket = touched.has(label);
+      const gammaAdvanced = !!raw && raw.status !== BedStatus.PREPARATION; // raw ausente = transitorio → no cerrar
+      if (!takenByTicket && !gammaAdvanced) continue;
+      closedCleaningsRef.current.add(info.spItemId);
+      setCleanings(prev => { const n = new Map(prev); n.delete(label); return n; });
+      authFetch('/api/limpiezas', {
+        method: 'PATCH',
+        body: JSON.stringify({ spItemId: info.spItemId, reason: takenByTicket ? 'TICKET' : 'GAMMA' }),
+      }).catch(() => { /* best-effort: reintenta el próximo poll */ });
+    }
+  }, [rawBeds, tickets, cleanings, authFetch]);
 
   // ── Change detection — generate notifications from polling updates ───────────
   useEffect(() => {
@@ -1597,9 +1721,9 @@ export const useHospitalState = () => {
   const refreshAll = useCallback(async () => {
     bedsEtagRef.current = null;
     ticketsEtagRef.current = null;
-    await Promise.all([fetchBeds(true), fetchTickets()]);
+    await Promise.all([fetchBeds(true), fetchTickets(), fetchCleanings()]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetchBeds, fetchTickets]);
+  }, [fetchBeds, fetchTickets, fetchCleanings]);
 
   // El server ahora filtra Status_N='Enviada' (no es necesario filtrar en cliente).
   // Solo se aplica el corte por "más de 20 minutos" para decidir qué entra al banner.
@@ -1935,6 +2059,7 @@ export const useHospitalState = () => {
       handleLogin, handleLogout,
       handleCreateTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
       fetchBeds, enrichBed, refreshAll,
+      markBedClean, undoBedClean,
       handleUpdateUserAreas, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleOpenNotifications, handleDismissToast,
       handleStartTransport,
       handleRejectTicket,

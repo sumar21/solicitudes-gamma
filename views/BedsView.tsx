@@ -4,7 +4,7 @@ import { can } from '../lib/permissions';
 import { hasLiveFasting, fastingOccurrences, formatFastingDateTime, fastingTimesForToday } from '../lib/fasting';
 import { Input } from '../components/ui/input';
 import { cn } from '../lib/utils';
-import { BedDouble, User as UserIcon, Info, Search, X, ChevronDown, Check, AlertTriangle, CheckCircle2, ShieldAlert, RefreshCw, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical } from 'lucide-react';
+import { BedDouble, User as UserIcon, Info, Search, X, ChevronDown, Check, AlertTriangle, CheckCircle2, ShieldAlert, RefreshCw, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan } from 'lucide-react';
 import { Dialog, DialogContent } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
@@ -42,6 +42,10 @@ interface BedsViewProps {
   isolatedBeds?: Set<string>;
   onEnrichBed?: (bed: Bed) => Promise<Bed>;
   onRefresh?: () => void | Promise<void>;
+  // Limpieza por azafata: marca/deshace una cama "En preparación" como limpia (overlay
+  // de 14.Limpiezas — ver hooks/useHospitalState markBedClean/undoBedClean).
+  onMarkClean?: (bed: Bed) => void | Promise<void>;
+  onUndoClean?: (bedLabel: string) => void | Promise<void>;
 }
 
 // Mapa de clave de color (la define api/isolations-summary.ts) → clases Tailwind.
@@ -78,7 +82,7 @@ const isPreventiveOnlyBed = (bed: Bed) =>
   (bed.isolations?.length ?? 0) > 0 && bed.isolations!.every(isPreventiveContact);
 
 
-export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onRefresh }) => {
+export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onRefresh, onMarkClean, onUndoClean }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
   const [enrichedBed, setEnrichedBed] = useState<Bed | null>(null);
   const [enrichLoading, setEnrichLoading] = useState(false);
@@ -1704,6 +1708,47 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
 
                 {/* Content */}
                 <div className="p-5 space-y-3">
+
+                  {/* Limpieza por azafata (Opción B): overlay sobre cama "En preparación".
+                      Si ya está limpia → chip + Deshacer; si está en prep y la azafata tiene
+                      el área → botón Marcar limpia. PROGAL es read-only: esto solo pisa la vista. */}
+                  {(() => {
+                    const areaOk = !currentUser?.filterByFloors
+                      || !currentUser?.assignedAreas?.length
+                      || currentUser.assignedAreas.includes(selectedBed.area);
+                    const canClean = can(currentUser, 'confirmar_limpieza') && areaOk;
+                    if (selectedBed.cleaned) {
+                      const when = selectedBed.cleanedAt
+                        ? new Date(selectedBed.cleanedAt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })
+                        : '';
+                      return (
+                        <div className="bg-emerald-50 rounded-2xl p-3.5 border border-emerald-200 flex items-center gap-3">
+                          <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-black text-emerald-800 uppercase tracking-wide">Limpia ✓</p>
+                            <p className="text-[11px] text-emerald-700 font-medium truncate">
+                              {selectedBed.cleanedBy ? `Por ${selectedBed.cleanedBy}` : 'Marcada limpia'}{when ? ` · ${when}` : ''}
+                            </p>
+                          </div>
+                          {canClean && onUndoClean && (
+                            <Button variant="outline" size="sm" onClick={() => { onUndoClean(selectedBed.label); setSelectedBed(null); }}
+                              className="h-8 px-3 text-[11px] font-bold rounded-lg border-emerald-200 text-emerald-700 hover:bg-emerald-100 shrink-0">
+                              Deshacer
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    }
+                    if (isPrep && canClean && onMarkClean) {
+                      return (
+                        <button onClick={() => { onMarkClean(selectedBed); setSelectedBed(null); }}
+                          className="w-full flex items-center justify-center gap-2 h-12 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm">
+                          <SprayCan className="w-4 h-4" /> Marcar habitación limpia
+                        </button>
+                      );
+                    }
+                    return null;
+                  })()}
 
                   {/* OCCUPIED — patient info organized in tabs */}
                   {isOccupied && (() => {
