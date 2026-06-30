@@ -21,7 +21,7 @@ import { graphFetch }  from './graph.js';
 import { requireAuth } from './jwt.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
-const LIST_ID = (process.env.LIMPIEZAS_LIST_ID ?? '').trim(); // 14.Limpiezas — ver scripts/create-limpiezas-list.mts
+const LIST_ID = (process.env.LIMPIEZAS_LIST_ID ?? '3665d496-0e52-465e-b40f-54ca39cd5856').trim(); // 14.Limpiezas
 
 // Entorno: separa producción y testing en la misma lista. Default seguro 'TESTING'.
 const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
@@ -94,7 +94,7 @@ async function handler(req: any, res: any) {
           const itemId = String(data.value[0].id);
           await graphFetch(`${basePath}/${itemId}/fields`, {
             method: 'PATCH',
-            body: JSON.stringify({ AzafataId_L: String(userId ?? ''), AzafataNombre_L: String(userName ?? ''), FechaLimpieza_L: nowIso }),
+            body: JSON.stringify({ AzafataId_L: parseInt(String(userId ?? '0'), 10), AzafataNombre_L: String(userName ?? ''), FechaLimpieza_L: nowIso }),
           });
           return res.status(200).json({ ok: true, spItemId: itemId });
         }
@@ -111,7 +111,7 @@ async function handler(req: any, res: any) {
             Area_L: String(area ?? ''),
             Status_L: 'Activo',
             MotivoCierre_L: '',
-            AzafataId_L: String(userId ?? ''),
+            AzafataId_L: parseInt(String(userId ?? '0'), 10),
             AzafataNombre_L: String(userName ?? ''),
             FechaLimpieza_L: nowIso,
             Entorno_L: ENTORNO,

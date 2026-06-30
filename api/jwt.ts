@@ -9,8 +9,7 @@
 import { SignJWT, jwtVerify, type JWTPayload } from 'jose';
 
 const SECRET  = new TextEncoder().encode(process.env.JWT_SECRET ?? 'dev-secret-change-in-production');
-const EXPIRY_DEFAULT  = '8h';
-const EXPIRY_HOSTESS  = '3650d'; // Azafatas: token válido por ~10 años
+const EXPIRY_DEFAULT  = '3650d'; // ~10 años — PWA en celular, no tiene sentido desloguear
 
 export interface AppTokenPayload extends JWTPayload {
   id:    string;
@@ -22,7 +21,7 @@ export interface AppTokenPayload extends JWTPayload {
 
 // ── Sign ─────────────────────────────────────────────────────────────────────
 export async function signToken(payload: Omit<AppTokenPayload, keyof JWTPayload>): Promise<string> {
-  const expiry = payload.role === 'HOSTESS' ? EXPIRY_HOSTESS : EXPIRY_DEFAULT;
+  const expiry = EXPIRY_DEFAULT;
   return new SignJWT(payload as JWTPayload)
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()

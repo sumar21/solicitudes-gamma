@@ -14,7 +14,7 @@ MediFlow es una aplicación web para gestionar traslados de pacientes dentro del
 | Backend API | Vercel Serverless Functions (Node.js) |
 | Base de datos | SharePoint Online (listas) vía Microsoft Graph API |
 | API externa | Grupo Gamma REST API (mapa de camas, pacientes, eventos) |
-| Autenticación | JWT (jose) con tokens de 8h |
+| Autenticación | JWT (jose) con tokens de ~10 años (PWA, sin re-login para ningún rol) |
 | Notificaciones | Web Push (VAPID) + Service Worker |
 | Deploy | Vercel |
 
@@ -35,6 +35,7 @@ solicitudes-gamma/
 │   ├── users.ts             # ABM de usuarios (00.Usuarios)
 │   ├── roles.ts             # ABM de roles (99.ABMRoles_Traslados)
 │   ├── isolations.ts        # Aislamientos (08.Aislamientos)
+│   ├── limpiezas.ts         # CRUD de limpiezas por azafata (14.Limpiezas)
 │   ├── notifications.ts     # Historial de notificaciones (10.Notificaciones)
 │   ├── push-subscribe.ts    # Registro de suscripciones push (09.PushSubscriptions)
 │   ├── push-utils.ts        # Envío de push a suscriptores
@@ -62,6 +63,7 @@ solicitudes-gamma/
 │   │   └── StatusDonutChart.tsx
 │   ├── ui/                  # Componentes UI genéricos (card, input, table, etc.)
 │   ├── AuditModal.tsx       # Modal de auditoría/detalle de ticket
+│   ├── PatientJourney.tsx   # Timeline de movimientos del paciente (dentro de HistoryView)
 │   ├── Icons.tsx            # Re-exports de lucide-react
 │   ├── GammaLogo.tsx        # Logo SVG
 │   ├── NotificationToast.tsx
@@ -72,6 +74,7 @@ solicitudes-gamma/
 │   ├── constants.ts         # Áreas, mock data, constantes de negocio
 │   ├── mock-api-data.ts     # Datos de prueba (camas y tickets)
 │   ├── pushSubscription.ts  # Suscripción push client-side
+│   ├── ticketEvents.tsx     # Config centralizada de eventos de ticket (label, icono, color)
 │   └── real-beds-data.ts    # Datos reales de referencia
 ├── src-sw/
 │   └── sw.ts                # Service Worker: precache + push handler
@@ -121,12 +124,12 @@ solicitudes-gamma/
 1. El usuario ingresa email y contraseña en el formulario de login (`App.tsx`).
 2. `useHospitalState.handleLogin()` envía `POST /api/auth` con las credenciales.
 3. `api/auth.ts` busca en la lista SharePoint `00.Usuarios` un usuario activo cuyo `UsuarioApp_Usr` coincida y verifica la contraseña contra `Password_Usr`.
-4. Si es válido, firma un JWT (HS256, 8h de vida) con `jose` conteniendo `id`, `name`, `role`, `sede`, `email`.
+4. Si es válido, firma un JWT (HS256, **~10 años de vida** para todos los roles) con `jose` conteniendo `id`, `name`, `role`, `sede`, `email`.
 5. El token se guarda en `localStorage` (`mediflow_token`) y se envía como `Authorization: Bearer <token>` en todos los requests posteriores via `authFetch()`.
 6. El middleware `requireAuth` en cada endpoint verifica el token antes de procesar.
-7. Se monitorea la expiración del token cada 60s; a los 15 min restantes se muestra un banner de advertencia. Al expirar, se hace logout automático.
+7. Se monitorea la expiración del token cada 60s; como el token dura ~10 años, la advertencia y el auto-logout en la práctica nunca se disparan (pero el código sigue activo). El logout explícito (botón) sigue funcionando normalmente.
 
-**Excepción:** las Azafatas (`HOSTESS`) reciben un token con expiración de ~10 años para evitar re-login frecuente en dispositivos compartidos.
+**Nota:** el token tiene ~10 años de vida para todos los roles. La app se usa instalada como PWA en celulares y tablets; el re-login frecuente es más una molestia operativa que una ganancia de seguridad en este contexto. La principal barrera de seguridad es el control de ubicación (IP + GPS).
 
 ### 3.3. Flujo de un traslado (ciclo de vida del Ticket)
 
@@ -158,6 +161,7 @@ El hook `useHospitalState` implementa polling dual:
 
 - **Tickets:** cada **8 segundos** (`GET /api/tickets?all=1`). Usa **ETag** para evitar transferir datos sin cambios (responde `304 Not Modified`).
 - **Camas:** cada **60 segundos** (`GET /api/beds`). La API de Gamma cambia menos frecuentemente.
+- **Limpiezas:** cada **60 segundos** (`GET /api/limpiezas`), sincronizado con el poll de camas. Los registros activos de `14.Limpiezas` se mergean en `mergeBeds()` para mostrar camas "En preparación" como disponibles cuando una azafata las marcó limpias.
 - **Aislamientos:** se cargan al inicio de la sesión junto con camas y tickets (`fetchIsolations()`).
 
 **Camas con cache y ETag:** El endpoint `/api/beds` tiene cache server-side de 45s y soporte ETag. El frontend envía `If-None-Match` y recibe `304` si nada cambió, evitando transferir datos innecesarios.
@@ -237,6 +241,7 @@ Verifica que el usuario acceda desde una ubicación autorizada:
 | `api/users.ts` | `00.Usuarios` | CRUD de usuarios (soft-delete via `Status_U = 'Inactivo'`) |
 | `api/roles.ts` | `99.ABMRoles_Traslados` | CRUD de roles con permisos por módulo |
 | `api/isolations.ts` | `08.Aislamientos` | Activar/desactivar aislamiento por paciente |
+| `api/limpiezas.ts` | `14.Limpiezas` | GET activas / POST marcar limpia (upsert) / PATCH cerrar (`ANULADA`\|`TICKET`\|`GAMMA`) |
 | `api/ticket-events.ts` | `08.DetalleTraslados` | Log de movimientos por ticket |
 | `api/ticket-observations.ts` | `13.ObservacionesTraslados` | Observaciones por traslado ligadas al status (auditoría) |
 | `api/notifications.ts` | `10.Notificaciones` | Historial de notificaciones por usuario |
@@ -270,10 +275,12 @@ Responsabilidades:
 - `handleCreateTicket`, `handleEditTicket`, `handleValidateTicket`, `handleAssignBedAction`, `handleHousekeepingAction`, `handleStartTransport`, `handleCompleteTransport`, `handleRoomReady`, `handleConfirmReception`, `handleConsolidate`, `handleRejectTicket` — ciclo de vida del ticket.
 - `fetchBeds`, `fetchTickets`, `refreshAll` — fetch manual (este último invalida ETags y trae camas + tickets + aislamientos en paralelo; se dispara desde el botón "Refrescar" del mapa).
 - `toggleIsolation(bedLabel, nextTypes?)` — aislamientos multi-tipo (`nextTypes` es array; `undefined` o `[]` borra todos los tipos del paciente).
+- `markBedClean(bed)` — marca una cama "En preparación" como limpia (POST a `14.Limpiezas`, actualiza el estado optimísticamente).
+- `undoBedClean(bedLabel)` — deshace la limpieza (PATCH `reason=ANULADA`).
 - `handleUpdateUserAreas` — áreas de azafata.
 - Setters: `setCurrentView`, `setActiveRole`, `setLoginEmail`, etc.
 
-**Merge de camas:** la función `mergeBeds()` combina los datos reales de Gamma con el estado de los tickets activos para reflejar camas asignadas, en preparación u ocupadas por un traslado en curso.
+**Merge de camas:** la función `mergeBeds()` combina tres fuentes: datos reales de Gamma, tickets activos, y limpiezas activas (`14.Limpiezas`). Una cama que PROGAL reporta "En preparación" y tiene una limpieza activa se muestra como disponible con el overlay `cleaned=true` (chip "Limpia ✓" en BedsView). PROGAL es read-only: el overlay es solo visual, no escribe a PROGAL.
 
 **Edición de ticket (`handleEditTicket`):** admite cambiar workflow, destino, motivo de cambio, financiador ITR, observaciones y aislamiento (este último afecta al paciente globalmente, no solo al ticket). Valida que la nueva cama destino siga `AVAILABLE` o `PREPARATION` al momento del guardado (protege contra race conditions con otros admins), recalcula `status` y `targetBedOriginalStatus` según el estado Gamma de la nueva cama, y registra un único evento `"Modificacion - {cambios} - Motivo: {motivo}"` en `08.DetalleTraslados` con los cambios concatenados por ` | `. La liberación de la cama vieja es **implícita** gracias a `mergeBeds`: al dejar de apuntar a ella, el overlay se retira y la cama vuelve a mostrar su estado Gamma original (respeta AVAILABLE vs PREPARATION).
 
@@ -382,8 +389,27 @@ Las suscripciones expiradas (HTTP 404/410) se limpian automáticamente.
 | `09.PushSubscriptions` | `648fde7b-89d2-40ac-bc4a-63661508b50a` | Suscripciones Web Push |
 | `10.Notificaciones` | `240f00dd-715b-4c78-9661-3147b7650a0f` | Historial de notificaciones |
 | `13.ObservacionesTraslados` | `1c524476-f88f-47c8-ad22-4b3f7f429e46` | Observaciones por traslado ligadas al status (auditoría) |
+| `14.Limpiezas` | `3665d496-0e52-465e-b40f-54ca39cd5856` | Limpiezas marcadas por azafatas (overlay sobre camas "En preparación") |
 | `99.ABMRoles_Traslados` | `68836bbe-18c5-4cb2-8cc6-e21ecae96710` | Roles y permisos |
 | `99.ABM_GeoIPS` | `c30a13f0-070a-45bf-9ff2-415b36325af5` | IPs y geolocalizaciones permitidas |
+
+**Columnas de `14.Limpiezas` (creada 2026-06-30):**
+
+| Campo | Tipo SP | Indexado | Descripción |
+|-------|---------|:--------:|-------------|
+| `CamaLabel_L` | Texto | ✅ | Label legible de la cama (join visual con mapa) |
+| `CamaCodigo_L` | Texto | — | Código de cama Gamma (bedCode) |
+| `Habitacion_L` | Texto | — | Código de habitación Gamma (roomCode) |
+| `Area_L` | Texto | ✅ | Sector / piso (para filtrar por área de azafata) |
+| `Status_L` | Opción (`Activo`/`Inactivo`) | ✅ | Activo = overlay vigente; Inactivo = cerrada (soft-delete) |
+| `MotivoCierre_L` | Opción (`ANULADA`/`TICKET`/`GAMMA`) | — | Por qué se cerró |
+| `AzafataId_L` | **Número** | — | SP item ID del usuario que marcó (integer — creada manualmente como Número en SP) |
+| `AzafataNombre_L` | Texto | — | Nombre de la azafata (denormalizado para UI/auditoría) |
+| `FechaLimpieza_L` | Fecha y hora | — | Cuándo se marcó limpia (ISO) |
+| `FechaCierre_L` | Fecha y hora | — | Cuándo se cerró (ISO) |
+| `Entorno_L` | Texto | ✅ | `PRODUCTIVO` / `TESTING` |
+
+> Las 4 columnas indexadas (`CamaLabel_L`, `Area_L`, `Status_L`, `Entorno_L`) requieren permisos `Sites.Manage.All` para indexarse vía Graph API. Si se crean a mano desde la UI de SP, indexarlas manualmente en **Configuración de lista → Columnas → Columna indexada**. Sin índices funciona hasta ~5.000 filas (tardará años en pasar). El script `scripts/create-limpiezas-list.mts` puede crear e indexar con los permisos correctos, o solo indexar si la lista ya existe.
 
 **Columnas nuevas (2026-04-22):**
 - `07.Traslados.IntervinoAzafata_T` (Text): `"NO"` al crear el ticket, pasa a `"SI"` en la primera acción de azafata (`handleRoomReady`, `handleStartTransport`, `handleConfirmReception`). Gatekeepa la cancelación y edición: solo se permite mientras esté en `"NO"`.
@@ -638,6 +664,7 @@ Para permitir que producción y testing convivan en las **mismas listas SharePoi
 | `10.Notificaciones` | `Entorno_N` | [api/notifications.ts](api/notifications.ts) GET y POST desde push-utils |
 | `11.DietaSnapshot` | `Entorno_DS` | [api/cron-diet-changes.ts](api/cron-diet-changes.ts) bulk read y upsert |
 | `13.ObservacionesTraslados` | `Entorno_OBS` | [api/ticket-observations.ts](api/ticket-observations.ts) GET y POST |
+| `14.Limpiezas` | `Entorno_L` | [api/limpiezas.ts](api/limpiezas.ts) — GET activas, POST crear, PATCH cerrar |
 
 `08.DetalleTraslados` no tiene columna propia — filtrado por transitividad vía `IDUnivocoTraslado_DT` (los IDs son únicos globales y el frontend solo conoce los del entorno actual).
 

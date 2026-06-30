@@ -131,8 +131,8 @@ Registro de decisiones técnicas inferidas del código fuente. Cada entrada docu
 
 **Impacto:**
 - **Seguridad:** las contraseñas están en texto plano en SharePoint. Cualquiera con acceso a la lista puede verlas. Es el punto más débil de la arquitectura.
-- **Token lifetime diferenciado:** 8h para usuarios normales (una jornada laboral), ~10 años para Azafatas (dispositivos compartidos sin re-login).
-- **Expiración activa:** el frontend monitorea la expiración cada 60s y muestra un banner a los 15 minutos restantes.
+- **Token lifetime unificado:** ~10 años para **todos los roles** (ver decisión 16.2). La app se usa principalmente como PWA instalada en celulares; el re-login frecuente es contraproducente.
+- **Expiración activa:** el frontend monitorea la expiración cada 60s. Con tokens de 10 años, el banner de advertencia y el auto-logout prácticamente nunca se disparan, pero el código sigue activo por si se reduce el lifetime en el futuro.
 - **No hay refresh tokens:** al expirar, el usuario debe re-loguearse. No hay renovación silenciosa.
 
 ---
@@ -1256,8 +1256,55 @@ Resultado del bug: Catering recibía "Nueva Solicitud de Traslado" (NEW_TICKET) 
 
 ### 24.3. "Ingreso a ITR": origen filtrado a `eventOrigin === 'HIN'` (no 'HIT')
 
+
 **Qué:** En `NewRequestModal`, el flujo `INGRESO_A_ITR` listaba como origen todas las camas ocupadas de HIT (las 8 de Internación Transitoria). Ahora además exige que el `origen_evento` del paciente sea **`HIN`** (internación definitiva): `isHitArea(b.area) && normEventOrigin(b.eventOrigin) === 'HIN'`. Quedan excluidos los pacientes con evento `HIT` (transitoria).
 
 **Por qué:** pedido del cliente — por este flujo solo deben poder moverse a piso los pacientes con internación definitiva (HIN) que ocupan transitoriamente una cama de ITR; los HIT (transitoria propiamente dicha) no.
 
 **Datos:** `bed.eventOrigin` viene de `origen_evento` de `obtenermapacamasocupadas` ([api/beds.ts](api/beds.ts) `transformBeds`), presente en toda cama ocupada de la fuente live. El filtro se aplica **solo** dentro de la rama `isIngresoItrFlow`; `INTERNAL` e `ITR_TO_FLOOR` no cambian. `EditRequestModal` no lo necesita (su origen es read-only).
+
+---
+
+## 25. Decisiones recientes (limpiezas + token, 2026-06-30)
+
+### 25.1. Overlay de limpiezas sobre PROGAL ("Opción B") — sin escritura a PROGAL
+
+**Qué:** Las Azafatas pueden marcar una cama "En preparación" como limpia desde el detalle de cama en `BedsView`. La marca se guarda en la lista `14.Limpiezas` de SharePoint. `mergeBeds()` la interpreta y la muestra como disponible con un chip verde "Limpia ✓". PROGAL no recibe ninguna escritura — el overlay es puramente visual.
+
+**Por qué:**
+- La API de Gamma no expone endpoints de escritura (o no se tienen permisos). No hay forma de informarle a PROGAL que la cama está lista.
+- El cliente necesitaba una forma de que la azafata señalice "terminé la limpieza, esta cama puede asignarse" sin esperar a que PROGAL avance su ciclo (que puede tardar minutos o requerir una acción manual del administrativo de PROGAL).
+- La Opción A (integración directa con PROGAL) se descartó por falta de acceso al API de escritura.
+
+**Ciclo de vida de la limpieza (auto-cierre):**
+- **`ANULADA`**: la azafata deshace la marca (botón "Deshacer").
+- **`TICKET`**: se crea un traslado con esa cama como destino → `mergeBeds` detecta que un ticket activo "toma" la cama → cierra la limpieza automáticamente.
+- **`GAMMA`**: PROGAL cambia el estado de la cama (sale de "En preparación") → el poll detecta que ya no aplica el overlay → cierra la limpieza.
+
+El auto-cierre se implementa en `useHospitalState` comparando el estado de cada limpieza activa contra los tickets activos y el estado de PROGAL en cada poll. `closedCleaningsRef` evita que el PATCH a SP se dispare más de una vez por registro (`Status_L=Inactivo` es idempotente server-side).
+
+**Permiso:** controlado por `confirmar_limpieza` en `99.ABMRoles_Traslados`. El filtro de área de la azafata también aplica (`assignedAreas`).
+
+**Alternativas descartadas:**
+- Escribir a PROGAL directamente: sin acceso a API de escritura.
+- Usar el campo `cleaningDoneAt` del ticket (`IN_TRANSIT`): ese campo registra cuándo housekeeping confirmó en el flujo del ticket, no es una señal de "cama limpia esperando asignarse". Son dos conceptos distintos.
+
+**Impacto:**
+- `Bed` tiene 3 nuevos campos: `cleaned: boolean`, `cleanedBy: string`, `cleanedAt: string` ([types.ts](types.ts)).
+- Si PROGAL vuelve a poner la cama en "En preparación" después de un `GAMMA`-close, la azafata puede marcarla limpia de nuevo (limpieza como concepto repetible, no singleton).
+- Una limpieza activa que lleva mucho tiempo sin cierre automático podría quedar huérfana si PROGAL hace una transición que no se detecta. Es un edge case de baja probabilidad (los polls de 60s cubren la mayoría de los casos).
+
+---
+
+### 25.2. Token JWT unificado a ~10 años para todos los roles
+
+**Qué:** El `EXPIRY_DEFAULT` en [api/jwt.ts](api/jwt.ts) pasó de `'8h'` a `'3650d'` (~10 años). Todos los roles (Admin, Admisión, Azafata, Enfermería, Catering, Dirección) reciben el mismo lifetime. La distinción `HOSTESS = 3650d / resto = 8h` se eliminó.
+
+**Por qué:** La app se usa instalada como PWA en celulares y tablets. Directores y Admisión reportaban que la sesión expiraba en mitad de un turno (especialmente en dispositivos que se quedan en standby), forzando re-login con pérdida de contexto. El token corto (8h) no aportaba una barrera de seguridad real porque:
+1. La principal barrera son los controles de ubicación (IP + GPS).
+2. Las contraseñas ya están en texto plano en SP — un token expirado no mejora eso.
+3. El logout explícito (botón) sigue funcionando; invalidar el token antes de los 10 años requiere borrar el `localStorage` o forzar un nuevo login.
+
+**Trade-off aceptado:** un token robado dura más. Mitigado porque el token solo se usa desde la red del hospital (validación de IP/GPS) y porque el re-login es el único mecanismo de "invalidación" (no hay revocación server-side).
+
+**Tokens existentes:** los tokens emitidos antes de este cambio conservan su expiración original. Los usuarios con tokens de 8h seguirán siendo kickeados hasta el próximo login, momento en que recibirán un token de 10 años.
