@@ -680,12 +680,17 @@ export const useHospitalState = () => {
       const takenByTicket = touched.has(label);
       const gammaAdvanced = !!raw && raw.status !== BedStatus.PREPARATION; // raw ausente = transitorio → no cerrar
       if (!takenByTicket && !gammaAdvanced) continue;
-      closedCleaningsRef.current.add(info.spItemId);
+      const spItemId = info.spItemId;
+      closedCleaningsRef.current.add(spItemId); // evita disparos duplicados mientras el PATCH viaja
       setCleanings(prev => { const n = new Map(prev); n.delete(label); return n; });
       authFetch('/api/limpiezas', {
         method: 'PATCH',
-        body: JSON.stringify({ spItemId: info.spItemId, reason: takenByTicket ? 'TICKET' : 'GAMMA' }),
-      }).catch(() => { /* best-effort: reintenta el próximo poll */ });
+        body: JSON.stringify({ spItemId, reason: takenByTicket ? 'TICKET' : 'GAMMA' }),
+      })
+        // Si el cierre falla (HTTP no-ok o red), soltamos el candado para reintentar en el
+        // próximo poll — sino la fila queda 'Activo' en SP y el overlay puede reaparecer falso.
+        .then(r => { if (!r.ok) closedCleaningsRef.current.delete(spItemId); })
+        .catch(() => { closedCleaningsRef.current.delete(spItemId); });
     }
   }, [rawBeds, tickets, cleanings, authFetch]);
 
