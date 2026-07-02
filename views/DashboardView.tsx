@@ -128,13 +128,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ tickets }) => {
     ),
   }), [tickets]);
 
-  // Gráficos: sobre el set del período seleccionado.
-  const volumeData = useMemo(() => [
-    { label: 'Traslado Interno', value: current.set.filter(t => t.workflow === WorkflowType.INTERNAL).length, type: WorkflowType.INTERNAL },
-    { label: 'Sala de Espera', value: current.set.filter(t => t.workflow === WorkflowType.ITR_TO_FLOOR).length, type: WorkflowType.ITR_TO_FLOOR },
-    { label: 'Ingreso a ITR', value: current.set.filter(t => t.workflow === WorkflowType.INGRESO_A_ITR).length, type: WorkflowType.INGRESO_A_ITR },
-    { label: 'Cambio Habitación', value: current.set.filter(t => t.workflow === WorkflowType.ROOM_CHANGE).length, type: WorkflowType.ROOM_CHANGE },
-  ], [current.set]);
+  // Gráficos: sobre el set del período seleccionado. Workflows vigentes: Traslado Interno
+  // (ROOM_CHANGE legacy se pliega acá, se muestra igual en toda la app), Sala de Espera
+  // Admisión e Ingreso a ITR. Bajo Traslado Interno se desglosan los motivos (changeReason),
+  // contados dinámicamente para captar también motivos viejos ("Pase a piso", etc.).
+  const volumeData = useMemo(() => {
+    const internalSet = current.set.filter(
+      t => t.workflow === WorkflowType.INTERNAL || t.workflow === WorkflowType.ROOM_CHANGE,
+    );
+    const reasonCounts = new Map<string, number>();
+    for (const t of internalSet) {
+      const r = (t.changeReason ?? '').trim() || 'Sin motivo';
+      reasonCounts.set(r, (reasonCounts.get(r) ?? 0) + 1);
+    }
+    const breakdown = [...reasonCounts.entries()]
+      .map(([label, value]) => ({ label, value }))
+      .sort((a, b) => b.value - a.value);
+
+    return [
+      { label: 'Traslado Interno', value: internalSet.length, type: WorkflowType.INTERNAL, breakdown },
+      { label: 'Sala de Espera Admisión', value: current.set.filter(t => t.workflow === WorkflowType.ITR_TO_FLOOR).length, type: WorkflowType.ITR_TO_FLOOR },
+      { label: 'Ingreso a ITR', value: current.set.filter(t => t.workflow === WorkflowType.INGRESO_A_ITR).length, type: WorkflowType.INGRESO_A_ITR },
+    ];
+  }, [current.set]);
 
   const statusDistribution = useMemo(() => [
     { status: TicketStatus.WAITING_ROOM, count: current.set.filter(t => t.status === TicketStatus.WAITING_ROOM).length, color: '#f59e0b', label: 'Esperando Habitación' },

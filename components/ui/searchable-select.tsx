@@ -16,6 +16,8 @@ interface SearchableSelectProps {
   searchPlaceholder?: string;
   className?: string;
   showSearch?: boolean;
+  /** Alto máx. de la lista (clase Tailwind). Default "max-h-[200px]". */
+  listMaxHeight?: string;
 }
 
 export function SearchableSelect({
@@ -25,7 +27,8 @@ export function SearchableSelect({
   placeholder = "Seleccionar...",
   searchPlaceholder = "Buscar...",
   className,
-  showSearch = true
+  showSearch = true,
+  listMaxHeight = "max-h-[200px]"
 }: SearchableSelectProps) {
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
@@ -67,7 +70,7 @@ export function SearchableSelect({
             />
           </div>
         )}
-        <div className="max-h-[200px] overflow-y-auto p-1">
+        <div className={cn("overflow-y-auto p-1", listMaxHeight)}>
           {filteredOptions.length === 0 ? (
             <div className="py-6 text-center text-sm text-slate-500">No se encontraron resultados.</div>
           ) : (

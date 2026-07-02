@@ -81,6 +81,57 @@ const isPreventiveContact = (iso: IsolationEntry) => normIsoName(iso.name).inclu
 const isPreventiveOnlyBed = (bed: Bed) =>
   (bed.isolations?.length ?? 0) > 0 && bed.isolations!.every(isPreventiveContact);
 
+// Zócalo de totales al pie de los PDF de camas. Ocupadas = Ocupada + Asignada; los
+// porcentajes dejan afuera "En preparación" (camas en tránsito, no computan ocupación):
+//   · s/Habilitadas = Ocupadas / (Ocupadas + Libres)          → excluye Prep e Inhabilitadas
+//   · s/Total       = Ocupadas / (Ocupadas + Libres + Inhab.) → excluye solo Prep
+function drawBedTotalsFooter(
+  doc: jsPDF,
+  beds: Bed[],
+  opts: { pageW: number; pageH: number; margin: number; curY: number; now: string },
+): void {
+  const { pageW, pageH, margin, now } = opts;
+  const count = (s: BedStatus) => beds.filter(b => b.status === s).length;
+  const ocupadas = count(BedStatus.OCCUPIED) + count(BedStatus.ASSIGNED);
+  const libres   = count(BedStatus.AVAILABLE);
+  const inhab    = count(BedStatus.DISABLED);
+  const prep     = count(BedStatus.PREPARATION);
+  const pct = (n: number, d: number) =>
+    (d > 0 ? (n / d) * 100 : 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  let y = opts.curY + 4;
+  if (y > pageH - margin - 14) { doc.addPage(); y = 26; } // no entra → nueva página
+
+  doc.setDrawColor(148, 163, 184);
+  doc.setLineWidth(0.3);
+  doc.line(margin, y, pageW - margin, y);
+  y += 5;
+
+  const items: [string, string][] = [
+    ['Total Camas Ocupadas:', String(ocupadas)],
+    ['Total Camas Libres:', String(libres)],
+    ['Total Camas Inhabilitadas:', String(inhab)],
+    ['Total Camas En Prep.:', String(prep)],
+    ['Porcentaje Ocupación s/Habilitadas:', pct(ocupadas, ocupadas + libres)],
+    ['Porcentaje Ocupación s/Total:', pct(ocupadas, ocupadas + libres + inhab)],
+  ];
+  doc.setFontSize(7);
+  let x = margin;
+  for (const [label, val] of items) {
+    const w = doc.getTextWidth(label) + 1.5 + doc.getTextWidth(val);
+    if (x + w > pageW - margin) { x = margin; y += 5; } // wrap si no entra en la línea
+    doc.setFont('helvetica', 'bold');   doc.setTextColor(71, 85, 105);
+    doc.text(label, x, y);
+    doc.setFont('helvetica', 'normal'); doc.setTextColor(30, 41, 59);
+    doc.text(val, x + doc.getTextWidth(label) + 1.5, y);
+    x += w + 6;
+  }
+
+  y += 5;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(100, 116, 139);
+  doc.text(`Fecha-Hora: ${now}`, margin, y);
+}
+
 
 export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onRefresh, onMarkClean, onUndoClean }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
@@ -683,9 +734,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
           const maxDiagChars = Math.floor(colWidths[14] / 1.6);
           doc.text(diag.substring(0, maxDiagChars), colX[14] + 1.5, textY);
         } else {
-          // Non-occupied: just show bed code in patient column (dimmed)
+          // Cama libre/prep/inhab: sin paciente → guion tenue (antes repetía el nº de cama).
           doc.setTextColor(148, 163, 184);
-          doc.text(`${bed.roomCode}-${bed.bedCode}`, colX[3] + 1.5, textY);
+          doc.text('-', colX[3] + 1.5, textY);
         }
 
         curY += rowH;
@@ -696,6 +747,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       curY += 3;
     }
 
+    drawBedTotalsFooter(doc, enrichedBeds, { pageW, pageH, margin, curY, now });
     doc.save(`mapa-camas-${new Date().toISOString().slice(0, 10)}.pdf`);
   }, [filteredBeds, sortedAreaEntries, bedTicketMap, currentUser, enrichBedsForPdf]);
 
@@ -918,6 +970,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       curY += rowH;
     });
 
+    drawBedTotalsFooter(doc, enrichedBeds, { pageW, pageH, margin, curY, now });
     doc.save(`pacientes-alfa-${new Date().toISOString().slice(0, 10)}.pdf`);
   }, [filteredBeds, bedTicketMap, currentUser, enrichBedsForPdf]);
 
@@ -1171,6 +1224,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       curY += rowH;
     });
 
+    drawBedTotalsFooter(doc, enrichedBeds, { pageW, pageH, margin, curY, now });
     doc.save(`dietas-${new Date().toISOString().slice(0, 10)}.pdf`);
   }, [filteredBeds, currentUser, enrichBedsForPdf, bedTicketMap]);
 

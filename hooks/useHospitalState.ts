@@ -568,8 +568,14 @@ export const useHospitalState = () => {
       if (r.ok) {
         const data = await r.json().catch(() => ({} as any));
         if (data?.spItemId) setCleanings(prev => {
-          const cur = prev.get(bed.label); if (!cur) return prev;
-          const n = new Map(prev); n.set(bed.label, { ...cur, spItemId: String(data.spItemId) }); return n;
+          // Re-agrega la entrada si un poll de fetchCleanings la pisó mientras el POST
+          // viajaba (SP tarda en reflejar el alta) — sino la cama recién marcada parpadea.
+          const cur = prev.get(bed.label);
+          const n = new Map(prev);
+          n.set(bed.label, cur
+            ? { ...cur, spItemId: String(data.spItemId) }
+            : { by: u?.name ?? '', byId: u?.id ?? '', at, spItemId: String(data.spItemId) });
+          return n;
         });
       } else {
         setCleanings(prev => { const n = new Map(prev); n.delete(bed.label); return n; }); // rollback

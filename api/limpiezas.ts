@@ -94,7 +94,7 @@ async function handler(req: any, res: any) {
           const itemId = String(data.value[0].id);
           await graphFetch(`${basePath}/${itemId}/fields`, {
             method: 'PATCH',
-            body: JSON.stringify({ AzafataId_L: parseInt(String(userId ?? '0'), 10), AzafataNombre_L: String(userName ?? ''), FechaLimpieza_L: nowIso }),
+            body: JSON.stringify({ AzafataId_L: String(userId ?? ''), AzafataNombre_L: String(userName ?? ''), FechaLimpieza_L: nowIso }),
           });
           return res.status(200).json({ ok: true, spItemId: itemId });
         }
@@ -111,7 +111,7 @@ async function handler(req: any, res: any) {
             Area_L: String(area ?? ''),
             Status_L: 'Activo',
             MotivoCierre_L: '',
-            AzafataId_L: parseInt(String(userId ?? '0'), 10),
+            AzafataId_L: String(userId ?? ''),
             AzafataNombre_L: String(userName ?? ''),
             FechaLimpieza_L: nowIso,
             Entorno_L: ENTORNO,

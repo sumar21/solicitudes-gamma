@@ -4,8 +4,8 @@ import * as XLSX from 'xlsx';
 import { Ticket, TicketStatus, WorkflowType } from '../types';
 import {
   Search, Calendar as CalendarIcon, Clock, CheckCircle2,
-  ArrowRightLeft, Settings, X, Filter, AlertCircle, Download, MapPin,
-  User, History, MoveRight, ClipboardList
+  ArrowRightLeft, Settings, X, Filter, AlertCircle, Download,
+  History, ClipboardList
 } from '../components/Icons';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -16,6 +16,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '.
 import { Badge } from '../components/ui/badge';
 import { AuditModal } from '../components/AuditModal';
 import { PatientJourney } from '../components/PatientJourney';
+import { SearchableSelect } from '../components/ui/searchable-select';
 import { movementLabel } from '../lib/ticketEvents';
 import { cn, formatDateReadable, formatDateTime, calculateTicketMetrics, formatBedName } from '../lib/utils';
 
@@ -93,30 +94,15 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
     return [...map.values()];
   }, [tickets]);
 
-  // Pacientes a mostrar como tarjetas: filtra por búsqueda (nombre/código/ID); sin
-  // búsqueda, respeta el rango de fechas (al menos un traslado en rango). Orden por
-  // actividad reciente.
-  const filteredGroups = useMemo(() => {
-    const term = searchTerm.trim().toLowerCase();
-    let groups = patientGroups;
-    if (term) {
-      groups = groups.filter(g =>
-        g.name.toLowerCase().includes(term) ||
-        (g.code ?? '').toLowerCase().includes(term) ||
-        g.tickets.some(t => t.id.toLowerCase().includes(term)));
-    } else {
-      groups = groups.filter(g => g.tickets.some(t => {
-        const d = (t.date || t.createdAt || '').slice(0, 10);
-        return (startDate ? d >= startDate : true) && (endDate ? d <= endDate : true);
-      }));
-    }
-    return groups
-      .map(g => ({
-        ...g,
-        lastActivity: g.tickets.reduce((a, t) => { const e = t.completedAt || t.createdAt; return e > a ? e : a; }, ''),
-      }))
-      .sort((a, b) => b.lastActivity.localeCompare(a.lastActivity));
-  }, [patientGroups, searchTerm, startDate, endDate]);
+  // Trayectoria: opciones del combobox "Seleccionar paciente" (pacientes únicos ya en
+  // memoria — sin fetch aparte). Label = nombre · #código; el buscador interno del
+  // SearchableSelect filtra sobre el label. Orden alfabético para un default legible.
+  const patientOptions = useMemo(
+    () => patientGroups
+      .map(g => ({ value: g.key, label: g.code ? `${g.name} · #${g.code}` : g.name }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
+    [patientGroups],
+  );
 
   const journeyTickets = useMemo(
     () => journeyPatientKey ? (patientGroups.find(g => g.key === journeyPatientKey)?.tickets ?? []) : [],
@@ -278,21 +264,36 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
     <div className="p-2 md:p-4 animate-in slide-in-from-right-4 duration-300 max-w-full space-y-3 pb-20 md:pb-8">
       {/* Compact filter bar */}
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 pb-2">
-        {/* Search */}
-        <div className="relative flex-1 min-w-[180px] max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-          <Input
-            placeholder="Paciente o ID de ticket..."
-            value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
-            className="pl-9 h-9 text-xs rounded-xl border-slate-200"
-          />
-          {searchTerm && (
-            <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
+        {/* Búsqueda: en Lista es text input (paciente/ID); en Trayectoria es un combobox
+            "Seleccionar paciente" con buscador interno (pacientes únicos ya en memoria). */}
+        {viewMode === 'list' ? (
+          <div className="relative flex-1 min-w-[180px] max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+            <Input
+              placeholder="Paciente o ID de ticket..."
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              className="pl-9 h-9 text-xs rounded-xl border-slate-200"
+            />
+            {searchTerm && (
+              <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="flex-1 min-w-[180px] max-w-sm">
+            <SearchableSelect
+              options={patientOptions}
+              value={journeyPatientKey ?? ''}
+              onValueChange={key => setJourneyPatientKey(key)}
+              placeholder="Seleccionar paciente"
+              searchPlaceholder="Buscar paciente…"
+              className="h-9 text-xs"
+              listMaxHeight="max-h-[420px]"
+            />
+          </div>
+        )}
 
         {/* Modo: Lista / Trayectoria del paciente */}
         <div className="flex items-center bg-white border border-slate-200 rounded-xl overflow-hidden h-9 p-0.5">
@@ -318,7 +319,8 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
           })}
         </div>
 
-        {/* Date range */}
+        {/* Date range (solo modo Lista — la Trayectoria se busca por paciente, sin fechas) */}
+        {viewMode === 'list' && (
         <div className="flex items-center bg-white border border-slate-200 rounded-xl overflow-hidden h-9">
           <Popover open={openStart} onOpenChange={setOpenStart}>
             <PopoverTrigger asChild>
@@ -338,6 +340,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
             </PopoverContent>
           </Popover>
         </div>
+        )}
 
         {/* Status filter (solo modo Lista) */}
         {viewMode === 'list' && (
@@ -396,79 +399,15 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
         </div>
       </div>
 
-      {/* ── Modo Trayectoria: tarjetas por paciente ─────────────────────────── */}
+      {/* ── Modo Trayectoria: el cuerpo solo invita a buscar; las sugerencias se
+          despliegan desde la barra (combobox arriba). Al elegir se abre PatientJourney,
+          que recién ahí fetchea los movimientos de ESE paciente. */}
       {viewMode === 'journey' && (
-        filteredGroups.length === 0 ? (
-          <div className="py-20 text-center opacity-30">
-            <History className="w-12 h-12 mx-auto mb-3" />
-            <p className="text-xs font-black uppercase tracking-widest">Sin pacientes</p>
-            <p className="text-[10px] font-medium mt-1 lowercase tracking-normal">buscá por nombre o código de paciente</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {filteredGroups.map(g => {
-              const total = g.tickets.length;
-              const completed = g.tickets.filter(t => t.status === TicketStatus.COMPLETED).length;
-              const cancelled = g.tickets.filter(t => t.status === TicketStatus.REJECTED).length;
-              const active = total - completed - cancelled;
-              const latest = [...g.tickets].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-              const firstDate = g.tickets.reduce((a, t) => (a && a < t.createdAt ? a : t.createdAt), '');
-              const lastLoc = latest?.status === TicketStatus.REJECTED
-                ? (latest?.origin ?? '')
-                : (latest?.destination ?? latest?.origin ?? '');
-              return (
-                <Card
-                  key={g.key}
-                  onClick={() => setJourneyPatientKey(g.key)}
-                  className="p-4 border-slate-200 bg-white shadow-sm flex flex-col gap-3 cursor-pointer hover:border-emerald-300 hover:shadow-md active:scale-[0.99] transition-all"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <User className="w-3.5 h-3.5 text-slate-300 shrink-0" />
-                        <h3 className="font-black text-slate-900 text-sm leading-tight uppercase tracking-tight truncate">{g.name}</h3>
-                      </div>
-                      {g.code && <p className="text-[10px] text-slate-400 font-mono font-bold pl-5">#{g.code}</p>}
-                    </div>
-                    {active > 0 && (
-                      <Badge className="text-[8px] uppercase font-black px-1.5 py-0 bg-blue-100 text-blue-700 border-none shrink-0">En curso</Badge>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-tight bg-slate-50 rounded-xl border border-slate-100 px-2.5 py-2 min-w-0">
-                    <MapPin className="w-3 h-3 text-slate-300 shrink-0" />
-                    <span className="text-slate-400 shrink-0">Última:</span>
-                    <span className="text-slate-800 truncate">{lastLoc ? formatBedName(lastLoc) : '—'}</span>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-1.5">
-                    <div className="rounded-lg bg-slate-50 border border-slate-100 px-2 py-1.5 text-center">
-                      <span className="block text-base font-light text-slate-900 tabular-nums leading-none">{total}</span>
-                      <span className="block text-[7px] font-black uppercase tracking-widest text-slate-400 mt-0.5">Traslados</span>
-                    </div>
-                    <div className="rounded-lg bg-emerald-50/60 border border-emerald-100 px-2 py-1.5 text-center">
-                      <span className="block text-base font-light text-emerald-700 tabular-nums leading-none">{completed}</span>
-                      <span className="block text-[7px] font-black uppercase tracking-widest text-slate-400 mt-0.5">Consol.</span>
-                    </div>
-                    <div className="rounded-lg bg-red-50/50 border border-red-100 px-2 py-1.5 text-center">
-                      <span className="block text-base font-light text-red-600 tabular-nums leading-none">{cancelled}</span>
-                      <span className="block text-[7px] font-black uppercase tracking-widest text-slate-400 mt-0.5">Cancel.</span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-1 border-t border-slate-100">
-                    <span className="text-[9px] font-bold text-slate-400 tabular-nums flex items-center gap-1">
-                      <CalendarIcon className="w-3 h-3" /> Desde {formatDateReadable(firstDate)}
-                    </span>
-                    <span className="text-[9px] font-black uppercase tracking-wider text-emerald-700 flex items-center gap-1">
-                      Ver trayectoria <MoveRight className="w-3 h-3" />
-                    </span>
-                  </div>
-                </Card>
-              );
-            })}
-          </div>
-        )
+        <div className="py-20 text-center opacity-30">
+          <History className="w-12 h-12 mx-auto mb-3" />
+          <p className="text-xs font-black uppercase tracking-widest">Buscá un paciente</p>
+          <p className="text-[10px] font-medium mt-1 lowercase tracking-normal">escribí nombre o código y elegí de las sugerencias</p>
+        </div>
       )}
 
       {/* ── Modo Lista: tabla/tarjetas clásicas ──────────────────────────────── */}

@@ -15,8 +15,9 @@ export const ROOM_CHANGE_REASONS = [
   "Solicitud familiar",
   "Asilamiento / Infectologia",
   "Mantenimiento edificio",
-  "Pase a piso",
-  "Cambio de area"
+  "Cambio de area",
+  "Requerimiento Interno",
+  "Solicita Upgrade"
 ];
 
 export const ITR_SOURCES = [
