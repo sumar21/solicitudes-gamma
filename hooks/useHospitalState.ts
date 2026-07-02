@@ -3,7 +3,7 @@ import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import {
   WorkflowType, Role, SedeType, Ticket, TicketStatus, User, Area,
   Notification, NotificationType, ViewMode, SortConfig, Bed, BedStatus,
-  RoleModule,
+  RoleModule, Permission,
 } from '../types';
 import { MOCK_TICKETS } from '../lib/constants';
 import { can, hasModule, canReceiveNotif } from '../lib/permissions';
@@ -342,6 +342,10 @@ export const useHospitalState = () => {
     const saved = localStorage.getItem(USER_KEY);
     return saved ? JSON.parse(saved) : null;
   });
+  // Siempre apunta al currentUser más nuevo — lo lee el poll de resync de rol sin
+  // meter currentUser en las deps del efecto (evita reiniciar el interval en cada render).
+  const currentUserRef = useRef(currentUser);
+  currentUserRef.current = currentUser;
 
   const [currentView, setCurrentView] = useState<ViewMode>(() => {
     const saved = localStorage.getItem(USER_KEY);
@@ -354,6 +358,7 @@ export const useHospitalState = () => {
       if (modules.includes('Operativa')) return 'REQUESTS';
       if (modules.includes('Mapa de Camas')) return 'BEDS';
       if (modules.includes('Historial')) return 'HISTORY';
+      if (modules.includes('Gestion Limpieza')) return 'CLEANINGS';
     }
     return 'HOME';
   });
@@ -585,14 +590,15 @@ export const useHospitalState = () => {
     }
   }, [authFetch, currentUser]);
 
-  // Azafata deshace una limpieza que marcó (optimista + PATCH ANULADA).
-  const undoBedClean = useCallback(async (bedLabel: string) => {
+  // Cierra una limpieza (optimista + PATCH). reason: ANULADA (azafata deshizo, default) o
+  // CONSOLIDADO (supervisor consolida contra PROGAL desde Gestión de Limpieza).
+  const undoBedClean = useCallback(async (bedLabel: string, reason: 'ANULADA' | 'CONSOLIDADO' = 'ANULADA') => {
     const info = cleanings.get(bedLabel);
     setCleanings(prev => { const n = new Map(prev); n.delete(bedLabel); return n; });
     try {
       await authFetch('/api/limpiezas', {
         method: 'PATCH',
-        body: JSON.stringify({ spItemId: info?.spItemId || undefined, bedLabel, reason: 'ANULADA' }),
+        body: JSON.stringify({ spItemId: info?.spItemId || undefined, bedLabel, reason }),
       });
     } catch { /* best-effort */ }
   }, [authFetch, cleanings]);
@@ -662,6 +668,46 @@ export const useHospitalState = () => {
       clearInterval(cleaningPoll);
     };
   }, [token, fetchBeds, fetchTickets, fetchCleanings]);
+
+  // ── Resync de rol en caliente (para TODOS los usuarios) ──────────────────────
+  // Los módulos/permisos sólo se hidratan en el login. Sin esto, cuando un admin edita
+  // un rol, los usuarios con ese rol no ven el cambio en su navbar hasta re-loguear.
+  // Lee la config vigente de /api/me (role-cache, 5 min) y actualiza la sesión si cambió.
+  // Se dispara solo cada 60s (abajo) y también a mano desde el botón del sidebar.
+  // Devuelve true si aplicó cambios (para dar feedback en el botón).
+  const syncSessionRole = useCallback(async (): Promise<boolean> => {
+    const roleName = currentUserRef.current?.roleName;
+    if (!roleName) return false;
+    try {
+      const r = await authFetch(`/api/me?roleName=${encodeURIComponent(roleName)}`);
+      if (!r.ok) return false;
+      const { role } = await r.json();
+      if (!role) return false;
+      const prev = currentUserRef.current;
+      if (!prev) return false;
+      const same =
+        JSON.stringify(prev.modules ?? []) === JSON.stringify(role.modules ?? []) &&
+        JSON.stringify(prev.permissions ?? []) === JSON.stringify(role.permissions ?? []) &&
+        (prev.filterByFloors ?? false) === !!role.filterByFloors &&
+        (prev.bypassLocationCheck ?? false) === !!role.bypassLocationCheck;
+      if (same) return false; // sin cambios → no re-render
+      const updated = {
+        ...prev,
+        modules: role.modules, permissions: role.permissions,
+        filterByFloors: !!role.filterByFloors, bypassLocationCheck: !!role.bypassLocationCheck,
+      };
+      setCurrentUser(updated);
+      localStorage.setItem(USER_KEY, JSON.stringify(updated));
+      return true;
+    } catch { return false; /* mantiene la sesión actual */ }
+  }, [authFetch]);
+
+  useEffect(() => {
+    if (!token || !currentUser?.roleName) return;
+    syncSessionRole();
+    const id = setInterval(syncSessionRole, 60_000);
+    return () => clearInterval(id);
+  }, [token, currentUser?.roleName, syncSessionRole]);
 
   // ── Auto-cierre de limpiezas (Opción B) ─────────────────────────────────────
   // Cierra en SP las limpiezas que dejaron de aplicar: la cama ya no está "En preparación"
@@ -1107,6 +1153,7 @@ export const useHospitalState = () => {
         : mods.includes('Operativa') ? 'REQUESTS'
         : mods.includes('Mapa de Camas') ? 'BEDS'
         : mods.includes('Historial') ? 'HISTORY'
+        : mods.includes('Gestion Limpieza') ? 'CLEANINGS'
         : 'HOME';
       setCurrentView(landingView);
 
@@ -1727,6 +1774,25 @@ export const useHospitalState = () => {
     localStorage.setItem(USER_KEY, JSON.stringify(updatedUser));
   };
 
+  // Refresca módulos/permisos de la sesión en caliente cuando el admin edita SU PROPIO rol
+  // desde Configuración → Roles. Sin esto, `modules`/`permissions` sólo se hidratan en el
+  // login (auth.ts) y quedan stale en localStorage hasta re-loguear — el módulo recién
+  // habilitado no aparece en el sidebar. No-op si el rol editado no es el del usuario actual.
+  const refreshSessionRole = (role: {
+    name: string; modules: RoleModule[]; permissions: Permission[];
+    filterByFloors: boolean; bypassLocationCheck: boolean;
+  }) => {
+    if (!currentUser) return;
+    if ((currentUser.roleName ?? '').trim().toLowerCase() !== role.name.trim().toLowerCase()) return;
+    const updatedUser = {
+      ...currentUser,
+      modules: role.modules, permissions: role.permissions,
+      filterByFloors: role.filterByFloors, bypassLocationCheck: role.bypassLocationCheck,
+    };
+    setCurrentUser(updatedUser);
+    localStorage.setItem(USER_KEY, JSON.stringify(updatedUser));
+  };
+
   // Manual full refresh — invalidates caches and refetches everything.
   // Los aislamientos vienen dentro de /api/beds (enrich), así que refrescar camas alcanza.
   const refreshAll = useCallback(async () => {
@@ -2071,7 +2137,7 @@ export const useHospitalState = () => {
       handleCreateTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
       fetchBeds, enrichBed, refreshAll,
       markBedClean, undoBedClean,
-      handleUpdateUserAreas, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleOpenNotifications, handleDismissToast,
+      handleUpdateUserAreas, refreshSessionRole, syncSessionRole, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleOpenNotifications, handleDismissToast,
       handleStartTransport,
       handleRejectTicket,
       handleEditTicket,

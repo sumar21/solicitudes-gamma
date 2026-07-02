@@ -1281,7 +1281,7 @@ Resultado del bug: Catering recibía "Nueva Solicitud de Traslado" (NEW_TICKET) 
 - **`TICKET`**: se crea un traslado con esa cama como destino → `mergeBeds` detecta que un ticket activo "toma" la cama → cierra la limpieza automáticamente.
 - **`GAMMA`**: PROGAL cambia el estado de la cama (sale de "En preparación") → el poll detecta que ya no aplica el overlay → cierra la limpieza.
 
-El auto-cierre se implementa en `useHospitalState` comparando el estado de cada limpieza activa contra los tickets activos y el estado de PROGAL en cada poll. `closedCleaningsRef` evita que el PATCH a SP se dispare más de una vez por registro (`Status_L=Inactivo` es idempotente server-side).
+El auto-cierre se implementa en `useHospitalState` comparando el estado de cada limpieza activa contra los tickets activos y el estado de PROGAL en cada poll. `closedCleaningsRef` evita que el PATCH a SP se dispare más de una vez por registro (`Status_L=Inactivo` es idempotente server-side). **Importante:** si el PATCH de cierre falla (HTTP no-ok o error de red), el `spItemId` se **suelta** del `closedCleaningsRef` para reintentar en el próximo poll — sino la fila quedaría `Activo` en SP para siempre en esa sesión y el overlay podría reaparecer "limpia" en falso al volver la cama a "En preparación". No dejar el candado puesto de forma incondicional.
 
 **Permiso:** controlado por `confirmar_limpieza` en `99.ABMRoles_Traslados`. El filtro de área de la azafata también aplica (`assignedAreas`).
 
@@ -1308,3 +1308,31 @@ El auto-cierre se implementa en `useHospitalState` comparando el estado de cada 
 **Trade-off aceptado:** un token robado dura más. Mitigado porque el token solo se usa desde la red del hospital (validación de IP/GPS) y porque el re-login es el único mecanismo de "invalidación" (no hay revocación server-side).
 
 **Tokens existentes:** los tokens emitidos antes de este cambio conservan su expiración original. Los usuarios con tokens de 8h seguirán siendo kickeados hasta el próximo login, momento en que recibirán un token de 10 años.
+
+---
+
+## 26. Decisiones recientes (Historial por paciente + Monitor + PDF, 2026-07-02)
+
+### 26.1. Historial → Trayectoria: búsqueda por paciente client-side (no endpoint nuevo)
+
+**Qué:** El modo Trayectoria de [HistoryView](views/HistoryView.tsx) dejó de filtrar por rango de fechas. Ahora usa un combobox `SearchableSelect` "Seleccionar paciente" (pacientes únicos agrupados por `patientCode`, fallback nombre) que al elegir abre `PatientJourney` con **todos** los tickets de ese paciente. Las opciones se derivan de los tickets ya en memoria; no se agregó endpoint de búsqueda.
+
+**Por qué:** el poll global (`GET /api/tickets?all=1`, cada 8s) ya trae todo el historial del entorno a memoria para operativa/camas/notis. Un endpoint de búsqueda por paciente contra SharePoint sería **más lento** (SP lento, `contains` no indexado) y agregaría requests redundantes. Autocompletar en memoria + fetchear los movimientos (`/api/ticket-events`) solo del paciente elegido es lo óptimo. El rango de fechas se ocultó en modo Trayectoria (solo aplica a modo Lista).
+
+**Impacto:** `PatientJourney` ya traía todos los tickets del paciente sin corte de fecha; el cambio fue de UI/entrada. `SearchableSelect` sumó una prop opcional `listMaxHeight` (default `max-h-[200px]`) para agrandar la lista sin tocar sus otros 4 usos.
+
+### 26.2. Monitor: `ROOM_CHANGE` plegado en Traslado Interno + desglose de motivos dinámico
+
+**Qué:** El KPI "Volumen por Workflow" ([VolumeBarChart](components/dashboard/VolumeBarChart.tsx)) dejó de mostrar la barra "Cambio Habitación" (`ROOM_CHANGE`, deprecado): esos tickets se cuentan dentro de **Traslado Interno** (`INTERNAL || ROOM_CHANGE`). Bajo esa barra se lista el **desglose de motivos** (`changeReason`).
+
+**Por qué:** `ROOM_CHANGE` se fusionó con `INTERNAL` hace tiempo y se renderiza como "Traslado Interno" en toda la app; mostrarlo aparte confundía. El desglose se cuenta dinámicamente (Map por `changeReason`, no lista fija) para captar también motivos legacy de tickets viejos (ej. `Pase a piso`) y agrupar los sin motivo como "Sin motivo".
+
+### 26.3. PDF de camas: zócalo de totales y fórmulas de ocupación
+
+**Qué:** Los 3 PDF de [BedsView](views/BedsView.tsx) (por sector, alfabético, dietas) cierran con un zócalo (`drawBedTotalsFooter`, helper único a nivel módulo): Ocupadas / Libres / Inhabilitadas / En Prep. + % Ocupación s/Habilitadas y s/Total. Además, en el PDF por sector las camas libres muestran "-" en la columna Paciente (antes repetían el nº de cama).
+
+**Por qué (fórmulas):** replican el reporte que usa el hospital. Ocupadas = `OCCUPIED + ASSIGNED`. Las "En preparación" quedan **fuera de ambos denominadores** (camas en tránsito, no computan ocupación):
+- `% s/Habilitadas = Ocupadas / (Ocupadas + Libres)` — excluye Prep e Inhabilitadas.
+- `% s/Total = Ocupadas / (Ocupadas + Libres + Inhabilitadas)` — excluye solo Prep.
+
+Verificado contra el reporte real: 75 ocupadas → `75/(75+38)=66,37%` s/Habilitadas y `75/(75+38+5)=63,56%` s/Total.

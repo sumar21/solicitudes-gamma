@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { User, Permission } from '../types';
+import { User, Permission, RoleModule } from '../types';
 import { Settings, Plus, Search, X, AlertCircle, CheckCircle2, Pencil, Trash2, Check, ChevronUp, ChevronDown } from '../components/Icons';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
@@ -12,6 +12,11 @@ import { cn } from '../lib/utils';
 
 interface RoleManagementViewProps {
   currentUser: User | null;
+  // Refresca la sesión en caliente si el admin edita su propio rol (no-op si es otro rol).
+  onSessionRoleUpdate?: (role: {
+    name: string; modules: RoleModule[]; permissions: Permission[];
+    filterByFloors: boolean; bypassLocationCheck: boolean;
+  }) => void;
 }
 
 interface SPRole {
@@ -29,6 +34,7 @@ const MODULES = [
   { label: 'Operativa', value: 'Operativa' },
   { label: 'Historial', value: 'Historial' },
   { label: 'Mapa de Camas', value: 'Mapa de Camas' },
+  { label: 'Gestión de Limpieza', value: 'Gestion Limpieza' },
   { label: 'Configuración', value: 'Configuracion' },
 ];
 
@@ -46,6 +52,12 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
       { code: 'iniciar_traslado',    label: 'Iniciar traslado' },
       { code: 'confirmar_recepcion', label: 'Confirmar recepción' },
       { code: 'consolidar',          label: 'Consolidar PROGAL' },
+    ],
+  },
+  {
+    module: 'Gestion Limpieza', label: 'Gestión de Limpieza',
+    perms: [
+      { code: 'consolidar_limpieza', label: 'Consolidar limpieza (Consolidado PROGAL)' },
     ],
   },
   {
@@ -77,7 +89,7 @@ interface FormState {
 
 const emptyForm: FormState = { name: '', selectedModules: new Set(), selectedPermissions: new Set(), filterByFloors: false, bypassLocationCheck: false };
 
-export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentUser }) => {
+export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentUser, onSessionRoleUpdate }) => {
   const [roles, setRoles] = useState<SPRole[]>([]);
   const [searchFilter, setSearchFilter] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -218,6 +230,15 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
         if (r.ok) {
           showToast('success', `Rol "${form.name}" actualizado`);
           fetchRoles();
+          // Si el admin editó su propio rol, refrescamos la sesión para que los módulos/
+          // permisos nuevos aparezcan sin re-loguear.
+          onSessionRoleUpdate?.({
+            name: form.name.trim(),
+            modules: Array.from(form.selectedModules) as RoleModule[],
+            permissions: permsArr,
+            filterByFloors: form.filterByFloors,
+            bypassLocationCheck: form.bypassLocationCheck,
+          });
         } else {
           showToast('error', 'Error al actualizar rol');
         }

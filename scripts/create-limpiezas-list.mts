@@ -43,7 +43,7 @@ const COLUMNS: ColSpec[] = [
   { name: 'Habitacion_L',    index: false, def: TEXT,                          desc: 'Código de habitación Gamma (roomCode)' },
   { name: 'Area_L',          index: true,  def: TEXT,                          desc: 'Sector / piso (para filtrar por área de azafata)' },
   { name: 'Status_L',        index: true,  def: CHOICE(['Activo','Inactivo']), desc: 'Activo = overlay "Limpia" vigente; Inactivo = cerrada (soft-delete)' },
-  { name: 'MotivoCierre_L',  index: false, def: CHOICE(['', 'ANULADA','TICKET','GAMMA']), desc: 'Por qué se cerró: ANULADA (azafata deshizo) / TICKET (traslado tomó la cama) / GAMMA (PROGAL avanzó)' },
+  { name: 'MotivoCierre_L',  index: false, def: CHOICE(['', 'ANULADA','TICKET','GAMMA','CONSOLIDADO']), desc: 'Por qué se cerró: ANULADA (azafata deshizo) / TICKET (traslado tomó la cama) / GAMMA (PROGAL avanzó) / CONSOLIDADO (supervisor consolidó contra PROGAL desde Gestión de Limpieza)' },
   { name: 'AzafataId_L',     index: false, def: TEXT,                          desc: 'ID del usuario que marcó la limpieza' },
   { name: 'AzafataNombre_L', index: false, def: TEXT,                          desc: 'Nombre de la azafata (denormalizado para UI/auditoría)' },
   { name: 'FechaLimpieza_L', index: false, def: DATETIME,                      desc: 'Cuándo se marcó limpia (ISO)' },
@@ -112,6 +112,18 @@ for (const col of COLUMNS) {
   });
   if (r.ok) console.log(`   ${col.name.padEnd(16)} → CREADA ✓`);
   else console.log(`   ${col.name.padEnd(16)} → FALLÓ (${r.status}): ${(await r.text()).slice(0, 160)}`);
+}
+
+// ── 3.5) Sincronizar choices en columnas de opción ya existentes ───────────────
+// Las recién creadas ya nacen con los choices correctos; las preexistentes (prod) hay
+// que actualizarlas para sumar valores nuevos (ej. CONSOLIDADO en MotivoCierre_L).
+for (const col of COLUMNS.filter(c => 'choice' in c.def)) {
+  const live = existingCols.find(c => c.name === col.name);
+  if (!live) continue; // se creó en este run con los choices ya correctos
+  const r = await graphFetch(`/sites/${SITE_ID}/lists/${listId}/columns/${(live as any).id}`, {
+    method: 'PATCH', body: JSON.stringify({ choice: (col.def as any).choice }),
+  });
+  console.log(`   choices ${col.name.padEnd(16)} → ${r.ok ? 'SYNC ✓' : `FALLÓ (${r.status})`}`);
 }
 
 // ── 4) Indexar columnas de filtro ─────────────────────────────────────────────

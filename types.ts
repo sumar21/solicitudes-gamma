@@ -122,7 +122,7 @@ export interface Bed {
   cleanedAt?: string;   // ISO — cuándo se marcó limpia
 }
 
-export type ViewMode = 'HOME' | 'REQUESTS' | 'USERS' | 'HISTORY' | 'BEDS';
+export type ViewMode = 'HOME' | 'REQUESTS' | 'USERS' | 'HISTORY' | 'BEDS' | 'CLEANINGS';
 export type SortKey = 'status' | 'patientName' | 'origin' | 'createdAt';
 export type SortDirection = 'asc' | 'desc';
 
@@ -137,6 +137,8 @@ export interface SortConfig {
 export const PERMISSIONS = [
   'crear_ticket','editar_ticket','cancelar_ticket','asignar_cama',
   'confirmar_limpieza','iniciar_traslado','confirmar_recepcion','consolidar',
+  // Acción del módulo Gestión de Limpieza: consolidar una cama marcada limpia contra PROGAL.
+  'consolidar_limpieza',
   'abm_usuarios','abm_roles',
   // Notificaciones granulares por tipo (antes había un solo `recibe_push`).
   // Cada permiso gobierna que el usuario reciba push + in-app de ese tipo.
@@ -149,7 +151,7 @@ export const PERMISSIONS = [
 export type Permission = typeof PERMISSIONS[number];
 
 // Módulos visibles para el rol (Acceso_RT). Drive el sidebar / vistas.
-export const ROLE_MODULES = ['Home','Operativa','Historial','Mapa de Camas','Configuracion'] as const;
+export const ROLE_MODULES = ['Home','Operativa','Historial','Mapa de Camas','Gestion Limpieza','Configuracion'] as const;
 export type RoleModule = typeof ROLE_MODULES[number];
 
 export interface User {

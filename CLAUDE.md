@@ -17,6 +17,7 @@ Para contexto completo, consultá estos archivos:
 - [docs/arquitectura.md](docs/arquitectura.md) — Estructura del proyecto, flujo de datos, API endpoints, listas SharePoint, sistema de roles, notificaciones, PWA, desarrollo local.
 - [docs/decisiones.md](docs/decisiones.md) — Decisiones técnicas con justificación, alternativas descartadas e impacto. Incluye: arquitectura, base de datos, autenticación, polling vs websockets, integración Gamma.
 - [docs/convenciones.md](docs/convenciones.md) — Convenciones de código: nombrado, estructura de archivos, patrones de componentes, manejo de estado, estilos Tailwind, imports.
+- [docs/troubleshooting.md](docs/troubleshooting.md) — Síntoma → causa probable → qué mirar/escalar, para soporte/QA (limpiezas, Monitor, Trayectoria, PDF).
 
 ## Reglas clave para desarrollo
 

@@ -293,10 +293,10 @@ Responsabilidades:
 
 | Vista | Acceso | Descripción |
 |-------|--------|-------------|
-| `DashboardView` | Admin, Admisión | KPIs (activos, completados, espera media), gráficos (volumen por hora, donut de estados), tickets recientes |
+| `DashboardView` | Admin, Admisión | KPIs (activos, completados, espera media), gráficos (volumen por workflow con desglose de motivos en Traslado Interno, donut de estados), tickets recientes |
 | `RequestsView` | Admin, Admisión, Azafata | Tabla de tickets activos con acciones contextuales por rol. Tabs de filtro por perfil operativo. Búsqueda y ordenamiento |
-| `HistoryView` | Todos | Tickets completados/cancelados. Filtros por fecha, estado, tipo. Exportación a Excel (XLSX). Modal de auditoría con timeline |
-| `BedsView` | Todos | Grilla visual de camas por sector/piso. Código de colores por estado. Detalle expandido del paciente. Exportación a PDF. Aislamientos |
+| `HistoryView` | Todos | Dos modos: **Lista** (tickets completados/cancelados, filtros por fecha/estado/tipo, export XLSX, modal de auditoría) y **Trayectoria** (combobox "Seleccionar paciente" → `PatientJourney` con toda la historia de traslados del paciente, sin filtro de fecha) |
+| `BedsView` | Todos | Grilla visual de camas por sector/piso. Código de colores por estado. Detalle expandido del paciente. Exportación a PDF (3 variantes: por sector, alfabético, dietas/ayunos — todas con zócalo de totales al pie). Aislamientos. Marcar/deshacer limpieza |
 | `UserManagementView` | Admin | ABM de usuarios. CRUD contra SharePoint. Asignación de pisos a azafatas |
 | `RoleManagementView` | Admin | ABM de roles. Permisos por módulo (Home, Operativa, Historial, Mapa, Config) |
 
@@ -324,7 +324,7 @@ Los roles y sus permisos se gestionan dinámicamente desde la lista SharePoint `
 |---------------------|-----------------|-------------|
 | Home | `DashboardView` | Monitor con KPIs y gráficos |
 | Operativa | `RequestsView` | Tabla de tickets con acciones por rol |
-| Historial | `HistoryView` | Tickets completados/cancelados, export XLSX |
+| Historial | `HistoryView` | Modo Lista (tickets completados/cancelados, export XLSX) + modo Trayectoria (búsqueda por paciente → historia completa) |
 | Mapa de Camas | `BedsView` | Grilla visual de camas, detalle paciente, export PDF |
 | Configuracion | `UserManagementView` + `RoleManagementView` | ABM de usuarios y roles |
 
@@ -546,7 +546,7 @@ Reglas de filtrado de origen/destino por workflow en los modales:
 - `INTERNAL`: origen y destino no pueden ser ITR (`bed.area !== Area.HIT`).
 - `ITR_TO_FLOOR`: origen debe ser ITR (`bed.area === Area.HIT`), destino no.
 
-`INTERNAL` siempre requiere un motivo del dropdown `ROOM_CHANGE_REASONS` (validado en frontend y backend).
+`INTERNAL` siempre requiere un motivo del dropdown `ROOM_CHANGE_REASONS` (validado en frontend y backend). Valores vigentes ([lib/constants.ts](lib/constants.ts)): `Solicitud familiar`, `Asilamiento / Infectologia`, `Mantenimiento edificio`, `Cambio de area`, `Requerimiento Interno`, `Solicita Upgrade`. El desglose de motivos del Monitor los cuenta dinámicamente (capta también motivos legacy de tickets viejos, ej. `Pase a piso`, ya retirado del dropdown).
 
 ---
 

@@ -2,8 +2,9 @@
  * Vercel serverless — CRUD para "14.Limpiezas" (limpiezas de habitaciones por azafatas).
  *
  * GET    /api/limpiezas   → limpiezas activas (overlay "Limpia" vigente)
+ * GET    /api/limpiezas?history=1&from=YYYY-MM-DD&to=YYYY-MM-DD → histórico (cerradas por fecha de cierre)
  * POST   /api/limpiezas   → marcar limpia (upsert) { bedLabel, bedCode, roomCode, area, userId, userName }
- * PATCH  /api/limpiezas   → cerrar una limpieza   { bedLabel | spItemId, reason }  reason ∈ ANULADA|TICKET|GAMMA
+ * PATCH  /api/limpiezas   → cerrar una limpieza   { bedLabel | spItemId, reason }  reason ∈ ANULADA|TICKET|GAMMA|CONSOLIDADO
  *
  * Modelo: una limpieza = una cama que una azafata marcó limpia mientras PROGAL la
  * reportaba "En preparación". El overlay del front (mergeBeds) la muestra disponible
@@ -42,6 +43,48 @@ async function handler(req: any, res: any) {
   }
 
   const basePath = `/sites/${SITE_ID}/lists/${LIST_ID}/items`;
+
+  // ── GET — histórico (SOLO limpiezas cerradas: Status_L='Inactivo') ─────────
+  if (req.method === 'GET' && String(req.query?.history ?? '') === '1') {
+    try {
+      const isDate = (s: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(s ?? ''));
+      const from = isDate(req.query?.from) ? String(req.query.from) : '';
+      const to   = isDate(req.query?.to)   ? String(req.query.to)   : '';
+      // Filtramos en SP sólo por Status+Entorno (columnas indexadas) y el rango de fecha
+      // en JS sobre FechaCierre_L — evita el filtro OData sobre DateTime (frágil, columna
+      // no indexada). El volumen de cerradas es chico; si crece >5k, indexar FechaCierre_L.
+      const filter = encodeURIComponent(`fields/Status_L eq 'Inactivo' and fields/Entorno_L eq '${ENTORNO}'`);
+      const spRes = await graphFetch(
+        `${basePath}?$expand=fields&$filter=${filter}&$top=2000`,
+        { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
+      );
+      if (!spRes.ok) { console.error('[limpiezas] history GET failed:', spRes.status); return res.status(200).json({ cleanings: [] }); }
+      const data = (await spRes.json()) as { value: Record<string, unknown>[] };
+      const fromMs = from ? Date.parse(`${from}T00:00:00Z`) : -Infinity;
+      const toMs   = to   ? Date.parse(`${to}T23:59:59Z`)   : Infinity;
+      const cleanings = (data.value ?? [])
+        .map((item: any) => {
+          const f = item.fields as Record<string, unknown>;
+          return {
+            spItemId: String(item.id),
+            bedLabel: String(f.CamaLabel_L ?? ''),
+            area:     String(f.Area_L ?? ''),
+            by:       String(f.AzafataNombre_L ?? ''),
+            at:       String(f.FechaLimpieza_L ?? ''),
+            closedAt: String(f.FechaCierre_L ?? ''),
+            reason:   String(f.MotivoCierre_L ?? ''),
+          };
+        })
+        .filter((c) => {
+          const t = Date.parse(c.closedAt);
+          return !isNaN(t) && t >= fromMs && t <= toMs;
+        });
+      return res.status(200).json({ cleanings });
+    } catch (err: any) {
+      console.error('[limpiezas] history GET error:', err);
+      return res.status(200).json({ cleanings: [] });
+    }
+  }
 
   // ── GET — limpiezas activas ───────────────────────────────────────────────
   if (req.method === 'GET') {
@@ -135,7 +178,7 @@ async function handler(req: any, res: any) {
   // ── PATCH — cerrar una limpieza ───────────────────────────────────────────
   if (req.method === 'PATCH') {
     const { spItemId, bedLabel, reason } = req.body ?? {};
-    const motivo = ['ANULADA', 'TICKET', 'GAMMA'].includes(String(reason)) ? String(reason) : 'ANULADA';
+    const motivo = ['ANULADA', 'TICKET', 'GAMMA', 'CONSOLIDADO'].includes(String(reason)) ? String(reason) : 'ANULADA';
     const nowIso = new Date().toISOString();
 
     try {

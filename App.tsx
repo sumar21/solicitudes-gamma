@@ -17,6 +17,7 @@ import { DashboardView } from './views/DashboardView';
 import { RequestsView } from './views/RequestsView';
 import { HistoryView } from './views/HistoryView';
 import { BedsView } from './views/BedsView';
+import { CleaningManagementView } from './views/CleaningManagementView';
 import { UserManagementView } from './views/UserManagementView';
 import { RoleManagementView } from './views/RoleManagementView';
 
@@ -38,6 +39,22 @@ import { AreaSelectionModal } from './components/modals/AreaSelectionModal';
 import { RejectionModal } from './components/modals/RejectionModal';
 import { cn, calculateTicketMetrics } from './lib/utils';
 import { NotificationToasts } from './components/NotificationToast';
+
+// SVG inline del spray-can (lucide 0.344). Se inlinea porque el componente `SprayCan`
+// del barrel de lucide no renderizaba en el sidebar (mientras los demás iconos, del mismo
+// módulo, sí). Con el SVG directo evitamos cualquier problema de resolución/bundling.
+const SprayCanIcon = ({ className }: { className?: string }) => (
+  // width/height="24" (dimensión intrínseca, como los iconos de lucide) + shrink-0: sin esto
+  // el SVG se colapsa a 0 en el flex del sidebar desktop (se veía en mobile pero no en desktop).
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor"
+    strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={cn('shrink-0', className)} aria-hidden="true">
+    <path d="M3 3h.01" /><path d="M7 5h.01" /><path d="M11 7h.01" /><path d="M3 7h.01" />
+    <path d="M7 9h.01" /><path d="M3 11h.01" />
+    <rect width="4" height="4" x="15" y="5" />
+    <path d="m19 9 2 2v10c0 .6-.4 1-1 1h-6c-.6 0-1-.4-1-1V11l2-2" />
+    <path d="m13 14 8-2" /><path d="m13 19 8-2" />
+  </svg>
+);
 
 export default function App() {
   const { state, actions } = useHospitalState();
@@ -77,6 +94,14 @@ export default function App() {
   const [isLegendModalOpen, setIsLegendModalOpen] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [isConfigOpen, setIsConfigOpen] = useState(state.currentView === 'USERS' || (state.currentView as string) === 'ROLES');
+  const [syncingRoles, setSyncingRoles] = useState(false);
+
+  // Fuerza el resync de módulos/permisos del rol (útil si un admin cambió tu acceso y
+  // no querés esperar al poll de 60s). Actualiza el navbar en el acto si hubo cambios.
+  const handleSyncRoles = useCallback(async () => {
+    setSyncingRoles(true);
+    try { await actions.syncSessionRole(); } finally { setSyncingRoles(false); }
+  }, [actions]);
 
   // Open Area Selection on login only if the user's role filters by floors AND has none assigned yet.
   // Cubre HOSTESS, CATERING y cualquier rol nuevo con FiltrarPisos_RT=Sí.
@@ -126,6 +151,7 @@ export default function App() {
   const canViewOperativa = hasModule(state.currentUser, 'Operativa');
   const canViewHistorial = hasModule(state.currentUser, 'Historial');
   const canViewBeds      = hasModule(state.currentUser, 'Mapa de Camas');
+  const canViewCleanings = hasModule(state.currentUser, 'Gestion Limpieza');
   const canViewConfig    = hasModule(state.currentUser, 'Configuracion');
 
   // Subsections de Configuración por permiso fino.
@@ -357,6 +383,9 @@ export default function App() {
             {canViewBeds && (
               <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'BEDS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('BEDS')}><Menu className="w-4 h-4" />Mapa de Camas</Button>
             )}
+            {canViewCleanings && (
+              <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'CLEANINGS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('CLEANINGS')}><SprayCanIcon className="w-4 h-4" />Limpiezas</Button>
+            )}
           </div>
 
           {/* Configuración — collapsible. Visible si el rol tiene Acceso_RT incluyendo Configuracion. */}
@@ -381,7 +410,10 @@ export default function App() {
             </div>
           )}
         </nav>
-        <div className="p-3 border-t border-white/10">
+        <div className="p-3 border-t border-white/10 space-y-1">
+          <Button variant="ghost" disabled={syncingRoles} className="w-full justify-start gap-3 text-white/70 hover:bg-white/10 hover:text-white" onClick={handleSyncRoles}>
+            <RefreshCw className={cn("w-4 h-4", syncingRoles && "animate-spin")} /> Actualizar accesos
+          </Button>
           <Button variant="ghost" className="w-full justify-start gap-3 text-red-400 hover:text-red-300 hover:bg-red-950/20" onClick={actions.handleLogout}><LogOut className="w-4 h-4" /> Salir</Button>
         </div>
       </aside>
@@ -398,7 +430,7 @@ export default function App() {
               <GammaLogo size={20} />
             </button>
             <h1 className="text-lg md:text-xl font-black text-slate-900 tracking-tight truncate max-w-[100px] xs:max-w-[180px] sm:max-w-none">
-              {state.currentView === 'HOME' ? 'Monitor' : state.currentView === 'REQUESTS' ? 'Operativa' : state.currentView === 'BEDS' ? 'Mapa de Camas' : state.currentView === 'USERS' ? 'Usuarios' : (state.currentView as string) === 'ROLES' ? 'Roles' : 'Historial'}
+              {state.currentView === 'HOME' ? 'Monitor' : state.currentView === 'REQUESTS' ? 'Operativa' : state.currentView === 'BEDS' ? 'Mapa de Camas' : state.currentView === 'CLEANINGS' ? 'Gestión de Limpieza' : state.currentView === 'USERS' ? 'Usuarios' : (state.currentView as string) === 'ROLES' ? 'Roles' : 'Historial'}
             </h1>
             {IS_TESTING && (
               <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-600 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-white shadow-sm shrink-0">
@@ -462,6 +494,9 @@ export default function App() {
                 {canViewBeds && (
                   <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'BEDS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('BEDS'); setIsMobileMenuOpen(false); }}><Menu className="w-4 h-4" />Mapa de Camas</Button>
                 )}
+                {canViewCleanings && (
+                  <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'CLEANINGS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('CLEANINGS'); setIsMobileMenuOpen(false); }}><SprayCanIcon className="w-4 h-4" />Limpiezas</Button>
+                )}
               </div>
 
               {canViewConfig && (canSeeUsers || canSeeRoles) && (
@@ -489,6 +524,9 @@ export default function App() {
               {installPrompt && /android/i.test(navigator.userAgent) && (
                 <Button variant="ghost" className="w-full justify-start gap-3 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/20" onClick={() => { handleInstallApp(); setIsMobileMenuOpen(false); }}><Download className="w-4 h-4" /> Instalar App</Button>
               )}
+              <Button variant="ghost" disabled={syncingRoles} className="w-full justify-start gap-3 text-white/70 hover:bg-white/10 hover:text-white" onClick={handleSyncRoles}>
+                <RefreshCw className={cn("w-4 h-4", syncingRoles && "animate-spin")} /> Actualizar accesos
+              </Button>
               <Button variant="ghost" className="w-full justify-start gap-3 text-red-400 hover:text-red-300 hover:bg-red-950/20" onClick={() => { actions.handleLogout(); setIsMobileMenuOpen(false); }}><LogOut className="w-4 h-4" /> Salir</Button>
             </div>
           </div>
@@ -611,9 +649,10 @@ export default function App() {
           {/* Usuarios — gateado por permiso abm_usuarios */}
           {canSeeUsers && state.currentView === 'USERS' && <UserManagementView currentUser={state.currentUser} />}
           {/* Roles — gateado por permiso abm_roles */}
-          {canSeeRoles && (state.currentView as string) === 'ROLES' && <RoleManagementView currentUser={state.currentUser} />}
+          {canSeeRoles && (state.currentView as string) === 'ROLES' && <RoleManagementView currentUser={state.currentUser} onSessionRoleUpdate={actions.refreshSessionRole} />}
           {/* Mapa de Camas — gateado por Acceso_RT */}
           {canViewBeds && state.currentView === 'BEDS' && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} onEnrichBed={actions.enrichBed} onRefresh={actions.refreshAll} onMarkClean={actions.markBedClean} onUndoClean={actions.undoBedClean} />}
+          {canViewCleanings && state.currentView === 'CLEANINGS' && <CleaningManagementView beds={state.beds} currentUser={state.currentUser} onConsolidate={(label) => actions.undoBedClean(label, 'CONSOLIDADO')} onRefresh={actions.refreshAll} />}
         </main>
       </div>
 
