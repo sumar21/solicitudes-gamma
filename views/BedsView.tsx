@@ -1,13 +1,15 @@
 import React, { useState, useMemo, useCallback } from 'react';
-import { Bed, BedStatus, Ticket, TicketStatus, User, Area, IsolationEntry } from '../types';
+import { Bed, BedStatus, Ticket, TicketStatus, User, Area, IsolationEntry, MealSlot } from '../types';
 import { can } from '../lib/permissions';
 import { hasLiveFasting, fastingOccurrences, formatFastingDateTime, fastingTimesForToday } from '../lib/fasting';
 import { Input } from '../components/ui/input';
 import { cn } from '../lib/utils';
-import { BedDouble, User as UserIcon, Info, Search, X, ChevronDown, Check, AlertTriangle, CheckCircle2, ShieldAlert, RefreshCw, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan } from 'lucide-react';
+import { BedDouble, User as UserIcon, Info, Search, X, ChevronDown, Check, AlertTriangle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan, History } from 'lucide-react';
 import { Dialog, DialogContent } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
+import { PatientJourney } from '../components/PatientJourney';
+import { WORKFLOW_LABELS } from '../lib/constants';
 import jsPDF from 'jspdf';
 
 const AREA_LABELS: Record<string, string> = {
@@ -33,6 +35,15 @@ const AREA_ORDER: Area[] = [
 
 const HIDDEN_BY_DEFAULT_ADMISSION = new Set<string>([Area.HSS, Area.HUQ]);
 
+// Tipo de dieta (PROGAL) de una cama: la respuesta del ítem "Tipo" del formulario de dieta
+// (ej. "General", "Líquida", "Blanda de masticación 1"). Vive en bed.diets — dietTags mezcla
+// el tipo con las condiciones ("Sí"), por eso para filtrar por TIPO leemos diets directo.
+// Mismo criterio que api/diet-tags.ts (descripcion "tipo", respuesta ≠ "No").
+const dietTypeOf = (b: Bed): string | undefined => {
+  const t = b.diets?.find(d => d.descripcion.toLowerCase() === 'tipo');
+  return t?.respuesta && t.respuesta.toLowerCase() !== 'no' ? t.respuesta : undefined;
+};
+
 interface BedsViewProps {
   beds: Bed[];
   tickets: Ticket[];
@@ -46,6 +57,9 @@ interface BedsViewProps {
   // de 14.Limpiezas — ver hooks/useHospitalState markBedClean/undoBedClean).
   onMarkClean?: (bed: Bed) => void | Promise<void>;
   onUndoClean?: (bedLabel: string) => void | Promise<void>;
+  // Carga de menú por Nutrición (15.CargasDieta): carga/actualiza o quita una comida.
+  onSaveMeal?: (bed: Bed, comida: MealSlot, tipo: 'MENU' | 'OPCION', observaciones: string) => void | Promise<void>;
+  onClearMeal?: (bed: Bed, comida: MealSlot) => void | Promise<void>;
 }
 
 // Mapa de clave de color (la define api/isolations-summary.ts) → clases Tailwind.
@@ -133,8 +147,90 @@ function drawBedTotalsFooter(
 }
 
 
-export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onRefresh, onMarkClean, onUndoClean }) => {
+// ── Carga de menú por Nutrición (pestaña Dieta) ─────────────────────────────
+// Menú y Opción son EXCLUYENTES → un solo botón activo. Nutrición carga/actualiza/quita;
+// catering (sin permiso) lo ve en modo lectura. Ver api/dietas.ts.
+const MEAL_SLOTS: { slot: MealSlot; label: string }[] = [
+  { slot: 'almuerzo', label: 'Almuerzo' },
+  { slot: 'cena',     label: 'Cena' },
+];
+
+const fmtMealWhen = (m?: { by: string; at: string }) =>
+  m ? `${m.by}${m.at ? ` · ${new Date(m.at).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}` : ''}` : '';
+
+const MealSlotEditor: React.FC<{
+  bed: Bed; slot: MealSlot; label: string; canEdit: boolean;
+  onSave?: (bed: Bed, comida: MealSlot, tipo: 'MENU' | 'OPCION', obs: string) => void | Promise<void>;
+  onClear?: (bed: Bed, comida: MealSlot) => void | Promise<void>;
+}> = ({ bed, slot, label, canEdit, onSave, onClear }) => {
+  const meal = bed.meals?.[slot];
+  const [tipo, setTipo] = useState<'MENU' | 'OPCION' | ''>(meal?.tipo ?? '');
+  const [obs, setObs]   = useState(meal?.observaciones ?? '');
+  const [saving, setSaving] = useState(false);
+  // Re-sincroniza el form cuando el server confirma un cambio (nuevo id/timestamp).
+  const sig = `${meal?.spItemId ?? ''}|${meal?.at ?? ''}`;
+  React.useEffect(() => {
+    setTipo(meal?.tipo ?? '');
+    setObs(meal?.observaciones ?? '');
+  }, [sig]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!canEdit) {
+    return (
+      <div className="bg-white rounded-xl p-3 border border-slate-100">
+        <div className="flex items-center justify-between mb-1">
+          <p className="text-[8px] font-bold uppercase text-slate-400">{label}</p>
+          {meal
+            ? <span className={cn("px-2 py-0.5 rounded-full text-[9px] font-bold", meal.tipo === 'MENU' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700')}>{meal.tipo === 'MENU' ? 'Menú' : 'Opción'}</span>
+            : <span className="text-[10px] text-slate-400 italic">Sin carga</span>}
+        </div>
+        {meal?.observaciones && <p className="text-[11px] text-slate-700 whitespace-pre-wrap break-words">{meal.observaciones}</p>}
+        {meal && <p className="text-[9px] text-slate-400 mt-1">{fmtMealWhen(meal)}</p>}
+      </div>
+    );
+  }
+
+  const dirty = tipo !== (meal?.tipo ?? '') || obs.trim() !== (meal?.observaciones ?? '').trim();
+  return (
+    <div className="bg-white rounded-xl p-3 border border-slate-100 space-y-2">
+      <div className="flex items-center justify-between">
+        <p className="text-[8px] font-bold uppercase text-slate-400">{label}</p>
+        {meal && <span className="text-[9px] text-slate-400 truncate">{fmtMealWhen(meal)}</span>}
+      </div>
+      <div className="flex gap-2">
+        {(['MENU', 'OPCION'] as const).map(op => (
+          <button key={op} type="button" onClick={() => setTipo(op)}
+            className={cn("flex-1 h-9 rounded-lg text-[11px] font-bold uppercase tracking-wide border transition-all",
+              tipo === op
+                ? (op === 'MENU' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-amber-500 text-white border-amber-500')
+                : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-100')}>
+            {op === 'MENU' ? 'Menú' : 'Opción'}
+          </button>
+        ))}
+      </div>
+      <textarea value={obs} onChange={e => setObs(e.target.value)} rows={2} maxLength={500}
+        placeholder="Observaciones (opcional)"
+        className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] resize-none focus:outline-none focus:ring-2 focus:ring-emerald-200" />
+      <div className="flex gap-2">
+        <Button size="sm" disabled={!tipo || !dirty || saving}
+          onClick={async () => { if (!tipo || !onSave) return; setSaving(true); try { await onSave(bed, slot, tipo, obs.trim()); } finally { setSaving(false); } }}
+          className="flex-1 h-8 text-[11px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40">
+          {saving ? 'Guardando…' : meal ? 'Actualizar' : 'Guardar'}
+        </Button>
+        {meal && onClear && (
+          <Button variant="outline" size="sm" disabled={saving}
+            onClick={async () => { setSaving(true); try { await onClear(bed, slot); } finally { setSaving(false); } }}
+            className="h-8 px-3 text-[11px] font-bold rounded-lg border-slate-200 text-slate-500 hover:bg-slate-100">
+            Quitar
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onRefresh, onMarkClean, onUndoClean, onSaveMeal, onClearMeal }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
+  const [journeyOpen, setJourneyOpen] = useState(false);
   const [enrichedBed, setEnrichedBed] = useState<Bed | null>(null);
   const [enrichLoading, setEnrichLoading] = useState(false);
   const [pdfExporting, setPdfExporting] = useState<'normal' | 'alpha' | 'dietas' | false>(false);
@@ -174,6 +270,26 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   }, [selectedBed?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const displayBed = enrichedBed ?? selectedBed;
+
+  // Traslados del paciente de la cama abierta — mismo criterio de agrupación que
+  // Historial: por patientCode si ambos lo tienen, si no por patientName normalizado.
+  // Se deriva de selectedBed (no de un snapshot aparte) para poder gatear el botón:
+  // la ocupación viene de PROGAL, independiente de los tickets, así que un paciente
+  // puede no tener ninguno → sin traslados no mostramos "Historial" (evita dead-end).
+  const journeyTickets = useMemo(() => {
+    if (!selectedBed) return [];
+    const code = selectedBed.patientCode?.trim();
+    const name = (selectedBed.patientName ?? '').trim().toLowerCase();
+    return tickets.filter(t => {
+      const tc = t.patientCode?.trim();
+      if (code && tc) return tc === code;
+      return (t.patientName ?? '').trim().toLowerCase() === name;
+    });
+  }, [selectedBed, tickets]);
+
+  // ¿Este usuario puede ver comandas cargadas? (Nutrición carga; Catering/Nutrición ven).
+  // Gatea tanto el ícono de la tarjeta como la sección de la pestaña Dieta.
+  const canViewComanda = can(currentUser, 'ver_dieta') || can(currentUser, 'cargar_dieta');
 
   // Color del aislamiento de una cama (el primer tipo activo define el color).
   const getIsolationColor = (bed: Bed) => {
@@ -264,6 +380,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   const [physicianFilters, setPhysicianFilters] = useState<Set<string>>(new Set());
   const [physicianSearch, setPhysicianSearch] = useState('');
 
+  const [dietTypeFilters, setDietTypeFilters] = useState<Set<string>>(new Set());
+  const [dietTypeSearch, setDietTypeSearch]   = useState('');
+
   // Camas con dieta cargada (al menos un tag: tipo de dieta o condición marcada "Sí").
   // Análogo a `isolatedBeds` pero derivado del enrich que ya traen las camas (cron).
   const dietBeds = useMemo(() => {
@@ -286,10 +405,13 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     (showDietOnly ? 1 : 0) +
     (showFastingOnly ? 1 : 0) +
     financierFilters.size +
-    physicianFilters.size;
+    physicianFilters.size +
+    dietTypeFilters.size;
 
   const uniqueFinanciers = useMemo(() => [...new Set(beds.filter((b: Bed) => b.institution).map((b: Bed) => b.institution!))].sort(), [beds]);
   const uniquePhysicians = useMemo(() => [...new Set(beds.filter((b: Bed) => b.prescribingPhysician).map((b: Bed) => b.prescribingPhysician!))].sort(), [beds]);
+  // Tipos de dieta presentes en las camas cargadas, ordenados alfabéticamente (locale es).
+  const uniqueDietTypes = useMemo(() => [...new Set(beds.map(dietTypeOf).filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b, 'es')), [beds]);
 
   const toggleArea = (area: string) => {
     setAreaFilters((prev: Set<string>) => {
@@ -364,9 +486,12 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     if (physicianFilters.size > 0) {
       result = result.filter(bed => bed.prescribingPhysician && physicianFilters.has(bed.prescribingPhysician));
     }
+    if (dietTypeFilters.size > 0) {
+      result = result.filter(bed => { const dt = dietTypeOf(bed); return !!dt && dietTypeFilters.has(dt); });
+    }
 
     return result;
-  }, [beds, currentUser, searchFilter, areaFilters, statusFilters, allAreas.length, bedTicketMap, showIsolatedOnly, isolatedBeds, showDietOnly, dietBeds, showFastingOnly, fastingBeds, financierFilters, physicianFilters]);
+  }, [beds, currentUser, searchFilter, areaFilters, statusFilters, allAreas.length, bedTicketMap, showIsolatedOnly, isolatedBeds, showDietOnly, dietBeds, showFastingOnly, fastingBeds, financierFilters, physicianFilters, dietTypeFilters]);
 
   // Conteo de camas para el badge del header: excluimos HRA ("Sala de Espera"),
   // que son sillones de pre-internación y no camas reales. El grid y los PDFs
@@ -1554,6 +1679,53 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
               </PopoverContent>
             </Popover>
           )}
+
+          {/* Diet type filter */}
+          {uniqueDietTypes.length > 0 && (
+            <Popover>
+              <PopoverTrigger asChild>
+                <button className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
+                  dietTypeFilters.size > 0 ? "bg-slate-900 text-white border-slate-900 shadow-sm" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                )}>
+                  <Utensils className="w-2.5 h-2.5" />
+                  Tipo de dieta {dietTypeFilters.size > 0 && `(${dietTypeFilters.size})`}
+                  <ChevronDown className="w-2.5 h-2.5" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-72 p-2">
+                <div className="flex items-center justify-between px-2 pb-2 border-b border-slate-100 mb-1">
+                  <span className="text-[9px] font-bold uppercase text-slate-400">Tipo de dieta</span>
+                  {dietTypeFilters.size > 0 && (
+                    <button onClick={() => setDietTypeFilters(new Set())} className="text-[9px] font-bold text-red-500">Limpiar</button>
+                  )}
+                </div>
+                <div className="relative mb-1.5">
+                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Buscar tipo..."
+                    value={dietTypeSearch}
+                    onChange={(e: any) => setDietTypeSearch(e.target.value)}
+                    className="w-full pl-7 pr-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-400"
+                  />
+                </div>
+                <div className="max-h-48 overflow-y-auto">
+                  {uniqueDietTypes.filter((d: string) => d.toLowerCase().includes(dietTypeSearch.toLowerCase())).map((d: string) => (
+                    <label key={d} className={cn(
+                      "flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer text-xs transition-colors",
+                      dietTypeFilters.has(d) ? "bg-emerald-50 text-emerald-800 font-bold" : "hover:bg-slate-50 text-slate-600"
+                    )}>
+                      <input type="checkbox" checked={dietTypeFilters.has(d)} onChange={() => {
+                        setDietTypeFilters((prev: Set<string>) => { const next = new Set(prev); next.has(d) ? next.delete(d) : next.add(d); return next; });
+                      }} className="accent-emerald-600 w-3.5 h-3.5" />
+                      {d}
+                    </label>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
         </div>
       </div>
 
@@ -1686,13 +1858,27 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                         <ShieldAlert className="w-2 h-2 md:w-2.5 md:h-2.5 text-white" strokeWidth={3} />
                       </div>
                     )}
-                    {hasLiveFasting(bed.fasting) && (
-                      <div
-                        className="absolute bottom-0.5 right-0.5 flex items-center gap-0.5 px-1 h-3 md:h-3.5 rounded-full bg-amber-500 text-white text-[7px] md:text-[8px] font-black ring-1 ring-white shadow-sm"
-                        title="Ayuno programado"
-                      >
-                        <UtensilsCrossed className="w-2 h-2 md:w-2.5 md:h-2.5" strokeWidth={3} />
-                        <span>Ayuno</span>
+                    {/* Esquina inf. derecha: platito = comanda cargada (sólo si puede verla) +
+                        pill de ayuno. En flex para que no se pisen si el paciente tiene ambos. */}
+                    {((canViewComanda && !!(bed.meals?.almuerzo || bed.meals?.cena)) || hasLiveFasting(bed.fasting)) && (
+                      <div className="absolute bottom-0.5 right-0.5 flex items-center gap-0.5">
+                        {canViewComanda && (bed.meals?.almuerzo || bed.meals?.cena) && (
+                          <div
+                            className="flex items-center justify-center w-3.5 h-3.5 md:w-4 md:h-4 rounded-full bg-indigo-500 text-white ring-1 ring-white shadow-sm"
+                            title="Comanda cargada"
+                          >
+                            <Utensils className="w-2.5 h-2.5 md:w-3 md:h-3" strokeWidth={3} />
+                          </div>
+                        )}
+                        {hasLiveFasting(bed.fasting) && (
+                          <div
+                            className="flex items-center gap-0.5 px-1 h-3 md:h-3.5 rounded-full bg-amber-500 text-white text-[7px] md:text-[8px] font-black ring-1 ring-white shadow-sm"
+                            title="Ayuno programado"
+                          >
+                            <UtensilsCrossed className="w-2 h-2 md:w-2.5 md:h-2.5" strokeWidth={3} />
+                            <span>Ayuno</span>
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -1863,7 +2049,19 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                             <UserIcon className={cn("w-3.5 h-3.5", t.label)} />
                             <span className={cn("text-[9px] font-bold uppercase tracking-widest", t.label)}>Paciente</span>
                           </div>
-                          <p className="text-base font-black text-slate-900 leading-snug">{selectedBed.patientName}</p>
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-base font-black text-slate-900 leading-snug min-w-0 truncate">{selectedBed.patientName}</p>
+                            {selectedBed.patientName && journeyTickets.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setJourneyOpen(true)}
+                                className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-200 bg-white text-slate-600 text-[10px] font-bold uppercase tracking-wide whitespace-nowrap hover:bg-slate-50 transition-colors"
+                              >
+                                <History className="w-3 h-3" />
+                                Historial del paciente
+                              </button>
+                            )}
+                          </div>
                         </div>
 
                         {/* Tab bar — scrolleable en X para que en mobile los 4 tabs no
@@ -2000,6 +2198,8 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                         {/* Tab: Dieta */}
                         {activeTab === 'dieta' && (
                           <>
+                            {/* Dieta del paciente PRIMERO (tipo + condiciones + formulario) para que
+                                Nutrición sepa qué dieta tiene ANTES de cargar el menú (abajo). */}
                             {displayBed?.dietTags && displayBed.dietTags.length > 0 && (
                               <div className="bg-emerald-50/60 rounded-xl p-3 border border-emerald-100">
                                 <p className="text-[8px] font-bold uppercase text-emerald-700 mb-2">Condiciones y Tipo</p>
@@ -2062,6 +2262,28 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                             {enrichLoading && (
                               <p className="text-xs text-slate-400 italic text-center py-2">Cargando...</p>
                             )}
+                            {/* Carga de menú por Nutrición (15.CargasDieta) — DEBAJO del detalle de
+                                dieta: se carga el menú sabiendo qué dieta/condiciones tiene el paciente.
+                                Nutrición (permiso cargar_dieta) edita; catering/otros lo ven en lectura. */}
+                            {(() => {
+                              const liveBed = beds.find(b => b.label === selectedBed.label) ?? selectedBed;
+                              const canEditMeal = can(currentUser, 'cargar_dieta');
+                              const hasAnyMeal = !!(liveBed.meals?.almuerzo || liveBed.meals?.cena);
+                              if (!canViewComanda) return null;              // sin permiso → no ve la sección
+                              if (!canEditMeal && !hasAnyMeal) return null;  // solo-lectura y nada cargado → nada
+                              return (
+                                <div className="rounded-xl p-3 border border-indigo-100 bg-indigo-50/40 space-y-2">
+                                  <div className="flex items-center gap-1.5">
+                                    <UtensilsCrossed className="w-3.5 h-3.5 text-indigo-500" />
+                                    <p className="text-[8px] font-bold uppercase text-indigo-700 tracking-widest">Menú{canEditMeal ? ' — Nutrición' : ''}</p>
+                                  </div>
+                                  {MEAL_SLOTS.map(({ slot, label }) => (
+                                    <MealSlotEditor key={slot} bed={liveBed} slot={slot} label={label}
+                                      canEdit={canEditMeal} onSave={onSaveMeal} onClear={onClearMeal} />
+                                  ))}
+                                </div>
+                              );
+                            })()}
                           </>
                         )}
 
@@ -2222,6 +2444,15 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
           })()}
         </DialogContent>
       </Dialog>
+
+      {/* Trayectoria del paciente — hermano del detalle de cama: se apila encima y al
+          cerrar vuelve al detalle (no cerramos selectedBed al abrirlo). */}
+      <PatientJourney
+        patientTickets={journeyTickets}
+        isOpen={journeyOpen}
+        onClose={() => setJourneyOpen(false)}
+        workflowLabels={WORKFLOW_LABELS}
+      />
     </div>
   );
 };

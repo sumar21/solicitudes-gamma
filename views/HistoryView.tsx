@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import * as XLSX from 'xlsx';
-import { Ticket, TicketStatus, WorkflowType } from '../types';
+import { Ticket, TicketStatus } from '../types';
 import {
   Search, Calendar as CalendarIcon, Clock, CheckCircle2,
   ArrowRightLeft, Settings, X, Filter, AlertCircle, Download,
@@ -19,21 +19,11 @@ import { PatientJourney } from '../components/PatientJourney';
 import { SearchableSelect } from '../components/ui/searchable-select';
 import { movementLabel } from '../lib/ticketEvents';
 import { cn, formatDateReadable, formatDateTime, calculateTicketMetrics, formatBedName } from '../lib/utils';
+import { WORKFLOW_LABELS } from '../lib/constants';
 
 interface HistoryViewProps {
   tickets: Ticket[];
 }
-
-const WORKFLOW_LABELS: Record<WorkflowType, string> = {
-  [WorkflowType.INTERNAL]: 'Traslado Interno',
-  // ITR_TO_FLOOR antes era "Ingreso ITR" pero el origen real es la sala de espera
-  // de Admisión (HRA). Renombrado en 2026-05 para reflejar la semántica real.
-  [WorkflowType.ITR_TO_FLOOR]: 'Sala de Espera Admisión',
-  [WorkflowType.INGRESO_A_ITR]: 'Ingreso a ITR',
-  // Tickets legacy que se crearon como "Cambio de Habitación" se muestran ahora
-  // como "Traslado Interno" porque ambos workflows fueron fusionados.
-  [WorkflowType.ROOM_CHANGE]: 'Traslado Interno',
-};
 
 const DateRangeTrigger = React.forwardRef<
   HTMLButtonElement, 
@@ -95,11 +85,20 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
   }, [tickets]);
 
   // Trayectoria: opciones del combobox "Seleccionar paciente" (pacientes únicos ya en
-  // memoria — sin fetch aparte). Label = nombre · #código; el buscador interno del
-  // SearchableSelect filtra sobre el label. Orden alfabético para un default legible.
+  // memoria — sin fetch aparte). Label = nombre · #código · habitación actual; el buscador
+  // interno del SearchableSelect filtra sobre el label (así se puede tipear la habitación).
+  // Habitación actual = destino (o, si falta, origen) del ticket más reciente por createdAt.
+  // Orden alfabético para un default legible.
   const patientOptions = useMemo(
     () => patientGroups
-      .map(g => ({ value: g.key, label: g.code ? `${g.name} · #${g.code}` : g.name }))
+      .map(g => {
+        const latest = [...g.tickets].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+        const room = formatBedName(latest && (latest.destination || latest.origin) || '');
+        const parts = [g.name];
+        if (g.code) parts.push(`#${g.code}`);
+        if (room) parts.push(room);
+        return { value: g.key, label: parts.join(' · ') };
+      })
       .sort((a, b) => a.label.localeCompare(b.label)),
     [patientGroups],
   );
@@ -377,25 +376,27 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
               <X className="w-3 h-3 mr-1" />Limpiar
             </Button>
           )}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleExportExcel}
-            disabled={exporting || filteredHistory.length === 0}
-            className="h-8 gap-1.5 bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 font-bold text-[10px] rounded-lg disabled:opacity-60"
-          >
-            {exporting ? (
-              <>
-                <span className="inline-block w-3 h-3 border-2 border-emerald-200 border-t-emerald-700 rounded-full animate-spin" />
-                Generando...
-              </>
-            ) : (
-              <>
-                <Download className="w-3 h-3" />
-                Excel
-              </>
-            )}
-          </Button>
+          {viewMode === 'list' && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExportExcel}
+              disabled={exporting || filteredHistory.length === 0}
+              className="h-8 gap-1.5 bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 font-bold text-[10px] rounded-lg disabled:opacity-60"
+            >
+              {exporting ? (
+                <>
+                  <span className="inline-block w-3 h-3 border-2 border-emerald-200 border-t-emerald-700 rounded-full animate-spin" />
+                  Generando...
+                </>
+              ) : (
+                <>
+                  <Download className="w-3 h-3" />
+                  Excel
+                </>
+              )}
+            </Button>
+          )}
         </div>
       </div>
 

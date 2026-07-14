@@ -120,7 +120,22 @@ export interface Bed {
   cleaned?: boolean;
   cleanedBy?: string;   // nombre de la azafata que la marcó
   cleanedAt?: string;   // ISO — cuándo se marcó limpia
+  // Cargas de menú de Nutrición (overlay de 15.CargasDieta, keyed por comida). Solo se
+  // adjuntan si el paciente cargado coincide con el actual de la cama — evita mostrarle a
+  // catering la dieta de un paciente anterior tras reasignar la cama. Ver mergeBeds.
+  meals?: { almuerzo?: MealLoad; cena?: MealLoad };
 }
+
+// Una carga de menú de Nutrición sobre una comida de la cama (fila de 15.CargasDieta).
+// Menú y Opción son EXCLUYENTES → `tipo` es uno de los dos.
+export interface MealLoad {
+  tipo: 'MENU' | 'OPCION';
+  observaciones?: string;
+  by: string;       // nombre del/la nutricionista que cargó
+  at: string;       // ISO — cuándo se cargó
+  spItemId: string;
+}
+export type MealSlot = 'almuerzo' | 'cena';
 
 export type ViewMode = 'HOME' | 'REQUESTS' | 'USERS' | 'HISTORY' | 'BEDS' | 'CLEANINGS';
 export type SortKey = 'status' | 'patientName' | 'origin' | 'createdAt';
@@ -139,6 +154,9 @@ export const PERMISSIONS = [
   'confirmar_limpieza','iniciar_traslado','confirmar_recepcion','consolidar',
   // Acción del módulo Gestión de Limpieza: consolidar una cama marcada limpia contra PROGAL.
   'consolidar_limpieza',
+  // Mapa de Camas — comandas: cargar (Nutrición) vs ver las comandas cargadas (Catering/Nutrición).
+  'cargar_dieta',
+  'ver_dieta',
   'abm_usuarios','abm_roles',
   // Notificaciones granulares por tipo (antes había un solo `recibe_push`).
   // Cada permiso gobierna que el usuario reciba push + in-app de ese tipo.

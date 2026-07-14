@@ -651,7 +651,7 @@ export default function App() {
           {/* Roles — gateado por permiso abm_roles */}
           {canSeeRoles && (state.currentView as string) === 'ROLES' && <RoleManagementView currentUser={state.currentUser} onSessionRoleUpdate={actions.refreshSessionRole} />}
           {/* Mapa de Camas — gateado por Acceso_RT */}
-          {canViewBeds && state.currentView === 'BEDS' && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} onEnrichBed={actions.enrichBed} onRefresh={actions.refreshAll} onMarkClean={actions.markBedClean} onUndoClean={actions.undoBedClean} />}
+          {canViewBeds && state.currentView === 'BEDS' && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} onEnrichBed={actions.enrichBed} onRefresh={actions.refreshAll} onMarkClean={actions.markBedClean} onUndoClean={actions.undoBedClean} onSaveMeal={actions.saveMealLoad} onClearMeal={actions.clearMealLoad} />}
           {canViewCleanings && state.currentView === 'CLEANINGS' && <CleaningManagementView beds={state.beds} currentUser={state.currentUser} onConsolidate={(label) => actions.undoBedClean(label, 'CONSOLIDADO')} onRefresh={actions.refreshAll} />}
         </main>
       </div>

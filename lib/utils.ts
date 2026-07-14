@@ -1,7 +1,7 @@
 
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
-import { Ticket } from "../types"
+import { Bed, Ticket } from "../types"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -201,6 +201,52 @@ export function calculateTicketMetrics(ticket: Ticket) {
     transportTime,
     adminTime
   };
+}
+
+/**
+ * Lock de re-entrancia por clave para acciones asíncronas — anti doble-click.
+ *
+ * Mientras una acción con la misma `key` está en vuelo, las siguientes con esa key se
+ * ignoran (el `run` devuelve sin ejecutar `fn`). Es SINCRÓNICO (Set en memoria): un 2º
+ * disparo en el mismo tick ve el lock en el acto, cosa que un guard por estado de React
+ * NO logra (setState es async → el 2º click lee el estado viejo y también dispara). Se
+ * libera cuando la promesa de `fn` settlea (éxito o error). Ver useHospitalState: los
+ * handlers de transición de ticket (Habitación Lista, Iniciar Traslado, etc.) lo usan
+ * para que una azafata apurada no genere eventos duplicados en la trayectoria.
+ */
+export function createActionLock() {
+  const inFlight = new Set<string>();
+  return async function run(key: string, fn: () => Promise<void>): Promise<void> {
+    if (inFlight.has(key)) return;
+    inFlight.add(key);
+    try { await fn(); }
+    finally { inFlight.delete(key); }
+  };
+}
+
+/**
+ * Warning NO bloqueante para creación de tickets: ¿la habitación destino ya aloja
+ * pacientes del sexo OPUESTO al que se traslada? Habitación = mismo roomCode + area
+ * (mismo criterio con que BedsView agrupa cuartos). `sex` viene del enrich de PROGAL;
+ * si falta en el origen o en un ocupante, ese lado no cuenta (best-effort, nunca bloquea).
+ * Se excluye la propia cama destino. Devuelve el sexo del paciente + las camas en conflicto,
+ * o null si no hay incompatibilidad detectable.
+ */
+export function roomSexConflict(
+  beds: Bed[],
+  originLabel: string,
+  destLabel: string,
+): { patientSex: 'M' | 'F'; roommates: Bed[] } | null {
+  const patientSex = beds.find(b => b.label === originLabel)?.sex;
+  const destBed = beds.find(b => b.label === destLabel);
+  if (!patientSex || !destBed?.roomCode) return null;
+  const roommates = beds.filter(b =>
+    b.label !== destBed.label &&
+    b.roomCode === destBed.roomCode &&
+    b.area === destBed.area &&
+    !!b.patientName && !!b.sex && b.sex !== patientSex,
+  );
+  return roommates.length ? { patientSex, roommates } : null;
 }
 
 /**

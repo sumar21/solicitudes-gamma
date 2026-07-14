@@ -3,11 +3,11 @@ import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import {
   WorkflowType, Role, SedeType, Ticket, TicketStatus, User, Area,
   Notification, NotificationType, ViewMode, SortConfig, Bed, BedStatus,
-  RoleModule, Permission,
+  RoleModule, Permission, MealLoad, MealSlot,
 } from '../types';
 import { MOCK_TICKETS } from '../lib/constants';
 import { can, hasModule, canReceiveNotif } from '../lib/permissions';
-import { effectiveHostessAreas, formatDateTime } from '../lib/utils';
+import { effectiveHostessAreas, formatDateTime, createActionLock } from '../lib/utils';
 
 // ── JWT helpers (client-side, solo lectura — sin verificar firma) ─────────────
 function parseJwtPayload(token: string): Record<string, unknown> | null {
@@ -159,7 +159,11 @@ function progalStillHasTicketPatientOnOrigin(origin: Bed, ticket: Ticket): boole
 // Limpieza por azafata: label de cama → datos de quién/cuándo la marcó limpia.
 type CleaningInfo = { by: string; byId: string; at: string; spItemId: string };
 
-function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?: Map<string, CleaningInfo>): Bed[] {
+// Carga de menú de Nutrición: label de cama → cargas por comida + el paciente al que
+// se le cargó (para no mostrarla si la cama cambió de paciente).
+type MealsInfo = { patientCode: string; almuerzo?: MealLoad; cena?: MealLoad };
+
+function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?: Map<string, CleaningInfo>, meals?: Map<string, MealsInfo>): Bed[] {
   const result = gammaBeds.map(b => ({ ...b }));
   // Camas que algún traslado activo está usando (origen o destino). El overlay del ticket
   // tiene prioridad sobre el de limpieza: si un traslado tomó la cama, NO la mostramos limpia.
@@ -239,14 +243,40 @@ function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?: Map<st
     }
   }
 
+  // ── Overlay de cargas de menú (Nutrición) ───────────────────────────────────
+  // Solo se adjunta si el paciente que se cargó sigue siendo el de la cama: si la cama
+  // se reasignó, la carga vieja no se muestra (y se puede quitar/sobreescribir).
+  if (meals && meals.size) {
+    for (const bed of result) {
+      const m = meals.get(bed.label);
+      if (!m) continue;
+      if (m.patientCode && bed.patientCode && m.patientCode !== bed.patientCode) continue;
+      if (m.almuerzo || m.cena) bed.meals = { almuerzo: m.almuerzo, cena: m.cena };
+    }
+  }
+
   return result;
 }
 
-const POLL_TICKETS_MS     = 8_000;   // tickets: poll every 8s
+const POLL_TICKETS_MS     = 15_000;  // tickets: poll every 15s (bajado de 8s para ~halve requests en Vercel)
 const POLL_BEDS_MS        = 60_000;  // beds: poll every 60s
 
 /** Human-readable labels for status transitions (for poll-based notifications) */
 function statusChangeLabel(_from: string, to: string): { title: string } | null {
+  // Guard anti-retroceso: un poll stale (read-after-write de SP) puede reportar una
+  // transición HACIA ATRÁS en el workflow (ej. COMPLETED→WAITING_CONSOLIDATION). Eso no
+  // es un evento real → no generar notif espuria. REJECTED es terminal: no entra al rank,
+  // así que cancelar desde cualquier estado nunca se suprime.
+  const rank: Record<string, number> = {
+    [TicketStatus.WAITING_ROOM]: 0,
+    [TicketStatus.IN_TRANSIT]: 1,
+    [TicketStatus.IN_TRANSPORT]: 2,
+    [TicketStatus.WAITING_CONSOLIDATION]: 3,
+    [TicketStatus.COMPLETED]: 4,
+  };
+  const rFrom = rank[_from];
+  const rTo   = rank[to];
+  if (rFrom !== undefined && rTo !== undefined && rTo < rFrom) return null;
   switch (to) {
     case TicketStatus.IN_TRANSIT:             return { title: 'Habitacion Lista' };
     case TicketStatus.IN_TRANSPORT:           return { title: 'Traslado en Curso' };
@@ -443,6 +473,11 @@ export const useHospitalState = () => {
   const [bedsError, setBedsError]                  = useState<string | null>(null);
   const [ticketActionLoading, setTicketActionLoading] = useState(false);
   const writingRef = React.useRef(false); // block polls during SP writes
+  // Lock anti doble-click por ticket (ver createActionLock). Instancia estable por sesión:
+  // un 2º click sincrónico ve el lock en el acto — un guard por estado de React no alcanza.
+  const runTicketActionRef = React.useRef<ReturnType<typeof createActionLock>>();
+  if (!runTicketActionRef.current) runTicketActionRef.current = createActionLock();
+  const runTicketAction = runTicketActionRef.current;
   const ticketsEtagRef = React.useRef<string | null>(null); // ETag for smart polling
   const prevTicketSnapshotRef = React.useRef<Map<string, string>>(new Map()); // id → status for change detection
   const initialLoadDoneRef = React.useRef(false); // skip notifications on first load
@@ -459,6 +494,8 @@ export const useHospitalState = () => {
   // camas. closedCleaningsRef evita disparar el auto-cierre más de una vez por registro.
   const [cleanings, setCleanings]                  = useState<Map<string, CleaningInfo>>(new Map());
   const closedCleaningsRef                         = React.useRef<Set<string>>(new Set());
+  // Cargas de menú de Nutrición (overlay de 15.CargasDieta), key = label de cama.
+  const [meals, setMeals]                          = useState<Map<string, MealsInfo>>(new Map());
 
   // Snapshot del enrich por patientCode — se actualiza en cada fetchBeds con los beds
   // cuyo enriched===true. Permite que la pill de ayuno/dieta/diagnóstico "siga" al
@@ -468,9 +505,9 @@ export const useHospitalState = () => {
 
   const beds = useMemo(() => {
     const active = tickets.filter(t => t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED);
-    const merged = mergeBeds(rawBeds, active, cleanings);
+    const merged = mergeBeds(rawBeds, active, cleanings, meals);
     return reapplyEnrichFromMap(merged, patientEnrichMapRef.current);
-  }, [rawBeds, tickets, cleanings]);
+  }, [rawBeds, tickets, cleanings, meals]);
 
   // Derive isolatedBeds (bed labels) directly from the enrich. Los aislamientos vienen
   // de PROGAL en `bed.isolations` y "siguen" al paciente como el resto del enrich
@@ -603,6 +640,87 @@ export const useHospitalState = () => {
     } catch { /* best-effort */ }
   }, [authFetch, cleanings]);
 
+  // ── Cargas de menú de Nutrición (overlay 15.CargasDieta) ──────────────────
+  const fetchMeals = useCallback(async () => {
+    try {
+      const r = await authFetch('/api/dietas');
+      if (!r.ok) return; // mantiene el estado actual ante fallo transitorio
+      const data = await r.json();
+      const map = new Map<string, MealsInfo>();
+      for (const m of (data.meals ?? []) as any[]) {
+        if (!m.bedLabel) continue;
+        const slot: MealSlot | null = m.comida === 'ALMUERZO' ? 'almuerzo' : m.comida === 'CENA' ? 'cena' : null;
+        if (!slot) continue;
+        const cur = map.get(String(m.bedLabel)) ?? { patientCode: String(m.patientCode ?? '') };
+        cur.patientCode = cur.patientCode || String(m.patientCode ?? '');
+        cur[slot] = {
+          tipo: m.tipo === 'OPCION' ? 'OPCION' : 'MENU',
+          observaciones: String(m.observaciones ?? ''),
+          by: String(m.by ?? ''), at: String(m.at ?? ''), spItemId: String(m.spItemId ?? ''),
+        };
+        map.set(String(m.bedLabel), cur);
+      }
+      setMeals(map);
+    } catch { /* keep current */ }
+  }, [authFetch]);
+
+  // Nutrición carga/actualiza el menú de una comida (optimista + POST upsert).
+  const saveMealLoad = useCallback(async (
+    bed: Bed, comida: MealSlot, tipo: 'MENU' | 'OPCION', observaciones: string,
+  ) => {
+    if (!bed?.label) return;
+    const u = currentUser;
+    const at = new Date().toISOString();
+    setMeals(prev => {
+      const n = new Map<string, MealsInfo>(prev);
+      const cur = n.get(bed.label) ?? { patientCode: bed.patientCode ?? '' };
+      cur.patientCode = bed.patientCode ?? cur.patientCode;
+      cur[comida] = { tipo, observaciones, by: u?.name ?? '', at, spItemId: cur[comida]?.spItemId ?? '' };
+      n.set(bed.label, cur);
+      return n;
+    });
+    try {
+      const r = await authFetch('/api/dietas', {
+        method: 'POST',
+        body: JSON.stringify({
+          bedLabel: bed.label, bedCode: bed.bedCode ?? '', roomCode: bed.roomCode ?? '', area: bed.area ?? '',
+          patientName: bed.patientName ?? '', patientCode: bed.patientCode ?? '',
+          comida: comida === 'almuerzo' ? 'ALMUERZO' : 'CENA', tipo, observaciones,
+          userId: u?.id ?? '', userName: u?.name ?? '',
+        }),
+      });
+      if (r.ok) {
+        const data = await r.json().catch(() => ({} as any));
+        if (data?.spItemId) setMeals(prev => {
+          const n = new Map<string, MealsInfo>(prev);
+          const cur = n.get(bed.label);
+          if (cur?.[comida]) { cur[comida] = { ...cur[comida]!, spItemId: String(data.spItemId) }; n.set(bed.label, cur); }
+          return n;
+        });
+      } else {
+        fetchMeals(); // reconciliar contra SP ante fallo
+      }
+    } catch { fetchMeals(); }
+  }, [authFetch, currentUser, fetchMeals]);
+
+  // Nutrición quita una carga (optimista + PATCH soft-delete).
+  const clearMealLoad = useCallback(async (bed: Bed, comida: MealSlot) => {
+    if (!bed?.label) return;
+    const spItemId = meals.get(bed.label)?.[comida]?.spItemId;
+    setMeals(prev => {
+      const n = new Map<string, MealsInfo>(prev);
+      const cur = n.get(bed.label);
+      if (cur) { delete cur[comida]; if (!cur.almuerzo && !cur.cena) n.delete(bed.label); else n.set(bed.label, cur); }
+      return n;
+    });
+    try {
+      await authFetch('/api/dietas', {
+        method: 'PATCH',
+        body: JSON.stringify({ spItemId: spItemId || undefined, bedLabel: bed.label, comida: comida === 'almuerzo' ? 'ALMUERZO' : 'CENA' }),
+      });
+    } catch { /* best-effort */ }
+  }, [authFetch, meals]);
+
   // ── On-demand bed enrichment (single bed) ─────────────────────────────────
   const enrichBed = useCallback(async (bed: Bed): Promise<Bed> => {
     if (!bed.patientCode) return bed;
@@ -659,15 +777,18 @@ export const useHospitalState = () => {
     fetchBeds();
     fetchTickets();
     fetchCleanings();
+    fetchMeals();
     const ticketPoll    = setInterval(fetchTickets, POLL_TICKETS_MS);
     const bedPoll       = setInterval(fetchBeds, POLL_BEDS_MS);
     const cleaningPoll  = setInterval(fetchCleanings, POLL_BEDS_MS); // ritmo de camas (cambian poco)
+    const mealsPoll     = setInterval(fetchMeals, POLL_BEDS_MS);
     return () => {
       clearInterval(ticketPoll);
       clearInterval(bedPoll);
       clearInterval(cleaningPoll);
+      clearInterval(mealsPoll);
     };
-  }, [token, fetchBeds, fetchTickets, fetchCleanings]);
+  }, [token, fetchBeds, fetchTickets, fetchCleanings, fetchMeals]);
 
   // ── Resync de rol en caliente (para TODOS los usuarios) ──────────────────────
   // Los módulos/permisos sólo se hidratan en el login. Sin esto, cuando un admin edita
@@ -1470,85 +1591,114 @@ export const useHospitalState = () => {
     spLogEvent(newTicket.id, 'Solicitud Creada');
   };
 
-  const handleRoomReady = async (ticketId: string) => {
+  const handleRoomReady = (ticketId: string) => runTicketAction(ticketId, async () => {
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket?.destination || ticket.status === TicketStatus.IN_TRANSIT) return;
-    const now     = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const updates = { status: TicketStatus.IN_TRANSIT, cleaningDoneAt: now, destinationBedStatus: BedStatus.ASSIGNED, intervenedByHostess: 'SI' } as const;
-    setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
-    addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Habitación Lista',
-      message: `La habitación ${ticket.destination} está lista. ${ticket.patientName} puede ser trasladado.`,
-      ticketId: ticket.id, sede: ticket.sede,
-      originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
-      destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
-    });
-    if (await persistTicketUpdate(ticket, updates, 'No se pudo guardar "Habitación Lista" (error de conexión o del servidor). Reintentá.')) {
-      spLogEvent(ticket.id, 'Habitacion Preparada');
+    writingRef.current = true; // block polls durante la escritura a SP (mismo ciclo que create/edit)
+    try {
+      const now     = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const updates = { status: TicketStatus.IN_TRANSIT, cleaningDoneAt: now, destinationBedStatus: BedStatus.ASSIGNED, intervenedByHostess: 'SI' } as const;
+      setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
+      addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Habitación Lista',
+        message: `La habitación ${ticket.destination} está lista. ${ticket.patientName} puede ser trasladado.`,
+        ticketId: ticket.id, sede: ticket.sede,
+        originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
+        destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
+      });
+      if (await persistTicketUpdate(ticket, updates, 'No se pudo guardar "Habitación Lista" (error de conexión o del servidor). Reintentá.')) {
+        spLogEvent(ticket.id, 'Habitacion Preparada');
+      }
+    } finally {
+      // Liberación diferida SIEMPRE (try/finally) — si persistTicketUpdate lanza, writingRef
+      // debe volver a false o se congela todo el polling de la sesión.
+      setTimeout(() => { writingRef.current = false; }, 1000);
     }
-  };
+  });
 
-  const handleStartTransport = async (ticketId: string) => {
+  const handleStartTransport = (ticketId: string) => runTicketAction(ticketId, async () => {
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket || ticket.status === TicketStatus.IN_TRANSPORT) return;
-    const now     = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    // originBedStatus → "En preparación": al iniciar el traslado el paciente sale de la
-    // cama origen (coherente con mergeBeds). Persistimos el cambio en SP para auditoría.
-    const updates = { status: TicketStatus.IN_TRANSPORT, transportStartedAt: now, originBedStatus: BedStatus.PREPARATION, intervenedByHostess: 'SI' } as const;
-    setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
-    addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Traslado en Curso',
-      message: `${ticket.patientName} está en camino hacia ${ticket.destination}.`,
-      ticketId: ticket.id, sede: ticket.sede,
-      originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
-      destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
-    });
-    if (await persistTicketUpdate(ticket, updates, 'No se pudo guardar "Iniciar Traslado" (error de conexión o del servidor). Reintentá.')) {
-      spLogEvent(ticket.id, 'Inicio Traslado');
+    writingRef.current = true; // block polls durante la escritura a SP (mismo ciclo que create/edit)
+    try {
+      const now     = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      // originBedStatus → "En preparación": al iniciar el traslado el paciente sale de la
+      // cama origen (coherente con mergeBeds). Persistimos el cambio en SP para auditoría.
+      const updates = { status: TicketStatus.IN_TRANSPORT, transportStartedAt: now, originBedStatus: BedStatus.PREPARATION, intervenedByHostess: 'SI' } as const;
+      setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
+      addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Traslado en Curso',
+        message: `${ticket.patientName} está en camino hacia ${ticket.destination}.`,
+        ticketId: ticket.id, sede: ticket.sede,
+        originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
+        destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
+      });
+      if (await persistTicketUpdate(ticket, updates, 'No se pudo guardar "Iniciar Traslado" (error de conexión o del servidor). Reintentá.')) {
+        spLogEvent(ticket.id, 'Inicio Traslado');
+      }
+    } finally {
+      // Liberación diferida SIEMPRE (try/finally) — sino writingRef quedaría en true y
+      // congelaría el polling de la sesión si persistTicketUpdate lanzara.
+      setTimeout(() => { writingRef.current = false; }, 1000);
     }
-  };
+  });
 
-  const handleConfirmReception = async (ticketId: string) => {
+  const handleConfirmReception = (ticketId: string) => runTicketAction(ticketId, async () => {
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket?.destination) return;
     if (ticket.status !== TicketStatus.IN_TRANSPORT && ticket.status !== TicketStatus.IN_TRANSIT) return;
-    const now     = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const updates = { status: TicketStatus.WAITING_CONSOLIDATION, receptionConfirmedAt: now, destinationBedStatus: BedStatus.OCCUPIED, intervenedByHostess: 'SI' } as const;
-    setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
-    addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Recepción Confirmada',
-      message: `${ticket.patientName} ha sido recibido en ${ticket.destination}. Pendiente consolidar en PROGAL.`,
-      ticketId: ticket.id, sede: ticket.sede,
-      originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
-      destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
-    });
-    if (await persistTicketUpdate(ticket, updates, 'No se pudo guardar "Recepción confirmada" (error de conexión o del servidor). Reintentá.')) {
-      spLogEvent(ticket.id, 'Paciente Recibido');
+    writingRef.current = true; // block polls durante la escritura a SP (mismo ciclo que create/edit)
+    try {
+      const now     = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const updates = { status: TicketStatus.WAITING_CONSOLIDATION, receptionConfirmedAt: now, destinationBedStatus: BedStatus.OCCUPIED, intervenedByHostess: 'SI' } as const;
+      setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
+      addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Recepción Confirmada',
+        message: `${ticket.patientName} ha sido recibido en ${ticket.destination}. Pendiente consolidar en PROGAL.`,
+        ticketId: ticket.id, sede: ticket.sede,
+        originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
+        destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
+      });
+      if (await persistTicketUpdate(ticket, updates, 'No se pudo guardar "Recepción confirmada" (error de conexión o del servidor). Reintentá.')) {
+        spLogEvent(ticket.id, 'Paciente Recibido');
+      }
+    } finally {
+      // Liberación diferida SIEMPRE (try/finally) — sino writingRef quedaría en true y
+      // congelaría el polling de la sesión si persistTicketUpdate lanzara.
+      setTimeout(() => { writingRef.current = false; }, 1000);
     }
-  };
+  });
 
-  const handleConsolidate = async (ticketId: string) => {
+  const handleConsolidate = (ticketId: string) => runTicketAction(ticketId, async () => {
     if (!can(currentUser, 'consolidar')) {
       alert('Tu rol no tiene permiso para consolidar.'); return;
     }
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket || ticket.status === TicketStatus.COMPLETED) return;
-    const updates = { status: TicketStatus.COMPLETED, completedAt: new Date().toISOString(), originBedStatus: BedStatus.PREPARATION } as const;
-    setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
-    // Isolation follows the patient automatically (derived from patientCode + beds)
-    addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Traslado Finalizado',
-      message: `El traslado de ${ticket.patientName} ha sido consolidado en PROGAL.`,
-      ticketId: ticket.id, sede: ticket.sede,
-      originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
-      destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
-    });
-    if (ticket.spItemId && !(await persistTicketUpdate(ticket, updates, 'No se pudo consolidar el traslado (error de conexión o del servidor). Reintentá.'))) return;
-    spLogEvent(ticket.id, 'Consolidado Progal');
-    // Refresh beds immediately + again after a few seconds (Gamma/PROGAL may take a moment)
-    fetchBeds();
-    ticketsEtagRef.current = null;
-    fetchTickets();
-    setTimeout(() => { fetchBeds(); fetchTickets(); }, 5000);
-  };
+    writingRef.current = true; // block polls durante la escritura a SP (mismo ciclo que create/edit)
+    try {
+      const updates = { status: TicketStatus.COMPLETED, completedAt: new Date().toISOString(), originBedStatus: BedStatus.PREPARATION } as const;
+      setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
+      // Isolation follows the patient automatically (derived from patientCode + beds)
+      addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Traslado Finalizado',
+        message: `El traslado de ${ticket.patientName} ha sido consolidado en PROGAL.`,
+        ticketId: ticket.id, sede: ticket.sede,
+        originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
+        destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
+      });
+      if (ticket.spItemId && !(await persistTicketUpdate(ticket, updates, 'No se pudo consolidar el traslado (error de conexión o del servidor). Reintentá.'))) return;
+      spLogEvent(ticket.id, 'Consolidado Progal');
+      // Refrescamos camas para el mapa. El refetch de tickets va SOLO diferido (~5s, cuando
+      // writingRef ya se liberó y SP ya confirmó): un fetchTickets inmediato corre contra la
+      // latencia read-after-write de SP y podría re-leer el ticket como activo → snapshot
+      // corrupto + notif espuria de transición inversa (ver statusChangeLabel).
+      fetchBeds();
+      setTimeout(() => { ticketsEtagRef.current = null; fetchBeds(); fetchTickets(); }, 5000);
+    } finally {
+      // Liberación diferida SIEMPRE (try/finally) — sino writingRef quedaría en true y
+      // congelaría el polling de la sesión si persistTicketUpdate lanzara.
+      setTimeout(() => { writingRef.current = false; }, 1000);
+    }
+  });
 
-  const handleRejectTicket = async (ticketId: string, reason: string) => {
+  const handleRejectTicket = (ticketId: string, reason: string) => runTicketAction(ticketId, async () => {
     // Solo Admisión/Admin pueden cancelar, en cualquier etapa activa y sin importar si la
     // azafata ya intervino. Rol fijo + permiso (cinturón de seguridad sobre la config de SP).
     if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) {
@@ -1562,17 +1712,24 @@ export const useHospitalState = () => {
     }
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket || ticket.status === TicketStatus.REJECTED || ticket.status === TicketStatus.COMPLETED) return;
-    const updates = { status: TicketStatus.REJECTED, rejectionReason: reason, completedAt: new Date().toISOString() };
-    setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
-    addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Traslado Cancelado',
-      message: `El traslado de ${ticket.patientName} ha sido cancelado. Motivo: ${reason}`,
-      ticketId: ticket.id, sede: ticket.sede,
-      originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
-      destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
-    });
-    if (ticket.spItemId && !(await persistTicketUpdate(ticket, updates, 'No se pudo cancelar el traslado (error de conexión o del servidor). Reintentá.'))) return;
-    spLogEvent(ticket.id, `Cancelado: ${reason}`);
-  };
+    writingRef.current = true; // block polls durante la escritura a SP (mismo ciclo que create/edit)
+    try {
+      const updates = { status: TicketStatus.REJECTED, rejectionReason: reason, completedAt: new Date().toISOString() };
+      setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
+      addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Traslado Cancelado',
+        message: `El traslado de ${ticket.patientName} ha sido cancelado. Motivo: ${reason}`,
+        ticketId: ticket.id, sede: ticket.sede,
+        originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
+        destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
+      });
+      if (ticket.spItemId && !(await persistTicketUpdate(ticket, updates, 'No se pudo cancelar el traslado (error de conexión o del servidor). Reintentá.'))) return;
+      spLogEvent(ticket.id, `Cancelado: ${reason}`);
+    } finally {
+      // Liberación diferida SIEMPRE (try/finally) — sino writingRef quedaría en true y
+      // congelaría el polling de la sesión si persistTicketUpdate lanzara.
+      setTimeout(() => { writingRef.current = false; }, 1000);
+    }
+  });
 
   // ── Edit ticket (Admission/Admin, only while no hostess intervention) ───────
   //
@@ -1798,9 +1955,9 @@ export const useHospitalState = () => {
   const refreshAll = useCallback(async () => {
     bedsEtagRef.current = null;
     ticketsEtagRef.current = null;
-    await Promise.all([fetchBeds(true), fetchTickets(), fetchCleanings()]);
+    await Promise.all([fetchBeds(true), fetchTickets(), fetchCleanings(), fetchMeals()]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetchBeds, fetchTickets, fetchCleanings]);
+  }, [fetchBeds, fetchTickets, fetchCleanings, fetchMeals]);
 
   // El server ahora filtra Status_N='Enviada' (no es necesario filtrar en cliente).
   // Solo se aplica el corte por "más de 20 minutos" para decidir qué entra al banner.
@@ -2137,6 +2294,7 @@ export const useHospitalState = () => {
       handleCreateTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
       fetchBeds, enrichBed, refreshAll,
       markBedClean, undoBedClean,
+      saveMealLoad, clearMealLoad,
       handleUpdateUserAreas, refreshSessionRole, syncSessionRole, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleOpenNotifications, handleDismissToast,
       handleStartTransport,
       handleRejectTicket,

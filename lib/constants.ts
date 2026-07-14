@@ -11,6 +11,19 @@ export const MOCK_BEDS: Bed[] = transformApiDataToBeds();
 
 export const HOSPITAL_LOCATIONS = MOCK_BEDS.map(b => b.label);
 
+// Etiquetas humanas por workflow. Fuente única compartida (HistoryView, AuditModal,
+// PatientJourney, BedsView) para no redefinir el mapa en cada consumidor.
+export const WORKFLOW_LABELS: Record<WorkflowType, string> = {
+  [WorkflowType.INTERNAL]: 'Traslado Interno',
+  // ITR_TO_FLOOR antes era "Ingreso ITR" pero el origen real es la sala de espera
+  // de Admisión (HRA). Renombrado en 2026-05 para reflejar la semántica real.
+  [WorkflowType.ITR_TO_FLOOR]: 'Sala de Espera Admisión',
+  [WorkflowType.INGRESO_A_ITR]: 'Ingreso a ITR',
+  // Tickets legacy creados como "Cambio de Habitación" → se muestran como "Traslado
+  // Interno" porque ambos workflows fueron fusionados.
+  [WorkflowType.ROOM_CHANGE]: 'Traslado Interno',
+};
+
 export const ROOM_CHANGE_REASONS = [
   "Solicitud familiar",
   "Asilamiento / Infectologia",

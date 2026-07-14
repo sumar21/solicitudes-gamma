@@ -37,6 +37,34 @@ async function findRowsByEndpoint(basePath: string, endpoint: string): Promise<s
   return (data.value ?? []).map(it => String(it.id));
 }
 
+// Poda best-effort por-usuario: conserva las `keep` filas más frescas del usuario en el
+// entorno y borra el resto. Acota el fan-out de push que sufre un tercero pasivo cuando un
+// mismo user acumula endpoints viejos/rotados (root-cause de las notis duplicadas). Ordena
+// por lastModifiedDateTime DESC → la fila recién upserteada sobrevive siempre, y un 2do
+// device real (heartbeat cada 6h vía touchPushSubscription) se mantiene fresco y no se poda.
+// Nunca bloquea ni falla el alta: la query no-indexada (UserId_PS) puede fallar al azar (SP).
+async function prunePerUser(basePath: string, userId: string, keep: number): Promise<void> {
+  if (!userId) return; // sin user no hay a quién podar (evita borrar filas con UserId vacío)
+  try {
+    const filter = encodeURIComponent(
+      `fields/UserId_PS eq '${userId.replace(/'/g, "''")}' and fields/Entorno_PS eq '${ENTORNO}'`,
+    );
+    const r = await graphFetch(`${basePath}?$expand=fields&$filter=${filter}&$top=100`, { headers: PREFER_HDR });
+    if (!r.ok) return;
+    const data = (await r.json()) as { value?: { id: string; lastModifiedDateTime?: string }[] };
+    // lastModifiedDateTime es ISO 8601 → orden lexicográfico = cronológico; DESC = más nuevo primero.
+    const rows = (data.value ?? [])
+      .slice()
+      .sort((a, b) => String(b.lastModifiedDateTime ?? '').localeCompare(String(a.lastModifiedDateTime ?? '')));
+    for (const row of rows.slice(keep)) {
+      await graphFetch(`${basePath}/${row.id}`, { method: 'DELETE' });
+    }
+    if (rows.length > keep) console.log(`[push-subscribe] Pruned ${rows.length - keep} stale endpoint(s) for user ${userId}`);
+  } catch (err: any) {
+    console.error('[push-subscribe] prune error (best-effort):', err);
+  }
+}
+
 // ── DELETE — baja en logout (sin auth) ────────────────────────────────────────
 async function handleDelete(req: any, res: any, basePath: string) {
   const { endpoint } = req.body ?? {};
@@ -78,6 +106,7 @@ async function handlePost(req: any, res: any, basePath: string) {
         await graphFetch(`${basePath}/${dupId}`, { method: 'DELETE' });
       }
       if (ids.length > 1) console.log(`[push-subscribe] Deduped ${ids.length - 1} duplicate row(s) for user ${userId}`);
+      await prunePerUser(basePath, String(userId ?? ''), 5);
       return res.status(200).json({ ok: true, updated: true, deduped: ids.length - 1 });
     }
 
@@ -89,6 +118,7 @@ async function handlePost(req: any, res: any, basePath: string) {
       return res.status(500).json({ error: 'Failed to save subscription' });
     }
     console.log(`[push-subscribe] Created subscription for user ${userId}`);
+    await prunePerUser(basePath, String(userId ?? ''), 5);
     return res.status(200).json({ ok: true, created: true });
   } catch (err: any) {
     console.error('[push-subscribe] Error:', err);

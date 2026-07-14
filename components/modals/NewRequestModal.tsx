@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { SearchableSelect } from '../ui/searchable-select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { ITR_SOURCES, ROOM_CHANGE_REASONS } from '../../lib/constants';
-import { isHitArea, isHraArea } from '../../lib/utils';
+import { isHitArea, isHraArea, roomSexConflict } from '../../lib/utils';
 
 // Same ordering used in BedsView: pre-internación (HRA, HIT) first, then floors, then critical units
 const AREA_ORDER: Area[] = [
@@ -120,6 +120,13 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
     .filter(b => !activeTransferDestinations.has(b.label)) // ocultar camas ya asignadas a otro ticket activo
     .sort(sortByAreaThenLabel);
 
+  // Warning NO bloqueante: habitación destino con pacientes del sexo opuesto. Ver roomSexConflict.
+  const sexLabel = (s?: string) => (s === 'M' ? 'Masculino' : s === 'F' ? 'Femenino' : '');
+  const sexWarning = React.useMemo(
+    () => (origin && destination ? roomSexConflict(beds, origin, destination) : null),
+    [beds, origin, destination],
+  );
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[550px] rounded-3xl max-h-[92vh] overflow-y-auto">
@@ -201,6 +208,15 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
               placeholder="Seleccionar Destino"
               searchPlaceholder="Buscar cama de destino..."
             />
+            {sexWarning && (
+              <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200">
+                <span className="w-2 h-2 mt-1 rounded-full bg-amber-500 shrink-0" />
+                <p className="text-xs font-medium text-amber-800">
+                  Incompatibilidad de sexo: el paciente a trasladar es {sexLabel(sexWarning.patientSex)}, pero la habitación destino ya tiene pacientes de sexo {sexLabel(sexWarning.patientSex === 'M' ? 'F' : 'M')}
+                  {' '}({sexWarning.roommates.map(b => `${b.label} — ${b.patientName}`).join(', ')}). No bloquea, verificá antes de confirmar.
+                </p>
+              </div>
+            )}
           </div>
 
           {workflow === WorkflowType.INTERNAL && (

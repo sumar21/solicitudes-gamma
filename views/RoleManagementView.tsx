@@ -61,6 +61,13 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
     ],
   },
   {
+    module: 'Mapa de Camas', label: 'Mapa de Camas',
+    perms: [
+      { code: 'cargar_dieta', label: 'Cargar comanda / menú (Nutrición)' },
+      { code: 'ver_dieta',    label: 'Ver comandas cargadas (Catering / Nutrición)' },
+    ],
+  },
+  {
     module: 'Configuracion', label: 'Configuración',
     perms: [
       { code: 'abm_usuarios', label: 'ABM Usuarios' },

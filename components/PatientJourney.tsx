@@ -203,7 +203,7 @@ export const PatientJourney: React.FC<PatientJourneyProps> = ({
                 <Activity className="w-4 h-4 opacity-30" /> Línea de Tiempo
               </h4>
               <div className="space-y-4">
-                {[...episodes].reverse().map((t) => (
+                {episodes.map((t) => (
                   <EpisodeCard
                     key={t.id}
                     ticket={t}

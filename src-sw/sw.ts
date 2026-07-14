@@ -100,10 +100,10 @@ self.addEventListener('push', (event) => {
     })
   );
 
-  // Unique tag per event (backend sends one; fallback to a client-side unique one).
-  // Using ticketId alone would make Android collapse consecutive updates silently
-  // without firing a new heads-up banner.
-  const notifTag = tag ?? `${ticketId ?? 'nt'}-${type ?? 'evt'}-${Date.now()}`;
+  // Stable tag per (ticketId, type): the backend always sends one; the fallback
+  // mirrors it so a repeated push for the same event collapses into a single
+  // bubble instead of stacking a new one on every PATCH.
+  const notifTag = tag ?? `${ticketId ?? 'nt'}-${type ?? 'evt'}`;
 
   const options: NotificationOptions & {
     vibrate?: number[];
@@ -127,7 +127,7 @@ self.addEventListener('push', (event) => {
     // sending the notif straight to the tray without a toast. Letting it
     // auto-dismiss is the cost for guaranteeing the heads-up shows up.
     requireInteraction: false,
-    renotify: true,             // re-surface heads-up when tag is reused
+    renotify: false,            // reused tag → replace the bubble silently (one bubble, no second buzz)
     silent: false,              // explicit — some Android builds treat missing flag as silent
     timestamp: timestamp ?? Date.now(),
     // Having at least one action bumps notification importance on many Android devices

@@ -5,7 +5,14 @@
 
 import webpush from 'web-push';
 import { graphFetch } from './graph.js';
+import { simpleHash } from './gamma-client.js';
 import { getRoleByName, type RoleConfig } from './role-cache.js';
+import { createRecentEventGuard } from './push-dedupe.js';
+
+// Guard de idempotencia módulo-level: colapsa el doble PATCH casi-simultáneo (o el
+// reintento en un lambda caliente) en un solo envío por evento. Ver push-dedupe.ts.
+// ponytail: per-instancia-de-lambda; NO cubre 2 lambdas fríos en paralelo.
+const recentEventGuard = createRecentEventGuard(60_000);
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = '648fde7b-89d2-40ac-bc4a-63661508b50a'; // 09.PushSubscriptions
@@ -236,6 +243,7 @@ async function deleteSubscription(spItemId: string): Promise<void> {
 
 export async function sendPushToSubscribers(params: PushParams): Promise<void> {
   console.log(`[push-utils] Called with: title="${params.title}" sede="${params.sede}" excludeUser="${params.excludeUserId}"`);
+
   if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
     console.warn('[push-utils] VAPID keys not configured, skipping push');
     return;
@@ -253,17 +261,37 @@ export async function sendPushToSubscribers(params: PushParams): Promise<void> {
     roleCfgByName.set(r, await getRoleByName(r));
   }));
 
-  const relevant = subs.filter(s => isRelevant(s, params, roleCfgByName.get(s.role) ?? null));
+  let relevant = subs.filter(s => isRelevant(s, params, roleCfgByName.get(s.role) ?? null));
   console.log(`[push-utils] ${relevant.length} relevant after filtering`);
 
   if (relevant.length === 0) { console.log('[push-utils] No relevant subscribers, skipping'); return; }
 
+  // Discriminador del EVENTO LÓGICO: hash de (título + cuerpo). Distingue lo que dentro
+  // del mismo `type` son eventos DISTINTOS —los 3 STATUS_UPDATE de un ticket (Habitación
+  // Lista / Traslado en Curso / Finalizado) tienen títulos distintos, y los DIET/FASTING
+  // (sin ticketId, título fijo) tienen cuerpo por-paciente— pero es ESTABLE ante un
+  // re-envío idéntico (doble PATCH / reintento). Sin esto, el tag por (ticket,tipo)
+  // colapsaba transiciones y pacientes distintos en una sola burbuja silenciosa.
+  const eventDiscriminator = simpleHash(`${params.title}${params.body ?? ''}`);
+
+  // Idempotencia por evento lógico: si el MISMO evento se envió hace <60s desde esta
+  // instancia, lo salteamos. Se arma ACÁ —después de confirmar relevant>0— para que un
+  // primer intento que no entregó a nadie (subs vacías por error transitorio, VAPID off)
+  // NO suprima un reintento legítimo. Colapsa el doble PATCH casi-simultáneo (el lock
+  // cliente es per-pestaña). Techo per-instancia-de-lambda (ver recentEventGuard).
+  const dedupeKey = `${params.ticketId ?? 'nt'}:${params.type ?? 'evt'}:${eventDiscriminator}`;
+  if (recentEventGuard(dedupeKey)) {
+    console.log(`[push-utils] Skipping duplicate event (<60s): ${dedupeKey}`);
+    return;
+  }
+
   console.log(`[push-utils] Sending push to ${relevant.length} subscriber(s) for: ${params.title}`);
 
-  // Unique tag per event so consecutive notifications for the same ticket
-  // (e.g. NEW_TICKET → STATUS_UPDATE) don't collapse silently on Android —
-  // each one triggers its own heads-up banner.
-  const uniqueTagBase = `${params.ticketId ?? 'nt'}-${params.type ?? 'evt'}-${Date.now()}`;
+  // Tag por EVENTO LÓGICO (ticket-tipo-discriminador): dos push del MISMO evento colapsan
+  // en UNA burbuja; transiciones y pacientes distintos conservan su tag propio y disparan
+  // su heads-up (ver arquitectura.md:471). Antes el tag por (ticket,tipo) era demasiado
+  // grueso y silenciaba transporte/finalización y cambios de dieta de otros pacientes.
+  const uniqueTagBase = `${params.ticketId ?? 'nt'}-${params.type ?? 'evt'}-${eventDiscriminator}`;
 
   // CATERING subscribers may receive a custom message (human-readable format with
   // room + floor). We build a dedicated payload for them so the same event delivers
@@ -287,6 +315,12 @@ export async function sendPushToSubscribers(params: PushParams): Promise<void> {
         timestamp: Date.now(),
       })
     : genericPayload;
+
+  // Dedup por endpoint exacto: cinturón barato contra filas duplicadas en SP que
+  // apuntan al mismo endpoint (rotación/churn). Mandarlas todas = N copias del mismo
+  // push al mismo dispositivo. NO deduplicamos por userId: rompería multi-device.
+  const seen = new Set<string>();
+  relevant = relevant.filter(s => seen.has(s.endpoint) ? false : (seen.add(s.endpoint), true));
 
   const results = await Promise.allSettled(
     relevant.map(async (sub) => {
