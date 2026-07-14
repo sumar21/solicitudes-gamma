@@ -242,7 +242,7 @@ function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?: Map<st
   return result;
 }
 
-const POLL_TICKETS_MS     = 8_000;   // tickets: poll every 8s
+const POLL_TICKETS_MS     = 12_000;  // tickets: poll every 12s (bajado de 8s para reducir carga en Vercel)
 const POLL_BEDS_MS        = 60_000;  // beds: poll every 60s
 
 /** Human-readable labels for status transitions (for poll-based notifications) */
