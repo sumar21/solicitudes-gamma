@@ -742,6 +742,20 @@ export const useHospitalState = () => {
     }
   }, [authFetch]);
 
+  // Historial de traslados de UN paciente, on-demand (para el botón "Historial del paciente"
+  // del mapa de camas). Trae TODOS sus tickets del entorno —incl. Consolidados/Cancelados— con
+  // un fetch acotado por código, sin depender de tener toda la historia en memoria (`tickets`).
+  const fetchPatientTickets = useCallback(async (patientCode?: string): Promise<Ticket[]> => {
+    const code = patientCode?.trim();
+    if (!code) return [];
+    try {
+      const r = await authFetch(`/api/tickets?patientCode=${encodeURIComponent(code)}`);
+      if (!r.ok) return [];
+      const data = await r.json();
+      return Array.isArray(data.tickets) ? data.tickets : [];
+    } catch { return []; }
+  }, [authFetch]);
+
   const fetchTickets = useCallback(async () => {
     if (writingRef.current) return; // skip poll while writing to SP
     try {
@@ -2287,7 +2301,7 @@ export const useHospitalState = () => {
       setLoginEmail, setLoginPass,
       handleLogin, handleLogout,
       handleCreateTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
-      fetchBeds, enrichBed, refreshAll,
+      fetchBeds, enrichBed, fetchPatientTickets, refreshAll,
       markBedClean, undoBedClean,
       saveMealLoad, clearMealLoad,
       handleUpdateUserAreas, refreshSessionRole, syncSessionRole, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleOpenNotifications, handleDismissToast,

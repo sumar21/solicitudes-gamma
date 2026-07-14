@@ -214,12 +214,19 @@ async function handler(req: any, res: any) {
     // ── GET ────────────────────────────────────────────────────────────────
     if (req.method === 'GET') {
       const fetchAll = req.query?.all === '1';
+      const patientCode = typeof req.query?.patientCode === 'string' ? req.query.patientCode.trim() : '';
       // Entorno: siempre filtra. Histórico (?all=1) también — solo se trae lo del entorno actual.
       const entornoClause = `fields/Entorno_T eq '${ENTORNO}'`;
       const statusClause  = `fields/Status_T ne '${TicketStatus.COMPLETED}' and fields/Status_T ne '${TicketStatus.REJECTED}'`;
-      const filter = fetchAll
-        ? `&$filter=${entornoClause}`
-        : `&$filter=${entornoClause} and ${statusClause}`;
+      // ?patientCode=X → historial de UN paciente (todos sus tickets, incl. terminales) SIN
+      // traer toda la historia del entorno. Todos los tickets tienen CodigoPaciente_T poblado,
+      // así que el filtro por código es preciso (no cruza pacientes por nombre). Alimenta el
+      // botón "Historial del paciente" del mapa de camas con un fetch on-demand por cama.
+      const filter = patientCode
+        ? `&$filter=${entornoClause} and fields/CodigoPaciente_T eq '${patientCode.replace(/'/g, "''")}'`
+        : fetchAll
+          ? `&$filter=${entornoClause}`
+          : `&$filter=${entornoClause} and ${statusClause}`;
 
       // Sin tope: paginamos siguiendo @odata.nextLink y traemos TODOS los tickets del
       // entorno (mismo patrón que api/notifications.ts). El `$top=500` es solo el tamaño

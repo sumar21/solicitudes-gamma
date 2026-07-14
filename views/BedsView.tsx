@@ -52,6 +52,8 @@ interface BedsViewProps {
   bedsError?: string | null;
   isolatedBeds?: Set<string>;
   onEnrichBed?: (bed: Bed) => Promise<Bed>;
+  // Historial de traslados de un paciente, on-demand (para el botón "Historial del paciente").
+  onFetchPatientTickets?: (patientCode?: string) => Promise<Ticket[]>;
   onRefresh?: () => void | Promise<void>;
   // Limpieza por azafata: marca/deshace una cama "En preparación" como limpia (overlay
   // de 14.Limpiezas — ver hooks/useHospitalState markBedClean/undoBedClean).
@@ -228,7 +230,7 @@ const MealSlotEditor: React.FC<{
   );
 };
 
-export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onRefresh, onMarkClean, onUndoClean, onSaveMeal, onClearMeal }) => {
+export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onFetchPatientTickets, onRefresh, onMarkClean, onUndoClean, onSaveMeal, onClearMeal }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
   const [journeyOpen, setJourneyOpen] = useState(false);
   const [enrichedBed, setEnrichedBed] = useState<Bed | null>(null);
@@ -271,21 +273,29 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
 
   const displayBed = enrichedBed ?? selectedBed;
 
-  // Traslados del paciente de la cama abierta — mismo criterio de agrupación que
-  // Historial: por patientCode si ambos lo tienen, si no por patientName normalizado.
-  // Se deriva de selectedBed (no de un snapshot aparte) para poder gatear el botón:
-  // la ocupación viene de PROGAL, independiente de los tickets, así que un paciente
-  // puede no tener ninguno → sin traslados no mostramos "Historial" (evita dead-end).
-  const journeyTickets = useMemo(() => {
-    if (!selectedBed) return [];
-    const code = selectedBed.patientCode?.trim();
-    const name = (selectedBed.patientName ?? '').trim().toLowerCase();
-    return tickets.filter(t => {
-      const tc = t.patientCode?.trim();
-      if (code && tc) return tc === code;
-      return (t.patientName ?? '').trim().toLowerCase() === name;
-    });
-  }, [selectedBed, tickets]);
+  // Historial de traslados del paciente de la cama abierta, ON-DEMAND: al abrir el modal se
+  // fetchean SOLO sus tickets (incl. Consolidados/Cancelados) por código — sin depender de
+  // tener toda la historia en memoria. `loaded` distingue "todavía no cargó" de "cargó y no
+  // tiene ninguno" → el botón muestra spinner / "Historial" / "Sin traslados" correctamente.
+  const [patientTickets, setPatientTickets] = useState<Ticket[]>([]);
+  const [patientTicketsLoading, setPatientTicketsLoading] = useState(false);
+  const [patientTicketsLoaded, setPatientTicketsLoaded] = useState(false);
+
+  React.useEffect(() => {
+    const code = selectedBed?.patientCode?.trim();
+    if (!code || !selectedBed?.patientName || !onFetchPatientTickets) {
+      setPatientTickets([]); setPatientTicketsLoaded(false); setPatientTicketsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setPatientTicketsLoading(true);
+    setPatientTicketsLoaded(false);
+    onFetchPatientTickets(code)
+      .then(ts => { if (!cancelled) { setPatientTickets(ts); setPatientTicketsLoaded(true); } })
+      .catch(() => { if (!cancelled) { setPatientTickets([]); setPatientTicketsLoaded(true); } })
+      .finally(() => { if (!cancelled) setPatientTicketsLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedBed?.id, onFetchPatientTickets]);
 
   // ¿Este usuario puede ver comandas cargadas? (Nutrición carga; Catering/Nutrición ven).
   // Gatea tanto el ícono de la tarjeta como la sección de la pestaña Dieta.
@@ -2051,15 +2061,21 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                           </div>
                           <div className="flex items-center justify-between gap-2">
                             <p className="text-base font-black text-slate-900 leading-snug min-w-0 truncate">{selectedBed.patientName}</p>
-                            {selectedBed.patientName && journeyTickets.length > 0 && (
-                              <button
-                                type="button"
-                                onClick={() => setJourneyOpen(true)}
-                                className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-200 bg-white text-slate-600 text-[10px] font-bold uppercase tracking-wide whitespace-nowrap hover:bg-slate-50 transition-colors"
-                              >
-                                <History className="w-3 h-3" />
-                                Historial del paciente
-                              </button>
+                            {selectedBed.patientName && (
+                              patientTicketsLoading ? (
+                                <span className="shrink-0 text-[10px] font-medium text-slate-400 whitespace-nowrap">Cargando…</span>
+                              ) : patientTickets.length > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setJourneyOpen(true)}
+                                  className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-200 bg-white text-slate-600 text-[10px] font-bold uppercase tracking-wide whitespace-nowrap hover:bg-slate-50 transition-colors"
+                                >
+                                  <History className="w-3 h-3" />
+                                  Historial del paciente
+                                </button>
+                              ) : patientTicketsLoaded ? (
+                                <span className="shrink-0 text-[10px] font-medium text-slate-400 italic whitespace-nowrap">Sin traslados</span>
+                              ) : null
                             )}
                           </div>
                         </div>
@@ -2448,7 +2464,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       {/* Trayectoria del paciente — hermano del detalle de cama: se apila encima y al
           cerrar vuelve al detalle (no cerramos selectedBed al abrirlo). */}
       <PatientJourney
-        patientTickets={journeyTickets}
+        patientTickets={patientTickets}
         isOpen={journeyOpen}
         onClose={() => setJourneyOpen(false)}
         workflowLabels={WORKFLOW_LABELS}
