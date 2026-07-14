@@ -1336,3 +1336,39 @@ El auto-cierre se implementa en `useHospitalState` comparando el estado de cada 
 - `% s/Total = Ocupadas / (Ocupadas + Libres + Inhabilitadas)` — excluye solo Prep.
 
 Verificado contra el reporte real: 75 ocupadas → `75/(75+38)=66,37%` s/Habilitadas y `75/(75+38+5)=63,56%` s/Total.
+
+---
+
+## 27. Decisiones recientes (2026-07-06)
+
+### 27.1. Notificaciones nativas: un solo canal (Web Push del SW), eliminado el `window.Notification` de página
+
+**Qué:** Se eliminó el bloque que disparaba `new window.Notification()` desde el change-detection del polling en [hooks/useHospitalState.ts:~897](hooks/useHospitalState.ts#L897). A partir de ahora las notificaciones **nativas** del navegador/OS las emite **exclusivamente** el Service Worker vía Web Push (`showNotification()` en [src-sw/sw.ts:139](src-sw/sw.ts#L139)). El toast in-app (arriba-centro, [NotificationToasts](components/NotificationToast.tsx)) sigue cubriendo el foreground; el sonido con cooldown quedó intacto.
+
+**Por qué:** había **dos sistemas independientes reaccionando al mismo evento** sin coordinarse:
+- **Web Push (server → SW):** `push-utils.ts` empuja al suscriptor; el SW muestra la notif. Funciona con la pestaña en foco, en segundo plano o cerrada.
+- **`window.Notification` de página (cliente):** el polling (cada 8s) detectaba el mismo cambio comparando snapshots y, además del toast, creaba una notif nativa.
+
+Para un mismo evento, en desktop con la pestaña en foco, el usuario recibía la notif del Web Push **y** la de página → **duplicado** abajo a la derecha. No se deduplicaban entre sí porque usan namespaces de `tag` distintos (SW: `${ticketId}-${type}-${timestamp}`; página: `NOTIF-POLL-${ticketId}-${status}`). Agravantes: el loop de página **no tenía tope** (los toasts sí, capados a 5) y una edición de destino emite 3 notifs → hasta 6 nativas por un solo cambio → "lluvia" con animación rota. El canal de página era un vestigio (fallback previo a que Web Push estuviera sólido) que quedó redundante y nunca se removió.
+
+**Impacto:** un evento = una notif nativa (la del SW). Se elimina el duplicado y la animación rota del stack de Chrome. **Riesgo asumido:** un usuario en desktop **sin** Web Push activo (permiso denegado / suscripción fallida) ya no recibe notif nativa desde la página; solo ve el toast in-app mientras la pestaña esté abierta. Se consideró aceptable porque el toast in-app cubre el foreground y Web Push es el canal correcto para el resto.
+
+**Cómo revertir (si el fix no funciona en producción):** restaurar el bloque dentro del `if (relevantToasts.length > 0) { ... }`, justo debajo del bloque de sonido (`soundCooldownRef`), reemplazando el comentario `NOTA:` por:
+
+```ts
+        // Browser notifications (works even when tab is not in foreground)
+        if ('Notification' in window && window.Notification.permission === 'granted') {
+          for (const toast of relevantToasts) {
+            const n = toast.notification;
+            try {
+              new window.Notification(n.title, {
+                body: n.message,
+                icon: '/favicon.ico',
+                tag: n.id, // prevents duplicates
+              });
+            } catch { /* silent — some browsers block from non-secure contexts */ }
+          }
+        }
+```
+
+Alternativa a revertir del todo: **blindar** el canal de página en vez de eliminarlo — dispararlo solo si `document.hidden`, capado a 1-2 y con `tag` estable (`n.ticketId ?? n.id`) para que el OS dedupe. Cubre al usuario sin Web Push sin reintroducir la lluvia en foco.

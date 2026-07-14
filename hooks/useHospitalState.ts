@@ -1015,19 +1015,14 @@ export const useHospitalState = () => {
           setTimeout(() => { soundCooldownRef.current = false; }, 3000);
         }
 
-        // Browser notifications (works even when tab is not in foreground)
-        if ('Notification' in window && window.Notification.permission === 'granted') {
-          for (const toast of relevantToasts) {
-            const n = toast.notification;
-            try {
-              new window.Notification(n.title, {
-                body: n.message,
-                icon: '/favicon.ico',
-                tag: n.id, // prevents duplicates
-              });
-            } catch { /* silent — some browsers block from non-secure contexts */ }
-          }
-        }
+        // NOTA: las notificaciones nativas del navegador/OS las emite EXCLUSIVAMENTE
+        // el Service Worker vía Web Push (showNotification), que funciona con la
+        // pestaña en foco, en segundo plano o cerrada. Antes acá también se disparaba
+        // un `new window.Notification()` por cada notif relevante: en desktop se
+        // sumaba al Web Push y al toast in-app para el MISMO evento (2-3 notifs casi
+        // idénticas abajo a la derecha), sin tope ni dedupe → "lluvia" de notifs con
+        // animación rota. Se eliminó ese canal de página; el toast in-app (arriba-
+        // centro) cubre el foreground y el Web Push cubre el resto.
       }
     }
 

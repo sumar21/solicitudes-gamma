@@ -33,3 +33,11 @@ de cada diseño, ver [decisiones.md](decisiones.md); para el "qué hay", [arquit
 |---------|----------------|---------------------|
 | Los **totales del zócalo no cuadran** con lo esperado | Ocupadas = `OCCUPIED + ASSIGNED`; las "En preparación" quedan fuera de ambos porcentajes (ver [decisiones 26.3](decisiones.md)) | `% s/Habilitadas = Ocup/(Ocup+Libres)`; `% s/Total = Ocup/(Ocup+Libres+Inhab)`. El zócalo cuenta las camas **filtradas** que se exportan |
 | Una cama "limpia" (overlay) cuenta como **Libre** en el PDF | El PDF refleja lo que muestra el mapa: una cama con overlay `cleaned` se ve Disponible | Esperado — el overlay es la fuente de verdad de la vista |
+
+## Notificaciones
+
+| Síntoma | Causa probable | Qué mirar / escalar |
+|---------|----------------|---------------------|
+| **"Lluvia" de notificaciones nativas duplicadas** abajo a la derecha (Chrome desktop), animación rota, casi idénticas | Reintroducción del canal `window.Notification` de página que se sumaba al Web Push del SW para el mismo evento (ver [decisiones 27.1](decisiones.md)). Fue **eliminado el 2026-07-06** | Confirmar que en [useHospitalState.ts](../hooks/useHospitalState.ts) NO exista un `new window.Notification()` dentro del change-detection. La única fuente de notifs nativas debe ser el SW (`showNotification` en [src-sw/sw.ts](../src-sw/sw.ts)) |
+| **No llega ninguna notificación nativa** con la app cerrada / en segundo plano (desde el fix) | Web Push es ahora el único canal; si la suscripción push falló o el permiso está denegado, no hay fallback de página | Revisar permiso de notificaciones del navegador, que exista la suscripción en `09.PushSubscriptions`, y el push-log en IndexedDB (`mediflow-push-log`, snippet en [sw.ts](../src-sw/sw.ts)). Con la pestaña abierta igual se ve el toast in-app |
+| Se ve el **toast in-app (arriba-centro) pero NO** la notif nativa, con pestaña en foco | Comportamiento esperado post-fix: en foreground alcanza con el toast; la notif nativa del SW puede no mostrar heads-up con la pestaña activa | Esperado. No es el bug de duplicados |
