@@ -3,7 +3,7 @@ import { Bed, BedStatus, Ticket, TicketStatus, User, Area, IsolationEntry, MealS
 import { can } from '../lib/permissions';
 import { hasLiveFasting, fastingOccurrences, formatFastingDateTime, fastingTimesForToday } from '../lib/fasting';
 import { Input } from '../components/ui/input';
-import { cn } from '../lib/utils';
+import { cn, dietRequiresCustomComanda } from '../lib/utils';
 import { BedDouble, User as UserIcon, Info, Search, X, ChevronDown, Check, AlertTriangle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan, History } from 'lucide-react';
 import { Dialog, DialogContent } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
@@ -60,7 +60,7 @@ interface BedsViewProps {
   onMarkClean?: (bed: Bed) => void | Promise<void>;
   onUndoClean?: (bedLabel: string) => void | Promise<void>;
   // Carga de menú por Nutrición (15.CargasDieta): carga/actualiza o quita una comida.
-  onSaveMeal?: (bed: Bed, comida: MealSlot, tipo: 'MENU' | 'OPCION', observaciones: string) => void | Promise<void>;
+  onSaveMeal?: (bed: Bed, comida: MealSlot, tipo: 'MENU' | 'OPCION' | 'OTROS', detalle: string, observaciones: string) => void | Promise<void>;
   onClearMeal?: (bed: Bed, comida: MealSlot) => void | Promise<void>;
 }
 
@@ -131,16 +131,22 @@ function drawBedTotalsFooter(
     ['Porcentaje Ocupación s/Habilitadas:', pct(ocupadas, ocupadas + libres)],
     ['Porcentaje Ocupación s/Total:', pct(ocupadas, ocupadas + libres + inhab)],
   ];
-  doc.setFontSize(7);
+  doc.setFontSize(8);
+  const GAP = 2.5;      // separación label → valor
+  const ITEM_GAP = 11;  // separación entre contadores
   let x = margin;
   for (const [label, val] of items) {
-    const w = doc.getTextWidth(label) + 1.5 + doc.getTextWidth(val);
-    if (x + w > pageW - margin) { x = margin; y += 5; } // wrap si no entra en la línea
+    // Medir el label con la MISMA fuente con la que se dibuja (negrita, más ancha) — sino el
+    // valor se posiciona encima del final del label (el "Ocupadas0" pegado que se veía).
+    doc.setFont('helvetica', 'bold');   const labelW = doc.getTextWidth(label);
+    doc.setFont('helvetica', 'normal'); const valW = doc.getTextWidth(val);
+    const w = labelW + GAP + valW;
+    if (x + w > pageW - margin) { x = margin; y += 5.5; } // wrap si no entra en la línea
     doc.setFont('helvetica', 'bold');   doc.setTextColor(71, 85, 105);
     doc.text(label, x, y);
     doc.setFont('helvetica', 'normal'); doc.setTextColor(30, 41, 59);
-    doc.text(val, x + doc.getTextWidth(label) + 1.5, y);
-    x += w + 6;
+    doc.text(val, x + labelW + GAP, y);
+    x += w + ITEM_GAP;
   }
 
   y += 5;
@@ -160,61 +166,99 @@ const MEAL_SLOTS: { slot: MealSlot; label: string }[] = [
 const fmtMealWhen = (m?: { by: string; at: string }) =>
   m ? `${m.by}${m.at ? ` · ${new Date(m.at).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}` : ''}` : '';
 
+// Pill de tipo (compartido con el monitor de comandas): Menú/Opción/Otros con su color.
+export const comandaTipoPill = (t?: string): { label: string; cls: string } =>
+  t === 'MENU'   ? { label: 'Menú',   cls: 'bg-emerald-100 text-emerald-700' }
+  : t === 'OPCION' ? { label: 'Opción', cls: 'bg-amber-100 text-amber-700' }
+  : { label: 'Otros', cls: 'bg-indigo-100 text-indigo-700' };
+
 const MealSlotEditor: React.FC<{
   bed: Bed; slot: MealSlot; label: string; canEdit: boolean;
-  onSave?: (bed: Bed, comida: MealSlot, tipo: 'MENU' | 'OPCION', obs: string) => void | Promise<void>;
+  onSave?: (bed: Bed, comida: MealSlot, tipo: 'MENU' | 'OPCION' | 'OTROS', detalle: string, obs: string) => void | Promise<void>;
   onClear?: (bed: Bed, comida: MealSlot) => void | Promise<void>;
 }> = ({ bed, slot, label, canEdit, onSave, onClear }) => {
   const meal = bed.meals?.[slot];
-  const [tipo, setTipo] = useState<'MENU' | 'OPCION' | ''>(meal?.tipo ?? '');
+  // Dieta terapéutica (liviana/líquida/astringente…): sin Menú/Opción, tipo fijo "Otros" y
+  // Nutrición ESCRIBE la comida en el detalle (obligatorio). Ver dietRequiresCustomComanda.
+  const forceOtros = dietRequiresCustomComanda(dietTypeOf(bed));
+  const [tipo, setTipo] = useState<'MENU' | 'OPCION' | ''>(meal?.tipo === 'MENU' || meal?.tipo === 'OPCION' ? meal.tipo : '');
+  const [detalle, setDetalle] = useState(meal?.detalle ?? '');
   const [obs, setObs]   = useState(meal?.observaciones ?? '');
   const [saving, setSaving] = useState(false);
-  // Re-sincroniza el form cuando el server confirma un cambio (nuevo id/timestamp).
+  // Marca si el usuario tocó el form: evita que un poll externo (otro dispositivo actualiza la
+  // MISMA cama+comida) pise lo que está tipeando sin guardar. Se re-arma tras un guardado propio.
+  const editedRef = React.useRef(false);
+  // Re-sincroniza el form cuando el server confirma un cambio (nuevo id/timestamp) — salvo que
+  // el usuario tenga ediciones sin guardar (no las pisamos).
   const sig = `${meal?.spItemId ?? ''}|${meal?.at ?? ''}`;
   React.useEffect(() => {
-    setTipo(meal?.tipo ?? '');
+    if (editedRef.current) return;
+    setTipo(meal?.tipo === 'MENU' || meal?.tipo === 'OPCION' ? meal.tipo : '');
+    setDetalle(meal?.detalle ?? '');
     setObs(meal?.observaciones ?? '');
   }, [sig]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!canEdit) {
+    const pill = meal ? comandaTipoPill(meal.tipo) : null;
     return (
       <div className="bg-white rounded-xl p-3 border border-slate-100">
         <div className="flex items-center justify-between mb-1">
           <p className="text-[8px] font-bold uppercase text-slate-400">{label}</p>
-          {meal
-            ? <span className={cn("px-2 py-0.5 rounded-full text-[9px] font-bold", meal.tipo === 'MENU' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700')}>{meal.tipo === 'MENU' ? 'Menú' : 'Opción'}</span>
+          {pill
+            ? <span className={cn("px-2 py-0.5 rounded-full text-[9px] font-bold", pill.cls)}>{pill.label}</span>
             : <span className="text-[10px] text-slate-400 italic">Sin carga</span>}
         </div>
-        {meal?.observaciones && <p className="text-[11px] text-slate-700 whitespace-pre-wrap break-words">{meal.observaciones}</p>}
+        {meal?.detalle && <p className="text-[11px] font-semibold text-slate-800 whitespace-pre-wrap break-words">{meal.detalle}</p>}
+        {meal?.observaciones && <p className="text-[11px] text-slate-500 whitespace-pre-wrap break-words mt-0.5">Obs: {meal.observaciones}</p>}
         {meal && <p className="text-[9px] text-slate-400 mt-1">{fmtMealWhen(meal)}</p>}
       </div>
     );
   }
 
-  const dirty = tipo !== (meal?.tipo ?? '') || obs.trim() !== (meal?.observaciones ?? '').trim();
+  // forceOtros fija OTROS; si no, respeta la selección o un OTROS ya guardado (dieta que dejó de
+  // ser terapéutica): así no bloquea editar solo obs/detalle sobre una comanda OTROS preexistente.
+  const effectiveTipo: 'MENU' | 'OPCION' | 'OTROS' | '' = forceOtros ? 'OTROS' : (tipo || (meal?.tipo === 'OTROS' ? 'OTROS' : ''));
+  const dirty =
+    effectiveTipo !== (meal?.tipo ?? '') ||
+    detalle.trim() !== (meal?.detalle ?? '').trim() ||
+    obs.trim() !== (meal?.observaciones ?? '').trim();
+  // En "Otros" el detalle (la comida) es OBLIGATORIO; en Menú/Opción es opcional.
+  const canSave = !!effectiveTipo && dirty && (!forceOtros || detalle.trim() !== '');
+
   return (
     <div className="bg-white rounded-xl p-3 border border-slate-100 space-y-2">
       <div className="flex items-center justify-between">
         <p className="text-[8px] font-bold uppercase text-slate-400">{label}</p>
         {meal && <span className="text-[9px] text-slate-400 truncate">{fmtMealWhen(meal)}</span>}
       </div>
-      <div className="flex gap-2">
-        {(['MENU', 'OPCION'] as const).map(op => (
-          <button key={op} type="button" onClick={() => setTipo(op)}
-            className={cn("flex-1 h-9 rounded-lg text-[11px] font-bold uppercase tracking-wide border transition-all",
-              tipo === op
-                ? (op === 'MENU' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-amber-500 text-white border-amber-500')
-                : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-100')}>
-            {op === 'MENU' ? 'Menú' : 'Opción'}
-          </button>
-        ))}
-      </div>
-      <textarea value={obs} onChange={e => setObs(e.target.value)} rows={2} maxLength={500}
+      {forceOtros ? (
+        <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-indigo-50 border border-indigo-100">
+          <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-indigo-100 text-indigo-700 uppercase tracking-wide">Otros</span>
+          <span className="text-[10px] font-medium text-indigo-700">Dieta especial — escribí la comida abajo</span>
+        </div>
+      ) : (
+        <div className="flex gap-2">
+          {(['MENU', 'OPCION'] as const).map(op => (
+            <button key={op} type="button" onClick={() => { editedRef.current = true; setTipo(op); }}
+              className={cn("flex-1 h-9 rounded-lg text-[11px] font-bold uppercase tracking-wide border transition-all",
+                tipo === op
+                  ? (op === 'MENU' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-amber-500 text-white border-amber-500')
+                  : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-100')}>
+              {op === 'MENU' ? 'Menú' : 'Opción'}
+            </button>
+          ))}
+        </div>
+      )}
+      <input value={detalle} onChange={e => { editedRef.current = true; setDetalle(e.target.value); }} maxLength={500}
+        placeholder={forceOtros ? 'Comida / menú (obligatorio)' : 'Detalle de la comanda (opcional)'}
+        className={cn("w-full rounded-lg border px-2.5 py-1.5 text-[11px] focus:outline-none focus:ring-2 focus:ring-emerald-200",
+          forceOtros && detalle.trim() === '' ? 'border-indigo-300 bg-indigo-50/30' : 'border-slate-200')} />
+      <textarea value={obs} onChange={e => { editedRef.current = true; setObs(e.target.value); }} rows={2} maxLength={500}
         placeholder="Observaciones (opcional)"
         className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] resize-none focus:outline-none focus:ring-2 focus:ring-emerald-200" />
       <div className="flex gap-2">
-        <Button size="sm" disabled={!tipo || !dirty || saving}
-          onClick={async () => { if (!tipo || !onSave) return; setSaving(true); try { await onSave(bed, slot, tipo, obs.trim()); } finally { setSaving(false); } }}
+        <Button size="sm" disabled={!canSave || saving}
+          onClick={async () => { if (!effectiveTipo || !onSave) return; setSaving(true); try { await onSave(bed, slot, effectiveTipo, detalle.trim(), obs.trim()); editedRef.current = false; } finally { setSaving(false); } }}
           className="flex-1 h-8 text-[11px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40">
           {saving ? 'Guardando…' : meal ? 'Actualizar' : 'Guardar'}
         </Button>

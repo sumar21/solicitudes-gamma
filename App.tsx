@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Home as HomeIcon, LogOut, History, Menu, Info,
   Mail, Lock, Eye, EyeOff, User, Settings, ChevronDown, ChevronUp, Users, Download
 } from './components/Icons';
-import { Globe, MapPin as MapPinIcon, RefreshCw } from 'lucide-react';
+import { Globe, MapPin as MapPinIcon, RefreshCw, Utensils } from 'lucide-react';
 import { GammaLogo } from './components/GammaLogo';
 import { IS_TESTING } from './lib/env';
 import { Button } from "./components/ui/button";
@@ -18,6 +18,7 @@ import { RequestsView } from './views/RequestsView';
 import { HistoryView } from './views/HistoryView';
 import { BedsView } from './views/BedsView';
 import { CleaningManagementView } from './views/CleaningManagementView';
+import { ComandasManagementView } from './views/ComandasManagementView';
 import { UserManagementView } from './views/UserManagementView';
 import { RoleManagementView } from './views/RoleManagementView';
 
@@ -152,6 +153,7 @@ export default function App() {
   const canViewHistorial = hasModule(state.currentUser, 'Historial');
   const canViewBeds      = hasModule(state.currentUser, 'Mapa de Camas');
   const canViewCleanings = hasModule(state.currentUser, 'Gestion Limpieza');
+  const canViewComandas  = hasModule(state.currentUser, 'Gestion Comandas');
   const canViewConfig    = hasModule(state.currentUser, 'Configuracion');
 
   // Subsections de Configuración por permiso fino.
@@ -386,6 +388,9 @@ export default function App() {
             {canViewCleanings && (
               <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'CLEANINGS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('CLEANINGS')}><SprayCanIcon className="w-4 h-4" />Limpiezas</Button>
             )}
+            {canViewComandas && (
+              <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'COMANDAS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('COMANDAS')}><Utensils className="w-4 h-4" />Comandas</Button>
+            )}
           </div>
 
           {/* Configuración — collapsible. Visible si el rol tiene Acceso_RT incluyendo Configuracion. */}
@@ -430,7 +435,7 @@ export default function App() {
               <GammaLogo size={20} />
             </button>
             <h1 className="text-lg md:text-xl font-black text-slate-900 tracking-tight truncate max-w-[100px] xs:max-w-[180px] sm:max-w-none">
-              {state.currentView === 'HOME' ? 'Monitor' : state.currentView === 'REQUESTS' ? 'Operativa' : state.currentView === 'BEDS' ? 'Mapa de Camas' : state.currentView === 'CLEANINGS' ? 'Gestión de Limpieza' : state.currentView === 'USERS' ? 'Usuarios' : (state.currentView as string) === 'ROLES' ? 'Roles' : 'Historial'}
+              {state.currentView === 'HOME' ? 'Monitor' : state.currentView === 'REQUESTS' ? 'Operativa' : state.currentView === 'BEDS' ? 'Mapa de Camas' : state.currentView === 'CLEANINGS' ? 'Gestión de Limpieza' : state.currentView === 'COMANDAS' ? 'Gestión de Comandas' : state.currentView === 'USERS' ? 'Usuarios' : (state.currentView as string) === 'ROLES' ? 'Roles' : 'Historial'}
             </h1>
             {IS_TESTING && (
               <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-600 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-white shadow-sm shrink-0">
@@ -496,6 +501,9 @@ export default function App() {
                 )}
                 {canViewCleanings && (
                   <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'CLEANINGS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('CLEANINGS'); setIsMobileMenuOpen(false); }}><SprayCanIcon className="w-4 h-4" />Limpiezas</Button>
+                )}
+                {canViewComandas && (
+                  <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'COMANDAS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('COMANDAS'); setIsMobileMenuOpen(false); }}><Utensils className="w-4 h-4" />Comandas</Button>
                 )}
               </div>
 
@@ -653,6 +661,7 @@ export default function App() {
           {/* Mapa de Camas — gateado por Acceso_RT */}
           {canViewBeds && state.currentView === 'BEDS' && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} onEnrichBed={actions.enrichBed} onFetchPatientTickets={actions.fetchPatientTickets} onRefresh={actions.refreshAll} onMarkClean={actions.markBedClean} onUndoClean={actions.undoBedClean} onSaveMeal={actions.saveMealLoad} onClearMeal={actions.clearMealLoad} />}
           {canViewCleanings && state.currentView === 'CLEANINGS' && <CleaningManagementView beds={state.beds} currentUser={state.currentUser} onConsolidate={(label) => actions.undoBedClean(label, 'CONSOLIDADO')} onRefresh={actions.refreshAll} />}
+          {canViewComandas && state.currentView === 'COMANDAS' && <ComandasManagementView beds={state.beds} currentUser={state.currentUser} onRefresh={actions.refreshAll} />}
         </main>
       </div>
 

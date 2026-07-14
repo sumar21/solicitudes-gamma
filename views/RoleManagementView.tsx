@@ -35,6 +35,7 @@ const MODULES = [
   { label: 'Historial', value: 'Historial' },
   { label: 'Mapa de Camas', value: 'Mapa de Camas' },
   { label: 'Gestión de Limpieza', value: 'Gestion Limpieza' },
+  { label: 'Gestión de Comandas', value: 'Gestion Comandas' },
   { label: 'Configuración', value: 'Configuracion' },
 ];
 

@@ -25,7 +25,7 @@ const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 
 const esc = (s: unknown) => String(s ?? '').replace(/'/g, "''");
 const COMIDAS = ['ALMUERZO', 'CENA'];
-const TIPOS   = ['MENU', 'OPCION'];
+const TIPOS   = ['MENU', 'OPCION', 'OTROS'];
 
 // Día calendario en hora Argentina (ART, UTC-3). Las comandas se planifican día a día:
 // el GET devuelve sólo las de hoy, así la de ayer no queda visible. 'en-CA' → 'YYYY-MM-DD'.
@@ -50,6 +50,53 @@ async function handler(req: any, res: any) {
 
   const basePath = `/sites/${SITE_ID}/lists/${LIST_ID}/items`;
 
+  // ── GET histórico — comandas cargadas en un rango de fechas (FechaCarga_D) ──
+  if (req.method === 'GET' && String(req.query?.history ?? '') === '1') {
+    const from = String(req.query?.from ?? '');
+    const to   = String(req.query?.to ?? '');
+    try {
+      const filter = encodeURIComponent(`fields/Entorno_D eq '${ENTORNO}'`);
+      // Paginamos siguiendo @odata.nextLink (el $top es tamaño de página, NO tope) para no
+      // cortar las filas más nuevas cuando la lista crece. Sin $orderby (OData sobre DateTime
+      // no-indexado es frágil): filtramos por día ART en JS abajo. MAX 20k = backstop.
+      const rows: Record<string, unknown>[] = [];
+      let next: string | null = `${basePath}?$expand=fields&$filter=${filter}&$top=500`;
+      while (next && rows.length < 20000) {
+        const page = await graphFetch(next, { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } });
+        if (!page.ok) { console.error('[dietas] GET history failed:', page.status); break; }
+        const pageData = (await page.json()) as { value?: Record<string, unknown>[]; '@odata.nextLink'?: string };
+        for (const it of pageData.value ?? []) rows.push(it);
+        const raw = pageData['@odata.nextLink'];
+        next = raw ? raw.replace(/^https:\/\/graph\.microsoft\.com\/v1\.0/, '') : null;
+      }
+      const all = rows.map((item: any) => {
+        const f = item.fields as Record<string, unknown>;
+        return {
+          spItemId:      String(item.id),
+          bedLabel:      String(f.CamaLabel_D ?? ''),
+          area:          String(f.Area_D ?? ''),
+          patientName:   String(f.PacienteNombre_D ?? ''),
+          patientCode:   String(f.PacienteCodigo_D ?? ''),
+          comida:        String(f.Comida_D ?? ''),
+          tipo:          String(f.Tipo_D ?? ''),
+          detalle:       String(f.Detalle_D ?? ''),
+          observaciones: String(f.Observaciones_D ?? ''),
+          by:            String(f.NutricionistaNombre_D ?? ''),
+          at:            String(f.FechaCarga_D ?? ''),
+          status:        String(f.Status_D ?? ''),
+        };
+      });
+      // Filtro por DÍA ART de FechaCarga en JS (el filtro OData sobre DateTime es frágil).
+      const inRange = all
+        .filter((m) => { const day = artDay(m.at); return day && (!from || day >= from) && (!to || day <= to); })
+        .sort((a, b) => String(b.at).localeCompare(String(a.at)));
+      return res.status(200).json({ meals: inRange });
+    } catch (err: any) {
+      console.error('[dietas] GET history error:', err);
+      return res.status(200).json({ meals: [] });
+    }
+  }
+
   // ── GET — comandas de HOY (ART) ───────────────────────────────────────────
   if (req.method === 'GET') {
     try {
@@ -72,6 +119,7 @@ async function handler(req: any, res: any) {
           patientCode:   String(f.PacienteCodigo_D ?? ''),
           comida:        String(f.Comida_D ?? ''),
           tipo:          String(f.Tipo_D ?? ''),
+          detalle:       String(f.Detalle_D ?? ''),
           observaciones: String(f.Observaciones_D ?? ''),
           by:            String(f.NutricionistaNombre_D ?? ''),
           byId:          String(f.NutricionistaID_D ?? ''),
@@ -92,14 +140,18 @@ async function handler(req: any, res: any) {
   // ── POST — cargar/actualizar menú (upsert por cama + comida + entorno) ─────
   if (req.method === 'POST') {
     const { bedLabel, bedCode, roomCode, area, patientName, patientCode,
-            comida, tipo, observaciones, userId, userName } = req.body ?? {};
+            comida, tipo, detalle, observaciones, userId, userName } = req.body ?? {};
     if (!bedLabel) return res.status(400).json({ error: 'bedLabel is required' });
     const comidaVal = COMIDAS.includes(String(comida)) ? String(comida) : '';
     const tipoVal   = TIPOS.includes(String(tipo))     ? String(tipo)   : '';
     if (!comidaVal) return res.status(400).json({ error: 'comida must be ALMUERZO or CENA' });
-    if (!tipoVal)   return res.status(400).json({ error: 'tipo must be MENU or OPCION' });
+    if (!tipoVal)   return res.status(400).json({ error: 'tipo must be MENU, OPCION or OTROS' });
     const nowIso = new Date().toISOString();
     const obs = String(observaciones ?? '').slice(0, 500);
+    const det = String(detalle ?? '').slice(0, 500);
+    // Backstop server-side de la regla de la UI: una comanda "Otros" (dieta terapéutica) sin la
+    // comida escrita no tiene sentido. La tarjeta ya lo bloquea; esto respalda cualquier caller.
+    if (tipoVal === 'OTROS' && det.trim() === '') return res.status(400).json({ error: 'detalle is required for tipo OTROS' });
     // NutricionistaID_D es columna Número en SP (nombre interno con ID mayúscula). El user.id
     // es el item-id de SP (numérico), así que lo escribimos como número; si no es numérico
     // (edge), omitimos el campo para no romper el POST (una columna Número rechaza strings).
@@ -122,7 +174,7 @@ async function handler(req: any, res: any) {
           await graphFetch(`${basePath}/${itemId}/fields`, {
             method: 'PATCH',
             body: JSON.stringify({
-              Tipo_D: tipoVal, Observaciones_D: obs,
+              Tipo_D: tipoVal, Detalle_D: det, Observaciones_D: obs,
               PacienteNombre_D: String(patientName ?? ''), PacienteCodigo_D: String(patientCode ?? ''),
               NutricionistaNombre_D: String(userName ?? ''), ...nutriIdField,
               FechaCarga_D: nowIso,
@@ -145,6 +197,7 @@ async function handler(req: any, res: any) {
             PacienteCodigo_D: String(patientCode ?? ''),
             Comida_D: comidaVal,
             Tipo_D: tipoVal,
+            Detalle_D: det,
             Observaciones_D: obs,
             Status_D: 'Activo',
             NutricionistaNombre_D: String(userName ?? ''),

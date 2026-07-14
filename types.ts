@@ -129,7 +129,10 @@ export interface Bed {
 // Una carga de menú de Nutrición sobre una comida de la cama (fila de 15.CargasDieta).
 // Menú y Opción son EXCLUYENTES → `tipo` es uno de los dos.
 export interface MealLoad {
-  tipo: 'MENU' | 'OPCION';
+  // MENU / OPCION para dietas estándar; OTROS para dietas terapéuticas (liviana, líquida,
+  // astringente…) donde no hay menú/opción y Nutrición escribe la comida en `detalle`.
+  tipo: 'MENU' | 'OPCION' | 'OTROS';
+  detalle?: string;       // detalle de la comanda: qué menú/opción o, en OTROS, la comida específica
   observaciones?: string;
   by: string;       // nombre del/la nutricionista que cargó
   at: string;       // ISO — cuándo se cargó
@@ -137,7 +140,7 @@ export interface MealLoad {
 }
 export type MealSlot = 'almuerzo' | 'cena';
 
-export type ViewMode = 'HOME' | 'REQUESTS' | 'USERS' | 'HISTORY' | 'BEDS' | 'CLEANINGS';
+export type ViewMode = 'HOME' | 'REQUESTS' | 'USERS' | 'HISTORY' | 'BEDS' | 'CLEANINGS' | 'COMANDAS';
 export type SortKey = 'status' | 'patientName' | 'origin' | 'createdAt';
 export type SortDirection = 'asc' | 'desc';
 
@@ -169,7 +172,7 @@ export const PERMISSIONS = [
 export type Permission = typeof PERMISSIONS[number];
 
 // Módulos visibles para el rol (Acceso_RT). Drive el sidebar / vistas.
-export const ROLE_MODULES = ['Home','Operativa','Historial','Mapa de Camas','Gestion Limpieza','Configuracion'] as const;
+export const ROLE_MODULES = ['Home','Operativa','Historial','Mapa de Camas','Gestion Limpieza','Gestion Comandas','Configuracion'] as const;
 export type RoleModule = typeof ROLE_MODULES[number];
 
 export interface User {

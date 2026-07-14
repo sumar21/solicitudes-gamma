@@ -389,6 +389,7 @@ export const useHospitalState = () => {
       if (modules.includes('Mapa de Camas')) return 'BEDS';
       if (modules.includes('Historial')) return 'HISTORY';
       if (modules.includes('Gestion Limpieza')) return 'CLEANINGS';
+      if (modules.includes('Gestion Comandas')) return 'COMANDAS';
     }
     return 'HOME';
   });
@@ -654,7 +655,8 @@ export const useHospitalState = () => {
         const cur = map.get(String(m.bedLabel)) ?? { patientCode: String(m.patientCode ?? '') };
         cur.patientCode = cur.patientCode || String(m.patientCode ?? '');
         cur[slot] = {
-          tipo: m.tipo === 'OPCION' ? 'OPCION' : 'MENU',
+          tipo: m.tipo === 'OPCION' ? 'OPCION' : m.tipo === 'OTROS' ? 'OTROS' : 'MENU',
+          detalle: String(m.detalle ?? ''),
           observaciones: String(m.observaciones ?? ''),
           by: String(m.by ?? ''), at: String(m.at ?? ''), spItemId: String(m.spItemId ?? ''),
         };
@@ -666,7 +668,7 @@ export const useHospitalState = () => {
 
   // Nutrición carga/actualiza el menú de una comida (optimista + POST upsert).
   const saveMealLoad = useCallback(async (
-    bed: Bed, comida: MealSlot, tipo: 'MENU' | 'OPCION', observaciones: string,
+    bed: Bed, comida: MealSlot, tipo: 'MENU' | 'OPCION' | 'OTROS', detalle: string, observaciones: string,
   ) => {
     if (!bed?.label) return;
     const u = currentUser;
@@ -675,7 +677,7 @@ export const useHospitalState = () => {
       const n = new Map<string, MealsInfo>(prev);
       const cur = n.get(bed.label) ?? { patientCode: bed.patientCode ?? '' };
       cur.patientCode = bed.patientCode ?? cur.patientCode;
-      cur[comida] = { tipo, observaciones, by: u?.name ?? '', at, spItemId: cur[comida]?.spItemId ?? '' };
+      cur[comida] = { tipo, detalle, observaciones, by: u?.name ?? '', at, spItemId: cur[comida]?.spItemId ?? '' };
       n.set(bed.label, cur);
       return n;
     });
@@ -685,7 +687,7 @@ export const useHospitalState = () => {
         body: JSON.stringify({
           bedLabel: bed.label, bedCode: bed.bedCode ?? '', roomCode: bed.roomCode ?? '', area: bed.area ?? '',
           patientName: bed.patientName ?? '', patientCode: bed.patientCode ?? '',
-          comida: comida === 'almuerzo' ? 'ALMUERZO' : 'CENA', tipo, observaciones,
+          comida: comida === 'almuerzo' ? 'ALMUERZO' : 'CENA', tipo, detalle, observaciones,
           userId: u?.id ?? '', userName: u?.name ?? '',
         }),
       });
@@ -1284,6 +1286,7 @@ export const useHospitalState = () => {
         : mods.includes('Mapa de Camas') ? 'BEDS'
         : mods.includes('Historial') ? 'HISTORY'
         : mods.includes('Gestion Limpieza') ? 'CLEANINGS'
+        : mods.includes('Gestion Comandas') ? 'COMANDAS'
         : 'HOME';
       setCurrentView(landingView);
 

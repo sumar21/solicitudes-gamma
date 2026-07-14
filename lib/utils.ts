@@ -249,6 +249,19 @@ export function roomSexConflict(
   return roommates.length ? { patientSex, roommates } : null;
 }
 
+// Dietas terapéuticas donde NO hay un "Menú"/"Opción" estándar de cocina: Nutrición debe
+// ESCRIBIR la comida específica en el detalle de comanda (el tipo se fija en "Otros"). Match por
+// substring normalizado (tolera tildes/casing de PROGAL). Ajustar la lista si cambia el criterio.
+const CUSTOM_COMANDA_DIETS = [
+  'liviana', 'liquida', 'liquido', 'espesad', 'astringente', 'blanda', 'blanca',
+  'hepatica', 'hiperproteica', 'fibras', 'inmunodeprimid', 'nada x boca', 'nada por boca',
+];
+export function dietRequiresCustomComanda(dietType?: string | null): boolean {
+  if (!dietType) return false;
+  const n = dietType.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return CUSTOM_COMANDA_DIETS.some(d => n.includes(d));
+}
+
 /**
  * Formatea el nombre de la cama para que sea más corto en la vista desktop
  * Ejemplo: "Habitación 409 HPR - Cama 02" -> "409 - 02"

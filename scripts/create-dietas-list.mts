@@ -49,7 +49,8 @@ const COLUMNS: ColSpec[] = [
   // api/dietas.ts (única fuente de verdad), no SP. Así sumar DESAYUNO/MERIENDA o menús
   // planificados a futuro es solo cambiar código, sin migrar la columna en SharePoint.
   { name: 'Comida_D',           index: false, def: TEXT,                          desc: 'Comida — hoy ALMUERZO/CENA; extensible sin tocar SP. Valores válidos en api/dietas.ts' },
-  { name: 'Tipo_D',             index: false, def: TEXT,                          desc: 'Tipo — hoy MENU/OPCION; texto para permitir menús planificados a futuro. Validado en api/dietas.ts' },
+  { name: 'Tipo_D',             index: false, def: TEXT,                          desc: 'Tipo — MENU/OPCION (dieta estándar) u OTROS (dieta terapéutica). Validado en api/dietas.ts' },
+  { name: 'Detalle_D',          index: false, def: MULTILINE,                     desc: 'Detalle de la comanda: el menú/opción o, en OTROS, la comida específica que come el paciente' },
   { name: 'Observaciones_D',    index: false, def: MULTILINE,                     desc: 'Observaciones libres de Nutrición para catering' },
   { name: 'Status_D',           index: true,  def: CHOICE(['Activo','Inactivo']), desc: 'Activo = carga vigente; Inactivo = quitada (soft-delete)' },
   { name: 'NutricionistaID_D',  index: false, def: NUMBER,                        desc: 'ID (item-id de SP, numérico) del usuario Nutrición que cargó. La app lo escribe como número.' },
