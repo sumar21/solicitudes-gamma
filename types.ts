@@ -123,7 +123,7 @@ export interface Bed {
   // Cargas de menú de Nutrición (overlay de 15.CargasDieta, keyed por comida). Solo se
   // adjuntan si el paciente cargado coincide con el actual de la cama — evita mostrarle a
   // catering la dieta de un paciente anterior tras reasignar la cama. Ver mergeBeds.
-  meals?: { almuerzo?: MealLoad; cena?: MealLoad };
+  meals?: Partial<Record<MealSlot, MealSlotLoad>>;
 }
 
 // Una carga de menú de Nutrición sobre una comida de la cama (fila de 15.CargasDieta).
@@ -137,8 +137,135 @@ export interface MealLoad {
   by: string;       // nombre del/la nutricionista que cargó
   at: string;       // ISO — cuándo se cargó
   spItemId: string;
+  comensal?: Comensal;  // TITULAR (default) | ACOMPANANTE
+  orden?: number;       // 0 titular; 1..N ordinal INMUTABLE del acompañante (lo asigna el server)
+  status?: ComandaStatus;
 }
-export type MealSlot = 'almuerzo' | 'cena';
+
+// Ciclo de vida de una bandeja. Se guarda en `Status_D` (reusa la columna de soft-delete: no
+// hizo falta una columna nueva). 'Activo' y 'Entregado' son AMBOS estados vivos — ver el
+// comentario de VIVAS_FILTER en api/dietas.ts.
+export const COMANDA_STATUS = {
+  PENDIENTE: 'Activo',
+  ENTREGADO: 'Entregado',
+  ANULADA:   'Inactivo',
+} as const;
+export type ComandaStatus = typeof COMANDA_STATUS[keyof typeof COMANDA_STATUS];
+
+// Quién come. Una fila de 15.CargaComandas = una bandeja.
+export const COMENSALES = ['TITULAR', 'ACOMPANANTE'] as const;
+export type Comensal = typeof COMENSALES[number];
+
+/** Backstop anti-abuso, NO una regla de negocio (no hay tope real definido). Espeja api/dietas.ts. */
+export const MAX_ACOMPANANTES = 6;
+
+/**
+ * Todo lo cargado en un turno de una cama: la comanda del paciente + la de sus acompañantes.
+ *
+ * Estructura ANIDADA y no dos mapas paralelos keyed por lo mismo: dos mapas se desincronizan y
+ * el que se olvide falla EN SILENCIO.
+ *
+ * `titular` es OPCIONAL y no es teórico: 'nada por boca' es una dieta real (lib/utils.ts) —
+ * paciente en ayuno con un acompañante que sí come es un caso que pasa.
+ * `acompanantes` es SIEMPRE array (nunca undefined) para que `tsc` marque los lugares que lo dropean.
+ */
+export interface MealSlotLoad {
+  titular?: MealLoad;
+  acompanantes: MealLoad[];
+}
+
+/**
+ * ¿La cama tiene ALGUNA comanda cargada, en cualquier turno y de cualquier comensal?
+ * Derivado del catálogo: un turno nuevo entra solo. NO escribir `meals?.almuerzo || meals?.cena`
+ * a mano — es la misma clase de bug que el ternario binario, y como las props de los componentes
+ * no están tipadas (falta @types/react), `tsc` NO lo marca.
+ */
+export const hasAnyMealLoad = (meals: Bed['meals']): boolean =>
+  !!meals && MEAL_SLOTS.some(({ slot }) => {
+    const s = meals[slot];
+    return !!s && (!!s.titular || s.acompanantes.length > 0);
+  });
+// ── Turnos de comida — FUENTE ÚNICA ─────────────────────────────────────────
+// Agregar un turno acá lo propaga a todo: el tipo `MealSlot`, el mapeo app↔SP, los labels,
+// el orden de render y la validación del endpoint (`api/dietas.ts` importa `MEAL_SLOTS_SP`).
+//
+// ⚠️ NO enumerar 'almuerzo'/'cena' a mano en ningún lado — usar `MEAL_SLOTS` y los helpers.
+// El motivo es concreto: antes el mapeo app→SP era un ternario binario
+// (`comida === 'almuerzo' ? 'ALMUERZO' : 'CENA'`), así que cualquier turno nuevo caía al
+// `else` y se guardaba **como CENA**, pisando la cena real — y el mapeo inverso lo
+// descartaba con un `continue`, de modo que la UI no mostraba nada raro. `tsc` tampoco lo
+// marcaba. Los helpers de abajo hacen ese fallo imposible por construcción.
+//
+// Para dejar un turno "listo pero apagado", NO lo saques del catálogo (rompés el mapeo de
+// las filas ya guardadas en SP): filtrá al renderizar.
+// El orden del array es el orden cronológico del día y el de render de los boxes.
+// Un solo vocabulario para los DOS lados del dominio:
+//   · planificación → `Turno_CM` de 16.CargaMenu
+//   · ejecución     → `Comida_D` de 15.CargaComandas
+// Son el mismo concepto; tener dos catálogos sería la misma duplicación que causó el bug.
+export const MEAL_SLOTS = [
+  { slot: 'desayuno', sp: 'DESAYUNO', label: 'Desayuno' },
+  { slot: 'almuerzo', sp: 'ALMUERZO', label: 'Almuerzo' },
+  { slot: 'merienda', sp: 'MERIENDA', label: 'Merienda' },
+  { slot: 'cena',     sp: 'CENA',     label: 'Cena' },
+] as const;
+
+export type MealSlot   = typeof MEAL_SLOTS[number]['slot'];
+export type MealSlotSp = typeof MEAL_SLOTS[number]['sp'];
+
+/** app → SP (`Comida_D`). Total por construcción: todo `MealSlot` existe en el catálogo. */
+export const spFromMealSlot = (slot: MealSlot): MealSlotSp =>
+  MEAL_SLOTS.find(s => s.slot === slot)!.sp;
+
+/** SP (`Comida_D`) → app. `null` si el valor no es un turno conocido (fila vieja/corrupta). */
+export const mealSlotFromSp = (sp: unknown): MealSlot | null =>
+  MEAL_SLOTS.find(s => s.sp === String(sp ?? '').trim().toUpperCase())?.slot ?? null;
+
+/** Label legible de un turno (UI, PDF). */
+export const mealSlotLabel = (slot: MealSlot): string =>
+  MEAL_SLOTS.find(s => s.slot === slot)!.label;
+
+/** Valores válidos de `Comida_D` (15.CargaComandas) y `Turno_CM` (16.CargaMenu). */
+export const MEAL_SLOTS_SP: readonly string[] = MEAL_SLOTS.map(s => s.sp);
+
+// ── Planificación de menú (16.CargaMenu) ────────────────────────────────────
+// Tipo planificable. NO incluye 'OTROS' a propósito (decisión D5 del plan): "Otros" es una
+// comanda escrita a mano caso por caso — no hay nada que planificar por rango de fechas.
+// El selector de la tarjeta SÍ ofrece los 3 (MENU/OPCION/OTROS); ver `MealLoad.tipo`.
+export const TIPOS_PLAN = [
+  { tipo: 'MENU',   label: 'Menú' },
+  { tipo: 'OPCION', label: 'Opción' },
+] as const;
+
+export type TipoPlan = typeof TIPOS_PLAN[number]['tipo'];
+
+/** Valores válidos de `Tipo_CM` — para validar en el endpoint. */
+export const TIPOS_PLAN_SP: readonly string[] = TIPOS_PLAN.map(t => t.tipo);
+
+export const tipoPlanLabel = (t: TipoPlan): string =>
+  TIPOS_PLAN.find(x => x.tipo === t)!.label;
+
+/** Tope real de `Comanda_CM` en SharePoint. Verificado: >255 lo rechaza con 400, no trunca. */
+export const COMANDA_MAX_LEN = 255;
+
+/**
+ * Una planificación de menú (fila de 16.CargaMenu): "del {desde} al {hasta}, en el {turno},
+ * el {tipo} es {comanda}". Es la PLANTILLA que autocompleta la carga por paciente.
+ *
+ * `desde`/`hasta` son fechas calendarias 'YYYY-MM-DD' — NO instantes. Nunca parsearlas con
+ * `new Date()` ni con `artDay()`: se leen con `.slice(0,10)` y se escriben como `T12:00:00Z`
+ * (ver decisión D2 — el site de SP está en UTC-7 y la medianoche corre el día en la UI).
+ */
+export interface CargaMenu {
+  spItemId: string;
+  turno: MealSlot;
+  tipo: TipoPlan;
+  desde: string;        // 'YYYY-MM-DD' (FechaInicio_CM)
+  hasta: string;        // 'YYYY-MM-DD' (FechaFin_CM)
+  comanda: string;      // Comanda_CM — máx COMANDA_MAX_LEN
+  by: string;           // NombreUserCarga_CM
+  at: string;           // FechaCarga_CM (ISO instante)
+}
 
 export type ViewMode = 'HOME' | 'REQUESTS' | 'USERS' | 'HISTORY' | 'BEDS' | 'CLEANINGS' | 'COMANDAS';
 export type SortKey = 'status' | 'patientName' | 'origin' | 'createdAt';
@@ -160,6 +287,11 @@ export const PERMISSIONS = [
   // Mapa de Camas — comandas: cargar (Nutrición) vs ver las comandas cargadas (Catering/Nutrición).
   'cargar_dieta',
   'ver_dieta',
+  // Gestión Comandas — planificación de menú por rango de fechas (16.CargaMenu).
+  // `ver_planificacion` = abrir el modal y leer la grilla. `abm_planificacion` = crear/editar/eliminar.
+  // Separados porque catering puede querer VER qué menú está planificado sin poder tocarlo.
+  'ver_planificacion',
+  'abm_planificacion',
   'abm_usuarios','abm_roles',
   // Notificaciones granulares por tipo (antes había un solo `recibe_push`).
   // Cada permiso gobierna que el usuario reciba push + in-app de ese tipo.

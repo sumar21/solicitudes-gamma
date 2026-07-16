@@ -659,9 +659,9 @@ export default function App() {
           {/* Roles — gateado por permiso abm_roles */}
           {canSeeRoles && (state.currentView as string) === 'ROLES' && <RoleManagementView currentUser={state.currentUser} onSessionRoleUpdate={actions.refreshSessionRole} />}
           {/* Mapa de Camas — gateado por Acceso_RT */}
-          {canViewBeds && state.currentView === 'BEDS' && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} onEnrichBed={actions.enrichBed} onFetchPatientTickets={actions.fetchPatientTickets} onRefresh={actions.refreshAll} onMarkClean={actions.markBedClean} onUndoClean={actions.undoBedClean} onSaveMeal={actions.saveMealLoad} onClearMeal={actions.clearMealLoad} />}
+          {canViewBeds && state.currentView === 'BEDS' && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} onEnrichBed={actions.enrichBed} onFetchPatientTickets={actions.fetchPatientTickets} onRefresh={actions.refreshAll} onMarkClean={actions.markBedClean} onUndoClean={actions.undoBedClean} onSaveMeal={actions.saveMealLoad} onClearMeal={actions.clearMealLoad} onSaveCompanion={actions.saveCompanionLoad} onClearCompanion={actions.clearCompanionLoad} />}
           {canViewCleanings && state.currentView === 'CLEANINGS' && <CleaningManagementView beds={state.beds} currentUser={state.currentUser} onConsolidate={(label) => actions.undoBedClean(label, 'CONSOLIDADO')} onRefresh={actions.refreshAll} />}
-          {canViewComandas && state.currentView === 'COMANDAS' && <ComandasManagementView beds={state.beds} currentUser={state.currentUser} onRefresh={actions.refreshAll} />}
+          {canViewComandas && state.currentView === 'COMANDAS' && <ComandasManagementView beds={state.beds} currentUser={state.currentUser} onRefresh={actions.refreshAll} onSetMealStatus={actions.setMealStatus} />}
         </main>
       </div>
 

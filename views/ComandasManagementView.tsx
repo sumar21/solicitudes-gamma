@@ -1,12 +1,14 @@
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
-import { Bed, User, Area } from '../types';
+import { Bed, User, Area, MealSlot, MealLoad, MEAL_SLOTS, mealSlotFromSp, mealSlotLabel, COMANDA_STATUS, ComandaStatus } from '../types';
 import { cn, formatBedName, formatDateReadable } from '../lib/utils';
+import { can } from '../lib/permissions';
 import { comandaTipoPill } from './BedsView';
+import { PlanificacionMenuModal } from '../components/modals/PlanificacionMenuModal';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { Calendar } from '../components/ui/calendar';
-import { Utensils, User as UserIcon, Clock, RefreshCw, Calendar as CalendarIcon, FileDown } from 'lucide-react';
+import { Utensils, User as UserIcon, Clock, RefreshCw, Calendar as CalendarIcon, FileDown, CalendarDays, Check, X, Undo2, Loader2 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -19,16 +21,97 @@ const AREA_LABELS: Record<string, string> = {
 };
 const areaLabel = (a?: string) => (a ? AREA_LABELS[a] ?? a : '—');
 
+/**
+ * ¿Hace falta mostrar el sector, o ya lo dice el número de cama?
+ *
+ * En los pisos el número de habitación ARRANCA con el piso: "401 - 05" ya dice Piso 4, así que
+ * poner "Piso 4" al lado es repetir el mismo dato dos veces.
+ * En los sectores especiales (ITR, UTI, UCO, URP, Sala Espera, Sueño) la cama se numera sola
+ * ("Cama 04") y sin el sector no se sabe dónde está → ahí SÍ se muestra.
+ */
+const PISOS = new Set<string>([Area.PISO_4, Area.PISO_5, Area.PISO_6, Area.PISO_7, Area.PISO_8]);
+const sectorEsRedundante = (area?: string, bedLabel?: string): boolean => {
+  if (!area || !PISOS.has(area)) return false;                 // sector especial → nunca redundante
+  const piso = /Piso\s*(\d)/i.exec(AREA_LABELS[area] ?? '')?.[1];
+  if (!piso) return false;
+  // Redundante solo si el label realmente empieza con el dígito del piso (si el formato cambia,
+  // falla del lado seguro: muestra el sector).
+  return new RegExp(`(^|\\D)${piso}\\d{2}(\\D|$)`).test(String(bedLabel ?? ''));
+};
+
+/** Posición cronológica del turno según el catálogo. Turno desconocido → al final. */
+const slotOrder = (slot: MealSlot | null): number => {
+  const i = MEAL_SLOTS.findIndex(s => s.slot === slot);
+  return i === -1 ? 99 : i;
+};
+
 const fmtWhen = (iso?: string) => {
   if (!iso) return '—';
   const d = new Date(iso);
   return isNaN(d.getTime()) ? iso : d.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
 };
 
-const comidaPill = (c: string) =>
-  c.toUpperCase().startsWith('ALM') || c === 'Almuerzo'
-    ? { label: 'Almuerzo', cls: 'bg-sky-50 text-sky-700 border-sky-200' }
-    : { label: 'Cena', cls: 'bg-violet-50 text-violet-700 border-violet-200' };
+// Color por turno. Es un `Record<MealSlot, …>` a propósito: si mañana se suma un turno al
+// catálogo de types.ts, `tsc` obliga a darle color acá en vez de pintarlo como Cena.
+// Progresión cromática a lo largo del día: amanecer → mediodía → tarde → noche.
+const MEAL_PILL_CLS: Record<MealSlot, string> = {
+  desayuno: 'bg-orange-50 text-orange-700 border-orange-200',
+  almuerzo: 'bg-sky-50 text-sky-700 border-sky-200',
+  merienda: 'bg-rose-50 text-rose-700 border-rose-200',
+  cena:     'bg-violet-50 text-violet-700 border-violet-200',
+};
+const NEUTRAL_PILL_CLS = 'bg-slate-50 text-slate-600 border-slate-200';
+
+// `slot` null = turno desconocido (fila vieja de SP): se muestra el crudo, sin inventar.
+const comidaPill = (slot: MealSlot | null, raw: string): { label: string; cls: string } =>
+  slot
+    ? { label: mealSlotLabel(slot), cls: MEAL_PILL_CLS[slot] }
+    : { label: raw || '—', cls: NEUTRAL_PILL_CLS };
+
+const STATUS_PILL: Record<ComandaStatus, { label: string; cls: string }> = {
+  [COMANDA_STATUS.PENDIENTE]: { label: 'Pendiente', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
+  [COMANDA_STATUS.ENTREGADO]: { label: 'Entregado', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  [COMANDA_STATUS.ANULADA]:   { label: 'Anulada',   cls: 'bg-slate-100 text-slate-400 border-slate-200' },
+};
+
+/**
+ * Estado de la bandeja + sus acciones.
+ *   Pendiente → [✓ entregar] [✕ anular]
+ *   Entregado → [↩ volver a pendiente]  (para un check tocado por error)
+ *   Anulada   → sin acciones (es histórico: se reponen cargándola de nuevo desde la tarjeta)
+ */
+const StatusCell: React.FC<{
+  r: ComandaRow; busy: boolean; canAct: boolean;
+  onAction: (spItemId: string, action: 'entregar' | 'pendiente' | 'anular') => void;
+}> = ({ r, busy, canAct, onAction }) => {
+  const p = STATUS_PILL[r.status] ?? STATUS_PILL[COMANDA_STATUS.PENDIENTE];
+  const anulada = r.status === COMANDA_STATUS.ANULADA;
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className={cn('text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border', p.cls)}>{p.label}</span>
+      {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-300" />
+        : canAct && !anulada && (
+          r.status === COMANDA_STATUS.PENDIENTE ? (
+            <>
+              <button onClick={() => onAction(r.spItemId, 'entregar')} title="Marcar entregada"
+                className="w-6 h-6 rounded-md flex items-center justify-center text-slate-300 hover:bg-emerald-50 hover:text-emerald-600">
+                <Check className="w-3.5 h-3.5" />
+              </button>
+              <button onClick={() => onAction(r.spItemId, 'anular')} title="Anular comanda"
+                className="w-6 h-6 rounded-md flex items-center justify-center text-slate-300 hover:bg-red-50 hover:text-red-500">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </>
+          ) : (
+            <button onClick={() => onAction(r.spItemId, 'pendiente')} title="Volver a pendiente"
+              className="w-6 h-6 rounded-md flex items-center justify-center text-slate-300 hover:bg-amber-50 hover:text-amber-600">
+              <Undo2 className="w-3.5 h-3.5" />
+            </button>
+          )
+        )}
+    </div>
+  );
+};
 
 const DateRangeTrigger = React.forwardRef<
   HTMLButtonElement,
@@ -50,16 +133,22 @@ DateRangeTrigger.displayName = 'DateRangeTrigger';
 // del endpoint /api/dietas?history=1.
 type ComandaRow = {
   key: string; patientName: string; bedLabel: string; area: string;
-  comida: string; tipo: string; detalle: string; observaciones: string; by: string; at: string;
+  // `slot` es la identidad del turno; `comida` es solo su texto para mostrar/exportar.
+  // En el histórico `slot` puede ser null si SP tiene un `Comida_D` que no está en el catálogo.
+  slot: MealSlot | null;
+  comida: string; comensal: string; tipo: string; detalle: string; observaciones: string; by: string; at: string;
+  spItemId: string;
+  status: ComandaStatus;
 };
 
 interface Props {
   beds: Bed[];
   currentUser: User | null;
   onRefresh?: () => void | Promise<void>;
+  onSetMealStatus?: (spItemId: string, action: 'entregar' | 'pendiente' | 'anular') => Promise<{ ok: boolean }>;
 }
 
-export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onRefresh }) => {
+export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onRefresh, onSetMealStatus }) => {
   const areaOk = useCallback((area: string) =>
     !currentUser?.filterByFloors
     || !currentUser?.assignedAreas?.length
@@ -70,21 +159,34 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
     const out: ComandaRow[] = [];
     for (const b of beds) {
       if (!b.meals || !areaOk(b.area)) continue;
-      for (const slot of ['almuerzo', 'cena'] as const) {
-        const m = b.meals[slot];
-        if (!m) continue;
-        out.push({
-          key: `${b.label}-${slot}`,
-          patientName: b.patientName || '—',
-          bedLabel: b.label, area: b.area,
-          comida: slot === 'almuerzo' ? 'Almuerzo' : 'Cena',
-          tipo: m.tipo, detalle: m.detalle ?? '', observaciones: m.observaciones ?? '',
-          by: m.by ?? '', at: m.at ?? '',
-        });
+      // Recorre el catálogo (types.ts) → un turno nuevo aparece acá sin tocar esta línea.
+      for (const { slot, label } of MEAL_SLOTS) {
+        const s = b.meals[slot];
+        if (!s) continue;
+        // Una fila por BANDEJA (titular + cada acompañante): es lo que cocina necesita contar.
+        const comensales: { m: MealLoad; etiqueta: string; key: string }[] = [
+          ...(s.titular ? [{ m: s.titular, etiqueta: 'Paciente', key: `${b.label}-${slot}-t` }] : []),
+          ...s.acompanantes.map((a, i) => ({ m: a, etiqueta: `Acompañante ${i + 1}`, key: `${b.label}-${slot}-a${a.spItemId || i}` })),
+        ];
+        for (const { m, etiqueta, key } of comensales) {
+          out.push({
+            key,
+            patientName: b.patientName || '—',
+            bedLabel: b.label, area: b.area,
+            slot, comida: label, comensal: etiqueta,
+            tipo: m.tipo, detalle: m.detalle ?? '', observaciones: m.observaciones ?? '',
+            by: m.by ?? '', at: m.at ?? '',
+            spItemId: m.spItemId, status: m.status ?? COMANDA_STATUS.PENDIENTE,
+          });
+        }
       }
     }
+    // Por paciente y, dentro de cada uno, por turno CRONOLÓGICO (índice del catálogo).
+    // Ordenar por el label sería alfabético: Almuerzo, Cena, Desayuno, Merienda — sin sentido.
     return out.sort((a, b) =>
-      a.patientName.localeCompare(b.patientName, 'es') || a.comida.localeCompare(b.comida));
+      a.patientName.localeCompare(b.patientName, 'es') ||
+      slotOrder(a.slot) - slotOrder(b.slot) ||
+      a.comensal.localeCompare(b.comensal, 'es'));
   }, [beds, areaOk]);
 
   // ── Histórico (por fecha de carga) ──────────────────────────────────────────
@@ -99,6 +201,29 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
   const [loadingHist, setLoadingHist] = useState(false);
   const [openFrom, setOpenFrom] = useState(false);
   const [openTo, setOpenTo]     = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
+  // spItemId de la fila cuya acción está en vuelo → spinner solo en esa.
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  // Refs: `doAction` se declara antes que `fetchHistory`/`tab` y no queremos recrearlo en cada
+  // cambio de tab (recrearlo remontaría los botones de todas las filas).
+  const fetchHistoryRef = React.useRef<null | (() => void)>(null);
+  const tabRef = React.useRef<'activas' | 'historico'>('activas');
+
+  const doAction = useCallback(async (spItemId: string, action: 'entregar' | 'pendiente' | 'anular') => {
+    if (!onSetMealStatus || !spItemId) return;
+    setBusyId(spItemId); setActionError(null);
+    try {
+      const r = await onSetMealStatus(spItemId, action);
+      // Si falla NO se revierte mudo: el usuario ve por qué no pasó nada.
+      if (!r.ok) setActionError('No se pudo actualizar la comanda. Reintentá.');
+      // En "De hoy" el refresco lo hace el hook (fetchMeals). En "Histórico" hay que re-pedir:
+      // esa tab tiene su propio fetch y su propio estado.
+      else if (tabRef.current === 'historico') fetchHistoryRef.current?.();
+    } finally { setBusyId(null); }
+  }, [onSetMealStatus]);
+  // Ver la planificación alcanza para abrir el modal; adentro, el ABM se gatea por separado.
+  const canSeePlan = can(currentUser, 'ver_planificacion') || can(currentUser, 'abm_planificacion');
 
   const authFetch = useCallback((url: string) => {
     const token = localStorage.getItem('mediflow_token');
@@ -113,15 +238,29 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
         const data = await r.json();
         const rows: ComandaRow[] = (data.meals ?? [])
           .filter((m: any) => areaOk(String(m.area ?? '')))
-          .map((m: any) => ({
-            key: String(m.spItemId),
-            patientName: String(m.patientName || '—'),
-            bedLabel: String(m.bedLabel ?? ''), area: String(m.area ?? ''),
-            comida: String(m.comida ?? ''), tipo: String(m.tipo ?? ''),
-            detalle: String(m.detalle ?? ''), observaciones: String(m.observaciones ?? ''),
-            by: String(m.by ?? ''), at: String(m.at ?? ''),
-          }))
-          .sort((a: ComandaRow, b: ComandaRow) => String(b.at).localeCompare(String(a.at)));
+          .map((m: any) => {
+            // El histórico trae el crudo de SP (`Comida_D`). Se resuelve contra el catálogo;
+            // si no matchea (fila vieja), `slot` queda null y se muestra el crudo tal cual.
+            const slot = mealSlotFromSp(m.comida);
+            return {
+              key: String(m.spItemId),
+              patientName: String(m.patientName || '—'),
+              bedLabel: String(m.bedLabel ?? ''), area: String(m.area ?? ''),
+              slot, comida: slot ? mealSlotLabel(slot) : String(m.comida ?? ''),
+              comensal: String(m.comensal ?? '') === 'ACOMPANANTE' ? `Acompañante ${m.orden ?? ''}`.trim() : 'Paciente',
+              spItemId: String(m.spItemId ?? ''),
+              status: (String(m.status ?? '') || COMANDA_STATUS.PENDIENTE) as ComandaStatus,
+              tipo: String(m.tipo ?? ''),
+              detalle: String(m.detalle ?? ''), observaciones: String(m.observaciones ?? ''),
+              by: String(m.by ?? ''), at: String(m.at ?? ''),
+            };
+          })
+          // Mismo criterio que "De hoy": por paciente, y adentro por fecha desc — así las
+          // bandejas de una misma cama quedan juntas en vez de salteadas entre otras camas.
+          .sort((a: ComandaRow, b: ComandaRow) =>
+            a.patientName.localeCompare(b.patientName, 'es') ||
+            String(b.at).localeCompare(String(a.at)) ||
+            slotOrder(a.slot) - slotOrder(b.slot));
         setHistory(rows);
       }
     } catch { /* mantiene lo previo */ }
@@ -129,6 +268,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
   }, [authFetch, from, to, areaOk]);
 
   useEffect(() => { if (tab === 'historico') fetchHistory(); }, [tab, fetchHistory]);
+  useEffect(() => { fetchHistoryRef.current = fetchHistory; tabRef.current = tab; }, [fetchHistory, tab]);
 
   const data = tab === 'activas' ? rows : history;
 
@@ -141,10 +281,14 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
     doc.setFontSize(9); doc.setTextColor(120);
     doc.text(`${data.length} comanda(s) · generado ${new Date().toLocaleString('es-AR')}`, 14, 21);
     doc.setTextColor(0);
-    const head = [['Paciente', 'Cama', 'Sector', 'Comida', 'Tipo', 'Detalle comanda', 'Observaciones', 'Cargó', ...(showDate ? ['Cuándo'] : [])]];
+    // El PDF lo lee cocina en papel: ubicación en una sola columna (la cama ya dice el piso) y
+    // observaciones pegadas a la comanda, que es como se leen.
+    const head = [['Paciente', 'Ubicación', 'Turno', 'Comensal', 'Tipo', 'Comanda', 'Registró', ...(showDate ? ['Fecha y hora'] : [])]];
     const body = data.map(r => [
-      r.patientName, formatBedName(r.bedLabel), areaLabel(r.area), r.comida,
-      comandaTipoPill(r.tipo).label, r.detalle || '—', r.observaciones || '—', r.by || '—',
+      r.patientName,
+      formatBedName(r.bedLabel) + (sectorEsRedundante(r.area, r.bedLabel) ? '' : ` · ${areaLabel(r.area)}`),
+      r.comida, r.comensal, comandaTipoPill(r.tipo).label,
+      r.detalle || '—' , r.by || '—',
       ...(showDate ? [fmtWhen(r.at)] : []),
     ]);
     autoTable(doc, {
@@ -152,7 +296,9 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
       styles: { fontSize: 8, cellPadding: 2, overflow: 'linebreak' },
       headStyles: { fillColor: [2, 44, 34], textColor: 255, fontStyle: 'bold' }, // verde Gamma #022C22
       alternateRowStyles: { fillColor: [240, 253, 244] },                        // tinte verde suave (emerald-50)
-      columnStyles: { 5: { cellWidth: 45 }, 6: { cellWidth: 45 } },
+      // Índice de 'Comanda' (el texto largo). Apunta por POSICIÓN: si se agrega una columna
+      // antes, hay que correrlo.
+      columnStyles: { 5: { cellWidth: 70 } },
     });
     const fname = tab === 'activas'
       ? `Comandas HPR - ${todayStr}.pdf`
@@ -160,24 +306,6 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
     doc.save(fname);
   };
 
-  // Fila de tabla (desktop) reutilizada por Activas e Histórico.
-  const Row: React.FC<{ r: ComandaRow; showDate?: boolean }> = ({ r, showDate }) => {
-    const tp = comandaTipoPill(r.tipo);
-    const cp = comidaPill(r.comida);
-    return (
-      <tr className="hover:bg-slate-50/60 align-top">
-        <td className="px-4 py-3 font-bold text-slate-800">{r.patientName}</td>
-        <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{formatBedName(r.bedLabel)}</td>
-        <td className="px-4 py-3 text-slate-500">{areaLabel(r.area)}</td>
-        <td className="px-4 py-3"><span className={cn("text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border", cp.cls)}>{cp.label}</span></td>
-        <td className="px-4 py-3"><span className={cn("text-[10px] font-bold uppercase px-2 py-0.5 rounded-full", tp.cls)}>{tp.label}</span></td>
-        <td className="px-4 py-3 text-slate-800 font-medium max-w-[220px] break-words">{r.detalle || <span className="text-slate-300">—</span>}</td>
-        <td className="px-4 py-3 text-slate-500 max-w-[220px] break-words">{r.observaciones || <span className="text-slate-300">—</span>}</td>
-        <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{r.by || '—'}</td>
-        {showDate && <td className="px-4 py-3 text-slate-400 whitespace-nowrap">{fmtWhen(r.at)}</td>}
-      </tr>
-    );
-  };
 
   return (
     <div className="p-4 md:p-8 max-w-full w-full space-y-4 md:space-y-5 pb-24 md:pb-8">
@@ -229,10 +357,25 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
           className="h-9 px-3 rounded-lg gap-2 text-xs font-bold text-indigo-700 border-indigo-200 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50">
           <FileDown className="w-4 h-4" /> PDF
         </Button>
+        {canSeePlan && (
+          <Button variant="outline" size="sm" onClick={() => setPlanOpen(true)}
+            className="h-9 px-3 rounded-lg gap-2 text-xs font-bold text-emerald-700 border-emerald-200 bg-emerald-50 hover:bg-emerald-100">
+            <CalendarDays className="w-4 h-4" /> Planificación
+          </Button>
+        )}
         <p className="text-xs text-slate-500 font-medium ml-auto self-center">
           {data.length} {data.length === 1 ? 'comanda' : 'comandas'}
         </p>
       </div>
+
+      <PlanificacionMenuModal open={planOpen} onOpenChange={setPlanOpen} currentUser={currentUser} />
+
+      {actionError && (
+        <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200">
+          <p className="text-xs font-medium text-red-700">{actionError}</p>
+          <button onClick={() => setActionError(null)} className="text-red-400 hover:text-red-600"><X className="w-3.5 h-3.5" /></button>
+        </div>
+      )}
 
       {loadingHist && tab === 'historico' ? (
         <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400 text-sm">Cargando…</div>
@@ -252,7 +395,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
           <div className="grid grid-cols-1 gap-3 md:hidden">
             {data.map(r => {
               const tp = comandaTipoPill(r.tipo);
-              const cp = comidaPill(r.comida);
+              const cp = comidaPill(r.slot, r.comida);
               return (
                 <div key={r.key} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2">
                   <div className="flex items-start justify-between gap-2">
@@ -262,7 +405,11 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
                       <span className={cn("text-[9px] font-bold uppercase px-2 py-0.5 rounded-full", tp.cls)}>{tp.label}</span>
                     </div>
                   </div>
-                  <p className="text-[11px] text-slate-500 font-medium">{formatBedName(r.bedLabel)} · {areaLabel(r.area)}</p>
+                  <p className="text-[11px] text-slate-500 font-medium">
+                    {formatBedName(r.bedLabel)}
+                    {!sectorEsRedundante(r.area, r.bedLabel) && <span className="text-slate-400"> · {areaLabel(r.area)}</span>}
+                    <span className={cn("ml-2 font-bold uppercase", r.comensal !== 'Paciente' ? "text-teal-600" : "text-slate-400")}>{r.comensal}</span>
+                  </p>
                   {r.detalle && <p className="text-[12px] font-semibold text-slate-800">{r.detalle}</p>}
                   {r.observaciones && <p className="text-[11px] text-slate-500">Obs: {r.observaciones}</p>}
                   <div className="text-[10px] text-slate-400 flex items-center gap-3 pt-1">
@@ -276,26 +423,83 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
 
           {/* Desktop — grilla */}
           <Card className="hidden md:block shadow-sm border-slate-200 overflow-hidden bg-white rounded-2xl">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500 font-bold">
-                    <th className="px-4 py-3">Paciente</th>
-                    <th className="px-4 py-3">Cama</th>
-                    <th className="px-4 py-3">Sector</th>
-                    <th className="px-4 py-3">Comida</th>
-                    <th className="px-4 py-3">Tipo</th>
-                    <th className="px-4 py-3">Detalle comanda</th>
-                    <th className="px-4 py-3">Observaciones</th>
-                    <th className="px-4 py-3">Cargó</th>
-                    {tab === 'historico' && <th className="px-4 py-3">Cuándo</th>}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {data.map(r => <Row key={r.key} r={r} showDate={tab === 'historico'} />)}
-                </tbody>
-              </table>
-            </div>
+            {/* table-fixed + colgroup: los anchos los manda el diseño, no el contenido → sin
+                scroll horizontal y sin columnas que salten de ancho entre polls. */}
+            <table className="w-full text-sm table-fixed">
+              <colgroup>
+                <col className="w-[24%]" /><col className="w-[10%]" /><col className="w-[9%]" />
+                <col className="w-[26%]" /><col className="w-[14%]" /><col className="w-[17%]" />
+              </colgroup>
+              <thead>
+                <tr className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500 font-bold">
+                  <th className="px-4 py-3">Paciente</th>
+                  <th className="px-4 py-3">Turno</th>
+                  <th className="px-4 py-3">Tipo</th>
+                  <th className="px-4 py-3">Comanda</th>
+                  <th className="px-4 py-3">Registró</th>
+                  <th className="px-4 py-3">Estado</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {data.map(r => {
+                  const tp = comandaTipoPill(r.tipo);
+                  const cp = comidaPill(r.slot, r.comida);
+                  const esAcomp = r.comensal !== 'Paciente';
+                  const verSector = !sectorEsRedundante(r.area, r.bedLabel);
+                  return (
+                    <tr key={r.key} className={cn('align-middle hover:bg-slate-50/60',
+                      // Anulada = histórico. Se muestra (es auditoría: se pidió y se canceló)
+                      // pero atenuada, para que no compita con lo que sí se va a servir.
+                      r.status === COMANDA_STATUS.ANULADA && 'opacity-45')}>
+                      {/* Paciente + habitación. Si la bandeja es de un acompañante, se antepone
+                          el pill: la fila sigue siendo "de" ese paciente, y el pill dice de quién
+                          es la bandeja. Así no hace falta una columna Comensal aparte. */}
+                      <td className="px-4 py-3">
+                        {esAcomp && (
+                          <span className="inline-block mb-1 text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-teal-50 text-teal-700 border border-teal-200">
+                            {r.comensal}
+                          </span>
+                        )}
+                        <p className="font-bold text-slate-800 leading-tight break-words">{r.patientName}</p>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          {formatBedName(r.bedLabel)}
+                          {verSector && <span className="text-slate-400"> · {areaLabel(r.area)}</span>}
+                        </p>
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span className={cn('inline-block text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border', cp.cls)}>{cp.label}</span>
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span className={cn('inline-block text-[10px] font-bold uppercase px-2 py-0.5 rounded-full', tp.cls)}>{tp.label}</span>
+                      </td>
+                      {/* Comanda + observaciones */}
+                      <td className="px-4 py-3">
+                        <p className={cn('text-slate-800 font-medium break-words leading-snug',
+                          r.status === COMANDA_STATUS.ANULADA && 'line-through')}>{r.detalle || <span className="text-slate-300">—</span>}</p>
+                        {/* Siempre se dice algo: un hueco vacío no distingue "no tiene
+                            observaciones" de "no se ve el dato". */}
+                        <p className={cn('text-[11px] break-words mt-0.5 leading-snug',
+                          r.observaciones ? 'text-slate-500' : 'text-slate-300 italic')}>
+                          {r.observaciones || 'Sin observaciones'}
+                        </p>
+                      </td>
+                      {/* Quién + cuándo */}
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <p className="text-[12px] text-slate-600 leading-tight truncate">{r.by || '—'}</p>
+                        <p className="text-[10px] text-slate-400 mt-0.5">{fmtWhen(r.at)}</p>
+                      </td>
+                      {/* Estado + acciones */}
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        {/* El histórico es lectura: entregar/anular se hace en "De hoy", donde
+                            está lo que todavía se puede accionar. */}
+                        <StatusCell r={r} busy={busyId === r.spItemId}
+                          canAct={!!onSetMealStatus && tab === 'activas'} onAction={doAction} />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </Card>
         </>
       )}

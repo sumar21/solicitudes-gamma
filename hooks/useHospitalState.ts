@@ -3,7 +3,8 @@ import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import {
   WorkflowType, Role, SedeType, Ticket, TicketStatus, User, Area,
   Notification, NotificationType, ViewMode, SortConfig, Bed, BedStatus,
-  RoleModule, Permission, MealLoad, MealSlot,
+  RoleModule, Permission, MealLoad, MealSlot, MealSlotLoad, COMANDA_STATUS, ComandaStatus,
+  MEAL_SLOTS, spFromMealSlot, mealSlotFromSp,
 } from '../types';
 import { MOCK_TICKETS } from '../lib/constants';
 import { can, hasModule, canReceiveNotif } from '../lib/permissions';
@@ -159,9 +160,14 @@ function progalStillHasTicketPatientOnOrigin(origin: Bed, ticket: Ticket): boole
 // Limpieza por azafata: label de cama → datos de quién/cuándo la marcó limpia.
 type CleaningInfo = { by: string; byId: string; at: string; spItemId: string };
 
-// Carga de menú de Nutrición: label de cama → cargas por comida + el paciente al que
+// Carga de menú de Nutrición: label de cama → cargas por turno + el paciente al que
 // se le cargó (para no mostrarla si la cama cambió de paciente).
-type MealsInfo = { patientCode: string; almuerzo?: MealLoad; cena?: MealLoad };
+// `slots` va anidado bajo su propia clave (y no intersectado con patientCode) para que agregar
+// un turno nuevo no pueda colisionar jamás con un campo de metadata.
+type MealsInfo = { patientCode: string; slots: Partial<Record<MealSlot, MealSlotLoad>> };
+
+/** Slot vacío. Helper para no repetir el `{ acompanantes: [] }` en cada rama. */
+const emptySlot = (): MealSlotLoad => ({ acompanantes: [] });
 
 function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?: Map<string, CleaningInfo>, meals?: Map<string, MealsInfo>): Bed[] {
   const result = gammaBeds.map(b => ({ ...b }));
@@ -251,7 +257,15 @@ function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?: Map<st
       const m = meals.get(bed.label);
       if (!m) continue;
       if (m.patientCode && bed.patientCode && m.patientCode !== bed.patientCode) continue;
-      if (m.almuerzo || m.cena) bed.meals = { almuerzo: m.almuerzo, cena: m.cena };
+      // Derivado del catálogo: un turno nuevo se adjunta solo, sin tocar esta línea.
+      // Un slot cuenta si tiene titular O acompañantes (un acompañante puede comer aunque el
+      // paciente esté en ayuno — 'nada por boca' es una dieta real).
+      const slots: Partial<Record<MealSlot, MealSlotLoad>> = {};
+      for (const { slot } of MEAL_SLOTS) {
+        const s = m.slots[slot];
+        if (s && (s.titular || s.acompanantes.length > 0)) slots[slot] = s;
+      }
+      if (Object.keys(slots).length > 0) bed.meals = slots;
     }
   }
 
@@ -650,17 +664,31 @@ export const useHospitalState = () => {
       const map = new Map<string, MealsInfo>();
       for (const m of (data.meals ?? []) as any[]) {
         if (!m.bedLabel) continue;
-        const slot: MealSlot | null = m.comida === 'ALMUERZO' ? 'almuerzo' : m.comida === 'CENA' ? 'cena' : null;
+        // `null` = turno desconocido (fila vieja o valor corrupto en SP) → se descarta.
+        const slot = mealSlotFromSp(m.comida);
         if (!slot) continue;
-        const cur = map.get(String(m.bedLabel)) ?? { patientCode: String(m.patientCode ?? '') };
+        const cur = map.get(String(m.bedLabel)) ?? { patientCode: String(m.patientCode ?? ''), slots: {} };
         cur.patientCode = cur.patientCode || String(m.patientCode ?? '');
-        cur[slot] = {
+        const load: MealLoad = {
           tipo: m.tipo === 'OPCION' ? 'OPCION' : m.tipo === 'OTROS' ? 'OTROS' : 'MENU',
           detalle: String(m.detalle ?? ''),
           observaciones: String(m.observaciones ?? ''),
           by: String(m.by ?? ''), at: String(m.at ?? ''), spItemId: String(m.spItemId ?? ''),
+          comensal: m.comensal === 'ACOMPANANTE' ? 'ACOMPANANTE' : 'TITULAR',
+          orden: Number(m.orden ?? 0) || 0,
+          status: (m.status === COMANDA_STATUS.ENTREGADO ? COMANDA_STATUS.ENTREGADO : COMANDA_STATUS.PENDIENTE),
         };
+        const s = (cur.slots[slot] ??= emptySlot());
+        if (load.comensal === 'ACOMPANANTE') s.acompanantes.push(load);
+        else s.titular = load;
         map.set(String(m.bedLabel), cur);
+      }
+      // Orden estable de acompañantes: sin él los bloques BAILAN de posición entre polls
+      // mientras alguien tipea. Por `orden` asc; desempate por spItemId (filas viejas sin orden).
+      for (const info of map.values()) {
+        for (const s of Object.values(info.slots)) {
+          s?.acompanantes.sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0) || Number(a.spItemId) - Number(b.spItemId));
+        }
       }
       setMeals(map);
     } catch { /* keep current */ }
@@ -675,9 +703,16 @@ export const useHospitalState = () => {
     const at = new Date().toISOString();
     setMeals(prev => {
       const n = new Map<string, MealsInfo>(prev);
-      const cur = n.get(bed.label) ?? { patientCode: bed.patientCode ?? '' };
+      const cur = n.get(bed.label) ?? { patientCode: bed.patientCode ?? '', slots: {} };
       cur.patientCode = bed.patientCode ?? cur.patientCode;
-      cur[comida] = { tipo, detalle, observaciones, by: u?.name ?? '', at, spItemId: cur[comida]?.spItemId ?? '' };
+      // ⚠️ Merge, NO reemplazo del slot: `slots[comida] = {...}` pisaría el MealSlotLoad entero
+      // y borraría los acompañantes (el poll los restauraría → "parpadean y vuelven", y en esa
+      // ventana el usuario puede re-agregar duplicados).
+      const s = cur.slots[comida] ?? emptySlot();
+      cur.slots[comida] = {
+        ...s,
+        titular: { tipo, detalle, observaciones, by: u?.name ?? '', at, spItemId: s.titular?.spItemId ?? '', comensal: 'TITULAR', orden: 0 },
+      };
       n.set(bed.label, cur);
       return n;
     });
@@ -687,7 +722,7 @@ export const useHospitalState = () => {
         body: JSON.stringify({
           bedLabel: bed.label, bedCode: bed.bedCode ?? '', roomCode: bed.roomCode ?? '', area: bed.area ?? '',
           patientName: bed.patientName ?? '', patientCode: bed.patientCode ?? '',
-          comida: comida === 'almuerzo' ? 'ALMUERZO' : 'CENA', tipo, detalle, observaciones,
+          comida: spFromMealSlot(comida), tipo, detalle, observaciones,
           userId: u?.id ?? '', userName: u?.name ?? '',
         }),
       });
@@ -696,7 +731,11 @@ export const useHospitalState = () => {
         if (data?.spItemId) setMeals(prev => {
           const n = new Map<string, MealsInfo>(prev);
           const cur = n.get(bed.label);
-          if (cur?.[comida]) { cur[comida] = { ...cur[comida]!, spItemId: String(data.spItemId) }; n.set(bed.label, cur); }
+          const t = cur?.slots[comida]?.titular;
+          if (cur && t) {
+            cur.slots[comida] = { ...cur.slots[comida]!, titular: { ...t, spItemId: String(data.spItemId) } };
+            n.set(bed.label, cur);
+          }
           return n;
         });
       } else {
@@ -705,23 +744,113 @@ export const useHospitalState = () => {
     } catch { fetchMeals(); }
   }, [authFetch, currentUser, fetchMeals]);
 
-  // Nutrición quita una carga (optimista + PATCH soft-delete).
+  // Nutrición quita la carga del TITULAR (optimista + PATCH soft-delete).
   const clearMealLoad = useCallback(async (bed: Bed, comida: MealSlot) => {
     if (!bed?.label) return;
-    const spItemId = meals.get(bed.label)?.[comida]?.spItemId;
+    const spItemId = meals.get(bed.label)?.slots[comida]?.titular?.spItemId;
     setMeals(prev => {
       const n = new Map<string, MealsInfo>(prev);
       const cur = n.get(bed.label);
-      if (cur) { delete cur[comida]; if (!cur.almuerzo && !cur.cena) n.delete(bed.label); else n.set(bed.label, cur); }
+      if (!cur) return n;
+      // ⚠️ Se borra SOLO el titular. `delete cur.slots[comida]` volaría el slot completo con sus
+      // acompañantes: "Quitar" en el paciente le sacaría la bandeja al acompañante.
+      const s = cur.slots[comida];
+      if (s) {
+        delete s.titular;
+        // El slot sale solo si no queda nada; el bed sale solo si no queda ningún slot.
+        if (s.acompanantes.length === 0) delete cur.slots[comida];
+      }
+      if (!MEAL_SLOTS.some(x => cur.slots[x.slot])) n.delete(bed.label); else n.set(bed.label, cur);
       return n;
     });
     try {
       await authFetch('/api/dietas', {
         method: 'PATCH',
-        body: JSON.stringify({ spItemId: spItemId || undefined, bedLabel: bed.label, comida: comida === 'almuerzo' ? 'ALMUERZO' : 'CENA' }),
+        body: JSON.stringify({ spItemId: spItemId || undefined, bedLabel: bed.label, comida: spFromMealSlot(comida) }),
       });
     } catch { /* best-effort */ }
   }, [authFetch, meals]);
+
+  // ── Acompañantes ─────────────────────────────────────────────────────────
+  // Alta SIN update optimista: el `orden` lo asigna el SERVER, así que el cliente no puede
+  // construir la fila correcta; tendría que inventar un tempId y reconciliar. Con drafts en la
+  // UI no hay nada que reconciliar: la fila entra al Map recién con la respuesta.
+  const saveCompanionLoad = useCallback(async (
+    bed: Bed, comida: MealSlot, data: { spItemId?: string; tipo: 'MENU' | 'OPCION' | 'OTROS'; detalle: string; observaciones: string },
+  ): Promise<{ ok: boolean }> => {
+    if (!bed?.label) return { ok: false };
+    const u = currentUser;
+    try {
+      const r = await authFetch('/api/dietas', {
+        method: 'POST',
+        body: JSON.stringify({
+          bedLabel: bed.label, bedCode: bed.bedCode ?? '', roomCode: bed.roomCode ?? '', area: bed.area ?? '',
+          patientName: bed.patientName ?? '', patientCode: bed.patientCode ?? '',
+          comida: spFromMealSlot(comida), comensal: 'ACOMPANANTE', spItemId: data.spItemId,
+          tipo: data.tipo, detalle: data.detalle, observaciones: data.observaciones,
+          userId: u?.id ?? '', userName: u?.name ?? '',
+        }),
+      });
+      if (!r.ok) { await fetchMeals(); return { ok: false }; }
+      const d = await r.json().catch(() => ({} as any));
+      const at = new Date().toISOString();
+      setMeals(prev => {
+        const n = new Map<string, MealsInfo>(prev);
+        const cur = n.get(bed.label) ?? { patientCode: bed.patientCode ?? '', slots: {} };
+        const s = cur.slots[comida] ?? emptySlot();
+        const load: MealLoad = {
+          tipo: data.tipo, detalle: data.detalle, observaciones: data.observaciones,
+          by: u?.name ?? '', at, spItemId: String(d.spItemId ?? data.spItemId ?? ''),
+          comensal: 'ACOMPANANTE', orden: Number(d.orden ?? 0) || 0,
+        };
+        const i = s.acompanantes.findIndex(a => a.spItemId === load.spItemId);
+        const acompanantes = i >= 0
+          ? s.acompanantes.map((a, k) => (k === i ? load : a))
+          : [...s.acompanantes, load].sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));
+        cur.slots[comida] = { ...s, acompanantes };
+        n.set(bed.label, cur);
+        return n;
+      });
+      return { ok: true };
+    } catch { await fetchMeals(); return { ok: false }; }
+  }, [authFetch, currentUser, fetchMeals]);
+
+  /**
+   * Cambia el estado de una bandeja desde el panel de comandas: marcarla entregada, volverla a
+   * pendiente (check tocado por error) o anularla.
+   *
+   * Sin update optimista: el panel deriva de `beds` (que sale del poll de 60s), así que no hay
+   * un Map local que pisar — se hace el PATCH y se refresca. Devuelve ok para que la UI pueda
+   * mostrar el error en vez de revertir mudo.
+   */
+  const setMealStatus = useCallback(async (
+    spItemId: string, action: 'entregar' | 'pendiente' | 'anular',
+  ): Promise<{ ok: boolean }> => {
+    if (!spItemId) return { ok: false };
+    try {
+      const r = await authFetch('/api/dietas', { method: 'PATCH', body: JSON.stringify({ spItemId, action }) });
+      await fetchMeals();
+      return { ok: r.ok };
+    } catch { await fetchMeals(); return { ok: false }; }
+  }, [authFetch, fetchMeals]);
+
+  const clearCompanionLoad = useCallback(async (bed: Bed, comida: MealSlot, spItemId: string) => {
+    if (!bed?.label || !spItemId) return;
+    setMeals(prev => {
+      const n = new Map<string, MealsInfo>(prev);
+      const cur = n.get(bed.label);
+      const s = cur?.slots[comida];
+      if (!cur || !s) return n;
+      // Los ordinales de los que quedan NO se renumeran: son identidad, no posición.
+      cur.slots[comida] = { ...s, acompanantes: s.acompanantes.filter(a => a.spItemId !== spItemId) };
+      if (!cur.slots[comida]!.titular && cur.slots[comida]!.acompanantes.length === 0) delete cur.slots[comida];
+      if (!MEAL_SLOTS.some(x => cur.slots[x.slot])) n.delete(bed.label); else n.set(bed.label, cur);
+      return n;
+    });
+    try {
+      await authFetch('/api/dietas', { method: 'PATCH', body: JSON.stringify({ spItemId }) });
+    } catch { /* best-effort — el poll reconcilia */ }
+  }, [authFetch]);
 
   // ── On-demand bed enrichment (single bed) ─────────────────────────────────
   const enrichBed = useCallback(async (bed: Bed): Promise<Bed> => {
@@ -2306,7 +2435,7 @@ export const useHospitalState = () => {
       handleCreateTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
       fetchBeds, enrichBed, fetchPatientTickets, refreshAll,
       markBedClean, undoBedClean,
-      saveMealLoad, clearMealLoad,
+      saveMealLoad, clearMealLoad, saveCompanionLoad, clearCompanionLoad, setMealStatus,
       handleUpdateUserAreas, refreshSessionRole, syncSessionRole, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleOpenNotifications, handleDismissToast,
       handleStartTransport,
       handleRejectTicket,

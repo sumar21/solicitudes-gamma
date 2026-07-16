@@ -1,10 +1,10 @@
 import React, { useState, useMemo, useCallback } from 'react';
-import { Bed, BedStatus, Ticket, TicketStatus, User, Area, IsolationEntry, MealSlot } from '../types';
+import { Bed, BedStatus, Ticket, TicketStatus, User, Area, IsolationEntry, MealSlot, MealLoad, MEAL_SLOTS, mealSlotFromSp, hasAnyMealLoad, MAX_ACOMPANANTES, COMANDA_STATUS } from '../types';
 import { can } from '../lib/permissions';
 import { hasLiveFasting, fastingOccurrences, formatFastingDateTime, fastingTimesForToday } from '../lib/fasting';
 import { Input } from '../components/ui/input';
 import { cn, dietRequiresCustomComanda } from '../lib/utils';
-import { BedDouble, User as UserIcon, Info, Search, X, ChevronDown, Check, AlertTriangle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan, History } from 'lucide-react';
+import { BedDouble, User as UserIcon, Info, Search, X, Plus, ChevronDown, ChevronRight, Check, AlertTriangle, AlertCircle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan, History } from 'lucide-react';
 import { Dialog, DialogContent } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
@@ -62,6 +62,8 @@ interface BedsViewProps {
   // Carga de menú por Nutrición (15.CargasDieta): carga/actualiza o quita una comida.
   onSaveMeal?: (bed: Bed, comida: MealSlot, tipo: 'MENU' | 'OPCION' | 'OTROS', detalle: string, observaciones: string) => void | Promise<void>;
   onClearMeal?: (bed: Bed, comida: MealSlot) => void | Promise<void>;
+  onSaveCompanion?: (bed: Bed, comida: MealSlot, data: { spItemId?: string; tipo: 'MENU' | 'OPCION' | 'OTROS'; detalle: string; observaciones: string }) => Promise<{ ok: boolean }>;
+  onClearCompanion?: (bed: Bed, comida: MealSlot, spItemId: string) => void | Promise<void>;
 }
 
 // Mapa de clave de color (la define api/isolations-summary.ts) → clases Tailwind.
@@ -158,10 +160,7 @@ function drawBedTotalsFooter(
 // ── Carga de menú por Nutrición (pestaña Dieta) ─────────────────────────────
 // Menú y Opción son EXCLUYENTES → un solo botón activo. Nutrición carga/actualiza/quita;
 // catering (sin permiso) lo ve en modo lectura. Ver api/dietas.ts.
-const MEAL_SLOTS: { slot: MealSlot; label: string }[] = [
-  { slot: 'almuerzo', label: 'Almuerzo' },
-  { slot: 'cena',     label: 'Cena' },
-];
+// El orden y los labels salen del catálogo único (types.ts) — NO redeclarar la lista acá.
 
 const fmtMealWhen = (m?: { by: string; at: string }) =>
   m ? `${m.by}${m.at ? ` · ${new Date(m.at).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}` : ''}` : '';
@@ -172,19 +171,85 @@ export const comandaTipoPill = (t?: string): { label: string; cls: string } =>
   : t === 'OPCION' ? { label: 'Opción', cls: 'bg-amber-100 text-amber-700' }
   : { label: 'Otros', cls: 'bg-indigo-100 text-indigo-700' };
 
+const TIPO_BTN_CLS: Record<'MENU' | 'OPCION' | 'OTROS', string> = {
+  MENU:   'bg-emerald-600 text-white border-emerald-600',
+  OPCION: 'bg-amber-500 text-white border-amber-500',
+  OTROS:  'bg-indigo-600 text-white border-indigo-600',
+};
+
+/** Planificación vigente resuelta: turno → { MENU?: texto, OPCION?: texto }. */
+type PlannedMenu = Partial<Record<MealSlot, Partial<Record<'MENU' | 'OPCION', string>>>>;
+
+/**
+ * Trae la planificación de menú (16.CargaMenu) y deja lista la vigente para HOY (ART).
+ *
+ * La vigencia se resuelve acá y no en el server: el endpoint devuelve las activas (son pocas —
+ * un puñado de rangos) y filtrar en memoria evita un request por cada cama que se abre.
+ *
+ * "Hoy" en hora Argentina, y las fechas se comparan como STRING: son 'YYYY-MM-DD', o sea que el
+ * orden lexicográfico ES el cronológico. Nunca `new Date()` sobre ellas (ver decisión D2: son
+ * fechas calendarias, no instantes — parsearlas correría el día).
+ */
+function usePlannedMenu(enabled: boolean): PlannedMenu {
+  const [planned, setPlanned] = useState<PlannedMenu>({});
+
+  React.useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = localStorage.getItem('mediflow_token');
+        const r = await fetch('/api/carga-menu', { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+        if (!r.ok) return;                       // sin permiso o SP caído → sin autocompletado
+        const d = await r.json();
+        const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' });
+        const out: PlannedMenu = {};
+        for (const p of (d.plans ?? []) as any[]) {
+          const slot = mealSlotFromSp(p.turno);
+          if (!slot) continue;
+          const desde = String(p.desde ?? ''), hasta = String(p.hasta ?? '');
+          if (!(desde <= today && today <= hasta)) continue;    // no vigente hoy
+          const tipo = String(p.tipo ?? '').toUpperCase();
+          if (tipo !== 'MENU' && tipo !== 'OPCION') continue;
+          (out[slot] ??= {})[tipo] = String(p.comanda ?? '');
+        }
+        if (!cancelled) setPlanned(out);
+      } catch { /* sin autocompletado; el campo sigue editable a mano */ }
+    })();
+    return () => { cancelled = true; };
+  }, [enabled]);
+
+  return planned;
+}
+
 const MealSlotEditor: React.FC<{
   bed: Bed; slot: MealSlot; label: string; canEdit: boolean;
+  /** Planificación vigente para este turno: tipo → texto. Autocompleta al elegir Menú/Opción. */
+  planned?: Partial<Record<'MENU' | 'OPCION', string>>;
+  open: boolean;
+  onToggle: () => void;
   onSave?: (bed: Bed, comida: MealSlot, tipo: 'MENU' | 'OPCION' | 'OTROS', detalle: string, obs: string) => void | Promise<void>;
   onClear?: (bed: Bed, comida: MealSlot) => void | Promise<void>;
-}> = ({ bed, slot, label, canEdit, onSave, onClear }) => {
-  const meal = bed.meals?.[slot];
-  // Dieta terapéutica (liviana/líquida/astringente…): sin Menú/Opción, tipo fijo "Otros" y
-  // Nutrición ESCRIBE la comida en el detalle (obligatorio). Ver dietRequiresCustomComanda.
-  const forceOtros = dietRequiresCustomComanda(dietTypeOf(bed));
-  const [tipo, setTipo] = useState<'MENU' | 'OPCION' | ''>(meal?.tipo === 'MENU' || meal?.tipo === 'OPCION' ? meal.tipo : '');
+  onSaveCompanion?: (bed: Bed, comida: MealSlot, data: { spItemId?: string; tipo: 'MENU' | 'OPCION' | 'OTROS'; detalle: string; observaciones: string }) => Promise<{ ok: boolean }>;
+  onClearCompanion?: (bed: Bed, comida: MealSlot, spItemId: string) => void | Promise<void>;
+}> = ({ bed, slot, label, canEdit, planned, open, onToggle, onSave, onClear, onSaveCompanion, onClearCompanion }) => {
+  const meal = bed.meals?.[slot]?.titular;
+  const acomps = bed.meals?.[slot]?.acompanantes ?? [];
+  // Dieta terapéutica (liviana/líquida/astringente…): el menú global de cocina no le aplica, así
+  // que arranca PRESELECCIONADA en "Otros" — pero es un default, NO un bloqueo: las 3 opciones
+  // quedan disponibles para todas las dietas (decisión D12/P2). Antes esto IMPONÍA "Otros".
+  const preferOtros = dietRequiresCustomComanda(dietTypeOf(bed));
+  const initialTipo = (): 'MENU' | 'OPCION' | 'OTROS' | '' =>
+    meal?.tipo ?? (preferOtros ? 'OTROS' : '');
+
+  const [tipo, setTipo] = useState<'MENU' | 'OPCION' | 'OTROS' | ''>(initialTipo);
   const [detalle, setDetalle] = useState(meal?.detalle ?? '');
   const [obs, setObs]   = useState(meal?.observaciones ?? '');
   const [saving, setSaving] = useState(false);
+  // Acompañantes todavía no persistidos. Contador local para la key (no crypto.randomUUID:
+  // 0 usos en el repo y exige secure context — no vale traer una API nueva para ≤6 items).
+  const [drafts, setDrafts] = useState<number[]>([]);
+  const nextDraftId = React.useRef(0);
   // Marca si el usuario tocó el form: evita que un poll externo (otro dispositivo actualiza la
   // MISMA cama+comida) pise lo que está tipeando sin guardar. Se re-arma tras un guardado propio.
   const editedRef = React.useRef(false);
@@ -193,89 +258,280 @@ const MealSlotEditor: React.FC<{
   const sig = `${meal?.spItemId ?? ''}|${meal?.at ?? ''}`;
   React.useEffect(() => {
     if (editedRef.current) return;
-    setTipo(meal?.tipo === 'MENU' || meal?.tipo === 'OPCION' ? meal.tipo : '');
+    setTipo(initialTipo());
     setDetalle(meal?.detalle ?? '');
     setObs(meal?.observaciones ?? '');
   }, [sig]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const pill = meal ? comandaTipoPill(meal.tipo) : null;
+
+  // Header: siempre visible, es el que colapsa. Muestra el estado sin abrir el box.
+  const header = (
+    <button type="button" onClick={onToggle}
+      className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-slate-50/80 transition-colors">
+      <div className="flex items-center gap-2 min-w-0">
+        <ChevronRight className={cn('w-3 h-3 text-slate-400 shrink-0 transition-transform', open && 'rotate-90')} />
+        <span className="text-[10px] font-bold uppercase tracking-wide text-slate-600">{label}</span>
+      </div>
+      <div className="flex items-center gap-1.5 shrink-0">
+        {pill
+          ? <span className={cn('px-2 py-0.5 rounded-full text-[9px] font-bold', pill.cls)}>{pill.label}</span>
+          : <span className="text-[9px] text-slate-300 italic">Sin carga</span>}
+      </div>
+    </button>
+  );
+
+  // Colapso por CSS (`hidden`) y NO por render condicional: desmontar destruiría lo tipeado sin
+  // guardar. Con 4 turnos el riesgo se multiplica por 4.
+  const body = (children: React.ReactNode) => (
+    <div className={cn('px-3 pb-3 space-y-2', !open && 'hidden')}>{children}</div>
+  );
+
   if (!canEdit) {
-    const pill = meal ? comandaTipoPill(meal.tipo) : null;
     return (
-      <div className="bg-white rounded-xl p-3 border border-slate-100">
-        <div className="flex items-center justify-between mb-1">
-          <p className="text-[8px] font-bold uppercase text-slate-400">{label}</p>
-          {pill
-            ? <span className={cn("px-2 py-0.5 rounded-full text-[9px] font-bold", pill.cls)}>{pill.label}</span>
-            : <span className="text-[10px] text-slate-400 italic">Sin carga</span>}
-        </div>
-        {meal?.detalle && <p className="text-[11px] font-semibold text-slate-800 whitespace-pre-wrap break-words">{meal.detalle}</p>}
-        {meal?.observaciones && <p className="text-[11px] text-slate-500 whitespace-pre-wrap break-words mt-0.5">Obs: {meal.observaciones}</p>}
-        {meal && <p className="text-[9px] text-slate-400 mt-1">{fmtMealWhen(meal)}</p>}
+      <div className="bg-white rounded-xl border border-slate-100 overflow-hidden">
+        {header}
+        {body(
+          meal ? (
+            <>
+              {meal.detalle && <p className="text-[11px] font-semibold text-slate-800 whitespace-pre-wrap break-words">{meal.detalle}</p>}
+              {meal.observaciones && <p className="text-[11px] text-slate-500 whitespace-pre-wrap break-words mt-0.5">Obs: {meal.observaciones}</p>}
+              <p className="text-[9px] text-slate-400 mt-1">{fmtMealWhen(meal)}</p>
+            </>
+          ) : <p className="text-[10px] text-slate-300 italic">Sin carga</p>
+        )}
       </div>
     );
   }
 
-  // forceOtros fija OTROS; si no, respeta la selección o un OTROS ya guardado (dieta que dejó de
-  // ser terapéutica): así no bloquea editar solo obs/detalle sobre una comanda OTROS preexistente.
-  const effectiveTipo: 'MENU' | 'OPCION' | 'OTROS' | '' = forceOtros ? 'OTROS' : (tipo || (meal?.tipo === 'OTROS' ? 'OTROS' : ''));
+  /**
+   * Autocompletado (Fase 3). Al elegir Menú u Opción se copia el texto planificado al detalle.
+   * Es una COPIA por valor: queda editable y lo que se guarda es el texto final.
+   * NO destructivo: solo pisa el detalle si está vacío o si es exactamente el texto planificado
+   * del otro tipo (o sea, algo que puso el autocompletado y no la persona).
+   */
+  const pickTipo = (op: 'MENU' | 'OPCION' | 'OTROS') => {
+    editedRef.current = true;
+    setTipo(op);
+    if (op === 'OTROS') return;                    // "Otros" nunca autocompleta: se escribe a mano
+    const texto = planned?.[op];
+    if (!texto) return;                            // sin planificación vigente → no toca nada
+    const autofilled = Object.values(planned ?? {}).filter(Boolean) as string[];
+    const current = detalle.trim();
+    if (current === '' || autofilled.includes(current)) setDetalle(texto);
+  };
+
+  const hasPlan = !!planned && (!!planned.MENU || !!planned.OPCION);
+  const showNoPlanWarning = (tipo === 'MENU' || tipo === 'OPCION') && !planned?.[tipo];
+
+  // Una bandeja ENTREGADA está congelada: ya salió de la cocina. Para cambiarla hay que
+  // volverla a Pendiente desde el panel de comandas (paso explícito y auditable). El server
+  // igual lo rechaza con 409 — esto es UX, no seguridad.
+  const entregada = meal?.status === COMANDA_STATUS.ENTREGADO;
   const dirty =
-    effectiveTipo !== (meal?.tipo ?? '') ||
+    tipo !== (meal?.tipo ?? '') ||
     detalle.trim() !== (meal?.detalle ?? '').trim() ||
     obs.trim() !== (meal?.observaciones ?? '').trim();
   // En "Otros" el detalle (la comida) es OBLIGATORIO; en Menú/Opción es opcional.
-  const canSave = !!effectiveTipo && dirty && (!forceOtros || detalle.trim() !== '');
+  const canSave = !entregada && !!tipo && dirty && (tipo !== 'OTROS' || detalle.trim() !== '');
 
   return (
-    <div className="bg-white rounded-xl p-3 border border-slate-100 space-y-2">
-      <div className="flex items-center justify-between">
-        <p className="text-[8px] font-bold uppercase text-slate-400">{label}</p>
-        {meal && <span className="text-[9px] text-slate-400 truncate">{fmtMealWhen(meal)}</span>}
-      </div>
-      {forceOtros ? (
-        <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-indigo-50 border border-indigo-100">
-          <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-indigo-100 text-indigo-700 uppercase tracking-wide">Otros</span>
-          <span className="text-[10px] font-medium text-indigo-700">Dieta especial — escribí la comida abajo</span>
-        </div>
-      ) : (
-        <div className="flex gap-2">
-          {(['MENU', 'OPCION'] as const).map(op => (
-            <button key={op} type="button" onClick={() => { editedRef.current = true; setTipo(op); }}
-              className={cn("flex-1 h-9 rounded-lg text-[11px] font-bold uppercase tracking-wide border transition-all",
-                tipo === op
-                  ? (op === 'MENU' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-amber-500 text-white border-amber-500')
-                  : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-100')}>
-              {op === 'MENU' ? 'Menú' : 'Opción'}
-            </button>
-          ))}
-        </div>
+    <div className="bg-white rounded-xl border border-slate-100 overflow-hidden">
+      {header}
+      {body(
+        <>
+          {meal && <p className="text-[9px] text-slate-400 -mt-1">{fmtMealWhen(meal)}</p>}
+
+          {/* Las 3 opciones para TODAS las dietas. En terapéuticas, "Otros" viene preseleccionado. */}
+          <div className="flex gap-1.5">
+            {(['MENU', 'OPCION', 'OTROS'] as const).map(op => (
+              <button key={op} type="button" onClick={() => pickTipo(op)} disabled={entregada}
+                aria-pressed={tipo === op}
+                className={cn('flex-1 h-9 rounded-lg text-[11px] font-bold uppercase tracking-wide border transition-all disabled:opacity-50 disabled:cursor-not-allowed',
+                  tipo === op ? TIPO_BTN_CLS[op] : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-100')}>
+                {op === 'MENU' ? 'Menú' : op === 'OPCION' ? 'Opción' : 'Otros'}
+              </button>
+            ))}
+          </div>
+
+          {entregada && (
+            <div className="flex items-start gap-1.5 px-2 py-1.5 rounded-lg bg-emerald-50 border border-emerald-100">
+              <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0 mt-0.5" />
+              <p className="text-[9px] font-medium text-emerald-700">
+                Ya entregada — para modificarla, volvela a pendiente desde el panel de Comandas.
+              </p>
+            </div>
+          )}
+          {preferOtros && !entregada && (
+            <p className="text-[9px] text-indigo-600 font-medium">
+              Dieta especial — sugerido "Otros" (podés cambiarlo)
+            </p>
+          )}
+
+          {showNoPlanWarning && (
+            <div className="flex items-start gap-1.5 px-2 py-1.5 rounded-lg bg-amber-50 border border-amber-100">
+              <AlertCircle className="w-3 h-3 text-amber-500 shrink-0 mt-0.5" />
+              <p className="text-[9px] font-medium text-amber-700">
+                No hay comanda planificada para este turno y tipo. Escribila abajo.
+              </p>
+            </div>
+          )}
+
+          <input value={detalle} onChange={e => { editedRef.current = true; setDetalle(e.target.value); }} maxLength={500}
+            disabled={entregada}
+            placeholder={tipo === 'OTROS' ? 'Comida / menú (obligatorio)' : 'Detalle de la comanda'}
+            className={cn('w-full rounded-lg border px-2.5 py-1.5 text-[11px] focus:outline-none focus:ring-2 focus:ring-emerald-200',
+              tipo === 'OTROS' && detalle.trim() === '' ? 'border-indigo-300 bg-indigo-50/30' : 'border-slate-200')} />
+          <textarea value={obs} onChange={e => { editedRef.current = true; setObs(e.target.value); }} rows={2} maxLength={500}
+            disabled={entregada}
+            placeholder="Observaciones (opcional)"
+            className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] resize-none focus:outline-none focus:ring-2 focus:ring-emerald-200 disabled:bg-slate-50 disabled:text-slate-400" />
+          <div className="flex gap-2">
+            <Button size="sm" disabled={!canSave || saving}
+              onClick={async () => { if (!tipo || !onSave) return; setSaving(true); try { await onSave(bed, slot, tipo, detalle.trim(), obs.trim()); editedRef.current = false; } finally { setSaving(false); } }}
+              className="flex-1 h-8 text-[11px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40">
+              {saving ? 'Guardando…' : meal ? 'Actualizar' : 'Guardar'}
+            </Button>
+            {meal && onClear && (
+              <Button variant="outline" size="sm" disabled={saving}
+                onClick={async () => { setSaving(true); try { await onClear(bed, slot); } finally { setSaving(false); } }}
+                className="h-8 px-3 text-[11px] font-bold rounded-lg border-slate-200 text-slate-500 hover:bg-slate-100">
+                Quitar
+              </Button>
+            )}
+          </div>
+
+          {/* ── Acompañantes ─────────────────────────────────────────────── */}
+          <div className="pt-1 border-t border-slate-100 space-y-2">
+            {(acomps.length > 0 || drafts.length > 0) && (
+              <p className="text-[8px] font-bold uppercase tracking-widest text-slate-400 pt-1">Acompañante/s</p>
+            )}
+            {acomps.map((a, i) => (
+              <CompanionEditor key={a.spItemId} bed={bed} slot={slot} companion={a} index={i + 1}
+                planned={planned} onSave={onSaveCompanion} onRemove={onClearCompanion} />
+            ))}
+            {drafts.map((id, i) => (
+              <CompanionEditor key={`draft-${id}`} bed={bed} slot={slot} index={acomps.length + i + 1}
+                planned={planned} onSave={onSaveCompanion}
+                onDiscardDraft={() => setDrafts(d => d.filter(x => x !== id))} />
+            ))}
+            {acomps.length + drafts.length < MAX_ACOMPANANTES && (
+              <button type="button" onClick={() => setDrafts(d => [...d, nextDraftId.current++])}
+                className="w-full h-8 rounded-lg border border-dashed border-slate-200 text-[10px] font-bold text-slate-400 hover:text-slate-600 hover:border-slate-300 flex items-center justify-center gap-1">
+                <Plus className="w-3 h-3" /> Agregar acompañante
+              </button>
+            )}
+          </div>
+        </>
       )}
-      <input value={detalle} onChange={e => { editedRef.current = true; setDetalle(e.target.value); }} maxLength={500}
-        placeholder={forceOtros ? 'Comida / menú (obligatorio)' : 'Detalle de la comanda (opcional)'}
-        className={cn("w-full rounded-lg border px-2.5 py-1.5 text-[11px] focus:outline-none focus:ring-2 focus:ring-emerald-200",
-          forceOtros && detalle.trim() === '' ? 'border-indigo-300 bg-indigo-50/30' : 'border-slate-200')} />
-      <textarea value={obs} onChange={e => { editedRef.current = true; setObs(e.target.value); }} rows={2} maxLength={500}
-        placeholder="Observaciones (opcional)"
-        className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] resize-none focus:outline-none focus:ring-2 focus:ring-emerald-200" />
-      <div className="flex gap-2">
-        <Button size="sm" disabled={!canSave || saving}
-          onClick={async () => { if (!effectiveTipo || !onSave) return; setSaving(true); try { await onSave(bed, slot, effectiveTipo, detalle.trim(), obs.trim()); editedRef.current = false; } finally { setSaving(false); } }}
-          className="flex-1 h-8 text-[11px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40">
-          {saving ? 'Guardando…' : meal ? 'Actualizar' : 'Guardar'}
-        </Button>
-        {meal && onClear && (
-          <Button variant="outline" size="sm" disabled={saving}
-            onClick={async () => { setSaving(true); try { await onClear(bed, slot); } finally { setSaving(false); } }}
-            className="h-8 px-3 text-[11px] font-bold rounded-lg border-slate-200 text-slate-500 hover:bg-slate-100">
-            Quitar
-          </Button>
-        )}
-      </div>
     </div>
   );
 };
 
-export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onFetchPatientTickets, onRefresh, onMarkClean, onUndoClean, onSaveMeal, onClearMeal }) => {
+/**
+ * Bloque de un acompañante. `companion === undefined` = DRAFT local (todavía no existe en SP):
+ * se persiste recién al Guardar y el `orden` lo asigna el server.
+ *
+ * Tiene su PROPIO `editedRef` y su propio efecto de re-sync: el guard es por instancia, y con
+ * 4 turnos × 6 acompañantes puede haber hasta 28 instancias vivas.
+ */
+const CompanionEditor: React.FC<{
+  bed: Bed; slot: MealSlot; companion?: MealLoad; index: number;
+  planned?: Partial<Record<'MENU' | 'OPCION', string>>;
+  onSave?: (bed: Bed, comida: MealSlot, data: { spItemId?: string; tipo: 'MENU' | 'OPCION' | 'OTROS'; detalle: string; observaciones: string }) => Promise<{ ok: boolean }>;
+  onRemove?: (bed: Bed, comida: MealSlot, spItemId: string) => void | Promise<void>;
+  onDiscardDraft?: () => void;
+}> = ({ bed, slot, companion, index, planned, onSave, onRemove, onDiscardDraft }) => {
+  const [tipo, setTipo] = useState<'MENU' | 'OPCION' | 'OTROS' | ''>(companion?.tipo ?? '');
+  const [detalle, setDetalle] = useState(companion?.detalle ?? '');
+  const [obs, setObs] = useState(companion?.observaciones ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const editedRef = React.useRef(false);
+
+  const sig = `${companion?.spItemId ?? ''}|${companion?.at ?? ''}`;
+  React.useEffect(() => {
+    if (editedRef.current) return;
+    setTipo(companion?.tipo ?? '');
+    setDetalle(companion?.detalle ?? '');
+    setObs(companion?.observaciones ?? '');
+  }, [sig]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const pickTipo = (op: 'MENU' | 'OPCION' | 'OTROS') => {
+    editedRef.current = true;
+    setTipo(op);
+    if (op === 'OTROS') return;
+    const texto = planned?.[op];
+    if (!texto) return;
+    const autofilled = Object.values(planned ?? {}).filter(Boolean) as string[];
+    const current = detalle.trim();
+    if (current === '' || autofilled.includes(current)) setDetalle(texto);
+  };
+
+  const entregada = companion?.status === COMANDA_STATUS.ENTREGADO;
+  const dirty =
+    tipo !== (companion?.tipo ?? '') ||
+    detalle.trim() !== (companion?.detalle ?? '').trim() ||
+    obs.trim() !== (companion?.observaciones ?? '').trim();
+  const canSave = !entregada && !!tipo && dirty && (tipo !== 'OTROS' || detalle.trim() !== '');
+
+  return (
+    <div className="rounded-lg border border-slate-100 bg-slate-50/60 p-2 space-y-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-[9px] font-bold uppercase tracking-wide text-slate-500">
+          Acompañante {index}
+          {entregada && <span className="ml-1.5 text-emerald-600">· Entregada</span>}
+        </span>
+        <button type="button" title="Eliminar acompañante"
+          onClick={async () => {
+            if (!companion) { onDiscardDraft?.(); return; }   // draft → se descarta sin red
+            setSaving(true);
+            try { await onRemove?.(bed, slot, companion.spItemId); } finally { setSaving(false); }
+          }}
+          className="w-5 h-5 rounded flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50">
+          <X className="w-3 h-3" />
+        </button>
+      </div>
+      <div className="flex gap-1">
+        {(['MENU', 'OPCION', 'OTROS'] as const).map(op => (
+          <button key={op} type="button" onClick={() => pickTipo(op)} aria-pressed={tipo === op}
+            className={cn('flex-1 h-7 rounded text-[9px] font-bold uppercase border transition-all',
+              tipo === op ? TIPO_BTN_CLS[op] : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-100')}>
+            {op === 'MENU' ? 'Menú' : op === 'OPCION' ? 'Opción' : 'Otros'}
+          </button>
+        ))}
+      </div>
+      <input value={detalle} onChange={e => { editedRef.current = true; setDetalle(e.target.value); }} maxLength={500}
+        placeholder={tipo === 'OTROS' ? 'Comida (obligatorio)' : 'Detalle'}
+        className="w-full rounded border border-slate-200 px-2 py-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-emerald-200" />
+      <input value={obs} onChange={e => { editedRef.current = true; setObs(e.target.value); }} maxLength={500}
+        placeholder="Observaciones (opcional)"
+        className="w-full rounded border border-slate-200 px-2 py-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-emerald-200" />
+      {error && <p className="text-[9px] font-medium text-red-600">{error}</p>}
+      <Button size="sm" disabled={!canSave || saving}
+        onClick={async () => {
+          if (!tipo || !onSave) return;
+          setSaving(true); setError(null);
+          try {
+            const r = await onSave(bed, slot, { spItemId: companion?.spItemId, tipo, detalle: detalle.trim(), observaciones: obs.trim() });
+            // Si falla NO se revierte en silencio: se conserva lo tipeado y se avisa.
+            if (r.ok) { editedRef.current = false; onDiscardDraft?.(); }
+            else setError('No se pudo guardar. Reintentá.');
+          } finally { setSaving(false); }
+        }}
+        className="w-full h-7 text-[10px] font-bold rounded bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40">
+        {saving ? 'Guardando…' : companion ? 'Actualizar' : 'Guardar'}
+      </Button>
+    </div>
+  );
+};
+
+export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onFetchPatientTickets, onRefresh, onMarkClean, onUndoClean, onSaveMeal, onClearMeal, onSaveCompanion, onClearCompanion }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
+  // Turnos abiertos en el modal de la cama. Vive en el PADRE y no en cada box: si viviera adentro,
+  // se perdería al cerrar/reabrir. Se resetea al cambiar de cama (el default se recalcula abajo).
+  const [openSlots, setOpenSlots] = useState<Set<MealSlot>>(new Set());
+  const plannedMenu = usePlannedMenu(can(currentUser, 'ver_dieta') || can(currentUser, 'cargar_dieta'));
   const [journeyOpen, setJourneyOpen] = useState(false);
   const [enrichedBed, setEnrichedBed] = useState<Bed | null>(null);
   const [enrichLoading, setEnrichLoading] = useState(false);
@@ -288,6 +544,17 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   React.useEffect(() => {
     setDetailTab('general');
   }, [selectedBed?.id]);
+
+  // Default de colapso: se abren los turnos que YA tienen comanda cargada; el resto arranca
+  // cerrado. Se deriva de `beds` (no de `selectedBed`, que es el snapshot del click) porque las
+  // comandas llegan por el poll: en cold start `meals` viene vacío y los 4 quedarían cerrados,
+  // justo para catering, que es lectura. Depende solo del id de la cama para no pelear contra el
+  // usuario que colapsó algo a mano.
+  React.useEffect(() => {
+    if (!selectedBed?.id) { setOpenSlots(new Set()); return; }
+    const fresh = beds.find(b => b.id === selectedBed.id) ?? selectedBed;
+    setOpenSlots(new Set(MEAL_SLOTS.filter(s => fresh.meals?.[s.slot]).map(s => s.slot)));
+  }, [selectedBed?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // On-demand enrichment when user clicks an occupied bed.
   // Siempre re-consultamos al abrir el modal: la dieta y otros campos del evento
@@ -1914,9 +2181,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     )}
                     {/* Esquina inf. derecha: platito = comanda cargada (sólo si puede verla) +
                         pill de ayuno. En flex para que no se pisen si el paciente tiene ambos. */}
-                    {((canViewComanda && !!(bed.meals?.almuerzo || bed.meals?.cena)) || hasLiveFasting(bed.fasting)) && (
+                    {((canViewComanda && hasAnyMealLoad(bed.meals)) || hasLiveFasting(bed.fasting)) && (
                       <div className="absolute bottom-0.5 right-0.5 flex items-center gap-0.5">
-                        {canViewComanda && (bed.meals?.almuerzo || bed.meals?.cena) && (
+                        {canViewComanda && hasAnyMealLoad(bed.meals) && (
                           <div
                             className="flex items-center justify-center w-3.5 h-3.5 md:w-4 md:h-4 rounded-full bg-indigo-500 text-white ring-1 ring-white shadow-sm"
                             title="Comanda cargada"
@@ -2328,7 +2595,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                             {(() => {
                               const liveBed = beds.find(b => b.label === selectedBed.label) ?? selectedBed;
                               const canEditMeal = can(currentUser, 'cargar_dieta');
-                              const hasAnyMeal = !!(liveBed.meals?.almuerzo || liveBed.meals?.cena);
+                              const hasAnyMeal = hasAnyMealLoad(liveBed.meals);
                               if (!canViewComanda) return null;              // sin permiso → no ve la sección
                               if (!canEditMeal && !hasAnyMeal) return null;  // solo-lectura y nada cargado → nada
                               return (
@@ -2339,7 +2606,15 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                                   </div>
                                   {MEAL_SLOTS.map(({ slot, label }) => (
                                     <MealSlotEditor key={slot} bed={liveBed} slot={slot} label={label}
-                                      canEdit={canEditMeal} onSave={onSaveMeal} onClear={onClearMeal} />
+                                      canEdit={canEditMeal} planned={plannedMenu[slot]}
+                                      open={openSlots.has(slot)}
+                                      onToggle={() => setOpenSlots(prev => {
+                                        const n = new Set(prev);
+                                        n.has(slot) ? n.delete(slot) : n.add(slot);
+                                        return n;
+                                      })}
+                                      onSave={onSaveMeal} onClear={onClearMeal}
+                                      onSaveCompanion={onSaveCompanion} onClearCompanion={onClearCompanion} />
                                   ))}
                                 </div>
                               );
