@@ -69,6 +69,16 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
     ],
   },
   {
+    // Planificación del menú por rango de fechas (16.CargaMenu). Va acá y no en "Mapa de Camas"
+    // porque se hace desde el módulo Comandas: `cargar_dieta`/`ver_dieta` son la carga por
+    // paciente (tarjeta de la cama), esto es la plantilla que la autocompleta.
+    module: 'Gestion Comandas', label: 'Gestión de Comandas',
+    perms: [
+      { code: 'ver_planificacion', label: 'Ver planificación de menú (solo lectura)' },
+      { code: 'abm_planificacion', label: 'Crear / editar / eliminar planificación de menú' },
+    ],
+  },
+  {
     module: 'Configuracion', label: 'Configuración',
     perms: [
       { code: 'abm_usuarios', label: 'ABM Usuarios' },
