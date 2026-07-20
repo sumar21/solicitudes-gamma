@@ -24,7 +24,23 @@ const CRON_SECRET = process.env.CRON_SECRET ?? '';
 const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 const GAMMA_BASE = process.env.GAMMA_VM_URL ?? 'http://35.224.5.114/proxy/index.php';
 
-const WORKERS = 8;
+// Concurrencia contra Gamma. La VM es SINGLE-NODE (docs/arquitectura.md §41): 8 workers en
+// paralelo la saturan y entran en congestion collapse — más concurrencia la vuelve más lenta,
+// tardamos más, y se satura más. Infra reportó "ráfagas masivas cada 15 min" y tiene razón:
+// disparábamos las 103 camas lo más rápido posible.
+// Trade-off MEDIDO (103 camas, presupuesto 240s):
+//   VM rápida (2s/req):  8w sin pacing → 103/103 en 26s  |  4w+1000ms → 103/103 en 103s
+//   VM lenta  (22s/req): 8w sin pacing →  87/103         |  4w+1000ms →  43/103
+// Con la VM lenta procesamos menos por corrida — las restantes se retoman a los 15 min.
+// La apuesta: al dejar de saturarla, deja de estar lenta. Si no ocurre, subí CRON_WORKERS
+// por env (sin redeploy) y medí de nuevo con la línea `[cron-enrich] RUN`.
+const WORKERS = Number(process.env.CRON_WORKERS ?? 4);
+
+// Espaciado mínimo entre el ARRANQUE de dos requests (ms). Convierte la ráfaga en un goteo:
+// con 103 camas y 1200ms, la carga se reparte a lo largo de ~2 min en vez de caer de golpe.
+// Tenemos 240s de presupuesto — usar la ventana en vez de correr no nos cuesta nada, y a una
+// VM single-node le cambia la vida. 0 lo desactiva.
+const PACE_MS = Number(process.env.CRON_PACE_MS ?? 1000);
 const STALE_MS = 60 * 60 * 1000; // filas no vistas + sin update hace >1h → Inactivo
 
 interface EnrichRow {
@@ -188,12 +204,13 @@ export default async function handler(req: any, res: any) {
     String(req.query?.silent ?? req.query?.rebaseline ?? '').toLowerCase(),
   );
 
-  const stats = { checked: 0, upserted: 0, errors: 0, skippedPersistFail: 0, skippedByBudget: 0, deactivated: 0, silent };
+  const stats = { checked: 0, upserted: 0, errors: 0, eventTimeouts: 0, skippedPersistFail: 0, skippedByBudget: 0, deactivated: 0, breakerTripped: false, silent };
 
   // Presupuesto de tiempo por corrida: si nos acercamos al maxDuration (300s),
   // cortamos prolijo y devolvemos 200 con stats parciales en vez de que Vercel mate
   // la función (status 0). Las camas que quedaron se retoman en el próximo ciclo.
-  const deadline = Date.now() + Number(process.env.CRON_BUDGET_MS ?? 240_000);
+  const runStart = Date.now();
+  const deadline = runStart + Number(process.env.CRON_BUDGET_MS ?? 240_000);
 
   try {
     // 1) Filas existentes en SP.
@@ -248,10 +265,38 @@ export default async function handler(req: any, res: any) {
     const queue = [...beds];
     let fastingNotified = 0;
     let dietNotified = 0;
+    // Circuit breaker: N timeouts CONSECUTIVOS de evento → cortar la corrida.
+    // Tuneable por env sin redeploy (mismo criterio que CRON_BUDGET_MS / GAMMA_FETCH_TIMEOUT_MS).
+    // 0 lo desactiva.
+    //
+    // ⚠️ El umbral NO es arbitrario: en una corrida REAL (20/07 12:30) se observaron
+    // 8 timeouts consecutivos al arranque y después la VM se recuperó y procesó el resto
+    // bien. Con umbral 8 esa corrida se habría cortado perdiendo ~95 camas buenas.
+    // 20 deja margen sobre ese patrón y aun así, con la VM caída, manda 20 requests en
+    // vez de 103 (-80%). Subir si aparecen falsos cortes; bajar solo con datos.
+    const BREAKER_THRESHOLD = Number(process.env.CRON_BREAKER_FAILS ?? 20);
+    let consecutiveEventFails = 0;
+    let breakerTripped = false;
+    // Reloj compartido del pacing: cada worker espera su turno antes de disparar. Se comparte
+    // entre workers (no es un sleep por worker) para que el RITMO GLOBAL sea PACE_MS,
+    // independiente de cuántos workers haya.
+    let nextSlot = Date.now();
+    const esperarTurno = async () => {
+      if (PACE_MS <= 0) return;
+      const ahora = Date.now();
+      const mio = Math.max(ahora, nextSlot);
+      nextSlot = mio + PACE_MS;
+      const espera = mio - ahora;
+      if (espera > 0) await new Promise(r => setTimeout(r, espera));
+    };
+
     const worker = async () => {
-      while (queue.length > 0 && Date.now() < deadline) {
+      while (queue.length > 0 && Date.now() < deadline && !breakerTripped) {
         const b = queue.shift();
         if (!b) return;
+        await esperarTurno();
+        // El turno pudo haber consumido lo que quedaba de presupuesto.
+        if (Date.now() >= deadline || breakerTripped) { queue.unshift(b); return; }
         const eventKey = `${b.eventOrigin}-${b.eventNumber}`;
         seenKeys.add(eventKey);
         try {
@@ -266,8 +311,24 @@ export default async function handler(req: any, res: any) {
           // cancelado". Saltamos — se reintenta en el próximo ciclo.
           if (eventFetchFailed) {
             stats.errors++;
+            stats.eventTimeouts++;
+            // ── Circuit breaker ────────────────────────────────────────────
+            // La VM de Gamma es single-node: cuando se satura, `obtenereventointernacion`
+            // tarda 20-25s o se cuelga (ver docs/arquitectura.md §41). Al abortar NO la
+            // liberamos —el proceso sigue vivo del otro lado— y el worker toma la
+            // siguiente cama al instante, así que le apilamos trabajo más rápido de lo
+            // que puede drenar. Insistir con las 103 camas empeora algo que ya está caído.
+            //
+            // Cuenta fallos CONSECUTIVOS: un timeout suelto entre respuestas buenas es
+            // ruido normal y el contador se resetea; N seguidos = la VM no está
+            // respondiendo, y ahí cortamos y reintentamos en el próximo ciclo (15 min).
+            if (BREAKER_THRESHOLD > 0 && ++consecutiveEventFails >= BREAKER_THRESHOLD) {
+              breakerTripped = true;
+              console.warn(`[cron-enrich] CIRCUIT BREAKER: ${consecutiveEventFails} timeouts consecutivos de obtenereventointernacion — corto la corrida (quedan ${queue.length} camas para el próximo ciclo)`);
+            }
             continue;
           }
+          consecutiveEventFails = 0;   // respuesta buena → el breaker vuelve a cero
 
           // ── Detección de cambio de fasting (push a Catering / quien tenga notif_fasting_change) ──
           // Dos disparadores:
@@ -374,16 +435,32 @@ export default async function handler(req: any, res: any) {
     (stats as any).fastingNotified = fastingNotified;
     (stats as any).dietNotified = dietNotified;
 
-    // Si cortamos por presupuesto, las camas sin procesar quedan para el próximo ciclo.
+    // Si cortamos (por presupuesto o por breaker), las camas sin procesar quedan para el
+    // próximo ciclo.
     if (queue.length > 0) {
       stats.skippedByBudget = queue.length;
-      console.warn(`[cron-enrich] budget agotado: ${queue.length} camas pospuestas al próximo ciclo`);
+      const motivo = breakerTripped ? 'circuit breaker' : 'budget agotado';
+      console.warn(`[cron-enrich] ${motivo}: ${queue.length} camas pospuestas al próximo ciclo`);
     }
+    stats.breakerTripped = breakerTripped;
+
+    // Resumen de UNA línea por corrida. Antes solo se logueaban cambios y fallos, así que
+    // desde los logs de Vercel no se podía responder "¿cuántos requests le mandamos a Gamma?".
+    // `eventos` es 1 request a obtenereventointernacion por cama procesada (no reintentamos).
+    const procesadas = stats.checked - queue.length;
+    const durS = ((Date.now() - runStart) / 1000).toFixed(1);
+    console.log(
+      `[cron-enrich] RUN entorno=${ENTORNO} camas=${stats.checked} procesadas=${procesadas} ` +
+      `eventos=${procesadas} eventos_timeout=${stats.eventTimeouts} upserted=${stats.upserted} ` +
+      `pospuestas=${queue.length} breaker=${breakerTripped} workers=${WORKERS} pace=${PACE_MS}ms dur=${durS}s`,
+    );
 
     // 5) Cleanup: filas no vistas en este ciclo + viejas → Inactivo.
     // Sólo si no agotamos el presupuesto: con la corrida cortada habría filas no
     // vistas que no son stale de verdad. El cleanup se retoma el próximo ciclo.
-    if (Date.now() < deadline) {
+    // Tampoco si cortó el breaker: quedaron camas sin ver que NO son stale de verdad
+    // (mismo razonamiento que con el budget) — desactivarlas borraría enrich bueno.
+    if (Date.now() < deadline && !breakerTripped) {
       const staleCutoff = Date.now() - STALE_MS;
       for (const [key, row] of rows) {
         if (seenKeys.has(key)) continue;
