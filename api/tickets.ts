@@ -222,11 +222,29 @@ async function handler(req: any, res: any) {
       // traer toda la historia del entorno. Todos los tickets tienen CodigoPaciente_T poblado,
       // así que el filtro por código es preciso (no cruza pacientes por nombre). Alimenta el
       // botón "Historial del paciente" del mapa de camas con un fetch on-demand por cama.
+      // VENTANA DE GRACIA para los cerrados.
+      //
+      // El poll del front (cada 15s) pide la vista SIN ?all=1. Si esa vista devolviera
+      // únicamente los activos, un traslado que pasa a Consolidado/Cancelado DESAPARECERÍA
+      // del array del cliente de un poll al otro — y el detector de cambios de
+      // useHospitalState (`for (const t of tickets)`) solo mira tickets PRESENTES, así que
+      // nunca vería la transición y no emitiría la notif de finalización. Esa notif está
+      // puesta a propósito como red de seguridad para cuando falla el web-push.
+      //
+      // Solución: los cerrados siguen viajando un rato después de cerrarse. El cliente ve
+      // la transición con su status real (Consolidado vs Cancelado, que son notifs
+      // distintas) y recién después el ticket se cae solo del payload.
+      //
+      // 30 min es holgado a propósito: cubre pestañas en background con los timers
+      // throttleados por el navegador, que pueden pollear mucho más lento que 15s.
+      const CLOSED_GRACE_MS = 30 * 60 * 1000;
+      const graceCutoff = new Date(Date.now() - CLOSED_GRACE_MS).toISOString();
+      const recentlyClosed = `fields/FechaFin_T ge '${graceCutoff}'`;
       const filter = patientCode
         ? `&$filter=${entornoClause} and fields/CodigoPaciente_T eq '${patientCode.replace(/'/g, "''")}'`
         : fetchAll
           ? `&$filter=${entornoClause}`
-          : `&$filter=${entornoClause} and ${statusClause}`;
+          : `&$filter=${entornoClause} and ((${statusClause}) or ${recentlyClosed})`;
 
       // Sin tope: paginamos siguiendo @odata.nextLink y traemos TODOS los tickets del
       // entorno (mismo patrón que api/notifications.ts). El `$top=500` es solo el tamaño

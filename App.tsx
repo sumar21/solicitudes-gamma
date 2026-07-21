@@ -60,13 +60,19 @@ const SprayCanIcon = ({ className }: { className?: string }) => (
 export default function App() {
   const { state, actions } = useHospitalState();
 
-  // Espera media real: promedio de tiempo total de tickets consolidados
+  // Espera media real: promedio de tiempo total de tickets consolidados.
+  //
+  // Sale de `historyTickets` y no de `tickets`: el poll de 15s dejó de traer el histórico,
+  // así que `tickets` ya casi no tiene Consolidados (solo los de la ventana de gracia de
+  // 30 min del server). Con `historyTickets` el número es el de siempre en cuanto el
+  // histórico esté cargado; hasta entonces promedia solo los cierres recientes, o muestra
+  // '--' si no hubo ninguno.
   const avgWaitTime = React.useMemo(() => {
-    const completed = state.tickets.filter(t => t.status === TicketStatus.COMPLETED && t.createdAt && t.completedAt);
+    const completed = state.historyTickets.filter(t => t.status === TicketStatus.COMPLETED && t.createdAt && t.completedAt);
     if (completed.length === 0) return '--';
     const total = completed.reduce((acc, t) => acc + calculateTicketMetrics(t).totalCycleTime, 0);
     return Math.round(total / completed.length);
-  }, [state.tickets]);
+  }, [state.historyTickets]);
 
   // PWA install prompt
   const [installPrompt, setInstallPrompt] = useState<any>(null);
@@ -634,7 +640,10 @@ export default function App() {
 
         <main className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 bg-slate-50/50 relative overscroll-y-contain">
           {/* Monitor — Admin, Admisión y Dirección (lectura) */}
-          {canViewMonitor && state.currentView === 'HOME' && <DashboardView tickets={state.filteredTickets} />}
+          {/* `historyTickets` y no `filteredTickets`: el Monitor calcula KPIs por rango de
+              fechas sobre traslados Consolidados, que el poll de 15s ya no trae (ver
+              fetchAllTickets). Además así no lo afecta el buscador de Operativa. */}
+          {canViewMonitor && state.currentView === 'HOME' && <DashboardView tickets={state.historyTickets} onRefresh={() => actions.fetchAllTickets(true)} refreshing={state.allTicketsLoading} />}
           {/* Operativa — dos solapas: Traslados y Limpiezas.
               Limpiezas dejó de ser una entrada del sidebar y vive acá. La barra de solapas va
               como HERMANA de las vistas (no las envuelve), así cada una conserva su propio
@@ -687,7 +696,7 @@ export default function App() {
             </>
           )}
           {/* Historial — gateado por Acceso_RT */}
-          {canViewHistorial && state.currentView === 'HISTORY' && <HistoryView tickets={state.historyTickets} />}
+          {canViewHistorial && state.currentView === 'HISTORY' && <HistoryView tickets={state.historyTickets} onRefresh={() => actions.fetchAllTickets(true)} refreshing={state.allTicketsLoading} />}
           {/* Usuarios — gateado por permiso abm_usuarios */}
           {canSeeUsers && state.currentView === 'USERS' && <UserManagementView currentUser={state.currentUser} />}
           {/* Roles — gateado por permiso abm_roles */}

@@ -2,6 +2,7 @@
 import React, { useMemo, useState } from 'react';
 import { Ticket, TicketStatus, WorkflowType } from '../types';
 import { Activity, ArrowRightLeft, Clock, CheckCircle2, Calendar as CalendarIcon } from '../components/Icons';
+import { RefreshCw } from 'lucide-react';
 import { Card } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
@@ -14,6 +15,9 @@ import { calculateTicketMetrics, formatBedName, formatDateReadable, formatDateTi
 
 interface DashboardViewProps {
   tickets: Ticket[];
+  /** Recarga el histórico. El Monitor ya NO se pollea: se carga al entrar y con este botón. */
+  onRefresh?: () => void | Promise<void>;
+  refreshing?: boolean;
 }
 
 // ── Helpers de fecha (YYYY-MM-DD locales = hora del dispositivo = ART en uso real) ──
@@ -71,7 +75,7 @@ function computeStats(subset: Ticket[]) {
   return { activeCount: active.length, completedCount: completed.length, avgWait };
 }
 
-export const DashboardView: React.FC<DashboardViewProps> = ({ tickets }) => {
+export const DashboardView: React.FC<DashboardViewProps> = ({ tickets, onRefresh, refreshing }) => {
   const today = isoToday();
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
@@ -212,6 +216,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ tickets }) => {
             </PopoverContent>
           </Popover>
         </div>
+
+        {/* El Monitor ya no se pollea: carga al entrar y se refresca desde acá. */}
+        {onRefresh && (
+          <button
+            type="button"
+            onClick={() => onRefresh()}
+            disabled={refreshing}
+            className="ml-auto flex items-center gap-2 h-9 px-3 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={cn('w-4 h-4', refreshing && 'animate-spin')} />
+            Actualizar
+          </button>
+        )}
       </div>
 
       {/* Upper Metrics Grid con Datos Reales */}

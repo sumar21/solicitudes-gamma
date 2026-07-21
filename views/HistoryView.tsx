@@ -7,6 +7,7 @@ import {
   ArrowRightLeft, Settings, X, Filter, AlertCircle, Download,
   History, ClipboardList
 } from '../components/Icons';
+import { RefreshCw } from 'lucide-react';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -23,6 +24,9 @@ import { WORKFLOW_LABELS } from '../lib/constants';
 
 interface HistoryViewProps {
   tickets: Ticket[];
+  /** Recarga el histórico. Ya no se pollea: carga al entrar y con este botón. */
+  onRefresh?: () => void | Promise<void>;
+  refreshing?: boolean;
 }
 
 const DateRangeTrigger = React.forwardRef<
@@ -49,7 +53,7 @@ const DateRangeTrigger = React.forwardRef<
 ));
 DateRangeTrigger.displayName = "DateRangeTrigger";
 
-export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
+export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, refreshing }) => {
   const todayISO = (() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -395,6 +399,19 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets }) => {
                   Excel
                 </>
               )}
+            </Button>
+          )}
+          {/* El histórico ya no se pollea: se carga al entrar y se refresca desde acá. */}
+          {onRefresh && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onRefresh()}
+              disabled={refreshing}
+              className="h-8 gap-1.5 font-bold text-[10px] rounded-lg text-slate-600 disabled:opacity-60"
+            >
+              <RefreshCw className={cn('w-3 h-3', refreshing && 'animate-spin')} />
+              Actualizar
             </Button>
           )}
         </div>

@@ -513,6 +513,13 @@ export const useHospitalState = () => {
   const geoCacheRef = React.useRef<{ coords: { lat: number; lng: number } | null; ts: number }>({ coords: null, ts: 0 });
   const [rawBeds, setRawBeds]                      = useState<Bed[]>([]);
   const [tickets, setTickets]                      = useState<Ticket[]>(MOCK_TICKETS);
+  // Histórico completo (incluye Consolidados/Cancelados viejos). NO se pollea: lo cargan
+  // bajo demanda Monitor e Historial, que son las únicas vistas que lo necesitan.
+  // Vacío = "todavía no se pidió"; ver `mergedTickets`.
+  const [allTickets, setAllTickets]                = useState<Ticket[]>([]);
+  const [allTicketsLoading, setAllTicketsLoading]  = useState(false);
+  const allTicketsFetchedAtRef = React.useRef(0);    // anti-rebote al alternar de vista
+  const allTicketsLoadedRef    = React.useRef(false); // ¿alguna vez se cargó? (para refreshAll)
   // Limpiezas activas (overlay de 14.Limpiezas), key = label de cama. Se pollea como las
   // camas. closedCleaningsRef evita disparar el auto-cierre más de una vez por registro.
   const [cleanings, setCleanings]                  = useState<Map<string, CleaningInfo>>(new Map());
@@ -913,7 +920,13 @@ export const useHospitalState = () => {
     try {
       const headers: Record<string, string> = {};
       if (ticketsEtagRef.current) headers['If-None-Match'] = ticketsEtagRef.current;
-      const r = await authFetch('/api/tickets?all=1', { headers });
+      // SIN ?all=1: el poll trae solo los traslados vivos (+ los cerrados dentro de la
+      // ventana de gracia del server, ver api/tickets.ts). Antes pedía el historial COMPLETO
+      // del entorno cada 15s: medido en producción, 1.143 filas / 779 KB / ~2,9s de
+      // instancia viva por request, contra ~1 KB / ~0,5s de la vista activa. Y como el
+      // historial solo crece, el costo crecía solo con él.
+      // El histórico completo lo cargan Monitor e Historial bajo demanda (fetchAllTickets).
+      const r = await authFetch('/api/tickets', { headers });
       if (r.status === 401) { handleLogout(); return; }
       if (r.status === 304) return; // no changes
       if (!r.ok) return;
@@ -936,6 +949,54 @@ export const useHospitalState = () => {
     } catch { /* keep mock/current data */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authFetch]);
+
+  // Histórico completo, BAJO DEMANDA. Lo llaman Monitor e Historial al montarse y el botón
+  // "Actualizar" de esas vistas. Deliberadamente NO entra al setInterval: es el request caro
+  // (1.143 filas / ~2,9s de instancia) y no tiene sentido pagarlo cada 15s para KPIs que se
+  // miran de a ratos.
+  const fetchAllTickets = useCallback(async (force = false) => {
+    // Anti-rebote: alternar Monitor ↔ Historial no dispara un request de 2,9s por click.
+    // El botón "Actualizar" pasa force=true porque ahí el usuario PIDIÓ datos frescos.
+    if (!force && Date.now() - allTicketsFetchedAtRef.current < 30_000) return;
+    allTicketsFetchedAtRef.current = Date.now();
+    setAllTicketsLoading(true);
+    try {
+      const r = await authFetch('/api/tickets?all=1');
+      if (r.status === 401) { handleLogout(); return; }
+      if (!r.ok) { allTicketsFetchedAtRef.current = 0; return; } // reintentar en la próxima
+      const data: { tickets: Ticket[] } = await r.json();
+      if (Array.isArray(data.tickets)) {
+        const seen = new Set<string>();
+        setAllTickets(data.tickets.filter(t => seen.has(t.id) ? false : (seen.add(t.id), true)));
+        allTicketsLoadedRef.current = true;
+      }
+    } catch { allTicketsFetchedAtRef.current = 0; /* deja lo previo, reintenta después */ }
+    finally { setAllTicketsLoading(false); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authFetch]);
+
+  // Vista "todo": histórico + lo que el poll trae vivo, con el poll ganando por id.
+  //
+  // El merge no es cosmético. El histórico se congela en el momento en que se pidió; sin
+  // pisarlo con `tickets`, el Monitor mostraría el estado viejo de un traslado que se movió
+  // hace 10 segundos. Con el merge, los contadores operativos siguen vivos aunque el
+  // histórico tenga rato.
+  //
+  // Si el histórico todavía no se cargó devolvemos `tickets` tal cual: las vistas muestran
+  // lo vivo mientras llega, en vez de parpadear en vacío.
+  const mergedTickets = useMemo(() => {
+    if (allTickets.length === 0) return tickets;
+    const m = new Map(allTickets.map(t => [t.id, t]));
+    for (const t of tickets) m.set(t.id, t);
+    return [...m.values()];
+  }, [allTickets, tickets]);
+
+  // Carga del histórico al ENTRAR a Monitor (HOME) o Historial. Sin intervalo: se trae una
+  // vez por entrada (con el anti-rebote de 30s) y se refresca con el botón Actualizar.
+  useEffect(() => {
+    if (!token) return;
+    if (currentView === 'HOME' || currentView === 'HISTORY') fetchAllTickets();
+  }, [token, currentView, fetchAllTickets]);
 
   // ── Polling ───────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1500,10 +1561,15 @@ export const useHospitalState = () => {
     soundCooldownRef.current      = false;
     ticketsEtagRef.current        = null;
     bedsEtagRef.current           = null;
+    // El histórico es del usuario anterior (y ya viene recortado por SU sede/áreas):
+    // si no se limpia, el próximo login lo ve por un instante antes del primer fetch.
+    allTicketsFetchedAtRef.current = 0;
+    allTicketsLoadedRef.current    = false;
 
     // Reset state in-memory para que el próximo login no arranque mostrando
     // dropdown/banner con datos del user anterior por un instante.
     setTickets([]);
+    setAllTickets([]);
     setNotifications([]);
     setToasts([]);
     setUnreadSpNotifications([]);
@@ -1571,8 +1637,11 @@ export const useHospitalState = () => {
     return [...merged.values()];
   }, [notificationHistory, filteredNotifications, currentUser]);
 
-  const filteredTickets = useMemo(() => {
-    let result = tickets;
+  // El recorte por sede + áreas del rol se aplica IGUAL a la lista viva y al histórico, así
+  // que vive en un helper en vez de duplicarse. Antes había una sola lista y esto era el
+  // cuerpo del useMemo.
+  const scopeTickets = useCallback((input: Ticket[]) => {
+    let result = input;
     if (currentUser?.sede !== SedeType.SUMAR)
       result = result.filter(t => t.sede === currentUser?.sede);
 
@@ -1603,9 +1672,16 @@ export const useHospitalState = () => {
       }
       // If beds not loaded yet OR azafata has all areas → show all tickets (no area filter)
     }
+    return result;
+  }, [currentUser, beds]);
 
-    // Base filtered by sede (used for history view, before search/sort)
-    const baseFiltered = [...result];
+  const filteredTickets = useMemo(() => {
+    let result = scopeTickets(tickets);
+
+    // Base para Historial y Monitor: sale del MERGE (histórico + vivo), no del poll.
+    // El poll ya no trae los cerrados viejos — si esto siguiera saliendo de `tickets`,
+    // las dos vistas quedarían vacías.
+    const baseFiltered = scopeTickets(mergedTickets);
 
     if (requestsSearchTerm) {
       const term = requestsSearchTerm.toLowerCase();
@@ -1623,7 +1699,7 @@ export const useHospitalState = () => {
       if (valA > valB) return sortConfig.direction === 'asc' ?  1 : -1;
       return 0;
     }), baseFiltered };
-  }, [tickets, currentUser, requestsSearchTerm, sortConfig, beds]);
+  }, [tickets, mergedTickets, scopeTickets, requestsSearchTerm, sortConfig]);
 
   // ── Ticket actions ────────────────────────────────────────────────────────────
   const addNotification = (params: {
@@ -2120,9 +2196,13 @@ export const useHospitalState = () => {
   const refreshAll = useCallback(async () => {
     bedsEtagRef.current = null;
     ticketsEtagRef.current = null;
-    await Promise.all([fetchBeds(true), fetchTickets(), fetchCleanings(), fetchMeals()]);
+    // El histórico solo se re-pide si ya estaba cargado (o sea, si el usuario está parado en
+    // Monitor/Historial). Para el resto de las vistas es un request caro que nadie va a mirar.
+    const jobs: Promise<unknown>[] = [fetchBeds(true), fetchTickets(), fetchCleanings(), fetchMeals()];
+    if (allTicketsLoadedRef.current) { allTicketsFetchedAtRef.current = 0; jobs.push(fetchAllTickets()); }
+    await Promise.all(jobs);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetchBeds, fetchTickets, fetchCleanings, fetchMeals]);
+  }, [fetchBeds, fetchTickets, fetchCleanings, fetchMeals, fetchAllTickets]);
 
   // El server ahora filtra Status_N='Enviada' (no es necesario filtrar en cliente).
   // Solo se aplica el corte por "más de 20 minutos" para decidir qué entra al banner.
@@ -2448,6 +2528,7 @@ export const useHospitalState = () => {
       notifications, filteredNotifications, bellNotifications, toasts, tickets,
       filteredTickets: filteredTickets.sorted,
       historyTickets: filteredTickets.baseFiltered,
+      allTicketsLoading,
       loginEmail, loginPass, loginError, loginLoading, bedsLoading, bedsError, ticketActionLoading, beds,
       tokenExpirySoon, tokenMinutesLeft,
       isolatedBeds,
@@ -2458,7 +2539,7 @@ export const useHospitalState = () => {
       setLoginEmail, setLoginPass,
       handleLogin, handleLogout,
       handleCreateTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
-      fetchBeds, enrichBed, fetchPatientTickets, refreshAll,
+      fetchBeds, enrichBed, fetchPatientTickets, refreshAll, fetchAllTickets,
       markBedClean, undoBedClean,
       saveMealLoad, clearMealLoad, saveCompanionLoad, clearCompanionLoad, setMealStatus,
       setOperativaSubview,

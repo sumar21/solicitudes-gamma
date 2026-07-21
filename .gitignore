@@ -12,3 +12,6 @@ npm-debug.log*
 
 # Reportes de sesión generados (el HTML fuente sí se versiona)
 reporte-sesion-*.pdf
+
+# Export de facturación de Vercel (datos de toda la cuenta, no del proyecto)
+vercel-costs.csv
