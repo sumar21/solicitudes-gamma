@@ -51,10 +51,16 @@ export function SearchableSelect({
             className
           )}
         >
-          <span className="block truncate">
+          {/* `min-w-0` es lo que hace funcionar al `truncate`: un hijo de flex arranca con
+              min-width:auto, así que se niega a achicarse por debajo de su contenido y el
+              overflow:hidden nunca llega a activarse. Sin esto, una opción larga (p. ej.
+              "Internación Transitoria HPR - Cama 08 (Shockroom 2) (APELLIDO NOMBRE)") estira
+              el botón, y con él la grilla del form y el ancho del modal entero.
+              `shrink-0` en el chevron para que el texto no se lo coma al achicarse. */}
+          <span className="block flex-1 min-w-0 truncate text-left">
             {selectedOption ? selectedOption.label : placeholder}
           </span>
-          <ChevronDown className="h-4 w-4 opacity-50" />
+          <ChevronDown className="h-4 w-4 opacity-50 shrink-0" />
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0 rounded-xl" align="start">
@@ -92,7 +98,9 @@ export function SearchableSelect({
                     <Check className="h-4 w-4 text-slate-700" />
                   </span>
                 )}
-                <span className="truncate">{option.label}</span>
+                {/* mismo motivo que en el trigger: sin min-w-0 el truncate no corta y la
+                    opción larga se desborda del ancho del popover. */}
+                <span className="min-w-0 truncate">{option.label}</span>
               </div>
             ))
           )}
