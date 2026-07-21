@@ -3,7 +3,7 @@ import { Bed, BedStatus, Ticket, TicketStatus, User, Area, IsolationEntry, MealS
 import { can } from '../lib/permissions';
 import { hasLiveFasting, fastingOccurrences, formatFastingDateTime, fastingTimesForToday } from '../lib/fasting';
 import { Input } from '../components/ui/input';
-import { cn, dietRequiresCustomComanda } from '../lib/utils';
+import { cn, dietRequiresCustomComanda, suggestedRoomSex } from '../lib/utils';
 import { BedDouble, User as UserIcon, Info, Search, X, Plus, ChevronDown, ChevronRight, Check, AlertTriangle, AlertCircle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan, History } from 'lucide-react';
 import { Dialog, DialogContent } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
@@ -60,9 +60,9 @@ interface BedsViewProps {
   onMarkClean?: (bed: Bed) => void | Promise<void>;
   onUndoClean?: (bedLabel: string) => void | Promise<void>;
   // Carga de menú por Nutrición (15.CargasDieta): carga/actualiza o quita una comida.
-  onSaveMeal?: (bed: Bed, comida: MealSlot, tipo: 'MENU' | 'OPCION' | 'OTROS', detalle: string, observaciones: string) => void | Promise<void>;
+  onSaveMeal?: (bed: Bed, comida: MealSlot, tipo: 'MENU' | 'OPCION' | 'OTROS', detalle: string, observaciones: string) => Promise<{ ok: boolean; error?: string }>;
   onClearMeal?: (bed: Bed, comida: MealSlot) => void | Promise<void>;
-  onSaveCompanion?: (bed: Bed, comida: MealSlot, data: { spItemId?: string; tipo: 'MENU' | 'OPCION' | 'OTROS'; detalle: string; observaciones: string }) => Promise<{ ok: boolean }>;
+  onSaveCompanion?: (bed: Bed, comida: MealSlot, data: { spItemId?: string; tipo: 'MENU' | 'OPCION' | 'OTROS'; detalle: string; observaciones: string }) => Promise<{ ok: boolean; error?: string }>;
   onClearCompanion?: (bed: Bed, comida: MealSlot, spItemId: string) => void | Promise<void>;
 }
 
@@ -228,9 +228,9 @@ const MealSlotEditor: React.FC<{
   planned?: Partial<Record<'MENU' | 'OPCION', string>>;
   open: boolean;
   onToggle: () => void;
-  onSave?: (bed: Bed, comida: MealSlot, tipo: 'MENU' | 'OPCION' | 'OTROS', detalle: string, obs: string) => void | Promise<void>;
+  onSave?: (bed: Bed, comida: MealSlot, tipo: 'MENU' | 'OPCION' | 'OTROS', detalle: string, obs: string) => Promise<{ ok: boolean; error?: string }>;
   onClear?: (bed: Bed, comida: MealSlot) => void | Promise<void>;
-  onSaveCompanion?: (bed: Bed, comida: MealSlot, data: { spItemId?: string; tipo: 'MENU' | 'OPCION' | 'OTROS'; detalle: string; observaciones: string }) => Promise<{ ok: boolean }>;
+  onSaveCompanion?: (bed: Bed, comida: MealSlot, data: { spItemId?: string; tipo: 'MENU' | 'OPCION' | 'OTROS'; detalle: string; observaciones: string }) => Promise<{ ok: boolean; error?: string }>;
   onClearCompanion?: (bed: Bed, comida: MealSlot, spItemId: string) => void | Promise<void>;
 }> = ({ bed, slot, label, canEdit, planned, open, onToggle, onSave, onClear, onSaveCompanion, onClearCompanion }) => {
   const meal = bed.meals?.[slot]?.titular;
@@ -250,6 +250,9 @@ const MealSlotEditor: React.FC<{
   // 0 usos en el repo y exige secure context — no vale traer una API nueva para ≤6 items).
   const [drafts, setDrafts] = useState<number[]>([]);
   const nextDraftId = React.useRef(0);
+  // Mensaje del server cuando el guardado falla (ej. 409 de comanda ya entregada). Sin esto,
+  // un fallo revertía el formulario en silencio y no había forma de saber por qué.
+  const [saveError, setSaveError] = useState<string | null>(null);
   // Marca si el usuario tocó el form: evita que un poll externo (otro dispositivo actualiza la
   // MISMA cama+comida) pise lo que está tipeando sin guardar. Se re-arma tras un guardado propio.
   const editedRef = React.useRef(false);
@@ -386,9 +389,23 @@ const MealSlotEditor: React.FC<{
             disabled={entregada}
             placeholder="Observaciones (opcional)"
             className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] resize-none focus:outline-none focus:ring-2 focus:ring-emerald-200 disabled:bg-slate-50 disabled:text-slate-400" />
+          {saveError && (
+            <div className="flex items-start gap-1.5 px-2 py-1.5 rounded-lg bg-red-50 border border-red-200">
+              <AlertCircle className="w-3 h-3 text-red-500 shrink-0 mt-0.5" />
+              <p className="text-[9px] font-medium text-red-700">{saveError}</p>
+            </div>
+          )}
           <div className="flex gap-2">
             <Button size="sm" disabled={!canSave || saving}
-              onClick={async () => { if (!tipo || !onSave) return; setSaving(true); try { await onSave(bed, slot, tipo, detalle.trim(), obs.trim()); editedRef.current = false; } finally { setSaving(false); } }}
+              onClick={async () => {
+                if (!tipo || !onSave) return;
+                setSaving(true); setSaveError(null);
+                try {
+                  const r = await onSave(bed, slot, tipo, detalle.trim(), obs.trim());
+                  if (r?.ok) editedRef.current = false;
+                  else setSaveError(r?.error ?? 'No se pudo guardar. Reintentá.');
+                } finally { setSaving(false); }
+              }}
               className="flex-1 h-8 text-[11px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40">
               {saving ? 'Guardando…' : meal ? 'Actualizar' : 'Guardar'}
             </Button>
@@ -438,7 +455,7 @@ const MealSlotEditor: React.FC<{
 const CompanionEditor: React.FC<{
   bed: Bed; slot: MealSlot; companion?: MealLoad; index: number;
   planned?: Partial<Record<'MENU' | 'OPCION', string>>;
-  onSave?: (bed: Bed, comida: MealSlot, data: { spItemId?: string; tipo: 'MENU' | 'OPCION' | 'OTROS'; detalle: string; observaciones: string }) => Promise<{ ok: boolean }>;
+  onSave?: (bed: Bed, comida: MealSlot, data: { spItemId?: string; tipo: 'MENU' | 'OPCION' | 'OTROS'; detalle: string; observaciones: string }) => Promise<{ ok: boolean; error?: string }>;
   onRemove?: (bed: Bed, comida: MealSlot, spItemId: string) => void | Promise<void>;
   onDiscardDraft?: () => void;
 }> = ({ bed, slot, companion, index, planned, onSave, onRemove, onDiscardDraft }) => {
@@ -516,7 +533,7 @@ const CompanionEditor: React.FC<{
             const r = await onSave(bed, slot, { spItemId: companion?.spItemId, tipo, detalle: detalle.trim(), observaciones: obs.trim() });
             // Si falla NO se revierte en silencio: se conserva lo tipeado y se avisa.
             if (r.ok) { editedRef.current = false; onDiscardDraft?.(); }
-            else setError('No se pudo guardar. Reintentá.');
+            else setError(r?.error ?? 'No se pudo guardar. Reintentá.');
           } finally { setSaving(false); }
         }}
         className="w-full h-7 text-[10px] font-bold rounded bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40">
@@ -661,6 +678,29 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     return { blockedByIsolation: blocked, preventiveContactAdjacent: preventive };
   }, [beds, isolatedBeds]);
 
+  // Sexo al que ya está comprometida cada habitación por sus ocupantes.
+  // Sobre `beds` COMPLETO (igual que blockedByIsolation): si un filtro de la vista escondiera al
+  // ocupante, la sugerencia desaparecería sin que se entienda por qué.
+  const suggestedSexByRoom = useMemo(() => suggestedRoomSex(beds), [beds]);
+
+  /**
+   * ¿Qué sexo sugerir para esta cama? `null` = no mostrar nada.
+   * Gate único para los dos puntos de render (celda del mapa y modal de detalle).
+   * Función plana a propósito: se invoca dentro del map, no viaja como prop.
+   */
+  const suggestedSexFor = (bed: Bed | null | undefined): 'M' | 'F' | null => {
+    if (!bed?.roomCode) return null;
+    // Solo camas que se pueden llegar a asignar. OCCUPIED/ASSIGNED/DISABLED no aplican.
+    if (bed.status !== BedStatus.AVAILABLE && bed.status !== BedStatus.PREPARATION) return null;
+    // Cama no asignable por aislamiento (se pinta violeta) → sugerir un sexo sería contradictorio.
+    if (blockedByIsolation.has(bed.label)) return null;
+    // Misma exención que ya aplica el bloqueo por aislamiento (:642-644): en estas áreas los
+    // cubículos son físicamente independientes (HUC/HUT/HIT) o son sillones de sala de
+    // espera (HRA), así que "compartir habitación" no significa lo mismo.
+    if (CRITICAL_AREAS_NO_BLOCK.includes(bed.area)) return null;
+    return suggestedSexByRoom.get(`${bed.area}|${bed.roomCode}`) ?? null;
+  };
+
   // Map beds to their assigned ticket (for "Asignada" beds)
   const bedTicketMap = useMemo(() => {
     const map = new Map<string, Ticket>();
@@ -674,6 +714,24 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
 
   // Filters state
   const [searchFilter, setSearchFilter] = useState('');
+
+  // Sectores que el rol tiene HABILITADOS — no es un default, es el techo.
+  //
+  // Antes esto solo sembraba el valor inicial de `areaFilters` y el desplegable listaba
+  // AREA_ORDER completo, así que una azafata de Piso 8 podía tildar Piso 4/UTI/UCO y ver
+  // esas camas con sus pacientes. El filtro por rol era una sugerencia, no un límite.
+  //
+  // Mismo criterio que ComandasManagementView, CleaningManagementView y el bloque de
+  // limpieza del modal de más abajo: sin `filterByFloors` (admin/admisión/enfermería) o sin
+  // áreas asignadas, se ven todos los sectores.
+  //
+  // Se filtra sobre AREA_ORDER y no sobre `assignedAreas` para conservar el orden canónico
+  // del desplegable (Sala Espera → ITR → pisos → críticos).
+  const allowedAreas = useMemo<string[]>(() => {
+    if (!currentUser?.filterByFloors || !currentUser.assignedAreas?.length) return AREA_ORDER as string[];
+    const asignadas = new Set<string>(currentUser.assignedAreas);
+    return (AREA_ORDER as string[]).filter(a => asignadas.has(a));
+  }, [currentUser]);
 
   // Si el rol filtra por pisos (FiltrarPisos_RT=Sí) y tiene áreas asignadas, los filtros
   // de área arrancan limitados a esos pisos. Los demás roles arrancan con todos los
@@ -750,16 +808,25 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     });
   };
 
-  const allAreas = Object.values(Area) as string[];
-  const areaFilterLabel = areaFilters.size === allAreas.length
+  // El "todos" del label es sobre los sectores PERMITIDOS: una azafata de Piso 8 con su
+  // único sector tildado tiene que leer "Todos los sectores", no "1 sector".
+  const areaFiltersVisibles = allowedAreas.filter(a => areaFilters.has(a)).length;
+  const areaFilterLabel = areaFiltersVisibles === allowedAreas.length
     ? 'Todos los sectores'
-    : areaFilters.size === 0
+    : areaFiltersVisibles === 0
       ? 'Ningún sector'
-      : `${areaFilters.size} sector${areaFilters.size > 1 ? 'es' : ''}`;
+      : `${areaFiltersVisibles} sector${areaFiltersVisibles > 1 ? 'es' : ''}`;
 
   // Filter beds based on user role, assigned areas and search filters
   const filteredBeds = useMemo(() => {
-    let result = [...beds];
+    // Techo por rol, ANTES que cualquier filtro de UI y sin importar `areaFilters`.
+    //
+    // Va acá y no solo en el desplegable a propósito: el desplegable es presentación, y
+    // `areaFilters` es estado que se puede ensuciar por otros caminos (el check "Todos",
+    // un `assignedAreas` que cambia en caliente al recargar el rol). Si el techo viviera
+    // solo en el render de los checkboxes, cualquiera de esos caminos volvería a mostrar
+    // camas de sectores ajenos. Esta línea es la que garantiza que no pase.
+    let result = beds.filter(bed => allowedAreas.includes(bed.area));
 
     // Universal text search (patient, event, institution, physician, assigned ticket patient)
     if (searchFilter) {
@@ -786,7 +853,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
         return false;
       });
     }
-    if (areaFilters.size < allAreas.length) {
+    if (areaFiltersVisibles < allowedAreas.length) {
       result = result.filter(bed => areaFilters.has(bed.area));
     }
     if (statusFilters.size > 0) {
@@ -812,7 +879,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     }
 
     return result;
-  }, [beds, currentUser, searchFilter, areaFilters, statusFilters, allAreas.length, bedTicketMap, showIsolatedOnly, isolatedBeds, showDietOnly, dietBeds, showFastingOnly, fastingBeds, financierFilters, physicianFilters, dietTypeFilters]);
+  }, [beds, currentUser, searchFilter, areaFilters, statusFilters, allowedAreas, areaFiltersVisibles, bedTicketMap, showIsolatedOnly, isolatedBeds, showDietOnly, dietBeds, showFastingOnly, fastingBeds, financierFilters, physicianFilters, dietTypeFilters]);
 
   // Conteo de camas para el badge del header: excluimos HRA ("Sala de Espera"),
   // que son sillones de pre-internación y no camas reales. El grid y los PDFs
@@ -1734,14 +1801,14 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                 >
                   <input
                     type="checkbox"
-                    checked={areaFilters.size === allAreas.length}
-                    onChange={() => setAreaFilters(areaFilters.size === allAreas.length ? new Set() : new Set(allAreas))}
+                    checked={areaFiltersVisibles === allowedAreas.length}
+                    onChange={() => setAreaFilters(areaFiltersVisibles === allowedAreas.length ? new Set() : new Set(allowedAreas))}
                     className="h-3.5 w-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 accent-emerald-700"
                   />
                   Todos los sectores
                 </label>
                 <div className="my-1 border-t border-slate-100" />
-                {AREA_ORDER.map(area => (
+                {allowedAreas.map(area => (
                   <label
                     key={area}
                     className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
@@ -2132,6 +2199,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                 const isoColor = isIsolated ? getIsolationColor(bed) : DEFAULT_ISO_COLOR;
                 const isoTipos = isIsolated ? getIsolationTypes(bed) : [];
                 const isMultiIso = isoTipos.length >= 2;
+                const suggestedSex = suggestedSexFor(bed);
 
                 return (
                   <button
@@ -2181,8 +2249,22 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     )}
                     {/* Esquina inf. derecha: platito = comanda cargada (sólo si puede verla) +
                         pill de ayuno. En flex para que no se pisen si el paciente tiene ambos. */}
-                    {((canViewComanda && hasAnyMealLoad(bed.meals)) || hasLiveFasting(bed.fasting)) && (
+                    {((canViewComanda && hasAnyMealLoad(bed.meals)) || hasLiveFasting(bed.fasting) || suggestedSex) && (
                       <div className="absolute bottom-0.5 right-0.5 flex items-center gap-0.5">
+                        {/* Sexo SUGERIDO para una cama libre, derivado de quién ocupa el resto de
+                            la habitación. Es una sugerencia, NO un dato del paciente: por eso va
+                            en outline (fondo blanco) y no en sólido como los indicadores duros. */}
+                        {suggestedSex && (
+                          <div
+                            className={cn(
+                              'flex items-center justify-center w-3.5 h-3.5 md:w-4 md:h-4 rounded-full bg-white ring-1 shadow-sm text-[8px] md:text-[9px] font-black leading-none',
+                              suggestedSex === 'M' ? 'text-sky-600 ring-sky-400' : 'text-pink-600 ring-pink-400',
+                            )}
+                            title={`Sugerido: ${suggestedSex === 'M' ? 'masculino' : 'femenino'} — la habitación ya aloja ${suggestedSex === 'M' ? 'pacientes masculinos' : 'pacientes femeninos'}`}
+                          >
+                            {suggestedSex}
+                          </div>
+                        )}
                         {canViewComanda && hasAnyMealLoad(bed.meals) && (
                           <div
                             className="flex items-center justify-center w-3.5 h-3.5 md:w-4 md:h-4 rounded-full bg-indigo-500 text-white ring-1 ring-white shadow-sm"
@@ -2309,6 +2391,35 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                       );
                     }
                     return null;
+                  })()}
+
+                  {/* Sexo sugerido — solo en camas libres. Usa el MISMO gate que el chip de la
+                      grilla, así no pueden divergir. Es una sugerencia derivada de quién ocupa el
+                      resto de la habitación, no un dato del paciente de esta cama. */}
+                  {(() => {
+                    const sug = suggestedSexFor(selectedBed);
+                    if (!sug) return null;
+                    return (
+                      <div className="px-6 pb-4">
+                        <div className={cn(
+                          'flex items-start gap-2.5 px-3 py-2.5 rounded-xl border',
+                          sug === 'M' ? 'bg-sky-50 border-sky-200' : 'bg-pink-50 border-pink-200',
+                        )}>
+                          <div className={cn(
+                            'flex items-center justify-center w-6 h-6 rounded-full shrink-0 text-[11px] font-black bg-white ring-1',
+                            sug === 'M' ? 'text-sky-600 ring-sky-400' : 'text-pink-600 ring-pink-400',
+                          )}>{sug}</div>
+                          <div className="min-w-0">
+                            <p className={cn('text-[11px] font-bold', sug === 'M' ? 'text-sky-800' : 'text-pink-800')}>
+                              Sugerido: {sug === 'M' ? 'masculino' : 'femenino'}
+                            </p>
+                            <p className={cn('text-[10px] leading-snug mt-0.5', sug === 'M' ? 'text-sky-700' : 'text-pink-700')}>
+                              La habitación ya aloja {sug === 'M' ? 'pacientes masculinos' : 'pacientes femeninos'}. Es una sugerencia, no una restricción.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
                   })()}
 
                   {/* OCCUPIED — patient info organized in tabs */}

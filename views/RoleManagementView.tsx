@@ -34,7 +34,10 @@ const MODULES = [
   { label: 'Operativa', value: 'Operativa' },
   { label: 'Historial', value: 'Historial' },
   { label: 'Mapa de Camas', value: 'Mapa de Camas' },
-  { label: 'Gestión de Limpieza', value: 'Gestion Limpieza' },
+  // ⚠️ El `value` es lo que se guarda en Acceso_RT (SharePoint) y NO se toca: los 6 roles que
+  // hoy lo tienen siguen funcionando sin migrar una sola fila. Solo cambia el label, porque
+  // Limpiezas dejó de ser una entrada del sidebar y pasó a ser una solapa dentro de Operativa.
+  { label: 'Operativa · Limpiezas', value: 'Gestion Limpieza' },
   { label: 'Gestión de Comandas', value: 'Gestion Comandas' },
   { label: 'Configuración', value: 'Configuracion' },
 ];
@@ -53,14 +56,13 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
       { code: 'iniciar_traslado',    label: 'Iniciar traslado' },
       { code: 'confirmar_recepcion', label: 'Confirmar recepción' },
       { code: 'consolidar',          label: 'Consolidar PROGAL' },
+      // Vive en Operativa desde que Limpiezas pasó a ser una solapa de este módulo. Antes
+      // estaba bajo 'Gestion Limpieza', y como un grupo solo se renderiza si su módulo está
+      // tildado, era IMPOSIBLE darle este permiso a un rol con Operativa pero sin Limpieza.
+      { code: 'consolidar_limpieza', label: 'Consolidar limpieza (solapa Limpiezas)' },
     ],
   },
-  {
-    module: 'Gestion Limpieza', label: 'Gestión de Limpieza',
-    perms: [
-      { code: 'consolidar_limpieza', label: 'Consolidar limpieza (Consolidado PROGAL)' },
-    ],
-  },
+
   {
     module: 'Mapa de Camas', label: 'Mapa de Camas',
     perms: [

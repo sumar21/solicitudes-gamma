@@ -1,7 +1,7 @@
 
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
-import { Bed, Ticket } from "../types"
+import { Bed, Ticket, BedStatus } from "../types"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -249,6 +249,47 @@ export function roomSexConflict(
   return roommates.length ? { patientSex, roommates } : null;
 }
 
+/**
+ * Sexo al que está COMPROMETIDA cada habitación por sus ocupantes actuales.
+ *
+ * Inverso de `roomSexConflict`: en vez de avisar del conflicto al mover un paciente concreto,
+ * adelanta a qué sexo conviene destinar las camas LIBRES del cuarto.
+ * Habitación = mismo `roomCode` + misma `area` (mismo criterio que `roomSexConflict`).
+ *
+ * ⚠️ Ocupante = `status === OCCUPIED` con `sex` conocido. **NO se usa `patientName`**: en este
+ * repo queda residual en camas ya liberadas — `mergeBeds` pasa una cama de PREPARATION a
+ * AVAILABLE sin limpiar el paciente, `api/beds.ts` documenta residuos del array general, y
+ * `reapplyEnrichFromMap` reaplica el enrich (que incluye `sex`) mirando solo `patientCode`, sin
+ * chequear el status. Con `patientName`, un paciente fantasma comprometería una habitación vacía
+ * y sugeriría el sexo equivocado. `status === OCCUPIED` es el criterio que usa el resto de BedsView.
+ *
+ * Efecto buscado: una cama ASSIGNED (traslado en curso) NUNCA compromete la habitación, en
+ * ninguna fase del ticket — si no, la misma situación clínica daría sugerencias distintas según
+ * el estado del traslado.
+ *
+ * Devuelve por HABITACIÓN, no por cama: a quién se le muestra la sugerencia lo decide la vista.
+ * Best-effort: `sex` viene del enrich (cron cada 15 min) y puede faltar → sin sugerencia, sin ruido.
+ *
+ * Pasar la lista COMPLETA de camas, nunca la filtrada: si un filtro de la vista esconde al
+ * ocupante, la sugerencia desaparecería sin explicación.
+ */
+export function suggestedRoomSex(beds: Bed[]): Map<string, 'M' | 'F'> {
+  const rooms = new Map<string, Set<'M' | 'F'>>();
+  for (const b of beds) {
+    if (!b.roomCode || b.status !== BedStatus.OCCUPIED || !b.sex) continue;
+    const key = `${b.area}|${b.roomCode}`;
+    if (!rooms.has(key)) rooms.set(key, new Set());
+    rooms.get(key)!.add(b.sex);
+  }
+  const out = new Map<string, 'M' | 'F'>();
+  for (const [key, sexes] of rooms) {
+    // Sexos mixtos en la misma habitación (dato sucio o cuarto mixto real) → silencio.
+    // Una sugerencia ambigua es peor que ninguna.
+    if (sexes.size === 1) out.set(key, [...sexes][0]);
+  }
+  return out;
+}
+
 // Dietas terapéuticas donde NO hay un "Menú"/"Opción" estándar de cocina: Nutrición debe
 // ESCRIBIR la comida específica en el detalle de comanda (el tipo se fija en "Otros"). Match por
 // substring normalizado (tolera tildes/casing de PROGAL). Ajustar la lista si cambia el criterio.
@@ -273,4 +314,23 @@ export function formatBedName(bedName: string | undefined): string {
     return `${match[1]} - ${match[2]}`;
   }
   return bedName;
+}
+
+/**
+ * Normaliza texto para búsquedas: minúsculas, sin diacríticos, espacios colapsados.
+ *
+ * PROGAL manda nombres con tildes y mayúsculas inconsistentes ("MARÍA JOSÉ" / "Maria jose"),
+ * así que comparar crudo no sirve.
+ *
+ * El rango de diacríticos va ESCAPADO (`̀-ͯ`) y no con caracteres combinantes
+ * literales como en el resto del repo: este helper es al que van a apuntar los ~7 call-sites
+ * que hoy duplican el idiom, y un copy-paste roto acá sería invisible.
+ */
+export function normalizeText(s: string | null | undefined): string {
+  return String(s ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }

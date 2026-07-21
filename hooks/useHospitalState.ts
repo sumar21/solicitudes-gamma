@@ -3,7 +3,7 @@ import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import {
   WorkflowType, Role, SedeType, Ticket, TicketStatus, User, Area,
   Notification, NotificationType, ViewMode, SortConfig, Bed, BedStatus,
-  RoleModule, Permission, MealLoad, MealSlot, MealSlotLoad, COMANDA_STATUS, ComandaStatus,
+  RoleModule, Permission, MealLoad, MealSlot, MealSlotLoad, COMANDA_STATUS, ComandaStatus, OperativaSubview,
   MEAL_SLOTS, spFromMealSlot, mealSlotFromSp,
 } from '../types';
 import { MOCK_TICKETS } from '../lib/constants';
@@ -391,6 +391,12 @@ export const useHospitalState = () => {
   const currentUserRef = useRef(currentUser);
   currentUserRef.current = currentUser;
 
+  // Solapa activa dentro de Operativa. Vive ACÁ y no en RequestsView porque es destino de
+  // navegación: al tocar el toast de un ticket, App.tsx hace setCurrentView('REQUESTS'), y si el
+  // usuario ya estaba parado en Operativa/Limpiezas eso NO produce cambio de estado → la
+  // notificación se vería muerta. Con el estado acá se puede forzar la solapa junto con la vista.
+  const [operativaSubview, setOperativaSubview] = useState<OperativaSubview>('traslados');
+
   const [currentView, setCurrentView] = useState<ViewMode>(() => {
     const saved = localStorage.getItem(USER_KEY);
     if (saved) {
@@ -402,7 +408,9 @@ export const useHospitalState = () => {
       if (modules.includes('Operativa')) return 'REQUESTS';
       if (modules.includes('Mapa de Camas')) return 'BEDS';
       if (modules.includes('Historial')) return 'HISTORY';
-      if (modules.includes('Gestion Limpieza')) return 'CLEANINGS';
+      // Limpiezas dejó de ser vista propia: es una solapa de Operativa. Un rol que SOLO
+      // tenga 'Gestion Limpieza' aterriza en Operativa; la solapa la abre el efecto de rol.
+      if (modules.includes('Gestion Limpieza')) return 'REQUESTS';
       if (modules.includes('Gestion Comandas')) return 'COMANDAS';
     }
     return 'HOME';
@@ -697,8 +705,8 @@ export const useHospitalState = () => {
   // Nutrición carga/actualiza el menú de una comida (optimista + POST upsert).
   const saveMealLoad = useCallback(async (
     bed: Bed, comida: MealSlot, tipo: 'MENU' | 'OPCION' | 'OTROS', detalle: string, observaciones: string,
-  ) => {
-    if (!bed?.label) return;
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (!bed?.label) return { ok: false };
     const u = currentUser;
     const at = new Date().toISOString();
     setMeals(prev => {
@@ -738,10 +746,19 @@ export const useHospitalState = () => {
           }
           return n;
         });
-      } else {
-        fetchMeals(); // reconciliar contra SP ante fallo
+        return { ok: true };
       }
-    } catch { fetchMeals(); }
+      // ⚠️ NO tragar el error. Antes esto hacía `fetchMeals()` a secas: revertía el optimistic
+      // update y el usuario veía "sale el cargando y no pasa nada", sin ninguna pista de por
+      // qué. Devolvemos el mensaje del server (ej. el 409 de comanda ya entregada) para que la
+      // tarjeta lo muestre.
+      const err = await r.json().catch(() => ({} as any));
+      fetchMeals(); // reconciliar contra SP ante fallo
+      return { ok: false, error: err?.message ?? err?.error ?? `No se pudo guardar (HTTP ${r.status}).` };
+    } catch (e: any) {
+      fetchMeals();
+      return { ok: false, error: `Error de red: ${e?.message ?? 'sin conexión'}` };
+    }
   }, [authFetch, currentUser, fetchMeals]);
 
   // Nutrición quita la carga del TITULAR (optimista + PATCH soft-delete).
@@ -777,7 +794,7 @@ export const useHospitalState = () => {
   // UI no hay nada que reconciliar: la fila entra al Map recién con la respuesta.
   const saveCompanionLoad = useCallback(async (
     bed: Bed, comida: MealSlot, data: { spItemId?: string; tipo: 'MENU' | 'OPCION' | 'OTROS'; detalle: string; observaciones: string },
-  ): Promise<{ ok: boolean }> => {
+  ): Promise<{ ok: boolean; error?: string }> => {
     if (!bed?.label) return { ok: false };
     const u = currentUser;
     try {
@@ -791,7 +808,11 @@ export const useHospitalState = () => {
           userId: u?.id ?? '', userName: u?.name ?? '',
         }),
       });
-      if (!r.ok) { await fetchMeals(); return { ok: false }; }
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({} as any));
+        await fetchMeals();
+        return { ok: false, error: err?.message ?? err?.error ?? `No se pudo guardar (HTTP ${r.status}).` };
+      }
       const d = await r.json().catch(() => ({} as any));
       const at = new Date().toISOString();
       setMeals(prev => {
@@ -812,7 +833,7 @@ export const useHospitalState = () => {
         return n;
       });
       return { ok: true };
-    } catch { await fetchMeals(); return { ok: false }; }
+    } catch (e: any) { await fetchMeals(); return { ok: false, error: `Error de red: ${e?.message ?? 'sin conexión'}` }; }
   }, [authFetch, currentUser, fetchMeals]);
 
   /**
@@ -1414,10 +1435,13 @@ export const useHospitalState = () => {
         : mods.includes('Operativa') ? 'REQUESTS'
         : mods.includes('Mapa de Camas') ? 'BEDS'
         : mods.includes('Historial') ? 'HISTORY'
-        : mods.includes('Gestion Limpieza') ? 'CLEANINGS'
+        : mods.includes('Gestion Limpieza') ? 'REQUESTS'
         : mods.includes('Gestion Comandas') ? 'COMANDAS'
         : 'HOME';
       setCurrentView(landingView);
+      // Si llegó a Operativa SOLO por tener Limpieza, abrirle esa solapa: la de Traslados
+      // no la puede ver y le quedaría una pantalla vacía.
+      if (!mods.includes('Operativa') && mods.includes('Gestion Limpieza')) setOperativaSubview('limpiezas');
 
       // Pre-fetch beds + tickets so HOSTESS view has data immediately
       fetchBeds();
@@ -2420,6 +2444,7 @@ export const useHospitalState = () => {
   return {
     state: {
       currentUser, currentView, activeRole, sortConfig, requestsSearchTerm,
+      operativaSubview,
       notifications, filteredNotifications, bellNotifications, toasts, tickets,
       filteredTickets: filteredTickets.sorted,
       historyTickets: filteredTickets.baseFiltered,
@@ -2436,6 +2461,7 @@ export const useHospitalState = () => {
       fetchBeds, enrichBed, fetchPatientTickets, refreshAll,
       markBedClean, undoBedClean,
       saveMealLoad, clearMealLoad, saveCompanionLoad, clearCompanionLoad, setMealStatus,
+      setOperativaSubview,
       handleUpdateUserAreas, refreshSessionRole, syncSessionRole, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleOpenNotifications, handleDismissToast,
       handleStartTransport,
       handleRejectTicket,

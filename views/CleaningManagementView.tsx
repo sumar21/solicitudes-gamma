@@ -1,13 +1,14 @@
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { Bed, User, Area } from '../types';
 import { can } from '../lib/permissions';
-import { cn, formatDateReadable } from '../lib/utils';
+import { cn, formatBedName, formatDateReadable, normalizeText } from '../lib/utils';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
+import { Input } from '../components/ui/input';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { Calendar } from '../components/ui/calendar';
-import { CheckCircle2, DoorClosed, User as UserIcon, Clock, RefreshCw, Calendar as CalendarIcon } from 'lucide-react';
+import { CheckCircle2, DoorClosed, User as UserIcon, Clock, RefreshCw, Calendar as CalendarIcon, Search, X } from 'lucide-react';
 
 // ponytail: display map copiado de BedsView (no está exportado); exportar si un 3er lugar lo necesita.
 const AREA_LABELS: Record<string, string> = {
@@ -120,6 +121,61 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
     : r === 'ANULADA'   ? 'bg-amber-50 text-amber-700 border-amber-200'
     : 'bg-sky-50 text-sky-700 border-sky-200'; // GAMMA/TICKET = Traslado
 
+  // ── Buscador (aplica a las dos tabs) ───────────────────────────────────────
+  // Mismo criterio que el buscador de comandas: se indexa cada fila una vez y la búsqueda
+  // es frase-exacta primero, AND de términos como fallback. Sin el paso de frase, "piso 5"
+  // se parte en ["piso","5"] y trae camas del Piso 4 (el "5" matchea el 405 del label).
+  //
+  // Se indexan también las formas SIN espacios del sector y de la cama para poder tipear
+  // "piso5" o "401-02" de corrido.
+  const [searchFilter, setSearchFilter] = useState('');
+  const query = normalizeText(searchFilter);
+  const terms = query.split(' ').filter(Boolean);
+  const buscando = terms.length > 0;
+
+  const bedHaystack = (label: string, area: string, ...extra: (string | undefined)[]) => normalizeText([
+    label, formatBedName(label), formatBedName(label).replace(/[\s-]/g, ''),
+    area, areaLabel(area), areaLabel(area).replace(/\s+/g, ''),
+    ...extra,
+  ].join(' '));
+
+  const indexedRows = useMemo(
+    () => rows.map(b => ({ r: b, h: bedHaystack(b.label, b.area, b.cleanedBy) })),
+    [rows]);
+  const indexedHistory = useMemo(
+    () => history.map(h => ({ r: h, h: bedHaystack(h.bedLabel, h.area, h.by, reasonLabel(h.reason)) })),
+    [history]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function applySearch<T>(indexed: { r: T; h: string }[]): T[] {
+    if (!buscando) return indexed.map(({ r }) => r);
+    const porFrase = indexed.filter(({ h }) => h.includes(query));
+    if (porFrase.length > 0) return porFrase.map(({ r }) => r);
+    return indexed.filter(({ h }) => terms.every(t => h.includes(t))).map(({ r }) => r);
+  }
+
+  const visibleRows    = applySearch(indexedRows);
+  const visibleHistory = applySearch(indexedHistory);
+
+  // Input reutilizado por las dos tabs — el placeholder cambia porque el histórico tiene
+  // motivo y las activas no.
+  const searchBox = (placeholder: string) => (
+    <div className="relative flex-1 min-w-[180px] max-w-sm">
+      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
+      <Input
+        placeholder={placeholder}
+        value={searchFilter}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchFilter(e.target.value)}
+        className="pl-9 pr-8 h-9 text-xs rounded-xl border-slate-200"
+      />
+      {searchFilter && (
+        <button onClick={() => setSearchFilter('')} title="Limpiar búsqueda"
+          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <div className="p-4 md:p-8 max-w-full w-full space-y-4 md:space-y-5 pb-24 md:pb-8">
       {/* Tabs: Activas (overlay vigente) | Histórico (cerradas por rango de fecha). */}
@@ -139,6 +195,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
         <>
           {/* Filtros de fecha (cierre) — datepickers shadcn (Popover + Calendar) */}
           <div className="flex flex-wrap items-center gap-3 mb-4">
+            {searchBox('Cama, sector, quién limpió, motivo...')}
             <div className="flex items-center bg-white border border-slate-200 rounded-xl overflow-hidden h-9">
               <Popover open={openFrom} onOpenChange={setOpenFrom}>
                 <PopoverTrigger asChild>
@@ -163,23 +220,28 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
               <RefreshCw className={cn("w-4 h-4", loadingHist && "animate-spin")} /> Actualizar
             </Button>
             <p className="text-xs text-slate-500 font-medium ml-auto self-center">
-              {history.length} {history.length === 1 ? 'limpieza' : 'limpiezas'}
+              {visibleHistory.length} {visibleHistory.length === 1 ? 'limpieza' : 'limpiezas'}
+              {buscando && history.length !== visibleHistory.length && ` de ${history.length}`}
             </p>
           </div>
 
           {loadingHist ? (
             <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400 text-sm">Cargando…</div>
-          ) : history.length === 0 ? (
+          ) : visibleHistory.length === 0 ? (
             <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400">
               <Clock className="w-10 h-10 mx-auto mb-3 text-slate-300" />
-              <p className="font-bold text-sm text-slate-500">Sin limpiezas en el rango</p>
-              <p className="text-xs">Ajustá las fechas para ver el histórico.</p>
+              {/* Distinguir "no hay nada en el rango" de "la búsqueda no matcheó": si no,
+                  el usuario mueve las fechas sin darse cuenta de que el filtro es el texto. */}
+              <p className="font-bold text-sm text-slate-500">
+                {buscando ? 'Sin resultados para la búsqueda' : 'Sin limpiezas en el rango'}
+              </p>
+              <p className="text-xs">{buscando ? 'Probá con otro texto o limpiá el buscador.' : 'Ajustá las fechas para ver el histórico.'}</p>
             </div>
           ) : (
             <>
               {/* Mobile — tarjetas */}
               <div className="grid grid-cols-1 gap-3 md:hidden">
-                {history.map(h => (
+                {visibleHistory.map(h => (
                   <div key={h.spItemId} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <p className="font-black text-sm text-slate-800 leading-tight">{h.bedLabel}</p>
@@ -210,7 +272,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {history.map(h => (
+                      {visibleHistory.map(h => (
                         <tr key={h.spItemId} className="hover:bg-slate-50/60">
                           <td className="px-4 py-3 font-bold text-slate-800">{h.bedLabel}</td>
                           <td className="px-4 py-3 text-slate-600">{areaLabel(h.area)}</td>
@@ -253,7 +315,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
         <>
           {/* Mobile — tarjetas */}
           <div className="grid grid-cols-1 gap-3 md:hidden">
-            {rows.map(bed => (
+            {visibleRows.map(bed => (
               <div key={bed.label} className="bg-white rounded-2xl border border-emerald-200 shadow-sm p-4 space-y-3">
                 <div className="flex items-start gap-2">
                   <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
@@ -290,7 +352,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {rows.map(bed => (
+                  {visibleRows.map(bed => (
                     <tr key={bed.label} className="hover:bg-slate-50/60">
                       <td className="px-4 py-3 font-bold text-slate-800 flex items-center gap-2">
                         <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" /> {bed.label}

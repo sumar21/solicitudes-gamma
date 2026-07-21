@@ -238,10 +238,33 @@ async function handler(req: any, res: any) {
         console.error('[dietas] POST lookup failed:', existing.status);
         return res.status(500).json({ error: 'No se pudo validar contra SharePoint. Reintentá.' });
       }
-      const rows = ((await existing.json()) as { value: any[] }).value ?? [];
-      // Una bandeja ENTREGADA está congelada: ya salió de la cocina, editarla sería reescribir
-      // un hecho. Para cambiarla hay que volverla a Pendiente primero (botón ↩ del panel), que
-      // deja el paso explícito y auditable en vez de deshacer la entrega en silencio.
+      const allRows = ((await existing.json()) as { value: any[] }).value ?? [];
+
+      // ⚠️ El lookup NO filtra por día (no hay columna de día; el "día" se deriva de
+      // FechaCarga_D — ver GET de hoy). Sin acotar acá, una fila de un día ANTERIOR entra a
+      // las ramas de abajo y rompe dos cosas:
+      //   · Si está 'Entregado', bloquea con 409 cargar una comanda NUEVA de hoy. Ese fue el
+      //     bug reportado: "guardo, sale el cargando y no aparece nada" (9 combinaciones
+      //     cama+comida quedaron bloqueadas por entregas del 14/15/16 de julio).
+      //   · Al reusarla por upsert, conservaría el Status viejo → nacería ya "Entregada".
+      // Por eso separamos: las decisiones de bloqueo miran SOLO lo de hoy, y una fila vieja se
+      // reusa reseteándole el estado a PENDIENTE (es la comanda de otro día, no la de hoy).
+      const hoyArt = todayArtDay();
+      const esDeHoy = (row: any) => artDay(row?.fields?.FechaCarga_D) === hoyArt;
+      const estaPendiente = (row: any) => String(row?.fields?.Status_D ?? '') === ST_PENDIENTE;
+
+      // Candidatas al upsert:
+      //   · las de HOY (caso normal), y
+      //   · las de días anteriores que siguen PENDIENTES — son el mismo pedido sin cumplir
+      //     (el GET las muestra justamente para que se puedan cerrar). Reusarlas evita que
+      //     queden DOS filas activas de la misma cama+turno.
+      // Las ENTREGADAS de días anteriores quedan afuera: son histórico, no se tocan ni
+      // bloquean. Hoy necesita su propia fila.
+      const rows = allRows.filter(r => esDeHoy(r) || estaPendiente(r));
+
+      // Una bandeja ENTREGADA HOY está congelada: ya salió de la cocina, editarla sería
+      // reescribir un hecho. Para cambiarla hay que volverla a Pendiente (botón ↩ del panel),
+      // que deja el paso explícito y auditable en vez de deshacer la entrega en silencio.
       const bloqueadaPorEntrega = (row: any) =>
         String(row?.fields?.Status_D ?? '') === ST_ENTREGADO;
 
@@ -251,19 +274,24 @@ async function handler(req: any, res: any) {
         NutricionistaNombre_D: String(userName ?? ''), ...nutriIdField,
         FechaCarga_D: nowIso,
       };
+      // Al reusar una fila de otro día, la comanda es NUEVA → vuelve a PENDIENTE.
+      const patchFieldsReuso = { ...patchFields, Status_D: ST_PENDIENTE };
 
       // ── RAMA A — editar una fila concreta (acompañante existente) ─────────
       if (reqItemId) {
         // Se resuelve DESDE ESTE resultset, no se PATCHea un id arbitrario del cliente: con el
         // poll de 60s, A puede eliminar el acompañante 2 mientras B (stale) lo edita → el PATCH
         // caería sobre una fila Inactivo, devolvería 200 y la comanda no aparecería nunca.
-        const target = rows.find(r => String(r.id) === String(reqItemId));
+        const target = allRows.find(r => String(r.id) === String(reqItemId));
         if (!target) return res.status(409).json({ error: 'Esa comanda ya no existe o fue eliminada por otro usuario.' });
-        if (bloqueadaPorEntrega(target)) {
+        // Solo bloquea si la entrega es de HOY (ver comentario del filtro por día arriba).
+        if (esDeHoy(target) && bloqueadaPorEntrega(target)) {
           return res.status(409).json({ error: 'comanda_entregada', message: 'La comanda ya fue entregada. Volvela a pendiente desde el panel de comandas para poder editarla.' });
         }
         // Comensal_D / OrdenComensal_D son la IDENTIDAD de la fila: nunca se tocan en un update.
-        await graphFetch(`${basePath}/${target.id}/fields`, { method: 'PATCH', body: JSON.stringify(patchFields) });
+        await graphFetch(`${basePath}/${target.id}/fields`, {
+          method: 'PATCH', body: JSON.stringify(esDeHoy(target) ? patchFields : patchFieldsReuso),
+        });
         return res.status(200).json({
           ok: true, spItemId: String(target.id),
           comensal: comensalOf(target.fields), orden: ordenOf(target.fields),

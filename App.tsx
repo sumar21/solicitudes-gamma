@@ -149,10 +149,20 @@ export default function App() {
   // Vistas accesibles (Acceso_RT del rol). Si el back devolvió `modules`, manda eso;
   // si no (fail-open en caso de rol no migrado), el hook ya forzó logout — acá quedan flags safe-default.
   const canViewMonitor   = hasModule(state.currentUser, 'Home');
-  const canViewOperativa = hasModule(state.currentUser, 'Operativa');
+  // Limpiezas vive DENTRO de Operativa como solapa, así que la entrada del sidebar se habilita
+  // con cualquiera de los dos módulos. OJO: esto NO amplía acceso — cada solapa se gatea por
+  // separado, así que un rol con solo Limpieza entra pero NO ve la lista de traslados.
+  const canViewOperativa = hasModule(state.currentUser, 'Operativa') || hasModule(state.currentUser, 'Gestion Limpieza');
+  const canSeeTraslados  = hasModule(state.currentUser, 'Operativa');
+  const canSeeLimpiezas  = hasModule(state.currentUser, 'Gestion Limpieza');
+  // La botonera solo tiene sentido si hay más de una solapa para mostrar.
+  const showOperativaTabs = canSeeTraslados && canSeeLimpiezas;
+  // Solapa efectiva: si el rol no puede ver la seleccionada, cae en la que sí puede.
+  const operativaTab = showOperativaTabs
+    ? state.operativaSubview
+    : (canSeeLimpiezas ? 'limpiezas' : 'traslados');
   const canViewHistorial = hasModule(state.currentUser, 'Historial');
   const canViewBeds      = hasModule(state.currentUser, 'Mapa de Camas');
-  const canViewCleanings = hasModule(state.currentUser, 'Gestion Limpieza');
   const canViewComandas  = hasModule(state.currentUser, 'Gestion Comandas');
   const canViewConfig    = hasModule(state.currentUser, 'Configuracion');
 
@@ -164,7 +174,6 @@ export default function App() {
   const hasAzafataAccess = !!state.currentUser?.filterByFloors;
 
   // Alias legacy — cualquier rol con vista de Operativa.
-  const hasOperationalAccess = canViewOperativa;
 
   // Force view to BEDS if read-only and trying to access other views (or default)
   // This effect could be better handled in useEffect, but for now we control rendering.
@@ -339,7 +348,9 @@ export default function App() {
         toasts={state.toasts}
         onDismiss={actions.handleDismissToast}
         onTap={(n) => {
-          if (n.ticketId) actions.setCurrentView('REQUESTS');
+          // Además de la vista, se fuerza la solapa: si el usuario estaba en Limpiezas,
+          // setCurrentView('REQUESTS') no produce cambio y el toast se vería muerto.
+          if (n.ticketId) { actions.setOperativaSubview('traslados'); actions.setCurrentView('REQUESTS'); }
         }}
       />
 
@@ -384,9 +395,6 @@ export default function App() {
             )}
             {canViewBeds && (
               <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'BEDS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('BEDS')}><Menu className="w-4 h-4" />Mapa de Camas</Button>
-            )}
-            {canViewCleanings && (
-              <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'CLEANINGS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('CLEANINGS')}><SprayCanIcon className="w-4 h-4" />Limpiezas</Button>
             )}
             {canViewComandas && (
               <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'COMANDAS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('COMANDAS')}><Utensils className="w-4 h-4" />Comandas</Button>
@@ -435,7 +443,7 @@ export default function App() {
               <GammaLogo size={20} />
             </button>
             <h1 className="text-lg md:text-xl font-black text-slate-900 tracking-tight truncate max-w-[100px] xs:max-w-[180px] sm:max-w-none">
-              {state.currentView === 'HOME' ? 'Monitor' : state.currentView === 'REQUESTS' ? 'Operativa' : state.currentView === 'BEDS' ? 'Mapa de Camas' : state.currentView === 'CLEANINGS' ? 'Gestión de Limpieza' : state.currentView === 'COMANDAS' ? 'Gestión de Comandas' : state.currentView === 'USERS' ? 'Usuarios' : (state.currentView as string) === 'ROLES' ? 'Roles' : 'Historial'}
+              {state.currentView === 'HOME' ? 'Monitor' : state.currentView === 'REQUESTS' ? (operativaTab === 'limpiezas' ? 'Operativa · Limpiezas' : 'Operativa') : state.currentView === 'BEDS' ? 'Mapa de Camas' : state.currentView === 'COMANDAS' ? 'Gestión de Comandas' : state.currentView === 'USERS' ? 'Usuarios' : (state.currentView as string) === 'ROLES' ? 'Roles' : 'Historial'}
             </h1>
             {IS_TESTING && (
               <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-600 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-white shadow-sm shrink-0">
@@ -498,9 +506,6 @@ export default function App() {
                 )}
                 {canViewBeds && (
                   <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'BEDS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('BEDS'); setIsMobileMenuOpen(false); }}><Menu className="w-4 h-4" />Mapa de Camas</Button>
-                )}
-                {canViewCleanings && (
-                  <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'CLEANINGS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('CLEANINGS'); setIsMobileMenuOpen(false); }}><SprayCanIcon className="w-4 h-4" />Limpiezas</Button>
                 )}
                 {canViewComandas && (
                   <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'COMANDAS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('COMANDAS'); setIsMobileMenuOpen(false); }}><Utensils className="w-4 h-4" />Comandas</Button>
@@ -630,27 +635,56 @@ export default function App() {
         <main className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 bg-slate-50/50 relative overscroll-y-contain">
           {/* Monitor — Admin, Admisión y Dirección (lectura) */}
           {canViewMonitor && state.currentView === 'HOME' && <DashboardView tickets={state.filteredTickets} />}
-          {/* Operativa — Admin, Admisión y Azafata */}
-          {hasOperationalAccess && state.currentView === 'REQUESTS' && (
-            <RequestsView
-              tickets={state.filteredTickets} activeRole={state.activeRole} setActiveRole={actions.setActiveRole} averageWaitTime={avgWaitTime}
-              searchTerm={state.requestsSearchTerm} setSearchTerm={actions.setRequestsSearchTerm} sortConfig={state.sortConfig}
-              onSort={(key) => actions.setSortConfig(prev => ({ key, direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc' }))}
-              onNewRequest={() => setIsNewRequestOpen(true)}
-              onValidateReason={actions.handleValidateTicket}
-              onAssignBed={handleOpenAssignBed}
-              onHousekeepingAction={actions.handleHousekeepingAction}
-              onStartTransport={actions.handleStartTransport}
-              onCompleteTransport={actions.handleCompleteTransport}
-              onRoomReady={actions.handleRoomReady}
-              onConfirmReception={actions.handleConfirmReception}
-              onConsolidate={actions.handleConsolidate}
-              onReject={(id) => { setRejectTicketId(id); setIsRejectOpen(true); }}
-              onEdit={(id) => setEditTicketId(id)}
-              onAddObservation={actions.handleAddObservation}
-              currentUser={state.currentUser}
-              beds={state.beds}
-            />
+          {/* Operativa — dos solapas: Traslados y Limpiezas.
+              Limpiezas dejó de ser una entrada del sidebar y vive acá. La barra de solapas va
+              como HERMANA de las vistas (no las envuelve), así cada una conserva su propio
+              padding de página y no se duplica. */}
+          {canViewOperativa && state.currentView === 'REQUESTS' && (
+            <>
+              {showOperativaTabs && (
+                <div className="px-4 md:px-8 pt-4 md:pt-8">
+                  <div className="flex items-center gap-1 border-b border-slate-200">
+                    {([['traslados', 'Traslados'], ['limpiezas', 'Limpiezas']] as const).map(([val, label]) => (
+                      <button key={val} onClick={() => actions.setOperativaSubview(val)}
+                        className={cn(
+                          'px-4 py-2 text-xs font-bold uppercase tracking-wide border-b-2 -mb-px transition-colors',
+                          operativaTab === val ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-400 hover:text-slate-600',
+                        )}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {operativaTab === 'limpiezas' ? (
+                canSeeLimpiezas && (
+                  <CleaningManagementView beds={state.beds} currentUser={state.currentUser}
+                    onConsolidate={(label) => actions.undoBedClean(label, 'CONSOLIDADO')} onRefresh={actions.refreshAll} />
+                )
+              ) : (
+                canSeeTraslados && (
+              <RequestsView
+                tickets={state.filteredTickets} activeRole={state.activeRole} setActiveRole={actions.setActiveRole} averageWaitTime={avgWaitTime}
+                searchTerm={state.requestsSearchTerm} setSearchTerm={actions.setRequestsSearchTerm} sortConfig={state.sortConfig}
+                onSort={(key) => actions.setSortConfig(prev => ({ key, direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc' }))}
+                onNewRequest={() => setIsNewRequestOpen(true)}
+                onValidateReason={actions.handleValidateTicket}
+                onAssignBed={handleOpenAssignBed}
+                onHousekeepingAction={actions.handleHousekeepingAction}
+                onStartTransport={actions.handleStartTransport}
+                onCompleteTransport={actions.handleCompleteTransport}
+                onRoomReady={actions.handleRoomReady}
+                onConfirmReception={actions.handleConfirmReception}
+                onConsolidate={actions.handleConsolidate}
+                onReject={(id) => { setRejectTicketId(id); setIsRejectOpen(true); }}
+                onEdit={(id) => setEditTicketId(id)}
+                onAddObservation={actions.handleAddObservation}
+                currentUser={state.currentUser}
+                beds={state.beds}
+              />
+                )
+              )}
+            </>
           )}
           {/* Historial — gateado por Acceso_RT */}
           {canViewHistorial && state.currentView === 'HISTORY' && <HistoryView tickets={state.historyTickets} />}
@@ -660,7 +694,6 @@ export default function App() {
           {canSeeRoles && (state.currentView as string) === 'ROLES' && <RoleManagementView currentUser={state.currentUser} onSessionRoleUpdate={actions.refreshSessionRole} />}
           {/* Mapa de Camas — gateado por Acceso_RT */}
           {canViewBeds && state.currentView === 'BEDS' && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} onEnrichBed={actions.enrichBed} onFetchPatientTickets={actions.fetchPatientTickets} onRefresh={actions.refreshAll} onMarkClean={actions.markBedClean} onUndoClean={actions.undoBedClean} onSaveMeal={actions.saveMealLoad} onClearMeal={actions.clearMealLoad} onSaveCompanion={actions.saveCompanionLoad} onClearCompanion={actions.clearCompanionLoad} />}
-          {canViewCleanings && state.currentView === 'CLEANINGS' && <CleaningManagementView beds={state.beds} currentUser={state.currentUser} onConsolidate={(label) => actions.undoBedClean(label, 'CONSOLIDADO')} onRefresh={actions.refreshAll} />}
           {canViewComandas && state.currentView === 'COMANDAS' && <ComandasManagementView beds={state.beds} currentUser={state.currentUser} onRefresh={actions.refreshAll} onSetMealStatus={actions.setMealStatus} />}
         </main>
       </div>

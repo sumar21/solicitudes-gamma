@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { Bed, User, Area, MealSlot, MealLoad, MEAL_SLOTS, mealSlotFromSp, mealSlotLabel, COMANDA_STATUS, ComandaStatus } from '../types';
-import { cn, formatBedName, formatDateReadable } from '../lib/utils';
+import { cn, formatBedName, formatDateReadable, normalizeText } from '../lib/utils';
 import { can } from '../lib/permissions';
 import { comandaTipoPill } from './BedsView';
 import { PlanificacionMenuModal } from '../components/modals/PlanificacionMenuModal';
@@ -8,7 +8,8 @@ import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { Calendar } from '../components/ui/calendar';
-import { Utensils, User as UserIcon, Clock, RefreshCw, Calendar as CalendarIcon, FileDown, CalendarDays, Check, X, Undo2, Loader2 } from 'lucide-react';
+import { Utensils, User as UserIcon, Clock, RefreshCw, Calendar as CalendarIcon, FileDown, CalendarDays, Check, X, Undo2, Loader2, Search } from 'lucide-react';
+import { Input } from '../components/ui/input';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -141,6 +142,32 @@ type ComandaRow = {
   status: ComandaStatus;
 };
 
+/**
+ * Texto buscable de una fila. Se indexa lo que el usuario VE, no el crudo de SharePoint:
+ *  · `status` crudo es 'Activo'/'Inactivo' pero en pantalla dice "Pendiente"/"Anulada"
+ *  · `tipo` vacío se pinta como "Otros"
+ * Indexar el crudo sería un bug silencioso (buscás "pendiente" y no encuentra nada).
+ *
+ * Se agregan las formas SIN espacios de cama y sector ("40902", "piso5"): sin ellas, tipear
+ * "piso 5" devuelve habitaciones del Piso 4 (el término "5" matchea el 405 del bedLabel), y
+ * "409-02" no matchea nada. Con ellas, el filtro exacto se puede tipear junto.
+ *
+ * NO se indexa la fecha: ya están los datepickers, y meter "21/07/26, 14:30" en cada fila
+ * ensucia justo las búsquedas numéricas por cama.
+ */
+const rowHaystack = (r: ComandaRow): string => normalizeText([
+  r.patientName,
+  r.bedLabel, formatBedName(r.bedLabel), formatBedName(r.bedLabel).replace(/[\s-]/g, ''),
+  r.area, areaLabel(r.area), areaLabel(r.area).replace(/\s+/g, ''),
+  r.comida,
+  r.comensal,
+  comandaTipoPill(r.tipo).label,
+  r.detalle,
+  r.observaciones,
+  r.by,
+  (STATUS_PILL[r.status] ?? STATUS_PILL[COMANDA_STATUS.PENDIENTE]).label,
+].join(' '));
+
 interface Props {
   beds: Bed[];
   currentUser: User | null;
@@ -202,6 +229,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
   const [openFrom, setOpenFrom] = useState(false);
   const [openTo, setOpenTo]     = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
+  const [searchFilter, setSearchFilter] = useState('');
   // spItemId de la fila cuya acción está en vuelo → spinner solo en esa.
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -272,6 +300,31 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
 
   const data = tab === 'activas' ? rows : history;
 
+  // El haystack se precalcula por FILA, no por tecla: `data` solo cambia con un poll o un
+  // re-fetch del histórico. Así el trabajo por tecla es N includes() sobre strings ya
+  // normalizados → no hace falta debounce.
+  const indexed = useMemo(() => data.map(r => ({ r, h: rowHaystack(r) })), [data]);
+
+  // Búsqueda en dos pasadas: FRASE EXACTA primero, y si no hay nada, AND de términos.
+  //
+  // El AND solo sería un falso-positivo generador: "piso 5" se parte en ["piso","5"], y en una
+  // fila del Piso 4 cama 405 el "piso" matchea "piso 4" y el "5" matchea el "405" → la trae
+  // igual. Probar la frase completa primero lo resuelve: "piso 5" solo aparece literal en las
+  // filas del Piso 5.
+  //
+  // El fallback a AND se conserva porque es lo que hace útil buscar entre campos distintos:
+  // "juan 405" (paciente + cama) no existe como frase en ningún lado, y ahí el AND sí es lo
+  // que uno quiere.
+  const query = normalizeText(searchFilter);
+  const terms = query.split(' ').filter(Boolean);
+  const filtered = useMemo(() => {
+    if (terms.length === 0) return data;
+    const porFrase = indexed.filter(({ h }) => h.includes(query));
+    if (porFrase.length > 0) return porFrase.map(({ r }) => r);
+    return indexed.filter(({ h }) => terms.every(t => h.includes(t))).map(({ r }) => r);
+  }, [data, indexed, searchFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  const filtrando = terms.length > 0;
+
   // Descarga la tabla actual (De hoy / Histórico) a PDF con jspdf-autotable.
   const handlePdf = () => {
     const showDate = tab === 'historico';
@@ -279,12 +332,14 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
     const title = tab === 'activas' ? 'Comandas — De hoy' : `Comandas — ${formatDateReadable(from)} a ${formatDateReadable(to)}`;
     doc.setFontSize(14); doc.setTextColor(2, 44, 34); doc.text(title, 14, 15); // verde Gamma #022C22
     doc.setFontSize(9); doc.setTextColor(120);
-    doc.text(`${data.length} comanda(s) · generado ${new Date().toLocaleString('es-AR')}`, 14, 21);
+    // El PDF exporta lo FILTRADO: si el usuario buscó algo, el papel tiene que decir lo mismo
+    // que la pantalla. Se deja constancia del término en el subtítulo.
+    doc.text(`${filtered.length} comanda(s)${filtrando ? ` · filtro: "${searchFilter.trim()}"` : ''} · generado ${new Date().toLocaleString('es-AR')}`, 14, 21);
     doc.setTextColor(0);
     // El PDF lo lee cocina en papel: ubicación en una sola columna (la cama ya dice el piso) y
     // observaciones pegadas a la comanda, que es como se leen.
     const head = [['Paciente', 'Ubicación', 'Turno', 'Comensal', 'Tipo', 'Comanda', 'Registró', ...(showDate ? ['Fecha y hora'] : [])]];
-    const body = data.map(r => [
+    const body = filtered.map(r => [
       r.patientName,
       formatBedName(r.bedLabel) + (sectorEsRedundante(r.area, r.bedLabel) ? '' : ` · ${areaLabel(r.area)}`),
       r.comida, r.comensal, comandaTipoPill(r.tipo).label,
@@ -324,6 +379,23 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
 
       {/* Barra de acciones / filtros */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
+        {/* Buscador — aplica a las DOS tabs (comparten `data`, tabla, tarjetas, contador y PDF).
+            max-w-sm es lo que preserva el ml-auto del contador de más abajo: no sacarlo. */}
+        <div className="relative flex-1 min-w-[180px] max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
+          <Input
+            placeholder="Paciente, cama, sector, turno, comanda, obs..."
+            value={searchFilter}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchFilter(e.target.value)}
+            className="pl-9 pr-8 h-9 text-xs rounded-xl border-slate-200"
+          />
+          {searchFilter && (
+            <button onClick={() => setSearchFilter('')} title="Limpiar búsqueda"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
         {tab === 'historico' && (
           <>
             <div className="flex items-center bg-white border border-slate-200 rounded-xl overflow-hidden h-9">
@@ -353,7 +425,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
             <RefreshCw className="w-4 h-4" /> Actualizar
           </Button>
         )}
-        <Button variant="outline" size="sm" onClick={handlePdf} disabled={data.length === 0}
+        <Button variant="outline" size="sm" onClick={handlePdf} disabled={filtered.length === 0}
           className="h-9 px-3 rounded-lg gap-2 text-xs font-bold text-indigo-700 border-indigo-200 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50">
           <FileDown className="w-4 h-4" /> PDF
         </Button>
@@ -364,7 +436,8 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
           </Button>
         )}
         <p className="text-xs text-slate-500 font-medium ml-auto self-center">
-          {data.length} {data.length === 1 ? 'comanda' : 'comandas'}
+          {filtered.length} {filtered.length === 1 ? 'comanda' : 'comandas'}
+          {filtrando && filtered.length !== data.length && <span className="text-slate-400"> de {data.length}</span>}
         </p>
       </div>
 
@@ -379,7 +452,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
 
       {loadingHist && tab === 'historico' ? (
         <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400 text-sm">Cargando…</div>
-      ) : data.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400">
           <Utensils className="w-10 h-10 mx-auto mb-3 text-slate-300" />
           <p className="font-bold text-sm text-slate-500">
@@ -393,7 +466,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
         <>
           {/* Mobile — tarjetas */}
           <div className="grid grid-cols-1 gap-3 md:hidden">
-            {data.map(r => {
+            {filtered.map(r => {
               const tp = comandaTipoPill(r.tipo);
               const cp = comidaPill(r.slot, r.comida);
               return (
@@ -441,7 +514,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {data.map(r => {
+                {filtered.map(r => {
                   const tp = comandaTipoPill(r.tipo);
                   const cp = comidaPill(r.slot, r.comida);
                   const esAcomp = r.comensal !== 'Paciente';

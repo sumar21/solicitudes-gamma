@@ -7,22 +7,37 @@ import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
-// Load .env.local
-try {
-  const envPath = resolve(import.meta.dirname ?? '.', '.env.local');
-  const lines = readFileSync(envPath, 'utf-8').split('\n');
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eq = trimmed.indexOf('=');
-    if (eq < 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    const val = trimmed.slice(eq + 1).trim();
-    if (!process.env[key]) process.env[key] = val;
-  }
-  console.log('[dev-server] .env.local loaded');
-} catch (e: any) {
-  console.warn('[dev-server] Could not load .env.local:', e.message);
+// Carga de env: .env.local primero y .env después, como fallback.
+//
+// Antes solo leía .env.local. Como este repo tiene `.env` (y no `.env.local`), el server
+// arrancaba SIN NINGUNA variable — sin JWT_SECRET ni credenciales de SharePoint/Gamma — y el
+// síntoma era un login que fallaba con "Token inválido" sin ninguna pista del motivo.
+//
+// El orden importa: `.env.local` gana porque es el override personal de cada dev (y está en
+// .gitignore). Se usa `if (!process.env[key])` en las dos pasadas, así una variable ya
+// definida en el entorno real (o en .env.local) nunca se pisa con la de .env.
+const envFiles = ['.env.local', '.env'];
+const envLoaded: string[] = [];
+for (const file of envFiles) {
+  try {
+    const lines = readFileSync(resolve(import.meta.dirname ?? '.', file), 'utf-8').split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eq = trimmed.indexOf('=');
+      if (eq < 0) continue;
+      const key = trimmed.slice(0, eq).trim();
+      // Se quitan comillas envolventes: `FOO="bar"` y `FOO='bar'` son válidos en un .env.
+      const val = trimmed.slice(eq + 1).trim().replace(/^["']|["']$/g, '');
+      if (!process.env[key]) process.env[key] = val;
+    }
+    envLoaded.push(file);
+  } catch { /* el archivo puede no existir — se prueba el siguiente */ }
+}
+if (envLoaded.length) {
+  console.log(`[dev-server] env cargado desde: ${envLoaded.join(', ')}`);
+} else {
+  console.warn('[dev-server] ⚠️  No se encontró .env.local ni .env — los endpoints van a fallar por falta de credenciales.');
 }
 
 // Vercel-style request/response adapter

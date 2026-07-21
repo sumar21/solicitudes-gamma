@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:api": "tsx watch dev-server.ts",
-    "dev:full": "start /B tsx watch dev-server.ts && vite",
+    "dev:full": "concurrently -n api,web -c cyan,magenta \"npm:dev:api\" \"npm:dev\"",
     "build": "vite build",
     "preview": "vite preview",
     "lint": "tsc --noEmit"
@@ -30,9 +30,12 @@
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
     "@types/web": "^0.0.345",
     "@vitejs/plugin-react": "^5.0.0",
     "autoprefixer": "^10.4.0",
+    "concurrently": "^10.0.3",
     "postcss": "^8.4.0",
     "sharp": "^0.34.5",
     "tailwindcss": "^3.4.0",

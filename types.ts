@@ -267,7 +267,14 @@ export interface CargaMenu {
   at: string;           // FechaCarga_CM (ISO instante)
 }
 
-export type ViewMode = 'HOME' | 'REQUESTS' | 'USERS' | 'HISTORY' | 'BEDS' | 'CLEANINGS' | 'COMANDAS';
+// 'CLEANINGS' se eliminó: Limpiezas dejó de ser una vista del sidebar y pasó a ser una solapa
+// dentro de Operativa ('REQUESTS'). Qué solapa se muestra lo lleva `operativaSubview` en
+// useHospitalState — NO es un ViewMode, porque el módulo 'Gestion Limpieza' sigue existiendo
+// como permiso independiente y ambas solapas se gatean por separado.
+export type ViewMode = 'HOME' | 'REQUESTS' | 'USERS' | 'HISTORY' | 'BEDS' | 'COMANDAS';
+
+/** Solapa activa dentro de Operativa. */
+export type OperativaSubview = 'traslados' | 'limpiezas';
 export type SortKey = 'status' | 'patientName' | 'origin' | 'createdAt';
 export type SortDirection = 'asc' | 'desc';
 

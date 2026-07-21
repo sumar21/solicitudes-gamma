@@ -12,7 +12,7 @@
 > | ✅ **Fase 0 corrigió un supuesto** | El site de SP está en **UTC-7**, no en ART. Ver D2. |
 > | ⚠️ **`@types/react` NO está instalado** | Ver "Deuda conocida". Cambia cuánto vale un `npm run lint` verde. |
 >
-> ### 🔴 Deuda conocida #1 — `@types/react` no está instalado
+> ### ✅ ~~Deuda conocida #1 — `@types/react` no está instalado~~ — RESUELTO 2026-07-21
 >
 > `package.json` tiene `@types/node` y `@types/web`, pero **no `@types/react`**. Consecuencia:
 > `import React from 'react'` → `React` es `any` → `React.FC<Props>` es `any` → **las props de
@@ -25,8 +25,14 @@
 > Lo que SÍ chequea: constantes y helpers a nivel de módulo (por eso el `Record<MealSlot, string>`
 > de `MEAL_PILL_CLS` sí fuerza exhaustividad — esa red es real).
 >
-> **Implicancia práctica:** un `lint` verde en este repo NO significa que el front esté bien tipado.
-> Instalar `@types/react` probablemente destape muchos errores preexistentes; es un laburo aparte.
+> **RESUELTO.** Se instalaron `@types/react@^18` y `@types/react-dom@^18`. El resultado fue mucho
+> mejor de lo temido: los 2 errores que había eran **falsos positivos** (`key` en `<Badge>`, que
+> `@types/react` maneja solo vía `JSX.IntrinsicAttributes`) y solo aparecieron **2 errores reales**,
+> ambos en `views/RequestsView.tsx:201-202` — un `as string` sobre `Area[]` que el cast tapaba.
+> Corregidos con un guard explícito.
+>
+> **`npm run lint` ahora da 0 errores**, y las props de los componentes SÍ se chequean
+> (verificado rompiendo una a propósito). Un lint verde ahora vale lo que debería valer.
 >
 > ### 🟡 Deuda conocida #2 — la comanda de ayer se pisa
 >

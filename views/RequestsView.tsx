@@ -198,8 +198,11 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
           if (currentUser.assignedAreas.length < allAreas.length - 1) {
             const originArea = beds.find(b => b.label === t.origin)?.area ?? beds.find(b => t.origin?.includes(b.area))?.area;
             const destArea = t.destination ? (beds.find(b => b.label === t.destination)?.area ?? beds.find(b => t.destination?.includes(b.area))?.area) : undefined;
-            return currentUser.assignedAreas.includes(originArea as string) ||
-                   currentUser.assignedAreas.includes(destArea as string);
+            // Guard explícito en vez de `as string`: `assignedAreas` es `Area[]`, así que el
+            // cast solo silenciaba al compilador. Semánticamente es idéntico —`includes(undefined)`
+            // sobre un array de Area siempre da false— pero ahora el tipo lo dice en vez de taparlo.
+            return (!!originArea && currentUser.assignedAreas.includes(originArea)) ||
+                   (!!destArea && currentUser.assignedAreas.includes(destArea));
           }
         }
         return validStatus;
