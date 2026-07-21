@@ -44,17 +44,33 @@ export default async function handler(req: any, res: any) {
 
   const url = `${TESTING_BASE_URL}/api/cron-enrich-beds`;
   try {
-    // 290s < maxDuration 300; el enrich del Preview se autocorta por CRON_BUDGET_MS (~240s).
-    // No pasamos ?silent: el enrich del Preview debe comportarse normal (push a suscriptores TESTING).
+    // FIRE-AND-FORGET (antes: esperaba 290s a que el Preview terminara).
+    //
+    // Este handler no hace trabajo propio: solo despierta al enrich del Preview. Esperar a
+    // que ese enrich TERMINE mantenía viva una instancia de PRODUCCIÓN los ~100-290s que
+    // tardaba, 96 veces por día, con ~0% de CPU — puro Provisioned Memory facturado por
+    // estar sentado esperando. Se pagaba dos veces la misma corrida: la del Preview que
+    // hace el trabajo y la de prod que la mira.
+    //
+    // Con 10s alcanza para que el request LLEGUE y el Preview arranque (cubre cold start).
+    // El AbortError posterior es el resultado ESPERADO, no un fallo: significa que el
+    // disparo salió y nos desentendimos. Por eso se devuelve 202 y no 502 — un 502 acá
+    // ensuciaría los logs de cron con "fallas" que no lo son.
     const r = await fetchWithTimeout(
       url,
       { method: 'POST', headers: { 'X-Cron-Secret': CRON_SECRET } },
-      290_000,
+      10_000,
     );
+    // Si el Preview igual contestó rápido, lo logueamos; no cambia nada.
     const text = await r.text();
     console.log(`[cron-trigger-testing] upstream ${r.status}: ${text.slice(0, 300)}`);
     return res.status(r.ok ? 200 : 502).json({ ok: r.ok, upstreamStatus: r.status, upstream: text.slice(0, 500) });
   } catch (e: any) {
+    // Timeout = disparo exitoso. El enrich sigue corriendo del lado del Preview.
+    if (e?.name === 'AbortError') {
+      console.log('[cron-trigger-testing] disparado (fire-and-forget, sin esperar al upstream)');
+      return res.status(202).json({ ok: true, triggered: true, awaited: false });
+    }
     console.error('[cron-trigger-testing] error:', e?.message ?? e);
     return res.status(502).json({ ok: false, error: e?.message ?? 'fetch failed' });
   }

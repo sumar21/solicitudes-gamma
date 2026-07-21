@@ -14,7 +14,7 @@
 
 import { requireAuth } from './jwt.js';
 import {
-  getToken, GAMMA_BASE, simpleHash,
+  getToken, GAMMA_BASE, simpleHash, fetchWithTimeout, GAMMA_TIMEOUT_MS,
   GammaBed, GammaSector,
 } from './gamma-client.js';
 import { graphFetch } from './graph.js';
@@ -220,7 +220,12 @@ async function handler(req: any, res: any) {
     // serving a silently-empty bed map.
     const fetchAndParse = async (url: string, token: string, label: string): Promise<{ ok: boolean; data: GammaSector[] }> => {
       try {
-        const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        // fetchWithTimeout y no fetch pelado: la VM de Gamma se cuelga indefinidamente cada
+        // tanto. Sin techo por llamada, la instancia queda viva (y facturándose memoria)
+        // hasta que Vercel la mata por maxDuration. El AbortError cae en el catch de abajo,
+        // que ya rutea al fallback de cache stale con X-Beds-Stale — que es exactamente el
+        // comportamiento que querés en un hospital: mapa viejo antes que mapa vacío.
+        const r = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${token}` } }, GAMMA_TIMEOUT_MS);
         if (!r.ok) {
           console.warn(`[api/beds] ${label} HTTP ${r.status}`);
           return { ok: false, data: [] };
