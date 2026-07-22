@@ -186,7 +186,7 @@ const emptySlot = (): MealSlotLoad => ({ acompanantes: [] });
  * camas muestran el tag de sexo sugerido — el tag no causaba nada, era la huella del
  * mismo escenario: cama recién desocupada con compañero de cuarto.)
  */
-function bedsInUseByTickets(activeTickets: Ticket[]): Set<string> {
+export function bedsInUseByTickets(activeTickets: Ticket[]): Set<string> {
   const s = new Set<string>();
   for (const t of activeTickets) {
     if (t.destination) s.add(t.destination);
@@ -195,7 +195,46 @@ function bedsInUseByTickets(activeTickets: Ticket[]): Set<string> {
   return s;
 }
 
-function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?: Map<string, CleaningInfo>, meals?: Map<string, MealsInfo>): Bed[] {
+/**
+ * ¿Hay que auto-cerrar en SP la limpieza de esta cama, y con qué motivo? `null` = dejarla viva.
+ *
+ * - 'TICKET': un traslado vivo usa la cama de verdad (destino, u origen con paciente adentro).
+ * - 'GAMMA': PROGAL avanzó el estado de la cama y la marca quedó obsoleta.
+ *
+ * La sutileza es el LIMBO del origen recién desocupado: entre que el paciente sale y que
+ * admisión consolida en PROGAL, el crudo de Gamma sigue diciendo "Ocupada" (por el paciente
+ * VIEJO). Cerrar ahí con GAMMA mataba la marca de la azafata en su caso de uso principal.
+ * La exención cubre ese crudo=Ocupada mientras exista un ticket con esta cama como origen en
+ * En Traslado / Esperando Consolidación / Consolidado — este último gracias a la ventana de
+ * gracia del server (los cerrados siguen viajando ~30 min), que además tapa el hueco entre
+ * la consolidación y el próximo refresh del mapa. Pasada la ventana, si la cama sigue
+ * Ocupada es un ocupante nuevo → el cierre por GAMMA vuelve a operar como red de seguridad
+ * (una marca vieja que reapareciera como "Limpia" sobre una cama sucia sería peligrosa).
+ * 'Cancelado' NO exime: el paciente nunca se movió, esa cama Ocupada es real.
+ */
+export function cleaningAutoCloseReason(
+  rawStatus: BedStatus | undefined,
+  label: string,
+  ticketsInPayload: Ticket[],
+): 'TICKET' | 'GAMMA' | null {
+  const active = ticketsInPayload.filter(t => t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED);
+  if (bedsInUseByTickets(active).has(label)) return 'TICKET';
+  if (!rawStatus || rawStatus === BedStatus.PREPARATION) return null; // vigente (o cama ausente: transitorio → no cerrar)
+  if (rawStatus === BedStatus.OCCUPIED) {
+    const enLimbo = ticketsInPayload.some(t =>
+      t.origin === label && (
+        t.status === TicketStatus.IN_TRANSPORT ||
+        t.status === TicketStatus.WAITING_CONSOLIDATION ||
+        t.status === TicketStatus.COMPLETED
+      ));
+    if (enLimbo) return null;
+  }
+  return 'GAMMA';
+}
+
+// Exportada para poder testear los escenarios de overlay (limpieza/tickets) contra la
+// función REAL y no contra una réplica.
+export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?: Map<string, CleaningInfo>, meals?: Map<string, MealsInfo>): Bed[] {
   const result = gammaBeds.map(b => ({ ...b }));
   // Ver bedsInUseByTickets: destinos + orígenes aún ocupados. El overlay del ticket tiene
   // prioridad sobre el de limpieza SOLO en esas camas.
@@ -254,17 +293,24 @@ function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?: Map<st
   }
 
   // ── Overlay de limpieza (Opción B) ──────────────────────────────────────────
-  // Una cama que PROGAL reporta "En preparación" (recién desocupada/sucia), que ningún
-  // traslado activo está usando y que una azafata marcó limpia → se muestra Disponible
-  // con el flag `cleaned`. "Pisa" visualmente a PROGAL (que es read-only). Si Gamma ya
-  // sacó la cama de preparación o un traslado la tomó, el overlay no aplica y la cama
-  // vuelve a su estado real (el auto-cierre cierra el registro en SP — ver useEffect).
+  // Una cama EFECTIVAMENTE "En preparación" (recién desocupada/sucia), que ningún
+  // traslado la esté usando de verdad y que una azafata marcó limpia → se muestra
+  // Disponible con el flag `cleaned`. "Pisa" visualmente a PROGAL (que es read-only).
+  //
+  // El gate mira `bed.status` (el MERGEADO, después de aplicar los tickets) y NO el crudo
+  // de Gamma. No es un detalle: en "Esperando Consolidación" PROGAL todavía muestra al
+  // paciente viejo en la cama origen (crudo = Ocupada) — por eso existe ese estado — y el
+  // switch de arriba es el que la pasa a "En preparación". Con el gate sobre el crudo, la
+  // marca de la azafata en esa cama no se veía nunca: el caso MÁS común del módulo. El
+  // riesgo de "limpia sobre un ocupante nuevo" ya lo cubre el merge: si PROGAL reasignó la
+  // cama a otro paciente, progalStillHasTicketPatientOnOrigin da false y el status mergeado
+  // queda Ocupada → este if no entra.
   if (cleanings && cleanings.size) {
     for (let i = 0; i < result.length; i++) {
       const bed = result[i];
       const info = cleanings.get(bed.label);
       if (!info) continue;
-      if (gammaBeds[i].status === BedStatus.PREPARATION && !ticketTouched.has(bed.label)) {
+      if (bed.status === BedStatus.PREPARATION && !ticketTouched.has(bed.label)) {
         bed.status = BedStatus.AVAILABLE;
         bed.cleaned = true;
         bed.cleanedBy = info.by;
@@ -1089,24 +1135,19 @@ export const useHospitalState = () => {
   // (closedCleaningsRef evita repetir; el PATCH a Inactivo es idempotente del lado server).
   useEffect(() => {
     if (cleanings.size === 0 || rawBeds.length === 0) return;
-    const active = tickets.filter(t => t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED);
-    // MISMO criterio que el overlay (bedsInUseByTickets): si acá se usara "origen y destino
-    // de todo ticket", el auto-cierre mataría marcas que el overlay sí muestra — que era
-    // exactamente el bug de "toco Marcar limpia y no pasa nada".
-    const touched = bedsInUseByTickets(active);
+    // Toda la decisión (incluida la exención del limbo post-traslado) vive en
+    // cleaningAutoCloseReason — función pura y testeada. Acá solo se ejecuta el cierre.
     const rawByLabel = new Map<string, Bed>(rawBeds.map(b => [b.label, b]));
     for (const [label, info] of cleanings) {
       if (!info.spItemId || closedCleaningsRef.current.has(info.spItemId)) continue;
-      const raw = rawByLabel.get(label);
-      const takenByTicket = touched.has(label);
-      const gammaAdvanced = !!raw && raw.status !== BedStatus.PREPARATION; // raw ausente = transitorio → no cerrar
-      if (!takenByTicket && !gammaAdvanced) continue;
+      const reason = cleaningAutoCloseReason(rawByLabel.get(label)?.status, label, tickets);
+      if (!reason) continue;
       const spItemId = info.spItemId;
       closedCleaningsRef.current.add(spItemId); // evita disparos duplicados mientras el PATCH viaja
       setCleanings(prev => { const n = new Map(prev); n.delete(label); return n; });
       authFetch('/api/limpiezas', {
         method: 'PATCH',
-        body: JSON.stringify({ spItemId, reason: takenByTicket ? 'TICKET' : 'GAMMA' }),
+        body: JSON.stringify({ spItemId, reason }),
       })
         // Si el cierre falla (HTTP no-ok o red), soltamos el candado para reintentar en el
         // próximo poll — sino la fila queda 'Activo' en SP y el overlay puede reaparecer falso.
