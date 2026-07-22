@@ -319,12 +319,67 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
     }
   }
 
-  // ── Overlay de cargas de menú (Nutrición) ───────────────────────────────────
-  // Solo se adjunta si el paciente que se cargó sigue siendo el de la cama: si la cama
-  // se reasignó, la carga vieja no se muestra (y se puede quitar/sobreescribir).
+  // ── Overlay de cargas de menú (Nutrición) — LA COMANDA SIGUE AL PACIENTE ────
+  // Las entradas del Map vienen keyeadas por la cama donde se CARGÓ cada fila. Si el
+  // paciente se trasladó, sus cargas se muestran en la cama donde ESTÁ (el merge de
+  // tickets ya le copió el patientCode a la cama destino, incluso en tránsito) y
+  // desaparecen del label viejo — antes el platito quedaba en la cama vacía y cocina
+  // llevaba la bandeja a la habitación equivocada.
+  //
+  // Puede haber transitoriamente MÁS de una entrada del mismo paciente (el titular
+  // editado ya migró de cama en SP pero los acompañantes no, o el update optimista
+  // escribió bajo la cama nueva mientras el poll aún trae la vieja): se fusionan slot a
+  // slot — titular el más reciente por `at`, acompañantes concatenados sin repetir.
+  //
+  // Guard de reasignación intacto: una carga con patientCode solo se muestra donde ESE
+  // paciente esté; si la cama tiene otro ocupante, no se adjunta.
   if (meals && meals.size) {
+    const labelsByPatient = new Map<string, string[]>();
+    for (const [label, info] of meals) {
+      if (!info.patientCode) continue;
+      const arr = labelsByPatient.get(info.patientCode) ?? [];
+      arr.push(label);
+      labelsByPatient.set(info.patientCode, arr);
+    }
+    // ¿En qué cama está HOY cada paciente con cargas? Si aparece en el mapa, reclama ahí.
+    const claimedAt = new Map<string, string>();
     for (const bed of result) {
-      const m = meals.get(bed.label);
+      if (bed.patientCode && labelsByPatient.has(bed.patientCode)) claimedAt.set(bed.patientCode, bed.label);
+    }
+
+    const infoFor = (bed: Bed): MealsInfo | undefined => {
+      const claimed = bed.patientCode ? claimedAt.get(bed.patientCode) : undefined;
+      if (claimed === bed.label) {
+        const labels = labelsByPatient.get(bed.patientCode!)!;
+        if (labels.length === 1) return meals.get(labels[0]);
+        const merged: MealsInfo = { patientCode: bed.patientCode!, slots: {} };
+        for (const l of labels) {
+          const info = meals.get(l)!;
+          for (const { slot } of MEAL_SLOTS) {
+            const s = info.slots[slot];
+            if (!s) continue;
+            const dst = (merged.slots[slot] ??= emptySlot());
+            if (s.titular && (!dst.titular || String(s.titular.at) > String(dst.titular.at))) dst.titular = s.titular;
+            for (const a of s.acompanantes) {
+              if (!dst.acompanantes.some(x => x.spItemId === a.spItemId)) dst.acompanantes.push(a);
+            }
+          }
+        }
+        for (const s of Object.values(merged.slots)) {
+          s?.acompanantes.sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0) || Number(a.spItemId) - Number(b.spItemId));
+        }
+        return merged;
+      }
+      // Por label, solo si su paciente no la reclamó en otra cama (si la reclamó, acá
+      // no se muestra nada — ese es el "desaparece del label viejo").
+      const direct = meals.get(bed.label);
+      if (!direct) return undefined;
+      if (direct.patientCode && claimedAt.has(direct.patientCode) && claimedAt.get(direct.patientCode) !== bed.label) return undefined;
+      return direct;
+    };
+
+    for (const bed of result) {
+      const m = infoFor(bed);
       if (!m) continue;
       if (m.patientCode && bed.patientCode && m.patientCode !== bed.patientCode) continue;
       // Derivado del catálogo: un turno nuevo se adjunta solo, sin tocar esta línea.
@@ -842,10 +897,22 @@ export const useHospitalState = () => {
   // Nutrición quita la carga del TITULAR (optimista + PATCH soft-delete).
   const clearMealLoad = useCallback(async (bed: Bed, comida: MealSlot) => {
     if (!bed?.label) return;
-    const spItemId = meals.get(bed.label)?.slots[comida]?.titular?.spItemId;
+    // La carga puede estar keyeada por una cama ANTERIOR (la comanda sigue al paciente):
+    // se busca por paciente primero y por label como fallback, y el optimista se aplica
+    // sobre la clave real — si operara sobre bed.label, quitar desde la cama nueva no
+    // encontraría nada y el spItemId viajaría vacío (el server fallaría en silencio).
+    let ownerKey = bed.label;
+    for (const [key, info] of meals) {
+      const delPaciente = !!bed.patientCode && info.patientCode === bed.patientCode;
+      if ((delPaciente || key === bed.label) && info.slots[comida]?.titular) {
+        ownerKey = key;
+        if (delPaciente) break; // prioridad al match por paciente
+      }
+    }
+    const spItemId = meals.get(ownerKey)?.slots[comida]?.titular?.spItemId;
     setMeals(prev => {
       const n = new Map<string, MealsInfo>(prev);
-      const cur = n.get(bed.label);
+      const cur = n.get(ownerKey);
       if (!cur) return n;
       // ⚠️ Se borra SOLO el titular. `delete cur.slots[comida]` volaría el slot completo con sus
       // acompañantes: "Quitar" en el paciente le sacaría la bandeja al acompañante.
@@ -855,13 +922,15 @@ export const useHospitalState = () => {
         // El slot sale solo si no queda nada; el bed sale solo si no queda ningún slot.
         if (s.acompanantes.length === 0) delete cur.slots[comida];
       }
-      if (!MEAL_SLOTS.some(x => cur.slots[x.slot])) n.delete(bed.label); else n.set(bed.label, cur);
+      if (!MEAL_SLOTS.some(x => cur.slots[x.slot])) n.delete(ownerKey); else n.set(ownerKey, cur);
       return n;
     });
     try {
       await authFetch('/api/dietas', {
         method: 'PATCH',
-        body: JSON.stringify({ spItemId: spItemId || undefined, bedLabel: bed.label, comida: spFromMealSlot(comida) }),
+        // bedLabel = la clave REAL de la fila (puede ser la cama vieja): es el fallback del
+        // server cuando no hay spItemId.
+        body: JSON.stringify({ spItemId: spItemId || undefined, bedLabel: ownerKey, comida: spFromMealSlot(comida) }),
       });
     } catch { /* best-effort */ }
   }, [authFetch, meals]);
@@ -937,13 +1006,19 @@ export const useHospitalState = () => {
     if (!bed?.label || !spItemId) return;
     setMeals(prev => {
       const n = new Map<string, MealsInfo>(prev);
-      const cur = n.get(bed.label);
+      // La fila puede estar keyeada por una cama anterior (la comanda sigue al paciente):
+      // se ubica la entrada que CONTIENE este spItemId en vez de asumir bed.label.
+      let ownerKey = bed.label;
+      for (const [key, info] of n) {
+        if (info.slots[comida]?.acompanantes.some(a => a.spItemId === spItemId)) { ownerKey = key; break; }
+      }
+      const cur = n.get(ownerKey);
       const s = cur?.slots[comida];
       if (!cur || !s) return n;
       // Los ordinales de los que quedan NO se renumeran: son identidad, no posición.
       cur.slots[comida] = { ...s, acompanantes: s.acompanantes.filter(a => a.spItemId !== spItemId) };
       if (!cur.slots[comida]!.titular && cur.slots[comida]!.acompanantes.length === 0) delete cur.slots[comida];
-      if (!MEAL_SLOTS.some(x => cur.slots[x.slot])) n.delete(bed.label); else n.set(bed.label, cur);
+      if (!MEAL_SLOTS.some(x => cur.slots[x.slot])) n.delete(ownerKey); else n.set(ownerKey, cur);
       return n;
     });
     try {

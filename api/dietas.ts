@@ -226,13 +226,21 @@ async function handler(req: any, res: any) {
     const nutriIdField = String(userId ?? '').trim() !== '' && Number.isFinite(nutriIdNum) ? { NutricionistaID_D: nutriIdNum } : {};
 
     try {
-      // Traemos TODAS las filas activas de esta cama+comida (titular + acompañantes) y elegimos
-      // en JS. $top=50 alcanza: son 1 titular + hasta MAX_ACOMPANANTES por (cama, comida).
-      // ⚠️ El `$top=1` + `value[0]` de antes era correcto cuando había una sola fila por
-      // (cama, comida); con acompañantes agarraría una fila arbitraria y podría pisar la
-      // comanda de otro comensal.
+      // Traemos TODAS las filas activas de este comensal+comida (titular + acompañantes) y
+      // elegimos en JS. $top=50 alcanza: 1 titular + hasta MAX_ACOMPANANTES por comida.
+      //
+      // LA COMANDA SIGUE AL PACIENTE: si hay patientCode, la identidad del upsert es el
+      // PACIENTE, no la cama. Antes se resolvía por CamaLabel_D y eso partía la comanda en
+      // dos cuando el paciente se trasladaba: la fila vieja quedaba viva en la cama anterior
+      // y una edición desde la cama nueva creaba un DUPLICADO (dos bandejas para la misma
+      // persona). Resolviendo por paciente, la edición encuentra su fila esté donde esté, y
+      // patchFields la migra a la cama actual. El fallback por cama queda para camas sin
+      // código de paciente (enrich ausente) — mismo comportamiento de siempre.
+      const identityClause = String(patientCode ?? '').trim() !== ''
+        ? `fields/PacienteCodigo_D eq '${esc(patientCode)}'`
+        : `fields/CamaLabel_D eq '${esc(bedLabel)}'`;
       const filter = encodeURIComponent(
-        `fields/CamaLabel_D eq '${esc(bedLabel)}' and fields/Comida_D eq '${comidaVal}' and ${VIVAS_FILTER} and fields/Entorno_D eq '${ENTORNO}'`,
+        `${identityClause} and fields/Comida_D eq '${comidaVal}' and ${VIVAS_FILTER} and fields/Entorno_D eq '${ENTORNO}'`,
       );
       const existing = await graphFetch(
         `${basePath}?$expand=fields&$filter=${filter}&$top=50`,
@@ -279,6 +287,11 @@ async function handler(req: any, res: any) {
         PacienteNombre_D: String(patientName ?? ''), PacienteCodigo_D: String(patientCode ?? ''),
         NutricionistaNombre_D: String(userName ?? ''), ...nutriIdField,
         FechaCarga_D: nowIso,
+        // Migración de ubicación: editar una comanda la "muda" a la cama ACTUAL del paciente.
+        // Si se trasladó después de la carga, la fila deja de apuntar a la habitación vieja —
+        // cocina y el histórico ven a dónde hay que llevar la bandeja de verdad.
+        CamaLabel_D: String(bedLabel), CamaCodigo_D: String(bedCode ?? ''),
+        Habitacion_D: String(roomCode ?? ''), Area_D: String(area ?? ''),
       };
       // Al reusar una fila de otro día, la comanda es NUEVA → vuelve a PENDIENTE.
       const patchFieldsReuso = { ...patchFields, Status_D: ST_PENDIENTE };
