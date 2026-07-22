@@ -140,6 +140,7 @@ export interface MealLoad {
   comensal?: Comensal;  // TITULAR (default) | ACOMPANANTE
   orden?: number;       // 0 titular; 1..N ordinal INMUTABLE del acompañante (lo asigna el server)
   status?: ComandaStatus;
+  closedAt?: string;    // ISO — cuándo se entregó/anuló (FechaCierre_D); vacío si pendiente
 }
 
 // Ciclo de vida de una bandeja. Se guarda en `Status_D` (reusa la columna de soft-delete: no
@@ -307,6 +308,9 @@ export const PERMISSIONS = [
   'notif_reception_confirmed',
   'notif_diet_change',
   'notif_fasting_change',
+  // Azafata marcó una habitación limpia desde el mapa → aviso a Admisión (u otro rol que
+  // lo tenga tildado en el ABM). Push + campanita, mismo pipeline que los demás.
+  'notif_habitacion_limpia',
 ] as const;
 export type Permission = typeof PERMISSIONS[number];
 
@@ -341,6 +345,7 @@ export enum NotificationType {
   RECEPTION_CONFIRMED = 'RECEPTION_CONFIRMED',
   DIET_CHANGE = 'DIET_CHANGE',
   FASTING_CHANGE = 'FASTING_CHANGE',
+  ROOM_CLEANED = 'ROOM_CLEANED', // azafata marcó limpia una habitación desde el mapa
   ROLE_CHANGE = 'ROLE_CHANGE',  // no usado hoy, backwards-compat
   SYSTEM = 'SYSTEM',            // no usado hoy, backwards-compat
 }

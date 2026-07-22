@@ -20,6 +20,7 @@
 
 import { graphFetch }  from './graph.js';
 import { requireAuth } from './jwt.js';
+import { sendPushToSubscribers } from './push-utils.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = (process.env.LIMPIEZAS_LIST_ID ?? '3665d496-0e52-465e-b40f-54ca39cd5856').trim(); // 14.Limpiezas
@@ -122,6 +123,25 @@ async function handler(req: any, res: any) {
     if (!bedLabel) return res.status(400).json({ error: 'bedLabel is required' });
     const nowIso = new Date().toISOString();
 
+    // "Habitación Limpia" → push + campanita para los roles que tengan tildado
+    // `notif_habitacion_limpia` en el ABM (pensado para Admisión, pero configurable).
+    // sendPushToSubscribers ya filtra por permiso del rol, sede y pisos asignados, y
+    // persiste la fila per-usuario en 10.Notificaciones. Non-blocking: un fallo de push
+    // jamás debe hacer fallar la marca de limpieza (mismo idiom que api/tickets.ts).
+    const notifyRoomCleaned = () => {
+      const cama = bedCode ? ` · Cama ${bedCode}` : '';
+      sendPushToSubscribers({
+        title: 'Habitación Limpia',
+        body: `Hab. ${roomCode || '?'}${cama} — marcada limpia por ${userName || 'azafata'}.`,
+        type: 'ROOM_CLEANED',
+        // Área real para el match por pisos; el label de cama como fallback fuzzy.
+        originArea: String(bedLabel), destinationArea: String(bedLabel),
+        originAreaName: String(area ?? ''), destinationAreaName: String(area ?? ''),
+        sede: String(req.user?.sede ?? 'HPR'),
+        excludeUserId: String(userId ?? req.user?.id ?? ''),
+      }).catch((err: any) => console.error('[limpiezas] Push error:', err));
+    };
+
     try {
       // ¿Ya hay una limpieza activa para esta cama en este entorno? → refrescar.
       const filter = encodeURIComponent(
@@ -139,6 +159,7 @@ async function handler(req: any, res: any) {
             method: 'PATCH',
             body: JSON.stringify({ AzafataId_L: String(userId ?? ''), AzafataNombre_L: String(userName ?? ''), FechaLimpieza_L: nowIso }),
           });
+          notifyRoomCleaned(); // re-marca de una limpieza vigente: también es el evento
           return res.status(200).json({ ok: true, spItemId: itemId });
         }
       }
@@ -168,6 +189,7 @@ async function handler(req: any, res: any) {
       }
       const created = (await spRes.json()) as { id: string };
       console.log(`[limpiezas] Cama "${bedLabel}" marcada limpia por ${userName ?? userId}`);
+      notifyRoomCleaned();
       return res.status(200).json({ ok: true, spItemId: String(created.id) });
     } catch (err: any) {
       console.error('[limpiezas] POST error:', err);

@@ -186,6 +186,7 @@ const NOTIF_TYPE_TO_PERMISSION: Record<string, string> = {
   RECEPTION_CONFIRMED:  'notif_reception_confirmed',
   DIET_CHANGE:          'notif_diet_change',
   FASTING_CHANGE:       'notif_fasting_change',
+  ROOM_CLEANED:         'notif_habitacion_limpia',
 };
 
 // Decide si una suscripción es relevante para el push actual. Filtra por:

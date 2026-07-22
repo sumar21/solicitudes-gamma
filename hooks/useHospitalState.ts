@@ -169,14 +169,38 @@ type MealsInfo = { patientCode: string; slots: Partial<Record<MealSlot, MealSlot
 /** Slot vacío. Helper para no repetir el `{ acompanantes: [] }` en cada rama. */
 const emptySlot = (): MealSlotLoad => ({ acompanantes: [] });
 
+/**
+ * Camas que un traslado activo está usando DE VERDAD, a efectos del overlay de limpieza
+ * y de su auto-cierre (criterio único compartido para que nunca diverjan):
+ *   - todo DESTINO de un ticket vivo — la cama está reservada para un ingreso; ahí la
+ *     limpieza se maneja con el flujo del propio ticket ("Habitación Lista"), no con la marca.
+ *   - el ORIGEN solo mientras el paciente siga físicamente ahí (Esperando Habitación /
+ *     Habitación Lista).
+ *
+ * El origen de un ticket En Traslado / Esperando Consolidación ya quedó VACÍO: es
+ * exactamente la cama que la azafata acaba de limpiar. El criterio viejo (origen y destino
+ * de todo ticket vivo, sin distinguir) hacía que en ese caso "Marcar limpia" no produjera
+ * nada visible y que el auto-cierre matara la marca en SP a los segundos (motivo TICKET):
+ * al consolidarse el traslado la cama reaparecía "En preparación" sin limpieza, y el
+ * trabajo de la azafata se perdía. (Se notaba más en habitaciones compartidas porque esas
+ * camas muestran el tag de sexo sugerido — el tag no causaba nada, era la huella del
+ * mismo escenario: cama recién desocupada con compañero de cuarto.)
+ */
+function bedsInUseByTickets(activeTickets: Ticket[]): Set<string> {
+  const s = new Set<string>();
+  for (const t of activeTickets) {
+    if (t.destination) s.add(t.destination);
+    if (t.status === TicketStatus.WAITING_ROOM || t.status === TicketStatus.IN_TRANSIT) s.add(t.origin);
+  }
+  return s;
+}
+
 function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?: Map<string, CleaningInfo>, meals?: Map<string, MealsInfo>): Bed[] {
   const result = gammaBeds.map(b => ({ ...b }));
-  // Camas que algún traslado activo está usando (origen o destino). El overlay del ticket
-  // tiene prioridad sobre el de limpieza: si un traslado tomó la cama, NO la mostramos limpia.
-  const ticketTouched = new Set<string>();
+  // Ver bedsInUseByTickets: destinos + orígenes aún ocupados. El overlay del ticket tiene
+  // prioridad sobre el de limpieza SOLO en esas camas.
+  const ticketTouched = bedsInUseByTickets(activeTickets);
   for (const ticket of activeTickets) {
-    ticketTouched.add(ticket.origin);
-    if (ticket.destination) ticketTouched.add(ticket.destination);
     const origin = result.find(b => b.label === ticket.origin);
     const dest   = ticket.destination ? result.find(b => b.label === ticket.destination) : null;
     switch (ticket.status) {
@@ -692,6 +716,7 @@ export const useHospitalState = () => {
           comensal: m.comensal === 'ACOMPANANTE' ? 'ACOMPANANTE' : 'TITULAR',
           orden: Number(m.orden ?? 0) || 0,
           status: (m.status === COMANDA_STATUS.ENTREGADO ? COMANDA_STATUS.ENTREGADO : COMANDA_STATUS.PENDIENTE),
+          closedAt: String(m.closedAt ?? ''),
         };
         const s = (cur.slots[slot] ??= emptySlot());
         if (load.comensal === 'ACOMPANANTE') s.acompanantes.push(load);
@@ -1065,8 +1090,10 @@ export const useHospitalState = () => {
   useEffect(() => {
     if (cleanings.size === 0 || rawBeds.length === 0) return;
     const active = tickets.filter(t => t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED);
-    const touched = new Set<string>();
-    for (const t of active) { touched.add(t.origin); if (t.destination) touched.add(t.destination); }
+    // MISMO criterio que el overlay (bedsInUseByTickets): si acá se usara "origen y destino
+    // de todo ticket", el auto-cierre mataría marcas que el overlay sí muestra — que era
+    // exactamente el bug de "toco Marcar limpia y no pasa nada".
+    const touched = bedsInUseByTickets(active);
     const rawByLabel = new Map<string, Bed>(rawBeds.map(b => [b.label, b]));
     for (const [label, info] of cleanings) {
       if (!info.spItemId || closedCleaningsRef.current.has(info.spItemId)) continue;

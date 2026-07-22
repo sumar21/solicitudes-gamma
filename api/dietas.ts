@@ -125,6 +125,11 @@ async function handler(req: any, res: any) {
           by:            String(f.NutricionistaNombre_D ?? ''),
           at:            String(f.FechaCarga_D ?? ''),
           status:        String(f.Status_D ?? ''),
+          closedAt:      String(f.FechaCierre_D ?? ''), // hora de entrega/anulación (vacío si pendiente)
+          // El front del histórico ya esperaba estos dos para etiquetar "Acompañante N",
+          // pero el mapping no los incluía → todas las filas decían "Paciente".
+          comensal:      comensalOf(f),
+          orden:         ordenOf(f),
         };
       });
       // Filtro por DÍA ART de FechaCarga en JS (el filtro OData sobre DateTime es frágil).
@@ -168,6 +173,7 @@ async function handler(req: any, res: any) {
           comensal:      comensalOf(f),
           orden:         ordenOf(f),
           status:        String(f.Status_D ?? ST_PENDIENTE),
+          closedAt:      String(f.FechaCierre_D ?? ''), // hora de entrega/anulación (vacío si pendiente)
         };
       });
       // Qué se muestra en "De hoy": lo cargado HOY (ART) **+ todo lo que siga PENDIENTE** de
@@ -377,8 +383,12 @@ async function handler(req: any, res: any) {
 
     const ACTIONS: Record<string, Record<string, unknown>> = {
       anular:    { Status_D: ST_ANULADA,   FechaCierre_D: nowIso },
-      entregar:  { Status_D: ST_ENTREGADO },
-      pendiente: { Status_D: ST_PENDIENTE },
+      // FechaCierre_D también en la entrega: es la hora que Catering quiere ver en el
+      // histórico ("¿a qué hora salió la bandeja?"). Antes solo la anulación la escribía.
+      entregar:  { Status_D: ST_ENTREGADO, FechaCierre_D: nowIso },
+      // Deshacer un check limpia la fecha: si quedara la vieja, una re-entrega posterior
+      // mostraría la hora del toque errado en vez de la real.
+      pendiente: { Status_D: ST_PENDIENTE, FechaCierre_D: null },
     };
     const act = String(action ?? 'anular');
     const fields = ACTIONS[act];

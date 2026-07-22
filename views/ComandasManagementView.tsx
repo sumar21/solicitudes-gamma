@@ -81,15 +81,41 @@ const STATUS_PILL: Record<ComandaStatus, { label: string; cls: string }> = {
  *   Entregado → [↩ volver a pendiente]  (para un check tocado por error)
  *   Anulada   → sin acciones (es histórico: se reponen cargándola de nuevo desde la tarjeta)
  */
+/**
+ * Hora de cierre (entrega/anulación) para mostrar junto al estado. Solo la hora si el
+ * cierre fue el mismo día ART que la carga (el caso normal); con día ("22/7 13:45") si
+ * cruzó de día — una bandeja "pendiente de ayer" entregada hoy no debe leerse como de ayer.
+ */
+const fmtCierre = (closedAt: string, at: string): string => {
+  if (!closedAt) return '';
+  const d = new Date(closedAt);
+  if (isNaN(d.getTime())) return '';
+  // hour12:false explícito: según la versión de ICU, es-AR puede salir "01:06 p. m.";
+  // en una grilla de cocina tiene que ser 24h siempre ("13:06").
+  const hora = d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Argentina/Buenos_Aires' });
+  const dia = (iso: string) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' });
+  if (at && dia(closedAt) !== dia(at)) {
+    return `${d.toLocaleDateString('es-AR', { day: 'numeric', month: 'numeric', timeZone: 'America/Argentina/Buenos_Aires' })} ${hora}`;
+  }
+  return hora;
+};
+
 const StatusCell: React.FC<{
   r: ComandaRow; busy: boolean; canAct: boolean;
   onAction: (spItemId: string, action: 'entregar' | 'pendiente' | 'anular') => void;
 }> = ({ r, busy, canAct, onAction }) => {
   const p = STATUS_PILL[r.status] ?? STATUS_PILL[COMANDA_STATUS.PENDIENTE];
   const anulada = r.status === COMANDA_STATUS.ANULADA;
+  const cierre = r.status !== COMANDA_STATUS.PENDIENTE ? fmtCierre(r.closedAt, r.at) : '';
   return (
     <div className="flex items-center gap-1.5">
       <span className={cn('text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border', p.cls)}>{p.label}</span>
+      {cierre && (
+        <span className="text-[10px] font-bold text-slate-400 tabular-nums whitespace-nowrap"
+          title={anulada ? 'Hora de anulación' : 'Hora de entrega'}>
+          {cierre}
+        </span>
+      )}
       {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-300" />
         : canAct && !anulada && (
           r.status === COMANDA_STATUS.PENDIENTE ? (
@@ -140,6 +166,7 @@ type ComandaRow = {
   comida: string; comensal: string; tipo: string; detalle: string; observaciones: string; by: string; at: string;
   spItemId: string;
   status: ComandaStatus;
+  closedAt: string; // ISO de entrega/anulación (FechaCierre_D); '' si pendiente
 };
 
 /**
@@ -204,6 +231,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
             tipo: m.tipo, detalle: m.detalle ?? '', observaciones: m.observaciones ?? '',
             by: m.by ?? '', at: m.at ?? '',
             spItemId: m.spItemId, status: m.status ?? COMANDA_STATUS.PENDIENTE,
+            closedAt: m.closedAt ?? '',
           });
         }
       }
@@ -281,6 +309,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
               tipo: String(m.tipo ?? ''),
               detalle: String(m.detalle ?? ''), observaciones: String(m.observaciones ?? ''),
               by: String(m.by ?? ''), at: String(m.at ?? ''),
+              closedAt: String(m.closedAt ?? ''),
             };
           })
           // Mismo criterio que "De hoy": por paciente, y adentro por fecha desc — así las
@@ -338,13 +367,20 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
     doc.setTextColor(0);
     // El PDF lo lee cocina en papel: ubicación en una sola columna (la cama ya dice el piso) y
     // observaciones pegadas a la comanda, que es como se leen.
-    const head = [['Paciente', 'Ubicación', 'Turno', 'Comensal', 'Tipo', 'Comanda', 'Registró', ...(showDate ? ['Fecha y hora'] : [])]];
+    // "Entrega" solo en el histórico: hora en que se marcó entregada ('—' si quedó
+    // pendiente; anuladas muestran la hora de anulación con el label del estado).
+    const head = [['Paciente', 'Ubicación', 'Turno', 'Comensal', 'Tipo', 'Comanda', 'Registró', ...(showDate ? ['Fecha y hora', 'Entrega'] : [])]];
     const body = filtered.map(r => [
       r.patientName,
       formatBedName(r.bedLabel) + (sectorEsRedundante(r.area, r.bedLabel) ? '' : ` · ${areaLabel(r.area)}`),
       r.comida, r.comensal, comandaTipoPill(r.tipo).label,
       r.detalle || '—' , r.by || '—',
-      ...(showDate ? [fmtWhen(r.at)] : []),
+      ...(showDate ? [
+        fmtWhen(r.at),
+        r.status === COMANDA_STATUS.ANULADA
+          ? `Anulada${fmtCierre(r.closedAt, r.at) ? ` ${fmtCierre(r.closedAt, r.at)}` : ''}`
+          : (r.status === COMANDA_STATUS.ENTREGADO ? (fmtCierre(r.closedAt, r.at) || '✓') : '—'),
+      ] : []),
     ]);
     autoTable(doc, {
       head, body, startY: 26,
@@ -485,9 +521,19 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
                   </p>
                   {r.detalle && <p className="text-[12px] font-semibold text-slate-800">{r.detalle}</p>}
                   {r.observaciones && <p className="text-[11px] text-slate-500">Obs: {r.observaciones}</p>}
-                  <div className="text-[10px] text-slate-400 flex items-center gap-3 pt-1">
+                  <div className="text-[10px] text-slate-400 flex items-center gap-3 pt-1 flex-wrap">
                     <span className="flex items-center gap-1"><UserIcon className="w-3 h-3" />{r.by || '—'}</span>
                     {tab === 'historico' && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{fmtWhen(r.at)}</span>}
+                    {/* Estado + hora de entrega/anulación (en desktop lo muestra StatusCell) */}
+                    {(() => {
+                      const p = STATUS_PILL[r.status] ?? STATUS_PILL[COMANDA_STATUS.PENDIENTE];
+                      const cierre = r.status !== COMANDA_STATUS.PENDIENTE ? fmtCierre(r.closedAt, r.at) : '';
+                      return (
+                        <span className={cn('text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border', p.cls)}>
+                          {p.label}{cierre && <span className="normal-case tabular-nums"> · {cierre}</span>}
+                        </span>
+                      );
+                    })()}
                   </div>
                 </div>
               );

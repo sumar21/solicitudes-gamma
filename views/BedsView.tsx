@@ -2383,6 +2383,24 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                       );
                     }
                     if (isPrep && canClean && onMarkClean) {
+                      // Cama reservada como DESTINO de un traslado en curso: la marca de
+                      // limpieza no aplica acá (el auto-cierre la anularía con motivo TICKET,
+                      // y con razón — la limpieza previa al ingreso se informa con
+                      // "Habitación Lista" desde Operativa). Antes el botón aparecía igual,
+                      // se tocaba, y no pasaba nada: mejor decir por qué.
+                      const reservadaPor = bedTicketMap.get(selectedBed.label);
+                      if (reservadaPor) {
+                        return (
+                          <div className="bg-indigo-50 rounded-2xl p-3.5 border border-indigo-200 flex items-start gap-2.5">
+                            <Info className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
+                            <p className="text-[11px] leading-snug font-medium text-indigo-800">
+                              Reservada por un traslado en curso ({reservadaPor.patientName}). La limpieza
+                              previa al ingreso se confirma con <strong>“Habitación Lista”</strong> desde
+                              Operativa, no con la marca de limpieza.
+                            </p>
+                          </div>
+                        );
+                      }
                       return (
                         <button onClick={() => { onMarkClean(selectedBed); setSelectedBed(null); }}
                           className="w-full flex items-center justify-center gap-2 h-12 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm">

@@ -95,6 +95,7 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
       { code: 'notif_reception_confirmed', label: 'Recepción confirmada (traslado finalizado)' },
       { code: 'notif_diet_change',         label: 'Cambio de dieta' },
       { code: 'notif_fasting_change',      label: 'Cambio de ayuno' },
+      { code: 'notif_habitacion_limpia',   label: 'Habitación limpia (azafata la marcó desde el mapa)' },
     ],
   },
 ];
