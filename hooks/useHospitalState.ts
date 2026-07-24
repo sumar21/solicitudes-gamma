@@ -115,9 +115,18 @@ function extractEnrichSnapshot(bed: Bed): PatientEnrichSnapshot {
 // la pill (y demás campos) sigan al paciente aunque el server no haya actualizado
 // el enrich todavía en su nueva cama (cron-enrich-beds corre cada 15 min). Beds sin
 // patientCode o no presentes en el mapa quedan intactos.
-function reapplyEnrichFromMap(beds: Bed[], map: Map<string, PatientEnrichSnapshot>): Bed[] {
+export function reapplyEnrichFromMap(beds: Bed[], map: Map<string, PatientEnrichSnapshot>): Bed[] {
   for (const bed of beds) {
-    if (!bed.patientCode) continue;
+    // Se exige patientCode Y patientName: sin el nombre, la cama NO está mostrando un paciente.
+    //
+    // Gamma deja el `codigoPaciente` RESIDUAL en una cama recién desocupada (mismo problema que
+    // el guard occEventKeys del server), pero limpia el nombre. Sin este chequeo, reapply
+    // matcheaba ese código contra el snapshot y re-pintaba el ayuno/dieta del paciente que se
+    // fue sobre una cama vacía "En preparación" → la PILL FANTASMA reportada (719-1 sin nombre
+    // pero con "Ayuno"). El nombre es la señal fiable de "acá hay alguien": lo setea Gamma en
+    // las ocupadas, mergeBeds en el destino en tránsito (dest.patientName), y keepPatientOnOrigin
+    // en el sillón de HRA — todos los casos donde reapply SÍ debe correr.
+    if (!bed.patientCode || !bed.patientName) continue;
     const snap = map.get(bed.patientCode);
     if (!snap) continue;
     Object.assign(bed, snap);
