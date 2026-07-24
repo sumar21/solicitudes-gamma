@@ -191,6 +191,22 @@ export const hasAnyMealLoad = (meals: Bed['meals']): boolean =>
     return !!s && (!!s.titular || s.acompanantes.length > 0);
   });
 
+/**
+ * ¿La cama tiene al menos una bandeja PENDIENTE (aún no entregada), en cualquier turno o
+ * comensal? Las anuladas no llegan acá (el GET filtra Status vivo), así que "pendiente" =
+ * status distinto de ENTREGADO. Una carga con status ausente (fila vieja) cuenta como
+ * pendiente: ante la duda, mejor mostrarla como algo por resolver que como ya cerrada.
+ *
+ * Se usa para el ícono de comanda del mapa: color fuerte si hay algo pendiente, apagado si
+ * ya está todo entregado (para que se sepa que hubo comanda sin llamar a la acción).
+ */
+const cargaPendiente = (m?: MealLoad): boolean => !!m && m.status !== COMANDA_STATUS.ENTREGADO;
+export const hasPendingMealLoad = (meals: Bed['meals']): boolean =>
+  !!meals && MEAL_SLOTS.some(({ slot }) => {
+    const s = meals[slot];
+    return !!s && (cargaPendiente(s.titular) || s.acompanantes.some(cargaPendiente));
+  });
+
 // ── Bloqueo "sin dieta" (PROGAL) ─────────────────────────────────────────────
 // Tipo de dieta del formulario PROGAL: la respuesta del ítem "Tipo" (ej. "General",
 // "Líquida", "Nada por boca"). Misma semántica que api/diet-tags.ts (descripcion "tipo",

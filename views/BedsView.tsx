@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
-import { Bed, BedStatus, Ticket, TicketStatus, User, Area, IsolationEntry, MealSlot, MealLoad, MEAL_SLOTS, mealSlotFromSp, hasAnyMealLoad, MAX_ACOMPANANTES, COMANDA_STATUS, titularSinDieta, dietTypeFromDiets } from '../types';
+import { Bed, BedStatus, Ticket, TicketStatus, User, Area, IsolationEntry, MealSlot, MealLoad, MEAL_SLOTS, mealSlotFromSp, hasAnyMealLoad, hasPendingMealLoad, MAX_ACOMPANANTES, COMANDA_STATUS, titularSinDieta, dietTypeFromDiets } from '../types';
 import { can, canLoadMealSlot, canLoadAnyMealSlot } from '../lib/permissions';
 import { hasLiveFasting, fastingOccurrences, formatFastingDateTime, fastingTimesForToday } from '../lib/fasting';
 import { Input } from '../components/ui/input';
@@ -2301,14 +2301,24 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                             {suggestedSex}
                           </div>
                         )}
-                        {canViewComanda && hasAnyMealLoad(bed.meals) && (
-                          <div
-                            className="flex items-center justify-center w-3.5 h-3.5 md:w-4 md:h-4 rounded-full bg-indigo-500 text-white ring-1 ring-white shadow-sm"
-                            title="Comanda cargada"
-                          >
-                            <Utensils className="w-2.5 h-2.5 md:w-3 md:h-3" strokeWidth={3} />
-                          </div>
-                        )}
+                        {/* Tenedor de comanda, con el color según el estado:
+                            · INDIGO (fuerte) = hay al menos una bandeja PENDIENTE de entregar → "hay algo para servir".
+                            · VERDE apagado = había comanda pero YA se entregó todo → se sabe que se cargó, sin gritar acción.
+                            Antes se mostraba indigo aunque estuviera todo entregado, y parecía que faltaba servir. */}
+                        {canViewComanda && hasAnyMealLoad(bed.meals) && (() => {
+                          const pendiente = hasPendingMealLoad(bed.meals);
+                          return (
+                            <div
+                              className={cn(
+                                'flex items-center justify-center w-3.5 h-3.5 md:w-4 md:h-4 rounded-full ring-1 ring-white shadow-sm',
+                                pendiente ? 'bg-indigo-500 text-white' : 'bg-emerald-100 text-emerald-600',
+                              )}
+                              title={pendiente ? 'Comanda pendiente de entregar' : 'Comanda cargada — ya entregada'}
+                            >
+                              <Utensils className="w-2.5 h-2.5 md:w-3 md:h-3" strokeWidth={3} />
+                            </div>
+                          );
+                        })()}
                         {hasLiveFasting(bed.fasting) && (
                           <div
                             className="flex items-center gap-0.5 px-1 h-3 md:h-3.5 rounded-full bg-amber-500 text-white text-[7px] md:text-[8px] font-black ring-1 ring-white shadow-sm"

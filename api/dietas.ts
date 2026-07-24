@@ -157,6 +157,7 @@ async function handler(req: any, res: any) {
           at:            String(f.FechaCarga_D ?? ''),
           status:        String(f.Status_D ?? ''),
           closedAt:      String(f.FechaCierre_D ?? ''), // hora de entrega/anulación (vacío si pendiente)
+          motivoAnulacion: String(f.MotivoAnulacion_D ?? ''), // solo poblado en las anuladas
           // El front del histórico ya esperaba estos dos para etiquetar "Acompañante N",
           // pero el mapping no los incluía → todas las filas decían "Paciente".
           comensal:      comensalOf(f),
@@ -481,7 +482,7 @@ async function handler(req: any, res: any) {
   //   action 'entregar'            → Entregado — check desde el panel de comandas
   //   action 'pendiente'           → Activo    — deshacer un check tocado por error
   if (req.method === 'PATCH') {
-    const { spItemId, bedLabel, comida, action } = req.body ?? {};
+    const { spItemId, bedLabel, comida, action, motivo } = req.body ?? {};
     const nowIso = new Date().toISOString();
 
     // ── action 'reubicar' — el traslado del paciente se confirmó ────────────
@@ -519,14 +520,17 @@ async function handler(req: any, res: any) {
       }
     }
 
+    // El motivo de anulación va en su propia columna MotivoAnulacion_D (no en Observaciones_D,
+    // que es la nota de Nutrición sobre el plato). Se escribe SOLO al anular; al volver a
+    // pendiente se limpia (una comanda que revive no arrastra el motivo de una baja anterior).
+    const motivoAnul = String(motivo ?? '').slice(0, 500);
     const ACTIONS: Record<string, Record<string, unknown>> = {
-      anular:    { Status_D: ST_ANULADA,   FechaCierre_D: nowIso },
+      anular:    { Status_D: ST_ANULADA,   FechaCierre_D: nowIso, MotivoAnulacion_D: motivoAnul },
       // FechaCierre_D también en la entrega: es la hora que Catering quiere ver en el
       // histórico ("¿a qué hora salió la bandeja?"). Antes solo la anulación la escribía.
       entregar:  { Status_D: ST_ENTREGADO, FechaCierre_D: nowIso },
-      // Deshacer un check limpia la fecha: si quedara la vieja, una re-entrega posterior
-      // mostraría la hora del toque errado en vez de la real.
-      pendiente: { Status_D: ST_PENDIENTE, FechaCierre_D: null },
+      // Deshacer un check limpia la fecha; y limpiar el motivo por si venía de una anulación.
+      pendiente: { Status_D: ST_PENDIENTE, FechaCierre_D: null, MotivoAnulacion_D: '' },
     };
     const act = String(action ?? 'anular');
     const fields = ACTIONS[act];
@@ -556,7 +560,17 @@ async function handler(req: any, res: any) {
       }
       if (!itemId) return res.status(200).json({ ok: true, message: 'No active meal load found' });
 
-      const spRes = await graphFetch(`${basePath}/${itemId}/fields`, { method: 'PATCH', body: JSON.stringify(fields) });
+      let spRes = await graphFetch(`${basePath}/${itemId}/fields`, { method: 'PATCH', body: JSON.stringify(fields) });
+      // Blindaje de orden de deploy: si SP rechaza porque la columna MotivoAnulacion_D todavía
+      // no existe (400 cuando este código llega antes de crearla), NO se rompe la anulación —
+      // se reintenta el cambio de estado sin ese campo. El motivo se pierde hasta que la
+      // columna exista, pero la comanda igual se anula/reactiva. Una vez creada la columna,
+      // el primer intento pasa y el motivo se guarda normal.
+      if (!spRes.ok && spRes.status === 400 && 'MotivoAnulacion_D' in fields) {
+        const { MotivoAnulacion_D: _omit, ...sinMotivo } = fields;
+        console.warn('[dietas] PATCH 400 con MotivoAnulacion_D — reintento sin la columna (¿falta crearla en SP?)');
+        spRes = await graphFetch(`${basePath}/${itemId}/fields`, { method: 'PATCH', body: JSON.stringify(sinMotivo) });
+      }
       if (!spRes.ok) {
         console.error('[dietas] PATCH failed:', spRes.status, act);
         return res.status(500).json({ error: 'No se pudo actualizar la comanda.' });

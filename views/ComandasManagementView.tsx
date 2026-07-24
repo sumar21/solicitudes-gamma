@@ -8,6 +8,8 @@ import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { Calendar } from '../components/ui/calendar';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { Label } from '../components/ui/label';
 import { Utensils, User as UserIcon, Clock, RefreshCw, Calendar as CalendarIcon, FileDown, CalendarDays, Check, X, Undo2, Loader2, Search } from 'lucide-react';
 import { Input } from '../components/ui/input';
 import jsPDF from 'jspdf';
@@ -134,7 +136,7 @@ const fmtCierre = (closedAt: string, at: string): string => {
 
 const StatusCell: React.FC<{
   r: ComandaRow; busy: boolean; canAct: boolean;
-  onAction: (spItemId: string, action: 'entregar' | 'pendiente' | 'anular') => void;
+  onAction: (spItemId: string, action: 'entregar' | 'pendiente' | 'anular', label?: string) => void;
 }> = ({ r, busy, canAct, onAction }) => {
   const p = STATUS_PILL[r.status] ?? STATUS_PILL[COMANDA_STATUS.PENDIENTE];
   const anulada = r.status === COMANDA_STATUS.ANULADA;
@@ -156,7 +158,7 @@ const StatusCell: React.FC<{
                 className="w-6 h-6 rounded-md flex items-center justify-center text-slate-300 hover:bg-emerald-50 hover:text-emerald-600">
                 <Check className="w-3.5 h-3.5" />
               </button>
-              <button onClick={() => onAction(r.spItemId, 'anular')} title="Anular comanda"
+              <button onClick={() => onAction(r.spItemId, 'anular', `${r.patientName} · ${r.comida}`)} title="Anular comanda"
                 className="w-6 h-6 rounded-md flex items-center justify-center text-slate-300 hover:bg-red-50 hover:text-red-500">
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -199,6 +201,7 @@ type ComandaRow = {
   spItemId: string;
   status: ComandaStatus;
   closedAt: string; // ISO de entrega/anulación (FechaCierre_D); '' si pendiente
+  motivoAnulacion?: string; // por qué se anuló (solo en el histórico, filas anuladas)
 };
 
 /**
@@ -245,7 +248,7 @@ interface Props {
   beds: Bed[];
   currentUser: User | null;
   onRefresh?: () => void | Promise<void>;
-  onSetMealStatus?: (spItemId: string, action: 'entregar' | 'pendiente' | 'anular') => Promise<{ ok: boolean }>;
+  onSetMealStatus?: (spItemId: string, action: 'entregar' | 'pendiente' | 'anular', motivo?: string) => Promise<{ ok: boolean }>;
 }
 
 export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onRefresh, onSetMealStatus }) => {
@@ -319,11 +322,12 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
   const fetchHistoryRef = React.useRef<null | (() => void)>(null);
   const tabRef = React.useRef<'activas' | 'historico'>('activas');
 
-  const doAction = useCallback(async (spItemId: string, action: 'entregar' | 'pendiente' | 'anular') => {
+  // Ejecuta la acción contra el server (con motivo opcional para el anular).
+  const runAction = useCallback(async (spItemId: string, action: 'entregar' | 'pendiente' | 'anular', motivo?: string) => {
     if (!onSetMealStatus || !spItemId) return;
     setBusyId(spItemId); setActionError(null);
     try {
-      const r = await onSetMealStatus(spItemId, action);
+      const r = await onSetMealStatus(spItemId, action, motivo);
       // Si falla NO se revierte mudo: el usuario ve por qué no pasó nada.
       if (!r.ok) setActionError('No se pudo actualizar la comanda. Reintentá.');
       // En "De hoy" el refresco lo hace el hook (fetchMeals). En "Histórico" hay que re-pedir:
@@ -331,6 +335,21 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
       else if (tabRef.current === 'historico') fetchHistoryRef.current?.();
     } finally { setBusyId(null); }
   }, [onSetMealStatus]);
+
+  // La anulación pide motivo (obligatorio, para el histórico) → abre un modal; el resto de las
+  // acciones (entregar / volver a pendiente) van directo.
+  const [anularTarget, setAnularTarget] = useState<{ spItemId: string; label: string } | null>(null);
+  const [motivoInput, setMotivoInput] = useState('');
+  const doAction = useCallback((spItemId: string, action: 'entregar' | 'pendiente' | 'anular', label?: string) => {
+    if (action === 'anular') { setMotivoInput(''); setAnularTarget({ spItemId, label: label ?? '' }); return; }
+    void runAction(spItemId, action);
+  }, [runAction]);
+  const confirmAnular = useCallback(() => {
+    const t = anularTarget;
+    if (!t || !motivoInput.trim()) return;
+    setAnularTarget(null);
+    void runAction(t.spItemId, 'anular', motivoInput.trim());
+  }, [anularTarget, motivoInput, runAction]);
   // Ver la planificación alcanza para abrir el modal; adentro, el ABM se gatea por separado.
   const canSeePlan = can(currentUser, 'ver_planificacion') || can(currentUser, 'abm_planificacion');
 
@@ -363,6 +382,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
               detalle: String(m.detalle ?? ''), observaciones: String(m.observaciones ?? ''),
               by: String(m.by ?? ''), at: String(m.at ?? ''),
               closedAt: String(m.closedAt ?? ''),
+              motivoAnulacion: String(m.motivoAnulacion ?? ''),
             };
           })
           // Mismo criterio que "De hoy": por paciente, y adentro por fecha desc — así las
@@ -605,6 +625,9 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
                   </p>
                   {r.detalle && <p className="text-[12px] font-semibold text-slate-800">{r.detalle}</p>}
                   {r.observaciones && <p className="text-[11px] text-slate-500">Obs: {r.observaciones}</p>}
+                  {r.status === COMANDA_STATUS.ANULADA && r.motivoAnulacion && (
+                    <p className="text-[11px] text-red-500">Motivo anulación: {r.motivoAnulacion}</p>
+                  )}
                   <div className="text-[10px] text-slate-400 flex items-center gap-3 pt-1 flex-wrap">
                     <span className="flex items-center gap-1"><UserIcon className="w-3 h-3" />{r.by || '—'}</span>
                     {tab === 'historico' && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{fmtWhen(r.at)}</span>}
@@ -685,6 +708,13 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
                           r.observaciones ? 'text-slate-500' : 'text-slate-300 italic')}>
                           {r.observaciones || 'Sin observaciones'}
                         </p>
+                        {/* Motivo de anulación: solo en las anuladas (auditoría). No usa
+                            line-through — es la explicación, no parte del pedido tachado. */}
+                        {r.status === COMANDA_STATUS.ANULADA && r.motivoAnulacion && (
+                          <p className="text-[11px] break-words mt-1 leading-snug text-red-500 font-medium">
+                            Motivo anulación: {r.motivoAnulacion}
+                          </p>
+                        )}
                       </td>
                       {/* Quién + cuándo */}
                       <td className="px-4 py-3 whitespace-nowrap">
@@ -706,6 +736,40 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
           </Card>
         </>
       )}
+
+      {/* Modal de motivo de anulación — obligatorio, queda en el histórico para auditoría. */}
+      <Dialog open={!!anularTarget} onOpenChange={(v) => { if (!v) setAnularTarget(null); }}>
+        <DialogContent className="sm:max-w-[450px] rounded-3xl">
+          <DialogHeader>
+            <DialogTitle className="text-lg flex items-center gap-2 text-red-700">
+              <div className="p-2 bg-red-50 rounded-xl"><X className="w-5 h-5 text-red-400" /></div>
+              Anular comanda
+            </DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-3 py-1">
+            {anularTarget?.label && <p className="text-xs font-semibold text-slate-600">{anularTarget.label}</p>}
+            <p className="text-xs text-slate-400 font-medium">Es obligatorio documentar el motivo — queda en el histórico.</p>
+            <div className="grid gap-1.5">
+              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Motivo de anulación</Label>
+              <Input
+                autoFocus
+                value={motivoInput}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMotivoInput(e.target.value)}
+                onKeyDown={(e: React.KeyboardEvent) => { if (e.key === 'Enter') confirmAnular(); }}
+                placeholder="Ej: el paciente pasó a ayuno, alta, cambio de dieta…"
+                className="h-10 rounded-xl"
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setAnularTarget(null)} className="rounded-xl h-10">Cancelar</Button>
+            <Button onClick={confirmAnular} disabled={!motivoInput.trim()}
+              className="rounded-xl h-10 bg-red-600 hover:bg-red-700 text-white font-bold disabled:opacity-50">
+              Anular comanda
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

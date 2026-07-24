@@ -1078,11 +1078,12 @@ export const useHospitalState = () => {
    * mostrar el error en vez de revertir mudo.
    */
   const setMealStatus = useCallback(async (
-    spItemId: string, action: 'entregar' | 'pendiente' | 'anular',
+    spItemId: string, action: 'entregar' | 'pendiente' | 'anular', motivo?: string,
   ): Promise<{ ok: boolean }> => {
     if (!spItemId) return { ok: false };
     try {
-      const r = await authFetch('/api/dietas', { method: 'PATCH', body: JSON.stringify({ spItemId, action }) });
+      // `motivo` solo viaja al anular (queda como MotivoAnulacion_D para el histórico).
+      const r = await authFetch('/api/dietas', { method: 'PATCH', body: JSON.stringify({ spItemId, action, motivo }) });
       await fetchMeals();
       return { ok: r.ok };
     } catch { await fetchMeals(); return { ok: false }; }
