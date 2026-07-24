@@ -22,6 +22,38 @@ const AREA_LABELS: Record<string, string> = {
 };
 const areaLabel = (a?: string) => (a ? AREA_LABELS[a] ?? a : '—');
 
+// Orden de DESPACHO de cocina: los platos salen por piso y, dentro del piso, por habitación.
+// Pisos de internación primero (4→8), después ITR/Sala Espera, y los sectores críticos al
+// final. Un área desconocida (999) va última en vez de romper el orden.
+const AREA_DISPATCH_ORDER: string[] = [
+  Area.PISO_4, Area.PISO_5, Area.PISO_6, Area.PISO_7, Area.PISO_8,
+  Area.HIT, Area.HRA, Area.HUC, Area.HUT, Area.HUQ, Area.HSS,
+];
+const areaRank = (a: string): number => {
+  const i = AREA_DISPATCH_ORDER.indexOf(a);
+  return i === -1 ? 999 : i;
+};
+
+// Dentro de una misma cama+turno: titular primero, después los acompañantes por su número.
+// (El desempate alfabético viejo ponía "Acompañante 1" antes que "Paciente".)
+const comensalRank = (c: string): number =>
+  c === 'Paciente' ? 0 : 1 + (Number(/\d+/.exec(c)?.[0]) || 0);
+
+/**
+ * ORDEN DE DESPACHO: piso → habitación → turno → comensal (antes era alfabético por
+ * paciente). Es el orden en que cocina saca los platos, y como el PDF exporta las mismas
+ * filas que la grilla, el papel sale igual que la pantalla. El collator numérico hace que
+ * "401 - 02" < "405 - 01" < "702 - 01" como uno espera, no como strings. Y como la comanda
+ * sigue al paciente, la habitación es la de ENTREGA real, no la de carga.
+ * Buscar a un paciente puntual lo resuelve el buscador; la grilla optimiza el reparto.
+ * Exportado para testearlo contra el comparador real.
+ */
+export const comandaDispatchCompare = (a: ComandaRow, b: ComandaRow): number =>
+  areaRank(a.area) - areaRank(b.area) ||
+  formatBedName(a.bedLabel).localeCompare(formatBedName(b.bedLabel), 'es', { numeric: true }) ||
+  slotOrder(a.slot) - slotOrder(b.slot) ||
+  comensalRank(a.comensal) - comensalRank(b.comensal);
+
 /**
  * ¿Hace falta mostrar el sector, o ya lo dice el número de cama?
  *
@@ -195,6 +227,20 @@ const rowHaystack = (r: ComandaRow): string => normalizeText([
   (STATUS_PILL[r.status] ?? STATUS_PILL[COMANDA_STATUS.PENDIENTE]).label,
 ].join(' '));
 
+/**
+ * Partición de "De hoy": la grilla arranca mostrando SOLO lo pendiente (lo que cocina
+ * todavía tiene que sacar) y la botonera permite swapear a lo ya gestionado.
+ * Entregada = status ENTREGADO estricto; TODO lo demás (pendiente o un status inesperado)
+ * queda en Pendientes — del lado seguro: ninguna bandeja desaparece de las dos vistas por
+ * un dato raro. Preserva el orden de entrada (las filas ya vienen en orden de despacho).
+ * Exportada para testearla contra la función real.
+ */
+export const splitComandasPorEntrega = (rows: ComandaRow[]): { pendientes: ComandaRow[]; entregadas: ComandaRow[] } => {
+  const pendientes: ComandaRow[] = [], entregadas: ComandaRow[] = [];
+  for (const r of rows) (r.status === COMANDA_STATUS.ENTREGADO ? entregadas : pendientes).push(r);
+  return { pendientes, entregadas };
+};
+
 interface Props {
   beds: Bed[];
   currentUser: User | null;
@@ -220,12 +266,16 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
         // Una fila por BANDEJA (titular + cada acompañante): es lo que cocina necesita contar.
         const comensales: { m: MealLoad; etiqueta: string; key: string }[] = [
           ...(s.titular ? [{ m: s.titular, etiqueta: 'Paciente', key: `${b.label}-${slot}-t` }] : []),
-          ...s.acompanantes.map((a, i) => ({ m: a, etiqueta: `Acompañante ${i + 1}`, key: `${b.label}-${slot}-a${a.spItemId || i}` })),
+          // Etiqueta por `orden` REAL (ordinal inmutable del server), no por índice del array.
+          // Tras partir un slot mixto (entregada queda / pendiente viaja) el array puede quedar
+          // con un solo elemento, y el índice `i+1` renombraría "Acompañante 2" como "1". El
+          // `orden` es estable; fallback a i+1 solo para filas viejas sin ordinal.
+          ...s.acompanantes.map((a, i) => ({ m: a, etiqueta: `Acompañante ${a.orden || i + 1}`, key: `${b.label}-${slot}-a${a.spItemId || i}` })),
         ];
         for (const { m, etiqueta, key } of comensales) {
           out.push({
             key,
-            patientName: b.patientName || '—',
+            patientName: b.patientName || b.mealsPatientName || '—',
             bedLabel: b.label, area: b.area,
             slot, comida: label, comensal: etiqueta,
             tipo: m.tipo, detalle: m.detalle ?? '', observaciones: m.observaciones ?? '',
@@ -236,13 +286,12 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
         }
       }
     }
-    // Por paciente y, dentro de cada uno, por turno CRONOLÓGICO (índice del catálogo).
-    // Ordenar por el label sería alfabético: Almuerzo, Cena, Desayuno, Merienda — sin sentido.
-    return out.sort((a, b) =>
-      a.patientName.localeCompare(b.patientName, 'es') ||
-      slotOrder(a.slot) - slotOrder(b.slot) ||
-      a.comensal.localeCompare(b.comensal, 'es'));
+    return out.sort(comandaDispatchCompare);
   }, [beds, areaOk]);
+
+  // Contadores de la botonera: se calculan SOBRE rows (pre-búsqueda) — dicen cuántas
+  // existen, no cuántas matchean el buscador.
+  const { pendientes, entregadas } = useMemo(() => splitComandasPorEntrega(rows), [rows]);
 
   // ── Histórico (por fecha de carga) ──────────────────────────────────────────
   const [tab, setTab] = useState<'activas' | 'historico'>('activas');
@@ -258,6 +307,10 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
   const [openTo, setOpenTo]     = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
   const [searchFilter, setSearchFilter] = useState('');
+  // Sub-vista de "De hoy": Pendientes es el default (lo accionable); Entregadas es la foto
+  // de lo que ya se gestionó hoy. No participa del Histórico. Se conserva al ir y volver
+  // de tab (es barato y predecible).
+  const [vistaHoy, setVistaHoy] = useState<'pendientes' | 'entregadas'>('pendientes');
   // spItemId de la fila cuya acción está en vuelo → spinner solo en esa.
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -327,7 +380,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
   useEffect(() => { if (tab === 'historico') fetchHistory(); }, [tab, fetchHistory]);
   useEffect(() => { fetchHistoryRef.current = fetchHistory; tabRef.current = tab; }, [fetchHistory, tab]);
 
-  const data = tab === 'activas' ? rows : history;
+  const data = tab === 'activas' ? (vistaHoy === 'entregadas' ? entregadas : pendientes) : history;
 
   // El haystack se precalcula por FILA, no por tecla: `data` solo cambia con un poll o un
   // re-fetch del histórico. Así el trabajo por tecla es N includes() sobre strings ya
@@ -357,8 +410,13 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
   // Descarga la tabla actual (De hoy / Histórico) a PDF con jspdf-autotable.
   const handlePdf = () => {
     const showDate = tab === 'historico';
+    // La vista Entregadas muestra la hora de entrega en pantalla (StatusCell) → el papel
+    // tiene que decir lo mismo. En Pendientes la columna no aporta (todo '—').
+    const showEntrega = showDate || vistaHoy === 'entregadas';
     const doc = new jsPDF({ orientation: 'landscape' });
-    const title = tab === 'activas' ? 'Comandas — De hoy' : `Comandas — ${formatDateReadable(from)} a ${formatDateReadable(to)}`;
+    const title = tab === 'activas'
+      ? (vistaHoy === 'entregadas' ? 'Comandas — Entregadas hoy' : 'Comandas — De hoy')
+      : `Comandas — ${formatDateReadable(from)} a ${formatDateReadable(to)}`;
     doc.setFontSize(14); doc.setTextColor(2, 44, 34); doc.text(title, 14, 15); // verde Gamma #022C22
     doc.setFontSize(9); doc.setTextColor(120);
     // El PDF exporta lo FILTRADO: si el usuario buscó algo, el papel tiene que decir lo mismo
@@ -369,14 +427,14 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
     // observaciones pegadas a la comanda, que es como se leen.
     // "Entrega" solo en el histórico: hora en que se marcó entregada ('—' si quedó
     // pendiente; anuladas muestran la hora de anulación con el label del estado).
-    const head = [['Paciente', 'Ubicación', 'Turno', 'Comensal', 'Tipo', 'Comanda', 'Registró', ...(showDate ? ['Fecha y hora', 'Entrega'] : [])]];
+    const head = [['Paciente', 'Ubicación', 'Turno', 'Comensal', 'Tipo', 'Comanda', 'Registró', ...(showDate ? ['Fecha y hora'] : []), ...(showEntrega ? ['Entrega'] : [])]];
     const body = filtered.map(r => [
       r.patientName,
       formatBedName(r.bedLabel) + (sectorEsRedundante(r.area, r.bedLabel) ? '' : ` · ${areaLabel(r.area)}`),
       r.comida, r.comensal, comandaTipoPill(r.tipo).label,
       r.detalle || '—' , r.by || '—',
-      ...(showDate ? [
-        fmtWhen(r.at),
+      ...(showDate ? [fmtWhen(r.at)] : []),
+      ...(showEntrega ? [
         r.status === COMANDA_STATUS.ANULADA
           ? `Anulada${fmtCierre(r.closedAt, r.at) ? ` ${fmtCierre(r.closedAt, r.at)}` : ''}`
           : (r.status === COMANDA_STATUS.ENTREGADO ? (fmtCierre(r.closedAt, r.at) || '✓') : '—'),
@@ -392,11 +450,22 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
       columnStyles: { 5: { cellWidth: 70 } },
     });
     const fname = tab === 'activas'
-      ? `Comandas HPR - ${todayStr}.pdf`
+      ? `Comandas HPR - ${vistaHoy === 'entregadas' ? 'Entregadas ' : ''}${todayStr}.pdf`
       : `Comandas HPR - ${from} al ${to}.pdf`;
     doc.save(fname);
   };
 
+  // Mensaje del vacío: el buscador manda (decir "no hay comandas" cuando el filtro no
+  // matcheó sería mentir), después la tab y, en "De hoy", la sub-vista.
+  const vacio = filtrando
+    ? { titulo: 'Sin resultados para la búsqueda', sub: 'Probá con otro término o limpiá el filtro.' }
+    : tab === 'historico'
+      ? { titulo: 'Sin comandas en el rango', sub: 'Ajustá las fechas para ver el histórico.' }
+      : vistaHoy === 'entregadas'
+        ? { titulo: 'Todavía no se entregó ninguna comanda hoy', sub: 'Marcá el check verde en una pendiente y aparece acá.' }
+        : rows.length > 0
+          ? { titulo: 'No quedan comandas pendientes', sub: 'Todo lo de hoy ya se entregó — está en «Entregadas».' }
+          : { titulo: 'No hay comandas cargadas hoy', sub: 'Las comandas que carga Nutrición desde el mapa de camas aparecen acá.' };
 
   return (
     <div className="p-4 md:p-8 max-w-full w-full space-y-4 md:space-y-5 pb-24 md:pb-8">
@@ -415,6 +484,25 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
 
       {/* Barra de acciones / filtros */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
+        {tab === 'activas' && (
+          /* Botonera Pendientes/Entregadas — mismo patrón segmentado que el selector de período
+             del Monitor (DashboardView). Por defecto las entregadas NO están en la grilla; el
+             contador avisa que existen. */
+          <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1">
+            {([
+              ['pendientes', `Pendientes (${pendientes.length})`],
+              ['entregadas', `Entregadas (${entregadas.length})`],
+            ] as const).map(([k, label]) => (
+              <button key={k} type="button" onClick={() => setVistaHoy(k)}
+                className={cn(
+                  'px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wide transition-colors tabular-nums',
+                  vistaHoy === k ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700',
+                )}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
         {/* Buscador — aplica a las DOS tabs (comparten `data`, tabla, tarjetas, contador y PDF).
             max-w-sm es lo que preserva el ml-auto del contador de más abajo: no sacarlo. */}
         <div className="relative flex-1 min-w-[180px] max-w-sm">
@@ -491,12 +579,8 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
       ) : filtered.length === 0 ? (
         <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400">
           <Utensils className="w-10 h-10 mx-auto mb-3 text-slate-300" />
-          <p className="font-bold text-sm text-slate-500">
-            {tab === 'activas' ? 'No hay comandas cargadas hoy' : 'Sin comandas en el rango'}
-          </p>
-          <p className="text-xs">
-            {tab === 'activas' ? 'Las comandas que carga Nutrición desde el mapa de camas aparecen acá.' : 'Ajustá las fechas para ver el histórico.'}
-          </p>
+          <p className="font-bold text-sm text-slate-500">{vacio.titulo}</p>
+          <p className="text-xs">{vacio.sub}</p>
         </div>
       ) : (
         <>

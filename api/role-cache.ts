@@ -32,16 +32,21 @@ function parseBool(raw: unknown): boolean {
   return v === 'sí' || v === 'si' || v === 'yes' || v === 'true' || v === '1';
 }
 
-async function fetchRolesFromSP(): Promise<RoleConfig[]> {
-  if (!SITE_ID) return [];
+// `null` = el fetch FALLÓ (SP caído / red / config faltante). Distinto de `[]`, que es un
+// resultado válido "no hay roles". La diferencia es clave: un fallo NO debe cachearse como
+// lista vacía (ver getRolesCached), porque eso dejaría a todos los usuarios sin permisos por
+// los 5 min del TTL — el modo seguro "solo lectura" es correcto para un rol ausente, pero
+// catastrófico si se dispara por un hipo transitorio de SharePoint.
+async function fetchRolesFromSP(): Promise<RoleConfig[] | null> {
+  if (!SITE_ID) return null;
   const filter = encodeURIComponent("fields/Status_RT eq 'Activo'");
   const res = await graphFetch(
     `/sites/${SITE_ID}/lists/${LIST_ID}/items?$expand=fields&$filter=${filter}&$top=200`,
     { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
-  );
-  if (!res.ok) {
-    console.error('[role-cache] SP fetch failed:', res.status);
-    return [];
+  ).catch(() => null); // graphFetch puede RECHAZAR (no solo !ok): sin esto salía como 500 opaco
+  if (!res || !res.ok) {
+    console.error('[role-cache] SP fetch failed:', res?.status ?? 'network error');
+    return null;
   }
   const data = (await res.json()) as { value: Record<string, unknown>[] };
   return (data.value ?? []).map((item: any) => {
@@ -61,6 +66,13 @@ export async function getRolesCached(): Promise<RoleConfig[]> {
   const now = Date.now();
   if (cache && cache.exp > now) return cache.roles;
   const roles = await fetchRolesFromSP();
+  if (roles === null) {
+    // Fetch falló: servir el último cache bueno AUNQUE esté vencido (serve-stale-on-error),
+    // y JAMÁS cachear el fallo. Sin cache previo devolvemos [] pero SIN persistirlo, así el
+    // próximo request reintenta SP en vez de quedar 5 min envenenado con vacío.
+    if (cache) { console.warn('[role-cache] SP falló — sirviendo cache vencido (serve-stale)'); return cache.roles; }
+    return [];
+  }
   cache = { roles, exp: now + TTL_MS };
   return roles;
 }

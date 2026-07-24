@@ -173,10 +173,34 @@ type CleaningInfo = { by: string; byId: string; at: string; spItemId: string };
 // se le cargó (para no mostrarla si la cama cambió de paciente).
 // `slots` va anidado bajo su propia clave (y no intersectado con patientCode) para que agregar
 // un turno nuevo no pueda colisionar jamás con un campo de metadata.
-type MealsInfo = { patientCode: string; slots: Partial<Record<MealSlot, MealSlotLoad>> };
+type MealsInfo = { patientCode: string; patientName?: string; slots: Partial<Record<MealSlot, MealSlotLoad>> };
 
 /** Slot vacío. Helper para no repetir el `{ acompanantes: [] }` en cada rama. */
 const emptySlot = (): MealSlotLoad => ({ acompanantes: [] });
+
+// ¿La bandeja ya fue servida? Las entregadas NO viajan con el paciente: se siguen
+// mostrando en la cama donde se sirvieron. `status` undefined cuenta como pendiente
+// (los updates optimistas crean la carga sin status, y una bandeja recién creada no
+// puede estar entregada; el poll igual lo normaliza en fetchMeals).
+const bandejaEntregada = (l: MealLoad): boolean => l.status === COMANDA_STATUS.ENTREGADO;
+
+// Proyección de una entrada de cargas dejando solo las bandejas que cumplen `keep`,
+// slot a slot y bandeja a bandeja (titular y acompañantes por separado): así un slot
+// MIXTO —titular entregado + acompañante pendiente— se PARTE y cada bandeja se
+// muestra donde corresponde. No muta la entrada original (los arrays salen de filter).
+// Devuelve undefined si no sobrevive ninguna, para que el caller no adjunte nada.
+function filtrarBandejas(info: MealsInfo, keep: (l: MealLoad) => boolean): MealsInfo | undefined {
+  const out: MealsInfo = { patientCode: info.patientCode, patientName: info.patientName, slots: {} };
+  let alguna = false;
+  for (const { slot } of MEAL_SLOTS) {
+    const s = info.slots[slot];
+    if (!s) continue;
+    const titular = s.titular && keep(s.titular) ? s.titular : undefined;
+    const acompanantes = s.acompanantes.filter(keep);
+    if (titular || acompanantes.length > 0) { out.slots[slot] = { titular, acompanantes }; alguna = true; }
+  }
+  return alguna ? out : undefined;
+}
 
 /**
  * Camas que un traslado activo está usando DE VERDAD, a efectos del overlay de limpieza
@@ -342,6 +366,12 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
   //
   // Guard de reasignación intacto: una carga con patientCode solo se muestra donde ESE
   // paciente esté; si la cama tiene otro ocupante, no se adjunta.
+  //
+  // SOLO viajan las bandejas PENDIENTES. Las ENTREGADAS se quedan mostrándose en la
+  // cama donde se sirvieron (su label de carga): mudar visualmente un pedido ya
+  // cumplido le cambiaba la habitación al registro que cocina ya cerró — y en SP la
+  // fila entregada nunca se movió (el PATCH 'reubicar' migra solo Status_D='Activo'),
+  // así que la UI mentía respecto de la base.
   if (meals && meals.size) {
     const labelsByPatient = new Map<string, string[]>();
     for (const [label, info] of meals) {
@@ -360,10 +390,21 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
       const claimed = bed.patientCode ? claimedAt.get(bed.patientCode) : undefined;
       if (claimed === bed.label) {
         const labels = labelsByPatient.get(bed.patientCode!)!;
-        if (labels.length === 1) return meals.get(labels[0]);
-        const merged: MealsInfo = { patientCode: bed.patientCode!, slots: {} };
+        // Al reclamar, de las entradas cargadas en OTRA cama solo viajan las bandejas
+        // PENDIENTES: una entregada ya se sirvió en la cama vieja, y mudarla acá le
+        // cambiaba la habitación a un pedido ya cumplido (el bug de "me movió también el
+        // desayuno que ya había entregado"). Lo cargado en ESTA cama entra completo:
+        // una bandeja entregada en la cama actual se muestra acá, como siempre.
+        const parts: MealsInfo[] = [];
         for (const l of labels) {
           const info = meals.get(l)!;
+          const part = l === bed.label ? info : filtrarBandejas(info, x => !bandejaEntregada(x));
+          if (part) parts.push(part);
+        }
+        if (parts.length === 0) return undefined;
+        if (parts.length === 1) return parts[0];
+        const merged: MealsInfo = { patientCode: bed.patientCode!, slots: {} };
+        for (const info of parts) {
           for (const { slot } of MEAL_SLOTS) {
             const s = info.slots[slot];
             if (!s) continue;
@@ -379,11 +420,14 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
         }
         return merged;
       }
-      // Por label, solo si su paciente no la reclamó en otra cama (si la reclamó, acá
-      // no se muestra nada — ese es el "desaparece del label viejo").
+      // Por label. Si su paciente reclamó en otra cama, acá quedan SOLO las bandejas ya
+      // ENTREGADAS (se sirvieron en esta cama y su registro pertenece acá); las
+      // pendientes desaparecen de este label — se las llevó el paciente.
       const direct = meals.get(bed.label);
       if (!direct) return undefined;
-      if (direct.patientCode && claimedAt.has(direct.patientCode) && claimedAt.get(direct.patientCode) !== bed.label) return undefined;
+      if (direct.patientCode && claimedAt.has(direct.patientCode) && claimedAt.get(direct.patientCode) !== bed.label) {
+        return filtrarBandejas(direct, bandejaEntregada);
+      }
       return direct;
     };
 
@@ -399,7 +443,12 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
         const s = m.slots[slot];
         if (s && (s.titular || s.acompanantes.length > 0)) slots[slot] = s;
       }
-      if (Object.keys(slots).length > 0) bed.meals = slots;
+      if (Object.keys(slots).length > 0) {
+        bed.meals = slots;
+        // Cama sin ocupante mostrando bandejas (entregadas que quedaron acá, o la carga
+        // huérfana de siempre): conservar a quién se le sirvió para el panel de comandas.
+        if (!bed.patientName && m.patientName) bed.mealsPatientName = m.patientName;
+      }
     }
   }
 
@@ -804,6 +853,28 @@ export const useHospitalState = () => {
     } catch { /* best-effort */ }
   }, [authFetch, cleanings]);
 
+  // "Habitación Lista" deja constancia en el HISTORIAL de limpiezas: preparar la cama
+  // destino para el ingreso también es trabajo de la azafata, aunque no pase por la marca
+  // del mapa. La fila NACE cerrada (Status Inactivo, motivo TICKET → el histórico la
+  // muestra como "Traslado"): no crea overlay 'cleaned' ni dispara la push ROOM_CLEANED —
+  // eso es exclusivo de la marca manual. Best-effort y fire-and-forget: si falla, el
+  // flujo del ticket ni se entera.
+  const logRoomPreparedCleaning = useCallback((ticket: Ticket) => {
+    if (!ticket.destination) return;
+    const dest = rawBeds.find(b => b.label === ticket.destination);
+    authFetch('/api/limpiezas', {
+      method: 'POST',
+      body: JSON.stringify({
+        closed: true, reason: 'TICKET',
+        bedLabel: ticket.destination,
+        bedCode: dest?.bedCode ?? ticket.destinationBedCode ?? '',
+        roomCode: dest?.roomCode ?? '',
+        area: dest?.area ?? '',
+        userId: currentUser?.id ?? '', userName: currentUser?.name ?? '',
+      }),
+    }).catch(() => { /* best-effort */ });
+  }, [authFetch, currentUser, rawBeds]);
+
   // ── Cargas de menú de Nutrición (overlay 15.CargasDieta) ──────────────────
   const fetchMeals = useCallback(async () => {
     try {
@@ -818,6 +889,7 @@ export const useHospitalState = () => {
         if (!slot) continue;
         const cur = map.get(String(m.bedLabel)) ?? { patientCode: String(m.patientCode ?? ''), slots: {} };
         cur.patientCode = cur.patientCode || String(m.patientCode ?? '');
+        cur.patientName = cur.patientName || String(m.patientName ?? '');
         const load: MealLoad = {
           tipo: m.tipo === 'OPCION' ? 'OPCION' : m.tipo === 'OTROS' ? 'OTROS' : 'MENU',
           detalle: String(m.detalle ?? ''),
@@ -853,7 +925,7 @@ export const useHospitalState = () => {
     const at = new Date().toISOString();
     setMeals(prev => {
       const n = new Map<string, MealsInfo>(prev);
-      const cur = n.get(bed.label) ?? { patientCode: bed.patientCode ?? '', slots: {} };
+      const cur = n.get(bed.label) ?? { patientCode: bed.patientCode ?? '', patientName: bed.patientName ?? '', slots: {} };
       cur.patientCode = bed.patientCode ?? cur.patientCode;
       // ⚠️ Merge, NO reemplazo del slot: `slots[comida] = {...}` pisaría el MealSlotLoad entero
       // y borraría los acompañantes (el poll los restauraría → "parpadean y vuelven", y en esa
@@ -874,6 +946,11 @@ export const useHospitalState = () => {
           patientName: bed.patientName ?? '', patientCode: bed.patientCode ?? '',
           comida: spFromMealSlot(comida), tipo, detalle, observaciones,
           userId: u?.id ?? '', userName: u?.name ?? '',
+          // Evento del paciente: el backstop "sin dieta" resuelve la fila de 12.EnrichCamas
+          // por EventKey (eventOrigin-eventNumber), IGUAL que la UI (api/beds.ts). Sin esto
+          // el server elegía "la más reciente por UpdatedAt" y podía rechazar (409) una carga
+          // que la UI habilitó, cuando el paciente tiene un evento viejo residual en la lista.
+          eventOrigin: bed.eventOrigin ?? '', eventNumber: bed.eventNumber ?? '',
         }),
       });
       if (r.ok) {
@@ -973,7 +1050,7 @@ export const useHospitalState = () => {
       const at = new Date().toISOString();
       setMeals(prev => {
         const n = new Map<string, MealsInfo>(prev);
-        const cur = n.get(bed.label) ?? { patientCode: bed.patientCode ?? '', slots: {} };
+        const cur = n.get(bed.label) ?? { patientCode: bed.patientCode ?? '', patientName: bed.patientName ?? '', slots: {} };
         const s = cur.slots[comida] ?? emptySlot();
         const load: MealLoad = {
           tipo: data.tipo, detalle: data.detalle, observaciones: data.observaciones,
@@ -2000,6 +2077,7 @@ export const useHospitalState = () => {
       });
       if (await persistTicketUpdate(ticket, updates, 'No se pudo guardar "Habitación Lista" (error de conexión o del servidor). Reintentá.')) {
         spLogEvent(ticket.id, 'Habitacion Preparada');
+        logRoomPreparedCleaning(ticket); // constancia en el historial de limpiezas (nace cerrada → "Traslado")
       }
     } finally {
       // Liberación diferida SIEMPRE (try/finally) — si persistTicketUpdate lanza, writingRef
@@ -2034,6 +2112,29 @@ export const useHospitalState = () => {
     }
   });
 
+  // Las bandejas PENDIENTES siguen al paciente también EN SP (no solo en el overlay del
+  // mapa): al confirmarse el traslado se les pisa la cama, así Gestión de Comandas y el
+  // PDF de despacho muestran la habitación real sin depender de que alguien edite la
+  // comanda. Solo pendientes — las entregadas son historia y no se tocan. Best-effort e
+  // idempotente: se dispara en la recepción y de nuevo en la consolidación como red (si
+  // ya migraron, el server no cambia nada).
+  const migratePendingMeals = useCallback((ticket: Ticket) => {
+    if (!ticket.patientCode || !ticket.destination) return;
+    const dest = rawBeds.find(b => b.label === ticket.destination);
+    authFetch('/api/dietas', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        action: 'reubicar', patientCode: ticket.patientCode,
+        bedLabel: ticket.destination,
+        bedCode: dest?.bedCode ?? ticket.destinationBedCode ?? '',
+        roomCode: dest?.roomCode ?? '', area: dest?.area ?? '',
+      }),
+    })
+      .then(r => { if (r.ok) fetchMeals(); }) // re-fetch: el Map local re-keyea a la cama nueva
+      .catch(() => { /* best-effort — la migración por edición sigue cubriendo */ });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawBeds, authFetch, fetchMeals]);
+
   const handleConfirmReception = (ticketId: string) => runTicketAction(ticketId, async () => {
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket?.destination) return;
@@ -2051,6 +2152,7 @@ export const useHospitalState = () => {
       });
       if (await persistTicketUpdate(ticket, updates, 'No se pudo guardar "Recepción confirmada" (error de conexión o del servidor). Reintentá.')) {
         spLogEvent(ticket.id, 'Paciente Recibido');
+        migratePendingMeals(ticket); // las bandejas pendientes se mudan con el paciente
       }
     } finally {
       // Liberación diferida SIEMPRE (try/finally) — sino writingRef quedaría en true y
@@ -2078,6 +2180,7 @@ export const useHospitalState = () => {
       });
       if (ticket.spItemId && !(await persistTicketUpdate(ticket, updates, 'No se pudo consolidar el traslado (error de conexión o del servidor). Reintentá.'))) return;
       spLogEvent(ticket.id, 'Consolidado Progal');
+      migratePendingMeals(ticket); // red idempotente: por si la migración de la recepción falló
       // Refrescamos camas para el mapa. El refetch de tickets va SOLO diferido (~5s, cuando
       // writingRef ya se liberó y SP ya confirmó): un fetchTickets inmediato corre contra la
       // latencia read-after-write de SP y podría re-leer el ticket como activo → snapshot

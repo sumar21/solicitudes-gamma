@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { User, Permission, RoleModule } from '../types';
+import { User, Permission, RoleModule, MEAL_SLOTS, mealSlotPermission } from '../types';
 import { Settings, Plus, Search, X, AlertCircle, CheckCircle2, Pencil, Trash2, Check, ChevronUp, ChevronDown } from '../components/Icons';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
@@ -66,8 +66,13 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
   {
     module: 'Mapa de Camas', label: 'Mapa de Camas',
     perms: [
-      { code: 'cargar_dieta', label: 'Cargar comanda / menú (Nutrición)' },
       { code: 'ver_dieta',    label: 'Ver comandas cargadas (Catering / Nutrición)' },
+      // `cargar_dieta` es el permiso HISTÓRICO y significa TODOS los turnos: los roles que ya
+      // lo tienen siguen cargando todo sin migrar nada en SP. Los de abajo (derivados de
+      // MEAL_SLOTS) habilitan turno por turno y son aditivos — tildarlos junto con "todos los
+      // turnos" es redundante, gana el de todos.
+      { code: 'cargar_dieta', label: 'Cargar comandas — todos los turnos (Nutrición)' },
+      ...MEAL_SLOTS.map(({ slot, label }) => ({ code: mealSlotPermission(slot), label: `Cargar comandas — solo ${label}` })),
     ],
   },
   {

@@ -6,10 +6,19 @@
  * pre-refactor, rol mal configurado, etc.) el helper devuelve `false` →
  * comportamiento safe-default = solo lectura.
  */
-import type { User, Permission, RoleModule } from '../types';
+import type { User, Permission, RoleModule, MealSlot } from '../types';
+import { MEAL_SLOTS, permitsMealSlotLoad } from '../types';
 
 export const can = (user: User | null | undefined, perm: Permission): boolean =>
   !!user?.permissions?.includes(perm);
+
+/** ¿Puede cargar/editar comandas de ESTE turno? `cargar_dieta` = todos (compat histórica). */
+export const canLoadMealSlot = (user: User | null | undefined, slot: MealSlot): boolean =>
+  permitsMealSlotLoad(user?.permissions ?? [], slot);
+
+/** ¿Puede cargar al menos UN turno? Gatea la sección de carga y el fetch de planificación. */
+export const canLoadAnyMealSlot = (user: User | null | undefined): boolean =>
+  MEAL_SLOTS.some(({ slot }) => canLoadMealSlot(user, slot));
 
 export const hasModule = (user: User | null | undefined, mod: RoleModule): boolean =>
   !!user?.modules?.includes(mod);

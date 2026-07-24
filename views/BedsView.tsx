@@ -1,10 +1,10 @@
 import React, { useState, useMemo, useCallback } from 'react';
-import { Bed, BedStatus, Ticket, TicketStatus, User, Area, IsolationEntry, MealSlot, MealLoad, MEAL_SLOTS, mealSlotFromSp, hasAnyMealLoad, MAX_ACOMPANANTES, COMANDA_STATUS } from '../types';
-import { can } from '../lib/permissions';
+import { Bed, BedStatus, Ticket, TicketStatus, User, Area, IsolationEntry, MealSlot, MealLoad, MEAL_SLOTS, mealSlotFromSp, hasAnyMealLoad, MAX_ACOMPANANTES, COMANDA_STATUS, titularSinDieta, dietTypeFromDiets } from '../types';
+import { can, canLoadMealSlot, canLoadAnyMealSlot } from '../lib/permissions';
 import { hasLiveFasting, fastingOccurrences, formatFastingDateTime, fastingTimesForToday } from '../lib/fasting';
 import { Input } from '../components/ui/input';
 import { cn, dietRequiresCustomComanda, suggestedRoomSex } from '../lib/utils';
-import { BedDouble, User as UserIcon, Info, Search, X, Plus, ChevronDown, ChevronRight, Check, AlertTriangle, AlertCircle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan, History } from 'lucide-react';
+import { BedDouble, User as UserIcon, Info, Search, X, Plus, ChevronDown, ChevronRight, Check, AlertTriangle, AlertCircle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan, History, Lock } from 'lucide-react';
 import { Dialog, DialogContent } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
@@ -38,11 +38,9 @@ const HIDDEN_BY_DEFAULT_ADMISSION = new Set<string>([Area.HSS, Area.HUQ]);
 // Tipo de dieta (PROGAL) de una cama: la respuesta del ítem "Tipo" del formulario de dieta
 // (ej. "General", "Líquida", "Blanda de masticación 1"). Vive en bed.diets — dietTags mezcla
 // el tipo con las condiciones ("Sí"), por eso para filtrar por TIPO leemos diets directo.
-// Mismo criterio que api/diet-tags.ts (descripcion "tipo", respuesta ≠ "No").
-const dietTypeOf = (b: Bed): string | undefined => {
-  const t = b.diets?.find(d => d.descripcion.toLowerCase() === 'tipo');
-  return t?.respuesta && t.respuesta.toLowerCase() !== 'no' ? t.respuesta : undefined;
-};
+// Delega en types.ts (dietTypeFromDiets): fuente ÚNICA que comparte con el guard
+// server-side de api/dietas.ts, así UI y server nunca divergen en qué es "tener dieta".
+const dietTypeOf = (b: Bed): string | undefined => dietTypeFromDiets(b.diets);
 
 interface BedsViewProps {
   beds: Bed[];
@@ -224,6 +222,12 @@ function usePlannedMenu(enabled: boolean): PlannedMenu {
 
 const MealSlotEditor: React.FC<{
   bed: Bed; slot: MealSlot; label: string; canEdit: boolean;
+  /** Solo-lectura POR PERMISO de turno (no por rol visor): muestra el candado y la leyenda.
+      Distinto de `!canEdit` a secas — catering puro ve la misma rama read-only SIN señalizar,
+      porque para él no hay "otros turnos que sí puede cargar" que expliquen la diferencia. */
+  lockedByPermission?: boolean;
+  /** Bloqueo "sin dieta": el titular no se puede cargar/editar (los acompañantes sí). */
+  sinDieta?: boolean;
   /** Planificación vigente para este turno: tipo → texto. Autocompleta al elegir Menú/Opción. */
   planned?: Partial<Record<'MENU' | 'OPCION', string>>;
   open: boolean;
@@ -232,7 +236,7 @@ const MealSlotEditor: React.FC<{
   onClear?: (bed: Bed, comida: MealSlot) => void | Promise<void>;
   onSaveCompanion?: (bed: Bed, comida: MealSlot, data: { spItemId?: string; tipo: 'MENU' | 'OPCION' | 'OTROS'; detalle: string; observaciones: string }) => Promise<{ ok: boolean; error?: string }>;
   onClearCompanion?: (bed: Bed, comida: MealSlot, spItemId: string) => void | Promise<void>;
-}> = ({ bed, slot, label, canEdit, planned, open, onToggle, onSave, onClear, onSaveCompanion, onClearCompanion }) => {
+}> = ({ bed, slot, label, canEdit, lockedByPermission, sinDieta, planned, open, onToggle, onSave, onClear, onSaveCompanion, onClearCompanion }) => {
   const meal = bed.meals?.[slot]?.titular;
   const acomps = bed.meals?.[slot]?.acompanantes ?? [];
   // Dieta terapéutica (liviana/líquida/astringente…): el menú global de cocina no le aplica, así
@@ -277,6 +281,14 @@ const MealSlotEditor: React.FC<{
         <span className="text-[10px] font-bold uppercase tracking-wide text-slate-600">{label}</span>
       </div>
       <div className="flex items-center gap-1.5 shrink-0">
+        {/* Candado en span y no `title` directo en el ícono: el atributo title sobre un <svg>
+            inline no muestra tooltip nativo — sobre el <span> HTML sí (mismo patrón que el
+            botón de eliminar acompañante). */}
+        {lockedByPermission && (
+          <span title="Tu rol no puede cargar este turno" className="flex items-center">
+            <Lock className="w-3 h-3 text-slate-300 shrink-0" />
+          </span>
+        )}
         {pill
           ? <span className={cn('px-2 py-0.5 rounded-full text-[9px] font-bold', pill.cls)}>{pill.label}</span>
           : <span className="text-[9px] text-slate-300 italic">Sin carga</span>}
@@ -295,13 +307,20 @@ const MealSlotEditor: React.FC<{
       <div className="bg-white rounded-xl border border-slate-100 overflow-hidden">
         {header}
         {body(
-          meal ? (
-            <>
-              {meal.detalle && <p className="text-[11px] font-semibold text-slate-800 whitespace-pre-wrap break-words">{meal.detalle}</p>}
-              {meal.observaciones && <p className="text-[11px] text-slate-500 whitespace-pre-wrap break-words mt-0.5">Obs: {meal.observaciones}</p>}
-              <p className="text-[9px] text-slate-400 mt-1">{fmtMealWhen(meal)}</p>
-            </>
-          ) : <p className="text-[10px] text-slate-300 italic">Sin carga</p>
+          <>
+            {lockedByPermission && (
+              <p className="text-[9px] text-slate-400 italic flex items-center gap-1">
+                <Lock className="w-3 h-3 shrink-0" /> Solo lectura — tu rol no puede cargar este turno.
+              </p>
+            )}
+            {meal ? (
+              <>
+                {meal.detalle && <p className="text-[11px] font-semibold text-slate-800 whitespace-pre-wrap break-words">{meal.detalle}</p>}
+                {meal.observaciones && <p className="text-[11px] text-slate-500 whitespace-pre-wrap break-words mt-0.5">Obs: {meal.observaciones}</p>}
+                <p className="text-[9px] text-slate-400 mt-1">{fmtMealWhen(meal)}</p>
+              </>
+            ) : <p className="text-[10px] text-slate-300 italic">Sin carga</p>}
+          </>
         )}
       </div>
     );
@@ -336,7 +355,8 @@ const MealSlotEditor: React.FC<{
     detalle.trim() !== (meal?.detalle ?? '').trim() ||
     obs.trim() !== (meal?.observaciones ?? '').trim();
   // En "Otros" el detalle (la comida) es OBLIGATORIO; en Menú/Opción es opcional.
-  const canSave = !entregada && !!tipo && dirty && (tipo !== 'OTROS' || detalle.trim() !== '');
+  // `sinDieta` congela el guardado del titular (el server igual lo rechaza con 409 — esto es UX).
+  const canSave = !entregada && !sinDieta && !!tipo && dirty && (tipo !== 'OTROS' || detalle.trim() !== '');
 
   return (
     <div className="bg-white rounded-xl border border-slate-100 overflow-hidden">
@@ -348,7 +368,7 @@ const MealSlotEditor: React.FC<{
           {/* Las 3 opciones para TODAS las dietas. En terapéuticas, "Otros" viene preseleccionado. */}
           <div className="flex gap-1.5">
             {(['MENU', 'OPCION', 'OTROS'] as const).map(op => (
-              <button key={op} type="button" onClick={() => pickTipo(op)} disabled={entregada}
+              <button key={op} type="button" onClick={() => pickTipo(op)} disabled={entregada || sinDieta}
                 aria-pressed={tipo === op}
                 className={cn('flex-1 h-9 rounded-lg text-[11px] font-bold uppercase tracking-wide border transition-all disabled:opacity-50 disabled:cursor-not-allowed',
                   tipo === op ? TIPO_BTN_CLS[op] : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-100')}>
@@ -365,7 +385,19 @@ const MealSlotEditor: React.FC<{
               </p>
             </div>
           )}
-          {preferOtros && !entregada && (
+          {/* Bloqueo "sin dieta": el titular no se puede pedir hasta que PROGAL tenga la dieta.
+              El botón "Quitar" queda operativo a propósito — es la válvula de escape para anular
+              una comanda pre-existente de un paciente que perdió la dieta. */}
+          {sinDieta && (
+            <div className="flex items-start gap-1.5 px-2 py-1.5 rounded-lg bg-amber-50 border border-amber-200">
+              <ShieldAlert className="w-3 h-3 text-amber-600 shrink-0 mt-0.5" />
+              <p className="text-[9px] font-medium text-amber-800">
+                El paciente no tiene dieta cargada en PROGAL — no se puede pedir su comanda hasta que la dieta esté cargada.
+                {meal ? ' La comanda ya cargada solo se puede quitar.' : ''} Los acompañantes sí se pueden cargar.
+              </p>
+            </div>
+          )}
+          {preferOtros && !entregada && !sinDieta && (
             <p className="text-[9px] text-indigo-600 font-medium">
               Dieta especial — sugerido "Otros" (podés cambiarlo)
             </p>
@@ -381,12 +413,12 @@ const MealSlotEditor: React.FC<{
           )}
 
           <input value={detalle} onChange={e => { editedRef.current = true; setDetalle(e.target.value); }} maxLength={500}
-            disabled={entregada}
+            disabled={entregada || sinDieta}
             placeholder={tipo === 'OTROS' ? 'Comida / menú (obligatorio)' : 'Detalle de la comanda'}
-            className={cn('w-full rounded-lg border px-2.5 py-1.5 text-[11px] focus:outline-none focus:ring-2 focus:ring-emerald-200',
+            className={cn('w-full rounded-lg border px-2.5 py-1.5 text-[11px] focus:outline-none focus:ring-2 focus:ring-emerald-200 disabled:bg-slate-50 disabled:text-slate-400',
               tipo === 'OTROS' && detalle.trim() === '' ? 'border-indigo-300 bg-indigo-50/30' : 'border-slate-200')} />
           <textarea value={obs} onChange={e => { editedRef.current = true; setObs(e.target.value); }} rows={2} maxLength={500}
-            disabled={entregada}
+            disabled={entregada || sinDieta}
             placeholder="Observaciones (opcional)"
             className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] resize-none focus:outline-none focus:ring-2 focus:ring-emerald-200 disabled:bg-slate-50 disabled:text-slate-400" />
           {saveError && (
@@ -548,7 +580,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   // Turnos abiertos en el modal de la cama. Vive en el PADRE y no en cada box: si viviera adentro,
   // se perdería al cerrar/reabrir. Se resetea al cambiar de cama (el default se recalcula abajo).
   const [openSlots, setOpenSlots] = useState<Set<MealSlot>>(new Set());
-  const plannedMenu = usePlannedMenu(can(currentUser, 'ver_dieta') || can(currentUser, 'cargar_dieta'));
+  // `canLoadAnyMealSlot` cubre tanto `cargar_dieta` (histórico = todos los turnos) como los
+  // granulares `cargar_comanda_<turno>` — un rol solo-granular también necesita la planificación.
+  const plannedMenu = usePlannedMenu(can(currentUser, 'ver_dieta') || canLoadAnyMealSlot(currentUser));
   const [journeyOpen, setJourneyOpen] = useState(false);
   const [enrichedBed, setEnrichedBed] = useState<Bed | null>(null);
   const [enrichLoading, setEnrichLoading] = useState(false);
@@ -627,7 +661,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
 
   // ¿Este usuario puede ver comandas cargadas? (Nutrición carga; Catering/Nutrición ven).
   // Gatea tanto el ícono de la tarjeta como la sección de la pestaña Dieta.
-  const canViewComanda = can(currentUser, 'ver_dieta') || can(currentUser, 'cargar_dieta');
+  // Poder cargar ALGÚN turno implica ver toda la sección (espeja la semántica histórica en la
+  // que `cargar_dieta` implicaba ver): quien pide almuerzo necesita ver qué hay en los demás.
+  const canViewComanda = can(currentUser, 'ver_dieta') || canLoadAnyMealSlot(currentUser);
 
   // Color del aislamiento de una cama (el primer tipo activo define el color).
   const getIsolationColor = (bed: Bed) => {
@@ -2720,22 +2756,36 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                             )}
                             {/* Carga de menú por Nutrición (15.CargasDieta) — DEBAJO del detalle de
                                 dieta: se carga el menú sabiendo qué dieta/condiciones tiene el paciente.
-                                Nutrición (permiso cargar_dieta) edita; catering/otros lo ven en lectura. */}
+                                Nutrición edita los turnos que su rol habilita; catering/otros lo ven en lectura. */}
                             {(() => {
                               const liveBed = beds.find(b => b.label === selectedBed.label) ?? selectedBed;
-                              const canEditMeal = can(currentUser, 'cargar_dieta');
+                              // Turnos que ESTE rol puede cargar: `cargar_dieta` (histórico) = todos; sino,
+                              // los granulares `cargar_comanda_<turno>`. Los turnos NO habilitados se ven
+                              // igual (permiso de ver) pero en solo-lectura, con candado — misma vista que
+                              // catering, señalizada.
+                              const editableSlots = new Set(MEAL_SLOTS.filter(({ slot }) => canLoadMealSlot(currentUser, slot)).map(({ slot }) => slot));
+                              const canEditAny = editableSlots.size > 0;
+                              // Bloqueo sin dieta: solo con dato CONFIRMADO del cron
+                              // (enriched===true). El enrich on-demand del modal NO participa:
+                              // su "sin diets" es indistinguible de "Gamma falló / evento no
+                              // consultado" y bloquear ahí violaría el fail-open.
+                              const sinDieta = titularSinDieta(liveBed);
                               const hasAnyMeal = hasAnyMealLoad(liveBed.meals);
                               if (!canViewComanda) return null;              // sin permiso → no ve la sección
-                              if (!canEditMeal && !hasAnyMeal) return null;  // solo-lectura y nada cargado → nada
+                              if (!canEditAny && !hasAnyMeal) return null;   // solo-lectura y nada cargado → nada
                               return (
                                 <div className="rounded-xl p-3 border border-indigo-100 bg-indigo-50/40 space-y-2">
                                   <div className="flex items-center gap-1.5">
                                     <UtensilsCrossed className="w-3.5 h-3.5 text-indigo-500" />
-                                    <p className="text-[8px] font-bold uppercase text-indigo-700 tracking-widest">Menú{canEditMeal ? ' — Nutrición' : ''}</p>
+                                    <p className="text-[8px] font-bold uppercase text-indigo-700 tracking-widest">Menú{canEditAny ? ' — Nutrición' : ''}</p>
                                   </div>
                                   {MEAL_SLOTS.map(({ slot, label }) => (
                                     <MealSlotEditor key={slot} bed={liveBed} slot={slot} label={label}
-                                      canEdit={canEditMeal} planned={plannedMenu[slot]}
+                                      canEdit={editableSlots.has(slot)}
+                                      // El hint solo aparece para quien puede cargar OTROS turnos;
+                                      // catering puro sigue viendo exactamente lo mismo que hoy.
+                                      lockedByPermission={canEditAny && !editableSlots.has(slot)}
+                                      sinDieta={sinDieta} planned={plannedMenu[slot]}
                                       open={openSlots.has(slot)}
                                       onToggle={() => setOpenSlots(prev => {
                                         const n = new Set(prev);

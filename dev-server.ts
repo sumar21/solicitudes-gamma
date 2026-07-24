@@ -166,6 +166,19 @@ const server = createServer(async (req, res) => {
   }
 });
 
+// EADDRINUSE con mensaje accionable en vez del stack trace de Node. Pasa cuando quedó un
+// dev-server zombie de una corrida anterior (crash de tsx watch, terminal duplicada, etc.).
+server.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error('\n[dev-server] ⚠️  El puerto 3000 ya está ocupado por otro proceso.');
+    console.error('[dev-server] Casi seguro es un dev-server viejo que quedó colgado. Matalo con:');
+    console.error('[dev-server]     lsof -ti:3000 | xargs kill');
+    console.error('[dev-server] y volvé a correr `npm run dev:full`.\n');
+    process.exit(1);
+  }
+  throw err;
+});
+
 server.listen(3000, () => {
   console.log('[dev-server] API running on http://localhost:3000');
   console.log('[dev-server] Routes:', Object.keys(routes).join(', '));

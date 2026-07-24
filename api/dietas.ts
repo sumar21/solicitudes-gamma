@@ -17,10 +17,13 @@
  */
 import { graphFetch }  from './graph.js';
 import { requireAuth } from './jwt.js';
-import { MEAL_SLOTS_SP } from '../types.js';
+import { getRoleByName } from './role-cache.js';
+import { getUserAreasById } from './user-cache.js';
+import { MEAL_SLOTS_SP, mealSlotFromSp, mealSlotLabel, permitsMealSlotLoad, dietTypeFromDiets } from '../types.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = (process.env.DIETAS_LIST_ID ?? '891ddeb5-3610-4a25-b6c0-512eb8e1648b').trim(); // 15.CargaComandas (hardcodeado como limpiezas)
+const ENRICH_LIST_ID = '443c4ff0-bc98-43ef-a49c-7fd91cc63734'; // 12.EnrichCamas — mismo hardcodeo que api/beds.ts
 
 const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 
@@ -75,6 +78,34 @@ const artDay = (iso: unknown): string => {
 };
 /** "Hoy" en hora Argentina. NUNCA `toISOString().slice(0,10)` (daría el día UTC). */
 const todayArtDay = (): string => new Date().toLocaleDateString('en-CA', { timeZone: ART_TZ });
+
+/**
+ * Permisos del rol del usuario, resueltos por el user-id del JWT (nunca por lo que mande el
+ * cliente) → un token viejo con permisos de más no sirve: manda lo que dice SP hoy.
+ * Mismo patrón (y mismas cachés) que api/carga-menu.ts — copiado a propósito: extraerlo a un
+ * módulo compartido obligaría a tocar ese endpoint estable, fuera del alcance de este cambio.
+ * Fail-closed: si SP/role-cache no responde devuelve [] → 403, nunca fail-open en permisos.
+ */
+// `null` = NO se pudo determinar (sin user-id, SP caído, excepción). El call-site hace
+// FAIL-OPEN ante null: bloquear a Nutrición legítima por un hipo de SharePoint es peor que
+// dejar pasar una carga de turno no autorizada (la UI ya esconde esos turnos; esto es
+// defensa en profundidad, no la única barrera). Un array (incluido []) SÍ es un veredicto:
+// [] significa "rol sin permisos de carga" → se bloquea.
+async function userPermissions(req: any): Promise<string[] | null> {
+  const userId = String(req?.user?.id ?? '');
+  if (!userId) return null;
+  try {
+    const ua = await getUserAreasById(userId);
+    // Sin ficha de usuario o sin perfil no hay veredicto confiable → fail-open.
+    if (!ua?.perfil) return null;
+    const role = await getRoleByName(ua.perfil);
+    // Rol inexistente = veredicto real (solo lectura). Rol existente → sus permisos.
+    return role?.permissions ?? [];
+  } catch (e) {
+    console.error('[dietas] userPermissions falló (fail-open):', (e as any)?.message ?? e);
+    return null;
+  }
+}
 
 async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -203,7 +234,7 @@ async function handler(req: any, res: any) {
   if (req.method === 'POST') {
     const { bedLabel, bedCode, roomCode, area, patientName, patientCode,
             comida, tipo, detalle, observaciones, userId, userName,
-            comensal, spItemId: reqItemId } = req.body ?? {};
+            comensal, spItemId: reqItemId, eventOrigin, eventNumber } = req.body ?? {};
     if (!bedLabel) return res.status(400).json({ error: 'bedLabel is required' });
     const comidaVal = COMIDAS.includes(String(comida)) ? String(comida) : '';
     const tipoVal   = TIPOS.includes(String(tipo))     ? String(tipo)   : '';
@@ -213,6 +244,21 @@ async function handler(req: any, res: any) {
     if (!comidaVal) return res.status(400).json({ error: `comida must be one of: ${COMIDAS.join(', ')}` });
     if (!tipoVal)   return res.status(400).json({ error: 'tipo must be MENU, OPCION or OTROS' });
     if (!comensalVal) return res.status(400).json({ error: `comensal must be one of: ${COMENSALES.join(', ')}` });
+
+    // ── Enforcement de carga por turno ────────────────────────────────────────
+    // La UI ya esconde los turnos que el rol no puede cargar, pero un permiso solo
+    // client-side es decorativo: cualquiera con un token puede POSTear a mano.
+    // `cargar_dieta` (histórico) habilita TODOS los turnos — los roles productivos
+    // existentes pasan sin tocar una fila de SP; `cargar_comanda_<turno>` habilita solo ése.
+    // Va ANTES de cualquier lectura/escritura a la lista: un 403 no deja rastro.
+    const perms = await userPermissions(req);
+    const slotSolicitado = mealSlotFromSp(comidaVal)!; // no-null: comidaVal ya validado contra COMIDAS
+    // perms === null → no se pudo determinar (fail-open, ver userPermissions). Solo se bloquea
+    // con un veredicto real de permisos que no habilita el turno.
+    if (perms !== null && !permitsMealSlotLoad(perms, slotSolicitado)) {
+      return res.status(403).json({ error: `No tenés permiso para cargar comandas de ${mealSlotLabel(slotSolicitado)}.` });
+    }
+
     const nowIso = new Date().toISOString();
     const obs = String(observaciones ?? '').slice(0, 500);
     const det = String(detalle ?? '').slice(0, 500);
@@ -224,6 +270,50 @@ async function handler(req: any, res: any) {
     // (edge), omitimos el campo para no romper el POST (una columna Número rechaza strings).
     const nutriIdNum = Number(userId);
     const nutriIdField = String(userId ?? '').trim() !== '' && Number.isFinite(nutriIdNum) ? { NutricionistaID_D: nutriIdNum } : {};
+
+    // ── Bloqueo "sin dieta" (backstop server-side del editor del mapa) ──────
+    // La comanda del TITULAR exige dieta cargada en PROGAL. La dieta vive en 12.EnrichCamas
+    // (Payload_EC, precomputado por cron-enrich-beds cada 15 min): una query extra POR
+    // GUARDADO DE TITULAR — aceptable porque guardar es una acción manual y poco frecuente;
+    // los POST de acompañante no la pagan (mandan comensal ACOMPANANTE, incluso vía RAMA A).
+    // Fail-open deliberado en TODO lo dudoso (sin patientCode, sin fila enrich, SP caído,
+    // payload corrupto): la regla castiga el dato CONFIRMADO "sin dieta", nunca su ausencia.
+    // El bloqueo que ve el usuario está en la UI (BedsView) — esto respalda clientes
+    // stale/viejos, igual que el backstop de 'OTROS' de arriba.
+    if (comensalVal === 'TITULAR' && String(patientCode ?? '').trim() !== '' && ENRICH_LIST_ID) {
+      try {
+        const efilter = encodeURIComponent(
+          `fields/PatientCode_EC eq '${esc(patientCode)}' and fields/Status_EC eq 'Activo' and fields/Entorno_EC eq '${ENTORNO}'`,
+        );
+        const er = await graphFetch(
+          `/sites/${SITE_ID}/lists/${ENRICH_LIST_ID}/items?$expand=fields&$filter=${efilter}&$top=5`,
+          { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
+        );
+        if (er.ok) {
+          const enrichRows = ((await er.json()) as { value: any[] }).value ?? [];
+          // Elegir la MISMA fila que la UI: por EventKey (eventOrigin-eventNumber) cuando el
+          // cliente lo mandó — así el server no rechaza una carga que la UI habilitó por mirar
+          // un evento distinto. Fallback a "la más reciente por UpdatedAt" para callers viejos
+          // que no mandan el evento (retrocompat).
+          const eventKey = `${String(eventOrigin ?? '').trim()}-${String(eventNumber ?? '').trim()}`;
+          const byEvent = String(eventOrigin ?? '').trim() !== ''
+            ? enrichRows.find(r => String(r?.fields?.EventKey_EC ?? '').trim() === eventKey)
+            : undefined;
+          const latest = byEvent ?? enrichRows.sort((a, b) =>
+            String(b?.fields?.UpdatedAt_EC ?? '').localeCompare(String(a?.fields?.UpdatedAt_EC ?? '')))[0];
+          if (latest) {
+            const payload = JSON.parse(String(latest.fields?.Payload_EC ?? 'null')) as
+              { diets?: { descripcion: string; respuesta: string }[] } | null;
+            if (payload && dietTypeFromDiets(payload.diets) === undefined) {
+              return res.status(409).json({
+                error: 'sin_dieta',
+                message: 'El paciente no tiene dieta cargada en PROGAL. No se puede cargar su comanda hasta que la dieta esté cargada.',
+              });
+            }
+          }
+        }
+      } catch { /* fail-open: sin señal confiable no se bloquea */ }
+    }
 
     try {
       // Traemos TODAS las filas activas de este comensal+comida (titular + acompañantes) y
@@ -393,6 +483,41 @@ async function handler(req: any, res: any) {
   if (req.method === 'PATCH') {
     const { spItemId, bedLabel, comida, action } = req.body ?? {};
     const nowIso = new Date().toISOString();
+
+    // ── action 'reubicar' — el traslado del paciente se confirmó ────────────
+    // Las bandejas PENDIENTES del paciente (todos los turnos, titular y acompañantes) se
+    // mudan a su cama nueva EN SP, así Gestión de Comandas y el PDF de despacho muestran
+    // la habitación de entrega real sin esperar a que alguien edite la comanda. Las
+    // Entregadas/Anuladas no se tocan: son historia de dónde se sirvió cada bandeja.
+    // Idempotente: re-llamarla no cambia nada si ya están en la cama destino.
+    if (String(action ?? '') === 'reubicar') {
+      const { patientCode, bedCode, roomCode, area } = req.body ?? {};
+      if (!String(patientCode ?? '').trim()) return res.status(400).json({ error: 'patientCode is required' });
+      if (!bedLabel) return res.status(400).json({ error: 'bedLabel (cama destino) is required' });
+      try {
+        const filter = encodeURIComponent(
+          `fields/PacienteCodigo_D eq '${esc(patientCode)}' and fields/Status_D eq '${ST_PENDIENTE}' and fields/Entorno_D eq '${ENTORNO}'`,
+        );
+        const r = await graphFetch(`${basePath}?$expand=fields&$filter=${filter}&$top=50`, {
+          headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' },
+        });
+        if (!r.ok) return res.status(502).json({ error: 'No se pudo consultar las comandas del paciente.' });
+        const rows = ((await r.json()) as { value: any[] }).value ?? [];
+        const aMigrar = rows.filter(row => String(row?.fields?.CamaLabel_D ?? '') !== String(bedLabel));
+        const ubicacion = {
+          CamaLabel_D: String(bedLabel), CamaCodigo_D: String(bedCode ?? ''),
+          Habitacion_D: String(roomCode ?? ''), Area_D: String(area ?? ''),
+        };
+        const results = await Promise.allSettled(aMigrar.map(row =>
+          graphFetch(`${basePath}/${row.id}/fields`, { method: 'PATCH', body: JSON.stringify(ubicacion) })));
+        const migradas = results.filter(x => x.status === 'fulfilled' && (x.value as any)?.ok).length;
+        if (migradas > 0) console.log(`[dietas] reubicar: ${migradas} bandeja(s) pendiente(s) del paciente movida(s) a "${bedLabel}"`);
+        return res.status(200).json({ ok: true, migradas, pendientes: rows.length });
+      } catch (err: any) {
+        console.error('[dietas] reubicar error:', err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
 
     const ACTIONS: Record<string, Record<string, unknown>> = {
       anular:    { Status_D: ST_ANULADA,   FechaCierre_D: nowIso },

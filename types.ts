@@ -124,6 +124,10 @@ export interface Bed {
   // adjuntan si el paciente cargado coincide con el actual de la cama — evita mostrarle a
   // catering la dieta de un paciente anterior tras reasignar la cama. Ver mergeBeds.
   meals?: Partial<Record<MealSlot, MealSlotLoad>>;
+  // Nombre del paciente dueño de `meals` cuando la cama ya no tiene ocupante (bandejas
+  // ENTREGADAS que quedan visibles donde se sirvieron tras un traslado). Fallback de
+  // patientName para el panel de comandas; lo setea mergeBeds al adjuntar el overlay.
+  mealsPatientName?: string;
 }
 
 // Una carga de menú de Nutrición sobre una comida de la cama (fila de 15.CargasDieta).
@@ -186,6 +190,29 @@ export const hasAnyMealLoad = (meals: Bed['meals']): boolean =>
     const s = meals[slot];
     return !!s && (!!s.titular || s.acompanantes.length > 0);
   });
+
+// ── Bloqueo "sin dieta" (PROGAL) ─────────────────────────────────────────────
+// Tipo de dieta del formulario PROGAL: la respuesta del ítem "Tipo" (ej. "General",
+// "Líquida", "Nada por boca"). Misma semántica que api/diet-tags.ts (descripcion "tipo",
+// respuesta ≠ "No") y que el dietTypeOf de BedsView — que ahora delega acá. Vive en
+// types.ts y no en lib/utils porque lo consume TAMBIÉN el server (api/dietas.ts), y api/
+// solo comparte código con el front a través de este módulo.
+export const dietTypeFromDiets = (
+  diets?: { descripcion: string; respuesta: string }[],
+): string | undefined => {
+  const t = diets?.find(d => d.descripcion.toLowerCase() === 'tipo');
+  return t?.respuesta && t.respuesta.toLowerCase() !== 'no' ? t.respuesta : undefined;
+};
+
+// ¿Hay que bloquear la comanda del TITULAR por falta de dieta en PROGAL?
+// · Solo con dato CONFIRMADO (enriched === true: el cron ya procesó la cama). Si el enrich
+//   todavía no llegó devuelve false — fail-open, no se castiga por dato ausente.
+// · El criterio es el TIPO de dieta y no dietTags: los chips mezclan condiciones
+//   ("Diabetes") con el tipo, y una condición suelta no le dice a cocina qué cocinar.
+// · NO aplica a acompañantes: su bandeja no depende de la dieta del paciente ('nada por
+//   boca' es una dieta real y `titular` es opcional en MealSlotLoad por ese mismo caso).
+export const titularSinDieta = (bed: Pick<Bed, 'enriched' | 'diets'>): boolean =>
+  bed.enriched === true && dietTypeFromDiets(bed.diets) === undefined;
 // ── Turnos de comida — FUENTE ÚNICA ─────────────────────────────────────────
 // Agregar un turno acá lo propaga a todo: el tipo `MealSlot`, el mapeo app↔SP, los labels,
 // el orden de render y la validación del endpoint (`api/dietas.ts` importa `MEAL_SLOTS_SP`).
@@ -228,6 +255,27 @@ export const mealSlotLabel = (slot: MealSlot): string =>
 
 /** Valores válidos de `Comida_D` (15.CargaComandas) y `Turno_CM` (16.CargaMenu). */
 export const MEAL_SLOTS_SP: readonly string[] = MEAL_SLOTS.map(s => s.sp);
+
+// ── Permisos de carga de comandas POR TURNO ─────────────────────────────────
+// Derivados del catálogo: un turno nuevo en MEAL_SLOTS genera su permiso solo,
+// sin tocar PERMISSIONS a mano (misma regla anti-enumeración del comentario de arriba).
+export type MealSlotPermission = `cargar_comanda_${MealSlot}`;
+
+/** Permiso granular de UN turno (p.ej. 'cargar_comanda_almuerzo'). */
+export const mealSlotPermission = (slot: MealSlot): MealSlotPermission => `cargar_comanda_${slot}`;
+
+export const MEAL_SLOT_PERMISSIONS: MealSlotPermission[] = MEAL_SLOTS.map(s => mealSlotPermission(s.slot));
+
+/**
+ * ¿Estos permisos habilitan CARGAR/EDITAR comandas de este turno?
+ * `cargar_dieta` (el permiso histórico) significa TODOS los turnos: los roles productivos
+ * que ya lo tienen en Permisos_RT siguen cargando todo sin migrar una sola fila de SP.
+ * Los granulares son aditivos turno por turno. Pura y sobre string[] a propósito: la
+ * comparten el front (via lib/permissions) y el server (api/dietas.ts, que recibe los
+ * permisos crudos del role-cache).
+ */
+export const permitsMealSlotLoad = (perms: readonly string[], slot: MealSlot): boolean =>
+  perms.includes('cargar_dieta') || perms.includes(mealSlotPermission(slot));
 
 // ── Planificación de menú (16.CargaMenu) ────────────────────────────────────
 // Tipo planificable. NO incluye 'OTROS' a propósito (decisión D5 del plan): "Otros" es una
@@ -294,6 +342,9 @@ export const PERMISSIONS = [
   'consolidar_limpieza',
   // Mapa de Camas — comandas: cargar (Nutrición) vs ver las comandas cargadas (Catering/Nutrición).
   'cargar_dieta',
+  // Carga de comandas POR TURNO (derivados de MEAL_SLOTS). `cargar_dieta` de arriba
+  // sigue significando "todos los turnos" — compat con los roles productivos existentes.
+  ...MEAL_SLOT_PERMISSIONS,
   'ver_dieta',
   // Gestión Comandas — planificación de menú por rango de fechas (16.CargaMenu).
   // `ver_planificacion` = abrir el modal y leer la grilla. `abm_planificacion` = crear/editar/eliminar.

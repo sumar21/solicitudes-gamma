@@ -4,6 +4,8 @@
  * GET    /api/limpiezas   → limpiezas activas (overlay "Limpia" vigente)
  * GET    /api/limpiezas?history=1&from=YYYY-MM-DD&to=YYYY-MM-DD → histórico (cerradas por fecha de cierre)
  * POST   /api/limpiezas   → marcar limpia (upsert) { bedLabel, bedCode, roomCode, area, userId, userName }
+ *                           + { closed: true, reason? } → registra una limpieza que NACE cerrada
+ *                           (constancia de "Habitación Lista" en el histórico; sin push ni overlay)
  * PATCH  /api/limpiezas   → cerrar una limpieza   { bedLabel | spItemId, reason }  reason ∈ ANULADA|TICKET|GAMMA|CONSOLIDADO
  *
  * Modelo: una limpieza = una cama que una azafata marcó limpia mientras PROGAL la
@@ -119,9 +121,17 @@ async function handler(req: any, res: any) {
 
   // ── POST — marcar limpia (upsert por cama + entorno) ──────────────────────
   if (req.method === 'POST') {
-    const { bedLabel, bedCode, roomCode, area, userId, userName } = req.body ?? {};
+    const { bedLabel, bedCode, roomCode, area, userId, userName, closed, reason } = req.body ?? {};
     if (!bedLabel) return res.status(400).json({ error: 'bedLabel is required' });
     const nowIso = new Date().toISOString();
+
+    // Modo "nace cerrada" (closed: true): constancia histórica de que la habitación se preparó
+    // para un ingreso ("Habitación Lista" del ticket). No es una marca operativa: no pasa por
+    // el upsert de activas, no dispara la push ROOM_CLEANED y jamás aparece como overlay en el
+    // mapa (el GET de activas filtra Status_L='Activo'). Motivo default TICKET → el histórico
+    // lo agrupa como "Traslado", igual que el auto-cierre por ticket.
+    const naceCerrada = closed === true;
+    const motivoCierre = ['ANULADA', 'TICKET', 'GAMMA', 'CONSOLIDADO'].includes(String(reason)) ? String(reason) : 'TICKET';
 
     // "Habitación Limpia" → push + campanita para los roles que tengan tildado
     // `notif_habitacion_limpia` en el ABM (pensado para Admisión, pero configurable).
@@ -143,24 +153,29 @@ async function handler(req: any, res: any) {
     };
 
     try {
-      // ¿Ya hay una limpieza activa para esta cama en este entorno? → refrescar.
-      const filter = encodeURIComponent(
-        `fields/CamaLabel_L eq '${esc(bedLabel)}' and fields/Status_L eq 'Activo' and fields/Entorno_L eq '${ENTORNO}'`,
-      );
-      const existing = await graphFetch(
-        `${basePath}?$expand=fields&$filter=${filter}&$top=1`,
-        { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
-      );
-      if (existing.ok) {
-        const data = (await existing.json()) as { value: Record<string, unknown>[] };
-        if (data.value?.length > 0) {
-          const itemId = String(data.value[0].id);
-          await graphFetch(`${basePath}/${itemId}/fields`, {
-            method: 'PATCH',
-            body: JSON.stringify({ AzafataId_L: String(userId ?? ''), AzafataNombre_L: String(userName ?? ''), FechaLimpieza_L: nowIso }),
-          });
-          notifyRoomCleaned(); // re-marca de una limpieza vigente: también es el evento
-          return res.status(200).json({ ok: true, spItemId: itemId });
+      // Una fila que nace cerrada NO debe tocar (ni refrescar) una marca activa existente:
+      // si la azafata había marcado limpia esa cama, esa marca la cierra el auto-cierre por
+      // ticket con su propio motivo. Por eso el upsert queda gateado.
+      if (!naceCerrada) {
+        // ¿Ya hay una limpieza activa para esta cama en este entorno? → refrescar.
+        const filter = encodeURIComponent(
+          `fields/CamaLabel_L eq '${esc(bedLabel)}' and fields/Status_L eq 'Activo' and fields/Entorno_L eq '${ENTORNO}'`,
+        );
+        const existing = await graphFetch(
+          `${basePath}?$expand=fields&$filter=${filter}&$top=1`,
+          { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
+        );
+        if (existing.ok) {
+          const data = (await existing.json()) as { value: Record<string, unknown>[] };
+          if (data.value?.length > 0) {
+            const itemId = String(data.value[0].id);
+            await graphFetch(`${basePath}/${itemId}/fields`, {
+              method: 'PATCH',
+              body: JSON.stringify({ AzafataId_L: String(userId ?? ''), AzafataNombre_L: String(userName ?? ''), FechaLimpieza_L: nowIso }),
+            });
+            notifyRoomCleaned(); // re-marca de una limpieza vigente: también es el evento
+            return res.status(200).json({ ok: true, spItemId: itemId });
+          }
         }
       }
 
@@ -173,11 +188,14 @@ async function handler(req: any, res: any) {
             CamaCodigo_L: String(bedCode ?? ''),
             Habitacion_L: String(roomCode ?? ''),
             Area_L: String(area ?? ''),
-            Status_L: 'Activo',
-            MotivoCierre_L: '',
+            Status_L: naceCerrada ? 'Inactivo' : 'Activo',
+            MotivoCierre_L: naceCerrada ? motivoCierre : '',
             AzafataId_L: String(userId ?? ''),
             AzafataNombre_L: String(userName ?? ''),
             FechaLimpieza_L: nowIso,
+            // FechaCierre_L solo en el modo cerrado — nunca mandar string vacío a una columna
+            // DateTime de SP (Graph lo rechaza con 400).
+            ...(naceCerrada ? { FechaCierre_L: nowIso } : {}),
             Entorno_L: ENTORNO,
           },
         }),
@@ -188,8 +206,10 @@ async function handler(req: any, res: any) {
         return res.status(500).json({ error: 'Failed to create cleaning' });
       }
       const created = (await spRes.json()) as { id: string };
-      console.log(`[limpiezas] Cama "${bedLabel}" marcada limpia por ${userName ?? userId}`);
-      notifyRoomCleaned();
+      console.log(naceCerrada
+        ? `[limpiezas] Cama "${bedLabel}" registrada preparada (nace cerrada ${motivoCierre}) por ${userName ?? userId}`
+        : `[limpiezas] Cama "${bedLabel}" marcada limpia por ${userName ?? userId}`);
+      if (!naceCerrada) notifyRoomCleaned();
       return res.status(200).json({ ok: true, spItemId: String(created.id) });
     } catch (err: any) {
       console.error('[limpiezas] POST error:', err);
