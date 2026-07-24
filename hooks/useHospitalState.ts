@@ -981,7 +981,7 @@ export const useHospitalState = () => {
   }, [authFetch, currentUser, fetchMeals]);
 
   // Nutrición quita la carga del TITULAR (optimista + PATCH soft-delete).
-  const clearMealLoad = useCallback(async (bed: Bed, comida: MealSlot) => {
+  const clearMealLoad = useCallback(async (bed: Bed, comida: MealSlot, motivo?: string) => {
     if (!bed?.label) return;
     // La carga puede estar keyeada por una cama ANTERIOR (la comanda sigue al paciente):
     // se busca por paciente primero y por label como fallback, y el optimista se aplica
@@ -1015,8 +1015,8 @@ export const useHospitalState = () => {
       await authFetch('/api/dietas', {
         method: 'PATCH',
         // bedLabel = la clave REAL de la fila (puede ser la cama vieja): es el fallback del
-        // server cuando no hay spItemId.
-        body: JSON.stringify({ spItemId: spItemId || undefined, bedLabel: ownerKey, comida: spFromMealSlot(comida) }),
+        // server cuando no hay spItemId. `motivo` → MotivoAnulacion_D (quitar = anular).
+        body: JSON.stringify({ spItemId: spItemId || undefined, bedLabel: ownerKey, comida: spFromMealSlot(comida), action: 'anular', motivo }),
       });
     } catch { /* best-effort */ }
   }, [authFetch, meals]);
@@ -1089,7 +1089,7 @@ export const useHospitalState = () => {
     } catch { await fetchMeals(); return { ok: false }; }
   }, [authFetch, fetchMeals]);
 
-  const clearCompanionLoad = useCallback(async (bed: Bed, comida: MealSlot, spItemId: string) => {
+  const clearCompanionLoad = useCallback(async (bed: Bed, comida: MealSlot, spItemId: string, motivo?: string) => {
     if (!bed?.label || !spItemId) return;
     setMeals(prev => {
       const n = new Map<string, MealsInfo>(prev);
@@ -1109,7 +1109,8 @@ export const useHospitalState = () => {
       return n;
     });
     try {
-      await authFetch('/api/dietas', { method: 'PATCH', body: JSON.stringify({ spItemId }) });
+      // action anular + motivo → MotivoAnulacion_D (quitar un acompañante = anularlo).
+      await authFetch('/api/dietas', { method: 'PATCH', body: JSON.stringify({ spItemId, action: 'anular', motivo }) });
     } catch { /* best-effort — el poll reconcilia */ }
   }, [authFetch]);
 

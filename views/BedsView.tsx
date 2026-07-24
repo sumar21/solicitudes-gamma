@@ -59,9 +59,9 @@ interface BedsViewProps {
   onUndoClean?: (bedLabel: string) => void | Promise<void>;
   // Carga de menú por Nutrición (15.CargasDieta): carga/actualiza o quita una comida.
   onSaveMeal?: (bed: Bed, comida: MealSlot, tipo: 'MENU' | 'OPCION' | 'OTROS', detalle: string, observaciones: string) => Promise<{ ok: boolean; error?: string }>;
-  onClearMeal?: (bed: Bed, comida: MealSlot) => void | Promise<void>;
+  onClearMeal?: (bed: Bed, comida: MealSlot, motivo?: string) => void | Promise<void>;
   onSaveCompanion?: (bed: Bed, comida: MealSlot, data: { spItemId?: string; tipo: 'MENU' | 'OPCION' | 'OTROS'; detalle: string; observaciones: string }) => Promise<{ ok: boolean; error?: string }>;
-  onClearCompanion?: (bed: Bed, comida: MealSlot, spItemId: string) => void | Promise<void>;
+  onClearCompanion?: (bed: Bed, comida: MealSlot, spItemId: string, motivo?: string) => void | Promise<void>;
 }
 
 // Mapa de clave de color (la define api/isolations-summary.ts) → clases Tailwind.
@@ -233,9 +233,9 @@ const MealSlotEditor: React.FC<{
   open: boolean;
   onToggle: () => void;
   onSave?: (bed: Bed, comida: MealSlot, tipo: 'MENU' | 'OPCION' | 'OTROS', detalle: string, obs: string) => Promise<{ ok: boolean; error?: string }>;
-  onClear?: (bed: Bed, comida: MealSlot) => void | Promise<void>;
+  onClear?: (bed: Bed, comida: MealSlot, motivo?: string) => void | Promise<void>;
   onSaveCompanion?: (bed: Bed, comida: MealSlot, data: { spItemId?: string; tipo: 'MENU' | 'OPCION' | 'OTROS'; detalle: string; observaciones: string }) => Promise<{ ok: boolean; error?: string }>;
-  onClearCompanion?: (bed: Bed, comida: MealSlot, spItemId: string) => void | Promise<void>;
+  onClearCompanion?: (bed: Bed, comida: MealSlot, spItemId: string, motivo?: string) => void | Promise<void>;
 }> = ({ bed, slot, label, canEdit, lockedByPermission, sinDieta, planned, open, onToggle, onSave, onClear, onSaveCompanion, onClearCompanion }) => {
   const meal = bed.meals?.[slot]?.titular;
   const acomps = bed.meals?.[slot]?.acompanantes ?? [];
@@ -250,6 +250,11 @@ const MealSlotEditor: React.FC<{
   const [detalle, setDetalle] = useState(meal?.detalle ?? '');
   const [obs, setObs]   = useState(meal?.observaciones ?? '');
   const [saving, setSaving] = useState(false);
+  // Quitar = anular → pide motivo inline (misma regla que el panel). `removing` abre el prompt,
+  // `removeMotivo` lo que se escribe. Inline y no modal-sobre-modal: el editor ya vive dentro
+  // del Dialog de la cama, y un Dialog anidado es frágil.
+  const [removing, setRemoving] = useState(false);
+  const [removeMotivo, setRemoveMotivo] = useState('');
   // Acompañantes todavía no persistidos. Contador local para la key (no crypto.randomUUID:
   // 0 usos en el repo y exige secure context — no vale traer una API nueva para ≤6 items).
   const [drafts, setDrafts] = useState<number[]>([]);
@@ -381,7 +386,7 @@ const MealSlotEditor: React.FC<{
             <div className="flex items-start gap-1.5 px-2 py-1.5 rounded-lg bg-emerald-50 border border-emerald-100">
               <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0 mt-0.5" />
               <p className="text-[9px] font-medium text-emerald-700">
-                Ya entregada — para modificarla, volvela a pendiente desde el panel de Comandas.
+                Ya entregada — para modificarla o quitarla, volvela a pendiente desde el panel de Comandas.
               </p>
             </div>
           )}
@@ -441,14 +446,43 @@ const MealSlotEditor: React.FC<{
               className="flex-1 h-8 text-[11px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40">
               {saving ? 'Guardando…' : meal ? 'Actualizar' : 'Guardar'}
             </Button>
+            {/* "Quitar" es una anulación: bloqueada si el plato ya se entregó (congelado, como
+                en el panel). Un plato pendiente sí se puede quitar, pero PIDIENDO MOTIVO. */}
             {meal && onClear && (
-              <Button variant="outline" size="sm" disabled={saving}
-                onClick={async () => { setSaving(true); try { await onClear(bed, slot); } finally { setSaving(false); } }}
-                className="h-8 px-3 text-[11px] font-bold rounded-lg border-slate-200 text-slate-500 hover:bg-slate-100">
+              <Button variant="outline" size="sm" disabled={saving || entregada || removing}
+                title={entregada ? 'Ya entregada — volvela a pendiente desde el panel para poder quitarla' : undefined}
+                onClick={() => { setRemoveMotivo(''); setRemoving(true); }}
+                className="h-8 px-3 text-[11px] font-bold rounded-lg border-slate-200 text-slate-500 hover:bg-slate-100 disabled:opacity-40">
                 Quitar
               </Button>
             )}
           </div>
+
+          {/* Prompt inline de motivo al quitar (anular). Obligatorio, queda en el histórico. */}
+          {removing && onClear && (
+            <div className="rounded-lg border border-red-200 bg-red-50/60 p-2 space-y-1.5">
+              <p className="text-[9px] font-bold uppercase tracking-wide text-red-600">Motivo de anulación</p>
+              <textarea
+                autoFocus value={removeMotivo} onChange={e => setRemoveMotivo(e.target.value)} rows={2} maxLength={500}
+                placeholder="Ej: el paciente pasó a ayuno, alta, cambio de dieta…"
+                className="w-full rounded-lg border border-red-200 px-2 py-1.5 text-[11px] resize-none focus:outline-none focus:ring-2 focus:ring-red-200" />
+              <div className="flex gap-2">
+                <Button size="sm" disabled={!removeMotivo.trim() || saving}
+                  onClick={async () => {
+                    setSaving(true);
+                    try { await onClear(bed, slot, removeMotivo.trim()); setRemoving(false); }
+                    finally { setSaving(false); }
+                  }}
+                  className="flex-1 h-7 text-[11px] font-bold rounded-lg bg-red-600 hover:bg-red-700 text-white disabled:opacity-40">
+                  {saving ? 'Quitando…' : 'Confirmar anulación'}
+                </Button>
+                <Button variant="outline" size="sm" disabled={saving} onClick={() => setRemoving(false)}
+                  className="h-7 px-3 text-[11px] font-bold rounded-lg border-slate-200 text-slate-500 hover:bg-slate-100">
+                  Cancelar
+                </Button>
+              </div>
+            </div>
+          )}
 
           {/* ── Acompañantes ─────────────────────────────────────────────── */}
           <div className="pt-1 border-t border-slate-100 space-y-2">
@@ -488,7 +522,7 @@ const CompanionEditor: React.FC<{
   bed: Bed; slot: MealSlot; companion?: MealLoad; index: number;
   planned?: Partial<Record<'MENU' | 'OPCION', string>>;
   onSave?: (bed: Bed, comida: MealSlot, data: { spItemId?: string; tipo: 'MENU' | 'OPCION' | 'OTROS'; detalle: string; observaciones: string }) => Promise<{ ok: boolean; error?: string }>;
-  onRemove?: (bed: Bed, comida: MealSlot, spItemId: string) => void | Promise<void>;
+  onRemove?: (bed: Bed, comida: MealSlot, spItemId: string, motivo?: string) => void | Promise<void>;
   onDiscardDraft?: () => void;
 }> = ({ bed, slot, companion, index, planned, onSave, onRemove, onDiscardDraft }) => {
   const [tipo, setTipo] = useState<'MENU' | 'OPCION' | 'OTROS' | ''>(companion?.tipo ?? '');
@@ -496,6 +530,10 @@ const CompanionEditor: React.FC<{
   const [obs, setObs] = useState(companion?.observaciones ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Quitar un acompañante YA GUARDADO = anularlo → pide motivo (igual que el titular). Un draft
+  // se descarta sin motivo (no existe en SP todavía).
+  const [removing, setRemoving] = useState(false);
+  const [removeMotivo, setRemoveMotivo] = useState('');
   const editedRef = React.useRef(false);
 
   const sig = `${companion?.spItemId ?? ''}|${companion?.at ?? ''}`;
@@ -531,16 +569,44 @@ const CompanionEditor: React.FC<{
           Acompañante {index}
           {entregada && <span className="ml-1.5 text-emerald-600">· Entregada</span>}
         </span>
-        <button type="button" title="Eliminar acompañante"
-          onClick={async () => {
-            if (!companion) { onDiscardDraft?.(); return; }   // draft → se descarta sin red
-            setSaving(true);
-            try { await onRemove?.(bed, slot, companion.spItemId); } finally { setSaving(false); }
+        {/* Bloqueado si la bandeja del acompañante ya se entregó (congelada, como el titular).
+            Un draft (sin companion) o un acompañante pendiente sí se pueden quitar. */}
+        <button type="button" disabled={entregada || removing}
+          title={entregada ? 'Ya entregada — volvela a pendiente desde el panel para poder quitarla' : 'Eliminar acompañante'}
+          onClick={() => {
+            if (!companion) { onDiscardDraft?.(); return; }   // draft → se descarta sin red ni motivo
+            setRemoveMotivo(''); setRemoving(true);            // guardado → pide motivo
           }}
-          className="w-5 h-5 rounded flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50">
+          className="w-5 h-5 rounded flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-300">
           <X className="w-3 h-3" />
         </button>
       </div>
+
+      {/* Prompt inline de motivo al quitar un acompañante guardado (anular). */}
+      {removing && companion && (
+        <div className="rounded-lg border border-red-200 bg-red-50/60 p-2 space-y-1.5">
+          <p className="text-[9px] font-bold uppercase tracking-wide text-red-600">Motivo de anulación</p>
+          <textarea
+            autoFocus value={removeMotivo} onChange={e => setRemoveMotivo(e.target.value)} rows={2} maxLength={500}
+            placeholder="Ej: cambio de dieta, ya no come el acompañante…"
+            className="w-full rounded-lg border border-red-200 px-2 py-1 text-[10px] resize-none focus:outline-none focus:ring-2 focus:ring-red-200" />
+          <div className="flex gap-2">
+            <Button size="sm" disabled={!removeMotivo.trim() || saving}
+              onClick={async () => {
+                setSaving(true);
+                try { await onRemove?.(bed, slot, companion.spItemId, removeMotivo.trim()); setRemoving(false); }
+                finally { setSaving(false); }
+              }}
+              className="flex-1 h-7 text-[10px] font-bold rounded-lg bg-red-600 hover:bg-red-700 text-white disabled:opacity-40">
+              {saving ? 'Quitando…' : 'Confirmar'}
+            </Button>
+            <Button variant="outline" size="sm" disabled={saving} onClick={() => setRemoving(false)}
+              className="h-7 px-3 text-[10px] font-bold rounded-lg border-slate-200 text-slate-500 hover:bg-slate-100">
+              Cancelar
+            </Button>
+          </div>
+        </div>
+      )}
       <div className="flex gap-1">
         {(['MENU', 'OPCION', 'OTROS'] as const).map(op => (
           <button key={op} type="button" onClick={() => pickTipo(op)} aria-pressed={tipo === op}

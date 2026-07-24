@@ -10,10 +10,11 @@ import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popove
 import { Calendar } from '../components/ui/calendar';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Label } from '../components/ui/label';
-import { Utensils, User as UserIcon, Clock, RefreshCw, Calendar as CalendarIcon, FileDown, CalendarDays, Check, X, Undo2, Loader2, Search } from 'lucide-react';
+import { Utensils, User as UserIcon, Clock, RefreshCw, Calendar as CalendarIcon, FileDown, FileSpreadsheet, CalendarDays, Check, X, Undo2, Loader2, Search } from 'lucide-react';
 import { Input } from '../components/ui/input';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import * as XLSX from 'xlsx';
 
 // display map (copiado de BedsView, igual que CleaningManagementView).
 const AREA_LABELS: Record<string, string> = {
@@ -108,6 +109,27 @@ const STATUS_PILL: Record<ComandaStatus, { label: string; cls: string }> = {
   [COMANDA_STATUS.ENTREGADO]: { label: 'Entregado', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
   [COMANDA_STATUS.ANULADA]:   { label: 'Anulada',   cls: 'bg-slate-100 text-slate-400 border-slate-200' },
 };
+
+// ── Colores de los pills para el PDF ────────────────────────────────────────
+// El PDF "como la grilla" repite los mismos tonos de pantalla; jspdf necesita RGB, no clases.
+// Turno = bg-*-50 / text-*-700 (MEAL_PILL_CLS); Tipo = bg-*-100 / text-*-700 (comandaTipoPill de
+// BedsView); Estado = los tonos de STATUS_PILL. Si cambia un color en pantalla, cambiarlo acá.
+type Rgb = [number, number, number];
+const PDF_TURNO_RGB: Record<MealSlot, { fill: Rgb; text: Rgb }> = {
+  desayuno: { fill: [255, 247, 237], text: [194, 65, 12] },   // orange-50 / orange-700
+  almuerzo: { fill: [240, 249, 255], text: [3, 105, 161] },   // sky-50 / sky-700
+  merienda: { fill: [255, 241, 242], text: [190, 18, 60] },   // rose-50 / rose-700
+  cena:     { fill: [245, 243, 255], text: [109, 40, 217] },  // violet-50 / violet-700
+};
+const PDF_NEUTRAL_RGB: { fill: Rgb; text: Rgb } = { fill: [248, 250, 252], text: [71, 85, 105] }; // slate-50 / slate-600
+const pdfTipoRgb = (t?: string): { fill: Rgb; text: Rgb } =>
+  t === 'MENU'   ? { fill: [209, 250, 229], text: [4, 120, 87] }    // emerald-100 / emerald-700
+  : t === 'OPCION' ? { fill: [254, 243, 199], text: [180, 83, 9] }  // amber-100 / amber-700
+  : { fill: [224, 231, 255], text: [67, 56, 202] };                 // indigo-100 / indigo-700
+const pdfEstadoRgb = (s: ComandaStatus): { fill: Rgb; text: Rgb } =>
+  s === COMANDA_STATUS.ENTREGADO ? { fill: [236, 253, 245], text: [4, 120, 87] }   // emerald-50 / emerald-700
+  : s === COMANDA_STATUS.ANULADA ? { fill: [241, 245, 249], text: [148, 163, 184] } // slate-100 / slate-400
+  : { fill: [255, 251, 235], text: [180, 83, 9] };                                  // amber-50 / amber-700
 
 /**
  * Estado de la bandeja + sus acciones.
@@ -427,32 +449,21 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
   }, [data, indexed, searchFilter]); // eslint-disable-line react-hooks/exhaustive-deps
   const filtrando = terms.length > 0;
 
-  // Descarga la tabla actual (De hoy / Histórico) a PDF con jspdf-autotable.
-  const handlePdf = () => {
+  // Construye la tabla exportable (encabezados + filas) a partir de lo FILTRADO en pantalla.
+  // La comparten PDF y Excel para que exporten exactamente las mismas columnas y datos.
+  // "Fecha y hora" solo en el histórico. "Entrega": en el histórico o en la vista Entregadas de
+  // hoy — la hora de entrega ya se ve en pantalla; en Pendientes la columna no aporta (todo '—').
+  const buildExportTable = () => {
     const showDate = tab === 'historico';
-    // La vista Entregadas muestra la hora de entrega en pantalla (StatusCell) → el papel
-    // tiene que decir lo mismo. En Pendientes la columna no aporta (todo '—').
     const showEntrega = showDate || vistaHoy === 'entregadas';
-    const doc = new jsPDF({ orientation: 'landscape' });
-    const title = tab === 'activas'
-      ? (vistaHoy === 'entregadas' ? 'Comandas — Entregadas hoy' : 'Comandas — De hoy')
-      : `Comandas — ${formatDateReadable(from)} a ${formatDateReadable(to)}`;
-    doc.setFontSize(14); doc.setTextColor(2, 44, 34); doc.text(title, 14, 15); // verde Gamma #022C22
-    doc.setFontSize(9); doc.setTextColor(120);
-    // El PDF exporta lo FILTRADO: si el usuario buscó algo, el papel tiene que decir lo mismo
-    // que la pantalla. Se deja constancia del término en el subtítulo.
-    doc.text(`${filtered.length} comanda(s)${filtrando ? ` · filtro: "${searchFilter.trim()}"` : ''} · generado ${new Date().toLocaleString('es-AR')}`, 14, 21);
-    doc.setTextColor(0);
-    // El PDF lo lee cocina en papel: ubicación en una sola columna (la cama ya dice el piso) y
-    // observaciones pegadas a la comanda, que es como se leen.
-    // "Entrega" solo en el histórico: hora en que se marcó entregada ('—' si quedó
-    // pendiente; anuladas muestran la hora de anulación con el label del estado).
-    const head = [['Paciente', 'Ubicación', 'Turno', 'Comensal', 'Tipo', 'Comanda', 'Registró', ...(showDate ? ['Fecha y hora'] : []), ...(showEntrega ? ['Entrega'] : [])]];
-    const body = filtered.map(r => [
+    const head: string[] = ['Paciente', 'Ubicación', 'Turno', 'Comensal', 'Tipo', 'Comanda', 'Registró', ...(showDate ? ['Fecha y hora'] : []), ...(showEntrega ? ['Entrega'] : [])];
+    // Ubicación en una sola columna (la cama ya dice el piso); "Entrega" = hora en que se marcó
+    // entregada ('—' si quedó pendiente; anuladas muestran la hora de anulación con el estado).
+    const body: string[][] = filtered.map(r => [
       r.patientName,
       formatBedName(r.bedLabel) + (sectorEsRedundante(r.area, r.bedLabel) ? '' : ` · ${areaLabel(r.area)}`),
       r.comida, r.comensal, comandaTipoPill(r.tipo).label,
-      r.detalle || '—' , r.by || '—',
+      r.detalle || '—', r.by || '—',
       ...(showDate ? [fmtWhen(r.at)] : []),
       ...(showEntrega ? [
         r.status === COMANDA_STATUS.ANULADA
@@ -460,19 +471,122 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
           : (r.status === COMANDA_STATUS.ENTREGADO ? (fmtCierre(r.closedAt, r.at) || '✓') : '—'),
       ] : []),
     ]);
-    autoTable(doc, {
-      head, body, startY: 26,
-      styles: { fontSize: 8, cellPadding: 2, overflow: 'linebreak' },
-      headStyles: { fillColor: [2, 44, 34], textColor: 255, fontStyle: 'bold' }, // verde Gamma #022C22
-      alternateRowStyles: { fillColor: [240, 253, 244] },                        // tinte verde suave (emerald-50)
-      // Índice de 'Comanda' (el texto largo). Apunta por POSICIÓN: si se agrega una columna
-      // antes, hay que correrlo.
-      columnStyles: { 5: { cellWidth: 70 } },
+    return { head, body };
+  };
+
+  // Nombre base del archivo (sin extensión), común a PDF y Excel.
+  const exportFname = () => (tab === 'activas'
+    ? `Comandas HPR - ${vistaHoy === 'entregadas' ? 'Entregadas ' : ''}${todayStr}`
+    : `Comandas HPR - ${from} al ${to}`);
+
+  // Descarga la vista actual a PDF REPRODUCIENDO LA GRILLA de pantalla (jspdf-autotable):
+  // mismas 6 columnas (Paciente con la cama debajo · Turno · Tipo · Comanda con observaciones ·
+  // Registró · Estado con la hora de cierre), los mismos pills de color, y SIN los botones de
+  // acción (el papel es lectura). El Excel sigue siendo la tabla plana (buildExportTable).
+  const handlePdf = () => {
+    const doc = new jsPDF({ orientation: 'landscape' });
+    const title = tab === 'activas'
+      ? (vistaHoy === 'entregadas' ? 'Comandas — Entregadas hoy' : 'Comandas — De hoy')
+      : `Comandas — ${formatDateReadable(from)} a ${formatDateReadable(to)}`;
+    doc.setFontSize(14); doc.setTextColor(2, 44, 34); doc.text(title, 14, 15); // verde Gamma #022C22
+    doc.setFontSize(9); doc.setTextColor(120);
+    // El PDF exporta lo FILTRADO: si el usuario buscó algo, el papel dice lo mismo que la pantalla.
+    doc.text(`${filtered.length} comanda(s)${filtrando ? ` · filtro: "${searchFilter.trim()}"` : ''} · generado ${new Date().toLocaleString('es-AR')}`, 14, 21);
+    doc.setTextColor(0);
+
+    // Datos derivados por fila (los usan el cuerpo de la tabla y los hooks de dibujo). El orden es
+    // el de `filtered`, que ya viene en orden de despacho (piso → cama → turno → comensal).
+    const rows = filtered.map(r => {
+      const esAcomp = r.comensal !== 'Paciente';
+      const verSector = !sectorEsRedundante(r.area, r.bedLabel);
+      const bedLine = formatBedName(r.bedLabel) + (verSector ? ` · ${areaLabel(r.area)}` : '');
+      const anulada = r.status === COMANDA_STATUS.ANULADA;
+      const cierre = r.status !== COMANDA_STATUS.PENDIENTE ? fmtCierre(r.closedAt, r.at) : '';
+      const est = STATUS_PILL[r.status] ?? STATUS_PILL[COMANDA_STATUS.PENDIENTE];
+      return { r, esAcomp, verSector, bedLine, anulada, cierre, est };
     });
-    const fname = tab === 'activas'
-      ? `Comandas HPR - ${vistaHoy === 'entregadas' ? 'Entregadas ' : ''}${todayStr}.pdf`
-      : `Comandas HPR - ${from} al ${to}.pdf`;
-    doc.save(fname);
+
+    const body = rows.map(g => [
+      // Col 0 (Paciente): se dibuja a mano en didDrawCell (nombre en negrita + cama en gris + pill
+      // de acompañante). El contenido de texto acá es solo para que autotable calcule la altura.
+      `${g.esAcomp ? g.r.comensal + '\n' : ''}${g.r.patientName}\n${g.bedLine}`,
+      comidaPill(g.r.slot, g.r.comida).label,                    // Turno
+      comandaTipoPill(g.r.tipo).label,                            // Tipo
+      // Comanda + observaciones (la grilla siempre dice algo; un hueco vacío se lee como dato faltante).
+      `${g.r.detalle || '—'}\n${g.r.observaciones || 'Sin observaciones'}${g.anulada && g.r.motivoAnulacion ? `\nMotivo anulación: ${g.r.motivoAnulacion}` : ''}`,
+      `${g.r.by || '—'}\n${fmtWhen(g.r.at)}`,                      // Registró (quién + cuándo)
+      `${g.est.label}${g.cierre ? `\n${g.cierre}` : ''}`,         // Estado + hora de cierre (sin acciones)
+    ]);
+
+    autoTable(doc, {
+      head: [['Paciente', 'Turno', 'Tipo', 'Comanda', 'Registró', 'Estado']],
+      body, startY: 26,
+      theme: 'grid',
+      styles: { fontSize: 8, cellPadding: 2, overflow: 'linebreak', valign: 'top', textColor: [30, 41, 59], lineColor: [226, 232, 240], lineWidth: 0.1 }, // slate-800 / slate-200
+      headStyles: { fillColor: [2, 44, 34], textColor: 255, fontStyle: 'bold', valign: 'middle', lineColor: [2, 44, 34] }, // verde Gamma #022C22
+      // Anchos ~proporcionales a la grilla (24/10/9/26/14/17 % → 269 mm útiles en A4 apaisado).
+      columnStyles: {
+        0: { cellWidth: 62, fontSize: 9 },                                  // el 9 da altura de sobra para el dibujo a mano
+        1: { cellWidth: 24, halign: 'center', valign: 'middle', fontStyle: 'bold', fontSize: 7.5 },
+        2: { cellWidth: 22, halign: 'center', valign: 'middle', fontStyle: 'bold', fontSize: 7.5 },
+        3: { cellWidth: 73 },
+        4: { cellWidth: 40, fontSize: 7.5, textColor: [100, 116, 139] },    // slate-500
+        5: { cellWidth: 47, halign: 'center', valign: 'middle', fontStyle: 'bold', fontSize: 7.5 },
+      },
+      // Pinta los pills de color (Turno/Tipo/Estado) y atenúa las anuladas, igual que en pantalla.
+      didParseCell: (data) => {
+        if (data.section !== 'body') return;
+        const g = rows[data.row.index];
+        if (!g) return;
+        const ci = data.column.index;
+        if (ci === 1) { const c = g.r.slot ? PDF_TURNO_RGB[g.r.slot] : PDF_NEUTRAL_RGB; data.cell.styles.fillColor = c.fill; data.cell.styles.textColor = c.text; }
+        else if (ci === 2) { const c = pdfTipoRgb(g.r.tipo); data.cell.styles.fillColor = c.fill; data.cell.styles.textColor = c.text; }
+        else if (ci === 5) { const c = pdfEstadoRgb(g.r.status); data.cell.styles.fillColor = c.fill; data.cell.styles.textColor = c.text; }
+        else if (g.anulada) { data.cell.styles.textColor = [148, 163, 184]; } // slate-400: anulada = auditoría, atenuada
+      },
+      // Col 0 (Paciente) a mano: la celda de autotable no permite dos estilos por celda, así que se
+      // borra su texto por defecto (rectángulo blanco interior, respetando el borde) y se redibuja.
+      didDrawCell: (data) => {
+        if (data.section !== 'body' || data.column.index !== 0) return;
+        const g = rows[data.row.index];
+        if (!g) return;
+        const { x, y, width, height } = data.cell;
+        doc.setFillColor(255, 255, 255);
+        doc.rect(x + 0.35, y + 0.35, width - 0.7, height - 0.7, 'F');
+        const left = x + 2.2;
+        const maxW = width - 4.4;
+        let cy = y + 3.4;
+        const dim = g.anulada;
+        if (g.esAcomp) {
+          doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5);
+          doc.setTextColor(...(dim ? [148, 163, 184] as Rgb : [13, 148, 136] as Rgb)); // teal-600
+          doc.text(g.r.comensal.toUpperCase(), left, cy); cy += 3.1;
+        }
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
+        doc.setTextColor(...(dim ? [148, 163, 184] as Rgb : [30, 41, 59] as Rgb));       // slate-800
+        for (const nl of doc.splitTextToSize(g.r.patientName, maxW) as string[]) { doc.text(nl, left, cy); cy += 3.4; }
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7);
+        doc.setTextColor(...(dim ? [203, 213, 225] as Rgb : [100, 116, 139] as Rgb));    // slate-500
+        for (const bl of doc.splitTextToSize(g.bedLine, maxW) as string[]) { doc.text(bl, left, cy); cy += 3.1; }
+        // Reset para que no se filtre a las celdas que autotable dibuja después.
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(30, 41, 59);
+      },
+    });
+    doc.save(`${exportFname()}.pdf`);
+  };
+
+  // Descarga la tabla actual (De hoy / Histórico) a Excel (.xlsx) con SheetJS.
+  // Mismas columnas y filtrado que el PDF; una sola hoja "Comandas".
+  const handleExcel = () => {
+    const { head, body } = buildExportTable();
+    const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
+    // Anchos de columna aproximados para que se lea sin tener que estirar a mano.
+    // Sigue el orden de `head`; "Comanda" (texto largo) más ancho.
+    const widths = [22, 26, 10, 12, 16, 40, 18, 18, 16];
+    ws['!cols'] = head.map((_, i) => ({ wch: widths[i] ?? 16 }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Comandas');
+    XLSX.writeFile(wb, `${exportFname()}.xlsx`);
   };
 
   // Mensaje del vacío: el buscador manda (decir "no hay comandas" cuando el filtro no
@@ -572,6 +686,10 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
         <Button variant="outline" size="sm" onClick={handlePdf} disabled={filtered.length === 0}
           className="h-9 px-3 rounded-lg gap-2 text-xs font-bold text-indigo-700 border-indigo-200 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50">
           <FileDown className="w-4 h-4" /> PDF
+        </Button>
+        <Button variant="outline" size="sm" onClick={handleExcel} disabled={filtered.length === 0}
+          className="h-9 px-3 rounded-lg gap-2 text-xs font-bold text-green-700 border-green-200 bg-green-50 hover:bg-green-100 disabled:opacity-50">
+          <FileSpreadsheet className="w-4 h-4" /> Excel
         </Button>
         {canSeePlan && (
           <Button variant="outline" size="sm" onClick={() => setPlanOpen(true)}
@@ -751,13 +869,17 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
             <p className="text-xs text-slate-400 font-medium">Es obligatorio documentar el motivo — queda en el histórico.</p>
             <div className="grid gap-1.5">
               <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Motivo de anulación</Label>
-              <Input
+              {/* textarea (no input de 1 línea): un motivo puede ser una frase larga.
+                  Ctrl/⌘+Enter confirma; Enter solo hace salto de línea. */}
+              <textarea
                 autoFocus
                 value={motivoInput}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setMotivoInput(e.target.value)}
-                onKeyDown={(e: React.KeyboardEvent) => { if (e.key === 'Enter') confirmAnular(); }}
+                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setMotivoInput(e.target.value)}
+                onKeyDown={(e: React.KeyboardEvent) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) confirmAnular(); }}
+                rows={3}
+                maxLength={500}
                 placeholder="Ej: el paciente pasó a ayuno, alta, cambio de dieta…"
-                className="h-10 rounded-xl"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm resize-y min-h-[72px] focus:outline-none focus:ring-2 focus:ring-red-200"
               />
             </div>
           </div>

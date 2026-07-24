@@ -560,6 +560,26 @@ async function handler(req: any, res: any) {
       }
       if (!itemId) return res.status(200).json({ ok: true, message: 'No active meal load found' });
 
+      // Un plato ENTREGADO está congelado: es un hecho (salió de la cocina). No se puede anular
+      // ni editar directo — hay que volverlo a pendiente primero (paso explícito y auditable).
+      // El panel ya lo respeta (solo ofrece "volver a pendiente"); acá se cierra el mismo hueco
+      // para el botón "Quitar" del editor del mapa, que pegaba directo con `spItemId` y podía
+      // dar de baja una bandeja entregada sin dejar rastro. `pendiente` (deshacer) sí se permite.
+      if (act === 'anular') {
+        const cur = await graphFetch(`${basePath}/${itemId}?$expand=fields`, {
+          headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' },
+        });
+        if (cur.ok) {
+          const st = String(((await cur.json()) as any)?.fields?.Status_D ?? '');
+          if (st === ST_ENTREGADO) {
+            return res.status(409).json({
+              error: 'comanda_entregada',
+              message: 'La comanda ya fue entregada. Volvela a pendiente desde el panel de Comandas para poder anularla.',
+            });
+          }
+        }
+      }
+
       let spRes = await graphFetch(`${basePath}/${itemId}/fields`, { method: 'PATCH', body: JSON.stringify(fields) });
       // Blindaje de orden de deploy: si SP rechaza porque la columna MotivoAnulacion_D todavía
       // no existe (400 cuando este código llega antes de crearla), NO se rompe la anulación —
