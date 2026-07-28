@@ -97,6 +97,49 @@ const isPreventiveContact = (iso: IsolationEntry) => normIsoName(iso.name).inclu
 const isPreventiveOnlyBed = (bed: Bed) =>
   (bed.isolations?.length ?? 0) > 0 && bed.isolations!.every(isPreventiveContact);
 
+// Áreas con cubículos/lugares físicamente independientes (UCO, UTI, ITR, HRA): no se bloquean
+// entre sí cuando un paciente está aislado. A nivel módulo para poder testear computeIsolationBlocks.
+const CRITICAL_AREAS_NO_BLOCK: Area[] = [Area.HUC, Area.HUT, Area.HIT, Area.HRA];
+
+/**
+ * Camas afectadas por el aislamiento de un COMPAÑERO de habitación:
+ *  · blocked    → bloqueo duro (violeta/"inhabilitada"): hay un aislamiento no-preventivo.
+ *  · preventive → solo Contacto preventivo: se señaliza (cyan), no se inhabilita.
+ *
+ * SOLO se marcan camas LIBRES (Disponible / En preparación). El bloqueo existe para no ASIGNAR
+ * un paciente nuevo en una habitación con aislamiento; una cama ya OCUPADA (o Asignada, con un
+ * traslado en curso) tiene su paciente adentro — grisarla la hacía ver "inhabilitada", que es el
+ * bug reportado (dos camas ocupadas en un cuarto, una se aísla y la otra quedaba gris).
+ * Exportada para testearla contra la función real.
+ */
+export function computeIsolationBlocks(
+  beds: Bed[], isolatedBeds: Set<string>,
+): { blocked: Set<string>; preventive: Set<string> } {
+  const blocked = new Set<string>();
+  const preventive = new Set<string>();
+  const roomMap = new Map<string, Bed[]>();
+  for (const bed of beds) {
+    if (!bed.roomCode) continue;
+    if (!roomMap.has(bed.roomCode)) roomMap.set(bed.roomCode, []);
+    roomMap.get(bed.roomCode)!.push(bed);
+  }
+  for (const [, roomBeds] of roomMap) {
+    if (roomBeds.some(b => CRITICAL_AREAS_NO_BLOCK.includes(b.area))) continue;
+    const isolatedInRoom = roomBeds.filter(b => isolatedBeds.has(b.label));
+    if (isolatedInRoom.length === 0) continue;
+    const roomHasHard = isolatedInRoom.some(b => !isPreventiveOnlyBed(b));
+    const roomHasPreventive = isolatedInRoom.some(b => (b.isolations ?? []).some(isPreventiveContact));
+    for (const b of roomBeds) {
+      if (isolatedBeds.has(b.label)) continue;
+      // Solo camas asignables: una ocupada/asignada ya tiene paciente, no se bloquea.
+      if (b.status !== BedStatus.AVAILABLE && b.status !== BedStatus.PREPARATION) continue;
+      if (roomHasHard) blocked.add(b.label);
+      else if (roomHasPreventive) preventive.add(b.label);
+    }
+  }
+  return { blocked, preventive };
+}
+
 // Zócalo de totales al pie de los PDF de camas. Ocupadas = Ocupada + Asignada; los
 // porcentajes dejan afuera "En preparación" (camas en tránsito, no computan ocupación):
 //   · s/Habilitadas = Ocupadas / (Ocupadas + Libres)          → excluye Prep e Inhabilitadas
@@ -741,42 +784,11 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   const getIsolationTypes = (bed: Bed): IsolationEntry[] => bed.isolations ?? [];
 
   // Rooms that have an isolated patient — other beds in same room are blocked.
-  // Excepción: áreas con cubículos/lugares físicamente independientes (UCO, UTI, ITR, HRA)
-  // no se bloquean entre sí cuando un paciente está aislado.
-  const CRITICAL_AREAS_NO_BLOCK: Area[] = [Area.HUC, Area.HUT, Area.HIT, Area.HRA];
-  // Dos conjuntos de camas según el aislamiento del compañero de habitación:
-  //  · blockedByIsolation       → bloqueo DURO (gris/violeta, "inhabilitada"): hay un
-  //    aislamiento que no es Contacto preventivo en la habitación.
-  //  · preventiveContactAdjacent → solo Contacto preventivo en la habitación: la cama NO
-  //    se inhabilita, se marca con color propio (cyan). El bloqueo duro tiene prioridad.
+  // Camas según el aislamiento del compañero de habitación (ver computeIsolationBlocks):
+  //  · blockedByIsolation       → bloqueo DURO (violeta/"inhabilitada"), SOLO camas libres.
+  //  · preventiveContactAdjacent → Contacto preventivo: señalización cyan, no inhabilita.
   const { blockedByIsolation, preventiveContactAdjacent } = useMemo(() => {
-    const blocked = new Set<string>();
-    const preventive = new Set<string>();
-    // Group beds by roomCode
-    const roomMap = new Map<string, Bed[]>();
-    for (const bed of beds) {
-      if (!bed.roomCode) continue;
-      if (!roomMap.has(bed.roomCode)) roomMap.set(bed.roomCode, []);
-      roomMap.get(bed.roomCode)!.push(bed);
-    }
-    // For each room, if any bed is isolated, block the others
-    for (const [, roomBeds] of roomMap) {
-      // Si CUALQUIER cama de la habitación está en un sector crítico, todo el cuarto se exime.
-      // (Una habitación vive entera en un solo sector, pero el check es defensivo.)
-      const inCriticalArea = roomBeds.some(b => CRITICAL_AREAS_NO_BLOCK.includes(b.area));
-      if (inCriticalArea) continue;
-      const isolatedInRoom = roomBeds.filter(b => isolatedBeds.has(b.label));
-      if (isolatedInRoom.length === 0) continue;
-      // Bloqueo duro si hay al menos un aislamiento que NO sea "solo preventivo" (incluye
-      // el caso de una cama sin info de tipos → se trata como duro, comportamiento previo).
-      const roomHasHard = isolatedInRoom.some(b => !isPreventiveOnlyBed(b));
-      const roomHasPreventive = isolatedInRoom.some(b => (b.isolations ?? []).some(isPreventiveContact));
-      for (const b of roomBeds) {
-        if (isolatedBeds.has(b.label)) continue;
-        if (roomHasHard) blocked.add(b.label);
-        else if (roomHasPreventive) preventive.add(b.label);
-      }
-    }
+    const { blocked, preventive } = computeIsolationBlocks(beds, isolatedBeds);
     return { blockedByIsolation: blocked, preventiveContactAdjacent: preventive };
   }, [beds, isolatedBeds]);
 
