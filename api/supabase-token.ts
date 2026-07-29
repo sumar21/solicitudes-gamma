@@ -25,6 +25,10 @@ async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  // CRÍTICO: un token es de un solo uso lógico. Sin esto, el browser o el CDN de Vercel pueden
+  // cachear la respuesta GET y devolver SIEMPRE el mismo pase (ya vencido) → loop de tokens
+  // muertos. `no-store` en el server + `cache: 'no-store'` en el fetch del cliente lo evita.
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   if (!SUPABASE_JWT_SECRET) {

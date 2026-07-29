@@ -41,7 +41,13 @@ async function getPase(): Promise<string> {
   const mediflow = typeof localStorage !== 'undefined' ? localStorage.getItem('mediflow_token') : null;
   if (!mediflow) { paseCache = null; return ''; }
   try {
-    const r = await fetch('/api/supabase-token', { headers: { Authorization: `Bearer ${mediflow}` } });
+    // `cache: 'no-store'` es OBLIGATORIO: sin esto el browser puede servir un pase viejo desde su
+    // HTTP cache y nunca renovarlo (aunque mi cache JS haya vencido) → tokens muertos en loop.
+    // Va de la mano del header `Cache-Control: no-store` que devuelve /api/supabase-token.
+    const r = await fetch('/api/supabase-token', {
+      headers: { Authorization: `Bearer ${mediflow}` },
+      cache: 'no-store',
+    });
     if (!r.ok) { paseCache = null; return ''; }
     const { token, expiresIn } = await r.json() as { token: string; expiresIn: number };
     paseCache = { token, exp: now + (expiresIn ?? 3600) * 1000 };
