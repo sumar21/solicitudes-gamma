@@ -115,6 +115,7 @@ const routes: Record<string, () => Promise<any>> = {
   '/api/cron-trigger-testing': () => import('./api/cron-trigger-testing'),
   '/api/cron-cleanup-notifs': () => import('./api/cron-cleanup-notifs'),
   '/api/client-ip':          () => import('./api/client-ip'),
+  '/api/supabase-token':     () => import('./api/supabase-token'),
 };
 
 const server = createServer(async (req, res) => {
