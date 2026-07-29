@@ -2708,6 +2708,13 @@ export const useHospitalState = () => {
     let cancelled = false;
     const REVALIDATE_MS = 60 * 1000;
 
+    // Histéresis: NO patear al primer allowed:false. Exigimos N ciclos consecutivos denegados
+    // (~3 min con el interval de 60s) para tolerar flakes transitorios (IP que rota entre WANs,
+    // geo ruidosa, cache server de 60s, o una instancia fría que devolvió mal el bypass). Se
+    // resetea ante cualquier allowed:true. Mantiene el contrato "usuario que se fue es expulsado".
+    let consecutiveFails = 0;
+    const KICK_AFTER_FAILS = 3;
+
     const postValidate = (coords: GeoCoords | null) =>
       fetch('/api/validate-location', {
         method: 'POST',
@@ -2737,8 +2744,14 @@ export const useHospitalState = () => {
         }
 
         if (data?.allowed === false) {
+          // Re-chequeo: si el bypass del rol ya sanó en la sesión (syncSessionRole), no patear.
+          if (currentUserRef.current?.bypassLocationCheck) { consecutiveFails = 0; return; }
+          consecutiveFails++;
+          if (consecutiveFails < KICK_AFTER_FAILS) return; // histéresis: esperar N fallos seguidos
           setLoginError(data?.reason ?? 'Ubicación no autorizada — re-ingresá desde una red autorizada.');
           handleLogout();
+        } else {
+          consecutiveFails = 0; // cualquier allowed (o respuesta no-false) resetea la cuenta
         }
       } catch {
         // Fail-open: errores de red NO patean al usuario.

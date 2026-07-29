@@ -26,20 +26,21 @@ commiteado → elimina las notificaciones duplicadas (no hay más doble-PATCH ni
    ```
    Los VAPID son los MISMOS que ya usa Vercel (`VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`).
 
-2. **Deploy** de la función:
+2. **Deploy** de la función con **`verify_jwt=false`**:
    ```bash
-   supabase functions deploy notify-push --project-ref <ref>
+   supabase functions deploy notify-push --project-ref <ref> --no-verify-jwt
    ```
-   (o vía el MCP: `deploy_edge_function`).
+   (o vía el MCP: `deploy_edge_function` con `verify_jwt:false`).
+   ⚠️ `verify_jwt=false` es OBLIGATORIO: el proyecto usa las API keys nuevas (`sb_publishable_`/
+   `sb_secret_`), que NO son JWTs, así que el `verify_jwt` de la plataforma las rechazaría. La
+   autorización se hace en la función con `WEBHOOK_SECRET`.
 
-3. **Database Webhook** (dashboard → Database → Webhooks → Create):
-   - Tabla: `public.traslados`
-   - Eventos: **Insert** + **Update**
-   - Tipo: **Supabase Edge Function** → `notify-push`
-   - Header HTTP: `x-webhook-secret: <el mismo WEBHOOK_SECRET del paso 1>`
-   - El payload por defecto (`{ type, table, schema, record, old_record }`) es el que la función espera.
-     `old_record` es imprescindible: sin él no se distingue un cambio de status real de una edición
-     de destino/observación.
+3. **Database Webhook** = trigger pg_net, versionado en SQL (ver
+   `supabase/migrations/…_webhook_notify_push_traslados.sql`, ya aplicado). Crea `net.http_post`
+   sobre `public.traslados` (INSERT+UPDATE) con el payload `{type, table, schema, record, old_record}`.
+   `old_record` es imprescindible: sin él no se distingue un cambio de status real de una edición
+   de destino/observación. Para hardening en prod: setear `WEBHOOK_SECRET` (secret de la función) y
+   agregar el header `'x-webhook-secret'` al `net.http_post` del trigger.
 
 ## Notas
 

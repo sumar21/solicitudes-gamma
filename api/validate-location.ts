@@ -12,6 +12,8 @@
 
 import { requireAuth } from './jwt.js';
 import { checkRequestLocationFull, getClientIp } from './location-check.js';
+import { getUserAreasById } from './user-cache.js';
+import { getRoleByName } from './role-cache.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 
@@ -28,6 +30,26 @@ async function handler(req: any, res: any) {
   if (!sede) return res.status(400).json({ error: 'sede is required' });
 
   const clientIp = getClientIp(req);
+
+  // Bypass por ROL, AUTORITATIVO server-side: si el rol del usuario tiene bypassLocationCheck,
+  // no se evalúa IP/GPS. Clave: NO depende del flag `bypassLocationCheck` del cliente (que se
+  // hidrata solo en login y puede quedar viejo) → mata el kick espurio a roles con bypass. Si el
+  // lookup del rol falla (instancia fría / hipo de DB), se cae al chequeo normal (fail-safe:
+  // preferimos chequear ubicación ante la duda; la histéresis del cliente cubre el transitorio).
+  try {
+    const userId = String((req as any).user?.id ?? '');
+    if (userId) {
+      const areas = await getUserAreasById(userId);
+      const roleCfg = areas?.perfil ? await getRoleByName(areas.perfil) : null;
+      if (roleCfg?.bypassLocationCheck) {
+        console.log(`[validate-location] sede=${sede} ip=${clientIp} → ✓ method=role_bypass (user=${userId})`);
+        return res.status(200).json({ allowed: true, ip: clientIp, method: 'role_bypass' });
+      }
+    }
+  } catch (e: any) {
+    console.warn('[validate-location] lookup de bypass por rol falló, sigo con IP/GPS:', e?.message ?? e);
+  }
+
   const result = await checkRequestLocationFull({ sede, clientIp, lat, lng });
 
   console.log(
