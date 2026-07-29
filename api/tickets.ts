@@ -1,373 +1,199 @@
 /**
- * Vercel serverless function — CRUD for the "Traslados" SharePoint List.
+ * Vercel serverless function — CRUD de traslados. FUENTE: Supabase public.traslados
+ * (migrado de la lista SP 07.Traslados).
  *
- * GET  /api/tickets          → all non-completed/rejected tickets (active)
- * GET  /api/tickets?all=1    → full history
- * POST /api/tickets          → create ticket  { ...Ticket fields }
- * PATCH /api/tickets         → update ticket  { spItemId, ...fields to update }
+ * GET  /api/tickets          → activos (+ cerrados en la ventana de gracia de 30min)
+ * GET  /api/tickets?all=1    → histórico completo del entorno
+ * GET  /api/tickets?patientCode=X → historial de UN paciente (todos sus tickets)
+ * POST /api/tickets          → crear ticket  { ...Ticket, originAreaName, destinationAreaName }
+ * PATCH /api/tickets         → actualizar    { id|spItemId, ...campos, originArea, destinationArea }
+ *
+ * Escribe con el cliente admin (service_role). El push YA NO sale de acá: lo dispara un Database
+ * Webhook sobre public.traslados → Edge Function notify-push (Fase D). El cliente lee por Realtime;
+ * este GET queda para ?all=1 (Monitor/Historial) y ?patientCode= (historia por cama), on-demand.
  */
-
-import { graphFetch, graphFetchRetry }  from './graph.js';
 import { requireAuth } from './jwt.js';
 import { Ticket, TicketStatus, WorkflowType, SedeType, BedStatus } from '../types.js';
-import { sendPushToSubscribers, effectiveAreaNames } from './push-utils.js';
+import { effectiveAreaNames } from './push-utils.js';
 import { getRoleByName } from './role-cache.js';
 import { getUserAreasById } from './user-cache.js';
+import { getSupabaseAdmin } from './supabase-admin.js';
 
-const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
-const LIST_ID = 'c7417674-9084-416d-a955-7024161a3194'; // 07.Traslados
-
-// Entorno: filtra y etiqueta los items para que producción y testing coexistan
-// en la misma lista sin pisarse. Default seguro 'TESTING' — si la variable no
-// está cargada, no se toca prod por accidente.
 const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 
-/** DJB2 string hash — fast, good distribution, no crypto needed */
+/** DJB2 string hash — para el ETag del GET (no crypto). */
 function simpleHash(str: string): string {
   let hash = 5381;
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) + hash + str.charCodeAt(i)) >>> 0;
-  }
+  for (let i = 0; i < str.length; i++) hash = ((hash << 5) + hash + str.charCodeAt(i)) >>> 0;
   return hash.toString(36);
 }
 
-// ── SP column names (07.Traslados) ──────────────────────────────────────────
-// Title                  → (auto, not used)
-// IDUnivocoTraslado_T    → ticket id (TKT-xxx)
-// TipoTraslado_T         → workflow type
-// CodigoCamaO_T          → origin bed code
-// CamaOrigen_T           → origin bed label
-// Paciente_T             → patient name
-// StatusCamaO_T          → origin bed status
-// StatusCamaD_T          → destination bed status
-// CodigoCamaD_T          → destination bed code
-// CamaDestino_T          → destination bed label
-// CodigoPaciente_T       → patient code
-// Financiador_T          → financier
-// Status_T               → ticket status
-// MotivoCambio_T         → change reason
-// ObservacionesTraslado_T→ observations
-// MotivoCancelacion_T    → rejection/cancellation reason
-// FechaInicio_T          → start date (DateTime)
-// FechaFin_T             → end date (DateTime)
-// Usuario_T              → user who created
-
-// ── SP item → Ticket ─────────────────────────────────────────────────────────
-function spToTicket(item: Record<string, unknown>): Ticket {
-  const f = item.fields as Record<string, unknown>;
-
-  // Cancellation is allowed until a hostess has intervened.
-  // IntervinoAzafata_T is "NO" at creation and flips to "SI" on the first hostess action.
-  const intervenedRaw = f.IntervinoAzafata_T ? String(f.IntervinoAzafata_T).trim().toUpperCase() : '';
-  const intervenedByHostess: 'SI' | 'NO' = intervenedRaw === 'SI' ? 'SI' : 'NO';
-  const canCancel = intervenedByHostess === 'NO';
-
+// ── fila public.traslados → Ticket ────────────────────────────────────────────
+function rowToTicket(r: Record<string, any>): Ticket {
+  // Cancelable hasta que interviene una azafata (intervino_azafata pasa de 'NO' a 'SI').
+  const intervenedByHostess: 'SI' | 'NO' = String(r.intervino_azafata ?? '').trim().toUpperCase() === 'SI' ? 'SI' : 'NO';
   return {
-    spItemId:               String(item.id),
-    id:                     String(f.IDUnivocoTraslado_T ?? ''),
+    // DECISIÓN de la migración: spItemId = id_univoco (el cliente lo trata opaco; persistTicketUpdate
+    // sigue keyando por spItemId, que ahora coincide con id). Se elimina el item-id de SharePoint.
+    spItemId:               String(r.id_univoco ?? ''),
+    id:                     String(r.id_univoco ?? ''),
     sede:                   SedeType.HPR,
-    patientName:            String(f.Paciente_T ?? ''),
-    patientCode:            f.CodigoPaciente_T ? String(f.CodigoPaciente_T) : undefined,
-    origin:                 String(f.CamaOrigen_T ?? ''),
-    originBedCode:          f.CodigoCamaO_T ? String(f.CodigoCamaO_T) : undefined,
-    originBedStatus:        f.StatusCamaO_T ? String(f.StatusCamaO_T) : undefined,
-    destination:            f.CamaDestino_T ? String(f.CamaDestino_T) : null,
-    destinationBedCode:     f.CodigoCamaD_T ? String(f.CodigoCamaD_T) : undefined,
-    destinationBedStatus:   f.StatusCamaD_T ? String(f.StatusCamaD_T) : undefined,
-    workflow:               (f.TipoTraslado_T as WorkflowType) ?? WorkflowType.INTERNAL,
-    status:                 (f.Status_T as TicketStatus) ?? TicketStatus.WAITING_ROOM,
-    createdAt:              String(f.FechaInicio_T ?? ''),
-    completedAt:            f.FechaFin_T ? String(f.FechaFin_T) : undefined,
-    financier:              f.Financiador_T ? String(f.Financiador_T) : undefined,
-    createdBy:              f.Usuario_T ? String(f.Usuario_T) : undefined,
-    createdById:            f.IDUsuario_T ? String(f.IDUsuario_T) : undefined,
-    date:                   f.FechaInicio_T ? String(f.FechaInicio_T) : undefined,
+    patientName:            String(r.paciente ?? ''),
+    patientCode:            r.codigo_paciente ? String(r.codigo_paciente) : undefined,
+    origin:                 String(r.cama_origen ?? ''),
+    originBedCode:          r.cama_origen_codigo ? String(r.cama_origen_codigo) : undefined,
+    originBedStatus:        r.cama_origen_status ? String(r.cama_origen_status) : undefined,
+    destination:            r.cama_destino ? String(r.cama_destino) : null,
+    destinationBedCode:     r.cama_destino_codigo ? String(r.cama_destino_codigo) : undefined,
+    destinationBedStatus:   r.cama_destino_status ? String(r.cama_destino_status) : undefined,
+    workflow:               (r.workflow as WorkflowType) ?? WorkflowType.INTERNAL,
+    status:                 (r.status as TicketStatus) ?? TicketStatus.WAITING_ROOM,
+    createdAt:              String(r.created_at ?? ''),
+    completedAt:            r.completed_at ? String(r.completed_at) : undefined,
+    financier:              r.financiador ? String(r.financiador) : undefined,
+    createdBy:              r.created_by ? String(r.created_by) : undefined,
+    createdById:            r.created_by_id != null ? String(r.created_by_id) : undefined,
+    date:                   r.created_at ? String(r.created_at) : undefined,
     isBedClean:             false,
     isReasonValidated:      true,
-    changeReason:           f.MotivoCambio_T ? String(f.MotivoCambio_T) : undefined,
-    rejectionReason:        f.MotivoCancelacion_T ? String(f.MotivoCancelacion_T) : undefined,
-    observations:           f.ObservacionesTraslado_T ? String(f.ObservacionesTraslado_T) : undefined,
-    targetBedOriginalStatus: f.StatusCamaD_T ? (f.StatusCamaD_T as BedStatus) : undefined,
+    changeReason:           r.motivo_cambio ? String(r.motivo_cambio) : undefined,
+    rejectionReason:        r.motivo_cancelacion ? String(r.motivo_cancelacion) : undefined,
+    observations:           r.observaciones ? String(r.observaciones) : undefined,
+    targetBedOriginalStatus: r.cama_destino_status ? (r.cama_destino_status as BedStatus) : undefined,
     intervenedByHostess,
-    canCancel,
+    canCancel:              intervenedByHostess === 'NO',
   };
 }
 
-// ── Ticket → SP fields (only defined keys are included → safe for PATCH) ─────
-function ticketToFields(t: Partial<Ticket>): Record<string, unknown> {
+// ── Ticket → columnas public.traslados (solo claves definidas → safe para PATCH) ──
+function ticketToRow(t: Partial<Ticket>): Record<string, unknown> {
   const map: [keyof Ticket, string][] = [
-    ['id',                     'IDUnivocoTraslado_T'],
-    ['patientName',            'Paciente_T'],
-    ['patientCode',            'CodigoPaciente_T'],
-    ['origin',                 'CamaOrigen_T'],
-    ['originBedCode',          'CodigoCamaO_T'],
-    ['originBedStatus',        'StatusCamaO_T'],
-    ['destination',            'CamaDestino_T'],
-    ['destinationBedCode',     'CodigoCamaD_T'],
-    ['destinationBedStatus',   'StatusCamaD_T'],
-    ['workflow',               'TipoTraslado_T'],
-    ['status',                 'Status_T'],
-    ['financier',              'Financiador_T'],
-    ['createdAt',              'FechaInicio_T'],
-    ['completedAt',            'FechaFin_T'],
-    ['createdBy',              'Usuario_T'],
-    ['createdById',            'IDUsuario_T'],
-    ['changeReason',           'MotivoCambio_T'],
-    ['rejectionReason',        'MotivoCancelacion_T'],
-    ['observations',           'ObservacionesTraslado_T'],
-    ['intervenedByHostess',    'IntervinoAzafata_T'],
+    ['id',                   'id_univoco'],
+    ['patientName',          'paciente'],
+    ['patientCode',          'codigo_paciente'],
+    ['origin',               'cama_origen'],
+    ['originBedCode',        'cama_origen_codigo'],
+    ['originBedStatus',      'cama_origen_status'],
+    ['destination',          'cama_destino'],
+    ['destinationBedCode',   'cama_destino_codigo'],
+    ['destinationBedStatus', 'cama_destino_status'],
+    ['workflow',             'workflow'],
+    ['status',               'status'],
+    ['financier',            'financiador'],
+    ['createdAt',            'created_at'],
+    ['completedAt',          'completed_at'],
+    ['createdBy',            'created_by'],
+    ['createdById',          'created_by_id'],
+    ['changeReason',         'motivo_cambio'],
+    ['rejectionReason',      'motivo_cancelacion'],
+    ['observations',         'observaciones'],
+    ['intervenedByHostess',  'intervino_azafata'],
   ];
-
-  const fields = Object.fromEntries(
-    map
-      .filter(([key]) => t[key] !== undefined)
-      .map(([key, spKey]) => [spKey, t[key]]),
-  );
-
-  // Title is always [sumar]
-  fields.Title = '[sumar]';
-
-  // IDUsuario_T is a number column in SP
-  if (fields.IDUsuario_T !== undefined) {
-    (fields as Record<string, unknown>).IDUsuario_T = Number(fields.IDUsuario_T);
-  }
-
-  return fields;
+  const row = Object.fromEntries(
+    map.filter(([key]) => t[key] !== undefined).map(([key, col]) => [col, t[key]]),
+  ) as Record<string, unknown>;
+  if (row.created_by_id !== undefined) row.created_by_id = Number(row.created_by_id);
+  return row;
 }
 
-// ── Idempotent create ─────────────────────────────────────────────────────────
-// graphFetchRetry reintenta 429/503/504, pero un POST NO es idempotente: si SharePoint
-// commitea la fila y el gateway igual devuelve 503/504 (timeout post-commit), un reintento
-// ciego insertaría una fila DUPLICADA (SP no impone unicidad sobre IDUnivocoTraslado_T).
-// Para evitarlo, ante un 503/504 chequeamos primero si la fila ya existe por
-// IDUnivocoTraslado_T (+ Entorno) y, si está, la devolvemos como éxito en vez de re-postear.
-// Un 429 nunca commitea → se reintenta sin chequear (es el caso común de throttling en ráfaga).
-// Presupuesto de retry más corto que los crons: hay un usuario esperando sincrónicamente.
-async function createTicketIdempotent(
-  fieldsPost: Record<string, unknown>,
-  unicoId: string,
-): Promise<{ ok: boolean; status: number; id?: string; errorText?: string }> {
-  const itemsPath = `/sites/${SITE_ID}/lists/${LIST_ID}/items`;
-  const body = JSON.stringify({ fields: fieldsPost });
-  const retries = 3;
-  const maxDelay = 4000;
-
-  const findExistingId = async (): Promise<string | undefined> => {
-    if (!unicoId) return undefined;
-    const escaped = String(unicoId).replace(/'/g, "''");
-    const url = `/sites/${SITE_ID}/lists/${LIST_ID}/items?$select=id&$top=1`
-      + `&$expand=fields($select=id)`
-      + `&$filter=fields/IDUnivocoTraslado_T eq '${escaped}' and fields/Entorno_T eq '${ENTORNO}'`;
-    // graphFetchRetry: que un throttle en el propio chequeo no lo colapse a undefined →
-    // eso dispararía un re-POST y la fila DUPLICADA que justamente queremos evitar.
-    const r = await graphFetchRetry(url, {
-      headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } as any,
-    }, { retries: 1, maxDelayMs: 1500 });
-    if (!r.ok) return undefined;
-    const d = (await r.json()) as { value?: { id: string }[] };
-    return d.value?.[0]?.id;
-  };
-
-  let res = await graphFetch(itemsPath, { method: 'POST', body });
-  for (let attempt = 0; !res.ok && (res.status === 429 || res.status === 503 || res.status === 504) && attempt < retries; attempt++) {
-    // 503/504 pueden haber commiteado antes de fallar → no dupliquemos.
-    if (res.status === 503 || res.status === 504) {
-      // Absorber el lag de indexación read-after-write de SP antes de chequear existencia,
-      // para no re-postear una fila que SÍ se commiteó pero todavía no es visible al $filter.
-      await new Promise<void>(r => setTimeout(r, 800));
-      const existing = await findExistingId();
-      if (existing) return { ok: true, status: 200, id: existing };
-    }
-    const retryAfter = Number(res.headers.get('Retry-After'));
-    const delay = Number.isFinite(retryAfter) && retryAfter > 0
-      ? Math.min(retryAfter * 1000, maxDelay)
-      : Math.min(400 * 2 ** attempt, maxDelay);
-    await new Promise<void>(r => setTimeout(r, delay));
-    res = await graphFetch(itemsPath, { method: 'POST', body });
-  }
-  if (res.ok) {
-    const d = (await res.json()) as { id: string };
-    return { ok: true, status: res.status, id: d.id };
-  }
-  // Último recurso: tal vez commiteó en el intento final fallido (503/504).
-  if (res.status === 503 || res.status === 504) {
-    await new Promise<void>(r => setTimeout(r, 800));
-    const late = await findExistingId();
-    if (late) return { ok: true, status: 200, id: late };
-  }
-  return { ok: false, status: res.status, errorText: await res.text() };
+// Busca el traslado ACTIVO que ya tiene esa cama destino (para el 409). El índice único parcial
+// (WHERE status NOT IN Consolidado/Cancelado) es la fuente de verdad; esto solo resuelve el id.
+async function findDestinationConflict(
+  supa: ReturnType<typeof getSupabaseAdmin>,
+  destination: string,
+  excludeIdUnivoco?: string,
+): Promise<string | undefined> {
+  let q = supa.from('traslados').select('id_univoco')
+    .eq('entorno', ENTORNO).eq('cama_destino', destination)
+    .not('status', 'in', `(${TicketStatus.COMPLETED},${TicketStatus.REJECTED})`)
+    .limit(1);
+  if (excludeIdUnivoco) q = q.neq('id_univoco', excludeIdUnivoco);
+  const { data } = await q;
+  return data?.[0]?.id_univoco ? String(data[0].id_univoco) : undefined;
 }
 
 // ── Handler ──────────────────────────────────────────────────────────────────
 async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  if (!SITE_ID || !LIST_ID) {
-    return res.status(503).json({ error: 'SHAREPOINT_SITE_ID / SHAREPOINT_TRASLADOS_LIST_ID not configured' });
-  }
+  let supa: ReturnType<typeof getSupabaseAdmin>;
+  try { supa = getSupabaseAdmin(); }
+  catch (e: any) { console.error('[tickets]', e?.message ?? e); return res.status(503).json({ error: 'Supabase no configurado' }); }
 
   try {
     // ── GET ────────────────────────────────────────────────────────────────
     if (req.method === 'GET') {
       const fetchAll = req.query?.all === '1';
       const patientCode = typeof req.query?.patientCode === 'string' ? req.query.patientCode.trim() : '';
-      // Entorno: siempre filtra. Histórico (?all=1) también — solo se trae lo del entorno actual.
-      const entornoClause = `fields/Entorno_T eq '${ENTORNO}'`;
-      const statusClause  = `fields/Status_T ne '${TicketStatus.COMPLETED}' and fields/Status_T ne '${TicketStatus.REJECTED}'`;
-      // ?patientCode=X → historial de UN paciente (todos sus tickets, incl. terminales) SIN
-      // traer toda la historia del entorno. Todos los tickets tienen CodigoPaciente_T poblado,
-      // así que el filtro por código es preciso (no cruza pacientes por nombre). Alimenta el
-      // botón "Historial del paciente" del mapa de camas con un fetch on-demand por cama.
-      // VENTANA DE GRACIA para los cerrados.
-      //
-      // El poll del front (cada 15s) pide la vista SIN ?all=1. Si esa vista devolviera
-      // únicamente los activos, un traslado que pasa a Consolidado/Cancelado DESAPARECERÍA
-      // del array del cliente de un poll al otro — y el detector de cambios de
-      // useHospitalState (`for (const t of tickets)`) solo mira tickets PRESENTES, así que
-      // nunca vería la transición y no emitiría la notif de finalización. Esa notif está
-      // puesta a propósito como red de seguridad para cuando falla el web-push.
-      //
-      // Solución: los cerrados siguen viajando un rato después de cerrarse. El cliente ve
-      // la transición con su status real (Consolidado vs Cancelado, que son notifs
-      // distintas) y recién después el ticket se cae solo del payload.
-      //
-      // 30 min es holgado a propósito: cubre pestañas en background con los timers
-      // throttleados por el navegador, que pueden pollear mucho más lento que 15s.
-      const CLOSED_GRACE_MS = 30 * 60 * 1000;
-      const graceCutoff = new Date(Date.now() - CLOSED_GRACE_MS).toISOString();
-      const recentlyClosed = `fields/FechaFin_T ge '${graceCutoff}'`;
-      const filter = patientCode
-        ? `&$filter=${entornoClause} and fields/CodigoPaciente_T eq '${patientCode.replace(/'/g, "''")}'`
-        : fetchAll
-          ? `&$filter=${entornoClause}`
-          : `&$filter=${entornoClause} and ((${statusClause}) or ${recentlyClosed})`;
 
-      // Sin tope: paginamos siguiendo @odata.nextLink y traemos TODOS los tickets del
-      // entorno (mismo patrón que api/notifications.ts). El `$top=500` es solo el tamaño
-      // de página (máximo que Graph devuelve por request con $expand), NO un límite del
-      // total. MAX_SCAN es un backstop anti-runaway (no un recorte esperable); si se
-      // alcanza, se loguea para que no sea un tope silencioso.
-      const MAX_SCAN = 50_000;
-      const rows: Record<string, unknown>[] = [];
-      let next: string | null =
-        `/sites/${SITE_ID}/lists/${LIST_ID}/items?$expand=fields&$top=500${filter}`;
-      while (next && rows.length < MAX_SCAN) {
-        const page = await graphFetch(next, {
-          headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } as any,
-        });
-        if (!page.ok) throw new Error(`SP GET failed (${page.status}): ${await page.text()}`);
-        const pageData = (await page.json()) as {
-          value?: Record<string, unknown>[];
-          '@odata.nextLink'?: string;
-        };
-        for (const it of pageData.value ?? []) rows.push(it);
-        const raw = pageData['@odata.nextLink'];
-        // nextLink es absoluta; graphFetch espera path relativo a /v1.0.
-        next = raw ? raw.replace(/^https:\/\/graph\.microsoft\.com\/v1\.0/, '') : null;
+      let q = supa.from('traslados').select('*').eq('entorno', ENTORNO);
+      if (patientCode) {
+        q = q.eq('codigo_paciente', patientCode);
+      } else if (!fetchAll) {
+        // Vista viva: activos + cerrados en la ventana de gracia de 30min. La ventana existe para
+        // que el detector de cambios del cliente vea la transición a Consolidado/Cancelado antes de
+        // que el ticket se caiga del payload (misma razón que en la versión SP).
+        const graceCutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+        q = q.or(`status.not.in.(${TicketStatus.COMPLETED},${TicketStatus.REJECTED}),completed_at.gte.${graceCutoff}`);
       }
-      if (next) console.warn(`[tickets] MAX_SCAN (${MAX_SCAN}) alcanzado — quedaron tickets sin traer`);
+      const { data, error } = await q;
+      if (error) throw new Error(`Supabase GET failed: ${error.message}`);
 
-      const tickets = rows.map(spToTicket);
+      const tickets = (data ?? []).map(rowToTicket);
 
-      // ETag: hash of ids + all editable/status fields so client can skip unchanged
-      // data. Incluye destination/observations/changeReason/workflow/financier además
-      // de status: una edición que solo cambia el destino o la observación (sin mover
-      // el status) DEBE invalidar el cache, sino el cliente queda en 304 y nunca ve el
-      // cambio (el mapa de camas sigue mostrando el destino viejo asignado).
+      // ETag: hash de ids + campos editables/estado. Una edición de destino/observación (sin
+      // mover el status) igual invalida el cache. Útil para ?all=1 on-demand.
       const etag = `"${simpleHash(tickets.map(t => `${t.id}:${t.status}:${t.destination ?? ''}:${t.destinationBedStatus ?? ''}:${t.observations ?? ''}:${t.changeReason ?? ''}:${t.workflow ?? ''}:${t.financier ?? ''}:${t.intervenedByHostess ?? ''}`).join('|'))}"`;
       res.setHeader('ETag', etag);
-
-      const clientEtag = req.headers?.['if-none-match'];
-      if (clientEtag === etag) {
-        return res.status(304).end();
-      }
+      if (req.headers?.['if-none-match'] === etag) return res.status(304).end();
 
       return res.status(200).json({ tickets });
     }
 
-    // ── POST ───────────────────────────────────────────────────────────────
+    // ── POST — crear ─────────────────────────────────────────────────────────
     if (req.method === 'POST') {
-      // originAreaName/destinationAreaName son los nombres reales de área (no se
-      // persisten en SP; ticketToFields los ignora) — solo para filtrar el push.
-      const { originAreaName, destinationAreaName, ...ticketBody } = req.body as Ticket & {
-        originAreaName?: string;
-        destinationAreaName?: string;
-      };
-      const ticket = ticketBody as Ticket;
+      const { originAreaName, destinationAreaName } = req.body ?? {};
+      const row = ticketToRow(req.body ?? {});
+      row.entorno = ENTORNO;
+      // Nombres de área reales (para que el webhook filtre por piso). No están en Ticket.
+      if (originAreaName !== undefined) row.cama_origen_area = originAreaName ? String(originAreaName) : null;
+      if (destinationAreaName !== undefined) row.cama_destino_area = destinationAreaName ? String(destinationAreaName) : null;
+      // created_at: gana el valor del cliente (ticketToRow lo mapea si vino); si no, default now().
 
-      // Reject if destination bed is already targeted by another active ticket.
-      // Active = not Consolidado and not Cancelado. Race-condition safe since SP is the source of truth.
-      // El chequeo se acota al entorno actual: testing y prod no se pisan.
-      if (ticket.destination) {
-        const escaped = String(ticket.destination).replace(/'/g, "''");
-        const conflictUrl = `/sites/${SITE_ID}/lists/${LIST_ID}/items?$expand=fields&$top=5`
-          + `&$filter=fields/Entorno_T eq '${ENTORNO}'`
-          + ` and fields/CamaDestino_T eq '${escaped}'`
-          + ` and fields/Status_T ne '${TicketStatus.COMPLETED}'`
-          + ` and fields/Status_T ne '${TicketStatus.REJECTED}'`;
-        const conflictRes = await graphFetchRetry(conflictUrl, {
-          headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } as any,
-        }, { retries: 1, maxDelayMs: 2000 }); // chequeo no-fatal (fail-open): retry barato
-        if (conflictRes.ok) {
-          const conflictData = (await conflictRes.json()) as { value: Record<string, unknown>[] };
-          if ((conflictData.value ?? []).length > 0) {
-            const conflicting = conflictData.value[0];
-            const cf = conflicting.fields as Record<string, unknown>;
-            return res.status(409).json({
-              error: 'Cama destino ya asignada a otro traslado activo.',
-              conflictingTicketId: cf.IDUnivocoTraslado_T ? String(cf.IDUnivocoTraslado_T) : undefined,
-            });
-          }
+      // upsert(onConflict id_univoco,entorno, ignoreDuplicates) = idempotencia nativa (reemplaza
+      // createTicketIdempotent). Un conflicto del ÍNDICE DE CAMA DESTINO (otro índice) NO lo tapa
+      // el onConflict → sale como 23505 y lo traducimos a 409.
+      const { error } = await supa.from('traslados')
+        .upsert(row, { onConflict: 'id_univoco,entorno', ignoreDuplicates: true });
+      if (error) {
+        if (error.code === '23505') {
+          const conflictingTicketId = row.cama_destino
+            ? await findDestinationConflict(supa, String(row.cama_destino))
+            : undefined;
+          return res.status(409).json({ error: 'Cama destino ya asignada a otro traslado activo.', conflictingTicketId });
         }
+        console.error('[tickets] POST failed:', error.message);
+        return res.status(500).json({ error: 'Failed to create ticket' });
       }
-
-      // Estampar el entorno en el item nuevo (solo POST — los PATCH no deben pisarlo).
-      const fieldsPost = { ...ticketToFields(ticket), Entorno_T: ENTORNO };
-      // Creación idempotente con retry: reintenta el throttle transitorio de SharePoint
-      // (429/503/504) que hacía fallar el POST en silencio y "desaparecer" el ticket al
-      // siguiente poll, SIN duplicar la fila si SP commitea y aun así devuelve 503/504.
-      const created = await createTicketIdempotent(fieldsPost, ticket.id);
-
-      if (!created.ok) throw new Error(`SP POST failed (${created.status}): ${created.errorText ?? ''}`);
-
-      // Send push notification for new ticket (non-blocking)
-      console.log('[tickets] POST success, sending push notification...');
-      sendPushToSubscribers({
-        title: 'Nueva Solicitud de Traslado',
-        body: `${ticket.patientName}: ${ticket.origin} → ${ticket.destination ?? '?'}`,
-        ticketId: ticket.id,
-        type: 'NEW_TICKET',
-        originArea: ticket.origin,       // bed label (fallback fuzzy)
-        destinationArea: ticket.destination,
-        originAreaName,                  // nombre de área real → match preciso + regla HRA
-        destinationAreaName,
-        sede: ticket.sede,
-        excludeUserId: (req as any).user?.id,
-      }).catch((err: any) => console.error('[tickets] Push error:', err));
-
-      return res.status(201).json({ spItemId: created.id });
+      return res.status(201).json({ spItemId: String(req.body?.id ?? '') });
     }
 
-    // ── PATCH ──────────────────────────────────────────────────────────────
+    // ── PATCH — actualizar ─────────────────────────────────────────────────────
     if (req.method === 'PATCH') {
       const { spItemId, originArea, destinationArea, ...updates } = req.body as Partial<Ticket> & {
-        spItemId: string;
-        originArea?: string;
-        destinationArea?: string;
+        spItemId?: string; originArea?: string; destinationArea?: string;
       };
-      if (!spItemId) return res.status(400).json({ error: 'spItemId required' });
+      const idUnivoco = String(updates.id ?? spItemId ?? '');
+      if (!idUnivoco) return res.status(400).json({ error: 'id/spItemId required' });
 
-      // ── Enforcement de piso para acciones de azafata ───────────────────────
-      // Una azafata solo puede ejecutar acciones de su(s) piso(s). Las 3 acciones de
-      // azafata se identifican porque marcan IntervinoAzafata_T = 'SI'. Cada una exige
-      // un extremo del traslado, aplicando la regla de HRA (Sala de Espera): si el
-      // extremo requerido es HRA, se usa el piso real del otro extremo (la azafata de
-      // destino maneja todo el flujo de un traslado HRA→Piso). Solo se enforcea para
-      // roles que filtran por pisos; admin/admisión (filterByFloors=false) quedan exentos.
+      // ── Enforcement de piso para acciones de azafata (SIN CAMBIOS respecto de SP) ──
+      // Una azafata solo puede ejecutar acciones de su(s) piso(s). Regla HRA (Sala de Espera):
+      // si el extremo requerido es HRA, se usa el piso real del otro extremo. Solo aplica a roles
+      // con filterByFloors; admin/admisión quedan exentos.
       const HOSTESS_ACTION_ENDPOINT: Partial<Record<TicketStatus, 'origin' | 'dest'>> = {
         [TicketStatus.IN_TRANSIT]: 'dest',            // confirmar limpieza (azafata destino)
         [TicketStatus.IN_TRANSPORT]: 'origin',        // iniciar traslado (azafata origen)
@@ -375,7 +201,7 @@ async function handler(req: any, res: any) {
       };
       const endpoint = updates.status ? HOSTESS_ACTION_ENDPOINT[updates.status] : undefined;
       if (updates.intervenedByHostess === 'SI' && endpoint) {
-        const userId = String((req as any).user?.id ?? '');
+        const userId = String(req.user?.id ?? '');
         const userAreas = await getUserAreasById(userId);
         const roleCfg = userAreas?.perfil ? await getRoleByName(userAreas.perfil) : null;
         const areas = userAreas?.assignedAreas ?? [];
@@ -390,103 +216,23 @@ async function handler(req: any, res: any) {
         }
       }
 
-      // If destination is being changed (not just touched), verify no other active ticket holds that bed.
-      // We only check when `destination` is in the patch payload; status-only updates skip this.
-      if (updates.destination) {
-        const escaped = String(updates.destination).replace(/'/g, "''");
-        const conflictUrl = `/sites/${SITE_ID}/lists/${LIST_ID}/items?$expand=fields&$top=5`
-          + `&$filter=fields/Entorno_T eq '${ENTORNO}'`
-          + ` and fields/CamaDestino_T eq '${escaped}'`
-          + ` and fields/Status_T ne '${TicketStatus.COMPLETED}'`
-          + ` and fields/Status_T ne '${TicketStatus.REJECTED}'`
-          + ` and id ne ${spItemId}`;
-        const conflictRes = await graphFetchRetry(conflictUrl, {
-          headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } as any,
-        }, { retries: 1, maxDelayMs: 2000 }); // chequeo no-fatal (fail-open): retry barato
-        if (conflictRes.ok) {
-          const conflictData = (await conflictRes.json()) as { value: Record<string, unknown>[] };
-          if ((conflictData.value ?? []).length > 0) {
-            const conflicting = conflictData.value[0];
-            const cf = conflicting.fields as Record<string, unknown>;
-            return res.status(409).json({
-              error: 'Cama destino ya asignada a otro traslado activo.',
-              conflictingTicketId: cf.IDUnivocoTraslado_T ? String(cf.IDUnivocoTraslado_T) : undefined,
-            });
-          }
+      const fields = ticketToRow(updates);
+      delete fields.id_univoco; // no reescribir la clave de join
+      fields.last_actor_id = Number(req.user?.id) || null; // quién hizo la acción → excludeUser del webhook
+      if (originArea !== undefined) fields.cama_origen_area = originArea ? String(originArea) : null;
+      if (destinationArea !== undefined) fields.cama_destino_area = destinationArea ? String(destinationArea) : null;
+
+      const { error } = await supa.from('traslados').update(fields)
+        .eq('id_univoco', idUnivoco).eq('entorno', ENTORNO);
+      if (error) {
+        if (error.code === '23505' && updates.destination) {
+          const conflictingTicketId = await findDestinationConflict(supa, String(updates.destination), idUnivoco);
+          return res.status(409).json({ error: 'Cama destino ya asignada a otro traslado activo.', conflictingTicketId });
         }
+        console.error('[tickets] PATCH failed:', error.message);
+        return res.status(500).json({ error: 'Failed to update ticket' });
       }
-
-      // graphFetchRetry: el PATCH es idempotente (fija campos a valores concretos), así
-      // que reintentar un throttle transitorio es ganancia pura — sin riesgo de duplicar.
-      const spRes = await graphFetchRetry(
-        `/sites/${SITE_ID}/lists/${LIST_ID}/items/${spItemId}`,
-        {
-          method: 'PATCH',
-          body:   JSON.stringify({ fields: ticketToFields(updates) }),
-        },
-        { retries: 2, maxDelayMs: 3000 }, // interactivo: presupuesto de retry acotado
-      );
-
-      if (!spRes.ok) throw new Error(`SP PATCH failed (${spRes.status}): ${await spRes.text()}`);
-
-      // Send push notification for status change (non-blocking)
-      if (updates.status) {
-        const statusLabels: Record<string, string> = {
-          [TicketStatus.IN_TRANSIT]: 'Habitación Lista',
-          [TicketStatus.IN_TRANSPORT]: 'Traslado en Curso',
-          [TicketStatus.WAITING_CONSOLIDATION]: 'Recepción Confirmada',
-          [TicketStatus.COMPLETED]: 'Traslado Finalizado',
-          [TicketStatus.REJECTED]: 'Traslado Cancelado',
-        };
-        const label = statusLabels[updates.status];
-        if (label) {
-          const isReceptionConfirmed = updates.status === TicketStatus.WAITING_CONSOLIDATION;
-          // Catering-only: human-readable message "X pasó de Habitación 413 (Piso 4) a Habitación 509 (Piso 5)".
-          // Only built for WAITING_CONSOLIDATION so other status changes don't notify Catering at all.
-          let cateringBody: string | undefined;
-          if (isReceptionConfirmed) {
-            const extractRoom = (label?: string): string => {
-              if (!label) return '?';
-              const m = label.match(/Habitaci[oó]n\s+(\S+)/i);
-              if (m) return m[1];
-              const unidad = label.match(/Unidad\s+([^-]+)/i);
-              if (unidad) return unidad[1].trim();
-              return label.split(' - ')[0].trim();
-            };
-            const extractFloor = (areaName?: string): string => {
-              if (!areaName) return '';
-              const m = areaName.match(/(\d+)°?\s*Piso/i);
-              if (m) return `Piso ${m[1]}`;
-              return areaName.replace(/\s*HPR\s*$/i, '').trim();
-            };
-            const patient = updates.patientName ?? 'Paciente';
-            const roomO   = extractRoom(updates.origin);
-            const roomD   = extractRoom(updates.destination);
-            const floorO  = extractFloor(originArea);
-            const floorD  = extractFloor(destinationArea);
-            const fromPart = floorO ? `Habitación ${roomO} (${floorO})` : `Habitación ${roomO}`;
-            const toPart   = floorD ? `Habitación ${roomD} (${floorD})` : `Habitación ${roomD}`;
-            cateringBody = `${patient} pasó de ${fromPart} a ${toPart}`;
-          }
-
-          sendPushToSubscribers({
-            title: label,
-            body: `${updates.patientName ?? 'Paciente'}: ${updates.origin ?? ''} → ${updates.destination ?? ''}`,
-            ticketId: updates.id,
-            // 'RECEPTION_CONFIRMED' is the only event Catering listens to.
-            type: isReceptionConfirmed ? 'RECEPTION_CONFIRMED' : 'STATUS_UPDATE',
-            originArea: updates.origin,
-            destinationArea: updates.destination,
-            originAreaName: originArea,
-            destinationAreaName: destinationArea,
-            sede: updates.sede,
-            excludeUserId: (req as any).user?.id,
-            cateringTitle: isReceptionConfirmed ? 'Traslado concretado' : undefined,
-            cateringBody,
-          }).catch((err: any) => console.error('[tickets] Push error:', err));
-        }
-      }
-
+      // El push (NEW_TICKET/STATUS_UPDATE/RECEPTION_CONFIRMED) lo dispara el webhook, no este endpoint.
       return res.status(200).json({ ok: true });
     }
 

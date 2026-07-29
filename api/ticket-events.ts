@@ -1,15 +1,17 @@
 /**
- * POST /api/ticket-events
- * Registra movimientos en la lista "08.DetalleTraslados".
+ * GET/POST /api/ticket-events — timeline/trayectoria de un traslado.
+ * FUENTE: Supabase public.traslado_eventos (migrado de SP 08.DetalleTraslados).
  *
- * Body: { ticketId, tipo, usuario, usuarioId }
+ * GET  ?ticketId=<id>                          → eventos del ticket, orden cronológico
+ * POST { ticketId, tipo, usuario, usuarioId }  → registra un movimiento
+ *
+ * NOTA: 08.DetalleTraslados NO tenía columna Entorno; traslado_eventos SÍ. Ahora el GET filtra
+ * y el POST etiqueta por entorno (las lecturas del cliente van bajo RLS por entorno).
  */
-
-import { graphFetch }  from './graph.js';
 import { requireAuth } from './jwt.js';
+import { getSupabaseAdmin } from './supabase-admin.js';
 
-const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
-const LIST_ID = 'bd50c2be-0ec7-45d7-b1f5-abf10546675d'; // 08.DetalleTraslados
+const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 
 async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -18,66 +20,50 @@ async function handler(req: any, res: any) {
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  if (!SITE_ID) return res.status(503).json({ error: 'SHAREPOINT_SITE_ID not configured' });
+  let supa;
+  try { supa = getSupabaseAdmin(); }
+  catch (e: any) { console.error('[ticket-events]', e?.message ?? e); return res.status(503).json({ error: 'Supabase no configurado' }); }
 
   try {
-    // ── GET — obtener eventos de un ticket ────────────────────────────────
+    // ── GET ────────────────────────────────────────────────────────────────
     if (req.method === 'GET') {
       const ticketId = req.query?.ticketId;
       if (!ticketId) return res.status(400).json({ error: 'ticketId query param required' });
 
-      const filter = `fields/IDUnivocoTraslado_DT eq '${String(ticketId).replace(/'/g, "''")}'`;
-      const t0 = Date.now();
-      const spRes = await graphFetch(
-        `/sites/${SITE_ID}/lists/${LIST_ID}/items?$expand=fields&$filter=${encodeURIComponent(filter)}&$top=50`,
-      );
+      const { data, error } = await supa.from('traslado_eventos')
+        .select('id, traslado_id, tipo, usuario, usuario_id, created_at')
+        .eq('traslado_id', String(ticketId)).eq('entorno', ENTORNO)
+        .order('created_at', { ascending: true });
+      if (error) throw new Error(`Supabase GET failed: ${error.message}`);
 
-      console.log(`[ticket-events] SP query took ${Date.now() - t0}ms`);
-      if (!spRes.ok) throw new Error(`SP GET failed (${spRes.status}): ${await spRes.text()}`);
-
-      const data = (await spRes.json()) as { value: Record<string, unknown>[] };
-      const events = (data.value ?? []).map((item) => {
-        const f = item.fields as Record<string, unknown>;
-        return {
-          id:        String(item.id),
-          ticketId:  String(f.IDUnivocoTraslado_DT ?? ''),
-          tipo:      String(f.TipoMovimiento_DT ?? ''),
-          fecha:     String(f.FechaMovimiento_DT ?? ''),
-          usuario:   String(f.UsuarioMovimiento_DT ?? ''),
-          usuarioId: String(f.IDUsuarioMovimiento_DT ?? ''),
-        };
-      });
-
-      // Sort by date in server instead of SP query (much faster)
-      events.sort((a, b) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime());
-
+      const events = (data ?? []).map((r: any) => ({
+        id:        String(r.id),
+        ticketId:  String(r.traslado_id ?? ''),
+        tipo:      String(r.tipo ?? ''),
+        fecha:     String(r.created_at ?? ''),
+        usuario:   String(r.usuario ?? ''),
+        usuarioId: r.usuario_id != null ? String(r.usuario_id) : '',
+      }));
       return res.status(200).json({ events });
     }
 
-    // ── POST — registrar nuevo movimiento ─────────────────────────────────
+    // ── POST ─────────────────────────────────────────────────────────────────
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
     const { ticketId, tipo, usuario, usuarioId } = req.body ?? {};
     if (!ticketId || !tipo) return res.status(400).json({ error: 'ticketId y tipo requeridos' });
 
-    const fields: Record<string, unknown> = {
-      Title:                  '[sumar]',
-      IDUnivocoTraslado_DT:   ticketId,
-      TipoMovimiento_DT:      tipo,
-      FechaMovimiento_DT:     new Date().toISOString(),
-      UsuarioMovimiento_DT:   usuario ?? '',
-      IDUsuarioMovimiento_DT: usuarioId ?? '',
-    };
+    const idNum = Number(usuarioId);
+    const { data, error } = await supa.from('traslado_eventos').insert({
+      traslado_id: String(ticketId),
+      entorno:     ENTORNO,
+      tipo:        String(tipo),
+      usuario:     usuario != null && usuario !== '' ? String(usuario) : null,
+      usuario_id:  Number.isFinite(idNum) && usuarioId != null && usuarioId !== '' ? idNum : null,
+    }).select('id').single();
+    if (error) throw new Error(`Supabase POST failed: ${error.message}`);
 
-    const spRes = await graphFetch(
-      `/sites/${SITE_ID}/lists/${LIST_ID}/items`,
-      { method: 'POST', body: JSON.stringify({ fields }) },
-    );
-
-    if (!spRes.ok) throw new Error(`SP POST failed (${spRes.status}): ${await spRes.text()}`);
-
-    const result = (await spRes.json()) as { id: string };
-    return res.status(201).json({ ok: true, spItemId: result.id });
+    return res.status(201).json({ ok: true, spItemId: String(data.id) });
   } catch (err: any) {
     console.error('[api/ticket-events]', err);
     return res.status(500).json({ error: err.message ?? 'Internal error' });

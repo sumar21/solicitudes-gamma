@@ -9,6 +9,7 @@ import {
 import { MOCK_TICKETS } from '../lib/constants';
 import { can, hasModule, canReceiveNotif } from '../lib/permissions';
 import { effectiveHostessAreas, formatDateTime, createActionLock } from '../lib/utils';
+import { supabase, resetSupabasePase } from '../lib/supabase';
 
 // ── JWT helpers (client-side, solo lectura — sin verificar firma) ─────────────
 function parseJwtPayload(token: string): Record<string, unknown> | null {
@@ -455,8 +456,7 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
   return result;
 }
 
-const POLL_TICKETS_MS     = 15_000;  // tickets: poll every 15s (bajado de 8s para ~halve requests en Vercel)
-const POLL_BEDS_MS        = 60_000;  // beds: poll every 60s
+const POLL_BEDS_MS        = 60_000;  // beds: poll every 60s (tickets ahora van por Realtime, ver efecto de polling)
 
 /** Human-readable labels for status transitions (for poll-based notifications) */
 function statusChangeLabel(_from: string, to: string): { title: string } | null {
@@ -1232,22 +1232,52 @@ export const useHospitalState = () => {
     if (currentView === 'HOME' || currentView === 'HISTORY') fetchAllTickets();
   }, [token, currentView, fetchAllTickets]);
 
-  // ── Polling ───────────────────────────────────────────────────────────────────
+  // ── Polling + Realtime ──────────────────────────────────────────────────────────
+  // Tickets y limpiezas: se reemplazó el poll por suscripciones Realtime (public.traslados y
+  // public.limpiezas). Un cambio de fila dispara un refetch DEBOUNCED (que ya lee de Supabase):
+  // el request corre SOLO cuando algo cambió, no en un intervalo fijo por dispositivo (era el
+  // mayor costo de Vercel). El refetch completo reconcilia todo el set → robusto ante eventos
+  // perdidos por desconexión. Beds y comandas (meals) siguen con su poll de 60s hasta migrarse.
   useEffect(() => {
     if (!token) return;
     fetchBeds();
     fetchTickets();
     fetchCleanings();
     fetchMeals();
-    const ticketPoll    = setInterval(fetchTickets, POLL_TICKETS_MS);
-    const bedPoll       = setInterval(fetchBeds, POLL_BEDS_MS);
-    const cleaningPoll  = setInterval(fetchCleanings, POLL_BEDS_MS); // ritmo de camas (cambian poco)
-    const mealsPoll     = setInterval(fetchMeals, POLL_BEDS_MS);
+    const bedPoll   = setInterval(fetchBeds, POLL_BEDS_MS);
+    const mealsPoll = setInterval(fetchMeals, POLL_BEDS_MS);
+
+    // Realtime traslados: un cambio → refetch debounced. Reseteamos el ETag antes del refetch
+    // para no comernos un 304 justo cuando acabamos de saber que algo cambió.
+    let ticketDebounce: ReturnType<typeof setTimeout> | null = null;
+    const triggerTicketRefetch = () => {
+      if (ticketDebounce) clearTimeout(ticketDebounce);
+      ticketDebounce = setTimeout(() => { ticketsEtagRef.current = null; fetchTickets(); }, 300);
+    };
+    const ticketsChannel = supabase
+      .channel('traslados-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'traslados' }, triggerTicketRefetch)
+      // catch-up al (re)conectar: Realtime no reenvía eventos perdidos mientras el socket estuvo caído.
+      .subscribe(status => { if (String(status) === 'SUBSCRIBED') { ticketsEtagRef.current = null; fetchTickets(); } });
+
+    // Realtime limpiezas: un cambio en el overlay de camas limpias → refetch debounced.
+    let cleaningDebounce: ReturnType<typeof setTimeout> | null = null;
+    const triggerCleaningRefetch = () => {
+      if (cleaningDebounce) clearTimeout(cleaningDebounce);
+      cleaningDebounce = setTimeout(() => { fetchCleanings(); }, 300);
+    };
+    const limpiezasChannel = supabase
+      .channel('limpiezas-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'limpiezas' }, triggerCleaningRefetch)
+      .subscribe(status => { if (String(status) === 'SUBSCRIBED') fetchCleanings(); });
+
     return () => {
-      clearInterval(ticketPoll);
       clearInterval(bedPoll);
-      clearInterval(cleaningPoll);
       clearInterval(mealsPoll);
+      if (ticketDebounce) clearTimeout(ticketDebounce);
+      if (cleaningDebounce) clearTimeout(cleaningDebounce);
+      supabase.removeChannel(ticketsChannel);
+      supabase.removeChannel(limpiezasChannel);
     };
   }, [token, fetchBeds, fetchTickets, fetchCleanings, fetchMeals]);
 
@@ -1792,6 +1822,7 @@ export const useHospitalState = () => {
     soundCooldownRef.current      = false;
     ticketsEtagRef.current        = null;
     bedsEtagRef.current           = null;
+    resetSupabasePase();          // invalida el pase cacheado → el próximo login lo re-mintea
     // El histórico es del usuario anterior (y ya viene recortado por SU sede/áreas):
     // si no se limpia, el próximo login lo ve por un instante antes del primer fetch.
     allTicketsFetchedAtRef.current = 0;

@@ -1,36 +1,22 @@
 /**
- * Vercel serverless — CRUD para "14.Limpiezas" (limpiezas de habitaciones por azafatas).
+ * Vercel serverless — CRUD de limpiezas de habitaciones. FUENTE: Supabase public.limpiezas
+ * (migrado de la lista SP 14.Limpiezas).
  *
  * GET    /api/limpiezas   → limpiezas activas (overlay "Limpia" vigente)
  * GET    /api/limpiezas?history=1&from=YYYY-MM-DD&to=YYYY-MM-DD → histórico (cerradas por fecha de cierre)
- * POST   /api/limpiezas   → marcar limpia (upsert) { bedLabel, bedCode, roomCode, area, userId, userName }
- *                           + { closed: true, reason? } → registra una limpieza que NACE cerrada
- *                           (constancia de "Habitación Lista" en el histórico; sin push ni overlay)
- * PATCH  /api/limpiezas   → cerrar una limpieza   { bedLabel | spItemId, reason }  reason ∈ ANULADA|TICKET|GAMMA|CONSOLIDADO
+ * POST   /api/limpiezas   → marcar limpia (upsert por cama+entorno) { bedLabel, bedCode, roomCode, area, userId, userName }
+ *                           + { closed: true, reason? } → limpieza que NACE cerrada (constancia histórica; sin push)
+ * PATCH  /api/limpiezas   → cerrar una limpieza { bedLabel | spItemId, reason }  reason ∈ ANULADA|TICKET|GAMMA|CONSOLIDADO
  *
- * Modelo: una limpieza = una cama que una azafata marcó limpia mientras PROGAL la
- * reportaba "En preparación". El overlay del front (mergeBeds) la muestra disponible
- * sobre lo que reporta Gamma — PROGAL es read-only, esto NO escribe a PROGAL.
- *
- * Ciclo de vida (Opción B — atado al traslado): la limpieza se cierra (Status_L=Inactivo)
- * cuando se crea un traslado con destino en esa cama (TICKET) o cuando Gamma saca la cama
- * de "En preparación" (GAMMA). El azafata puede deshacerla a mano (ANULADA).
- *
- * Setup: correr scripts/create-limpiezas-list.mts y setear LIMPIEZAS_LIST_ID en envs
- * (o hardcodear el LIST_ID acá como el resto de los endpoints).
+ * El overlay del front (mergeBeds) muestra la cama disponible sobre lo que reporta Gamma (read-only).
+ * El push "Habitación Limpia" (ROOM_CLEANED) sigue saliendo por push-utils (que ya lee subs de Supabase).
  */
-
-import { graphFetch }  from './graph.js';
 import { requireAuth } from './jwt.js';
 import { sendPushToSubscribers } from './push-utils.js';
+import { getSupabaseAdmin } from './supabase-admin.js';
 
-const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
-const LIST_ID = (process.env.LIMPIEZAS_LIST_ID ?? '3665d496-0e52-465e-b40f-54ca39cd5856').trim(); // 14.Limpiezas
-
-// Entorno: separa producción y testing en la misma lista. Default seguro 'TESTING'.
 const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
-
-const esc = (s: unknown) => String(s ?? '').replace(/'/g, "''");
+const MOTIVOS = ['ANULADA', 'TICKET', 'GAMMA', 'CONSOLIDADO'];
 
 async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -38,50 +24,31 @@ async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
-  if (!SITE_ID) return res.status(503).json({ error: 'SHAREPOINT_SITE_ID not configured' });
-  if (!LIST_ID) {
-    // La lista todavía no se aprovisionó: el front trata esto como "sin limpiezas".
-    if (req.method === 'GET') return res.status(200).json({ cleanings: [] });
-    return res.status(503).json({ error: 'LIMPIEZAS_LIST_ID not configured — run scripts/create-limpiezas-list.mts' });
-  }
 
-  const basePath = `/sites/${SITE_ID}/lists/${LIST_ID}/items`;
+  let supa;
+  try { supa = getSupabaseAdmin(); }
+  catch (e: any) { console.error('[limpiezas]', e?.message ?? e); return res.status(req.method === 'GET' ? 200 : 503).json(req.method === 'GET' ? { cleanings: [] } : { error: 'Supabase no configurado' }); }
 
-  // ── GET — histórico (SOLO limpiezas cerradas: Status_L='Inactivo') ─────────
+  // ── GET — histórico (cerradas) ────────────────────────────────────────────
   if (req.method === 'GET' && String(req.query?.history ?? '') === '1') {
     try {
       const isDate = (s: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(s ?? ''));
       const from = isDate(req.query?.from) ? String(req.query.from) : '';
       const to   = isDate(req.query?.to)   ? String(req.query.to)   : '';
-      // Filtramos en SP sólo por Status+Entorno (columnas indexadas) y el rango de fecha
-      // en JS sobre FechaCierre_L — evita el filtro OData sobre DateTime (frágil, columna
-      // no indexada). El volumen de cerradas es chico; si crece >5k, indexar FechaCierre_L.
-      const filter = encodeURIComponent(`fields/Status_L eq 'Inactivo' and fields/Entorno_L eq '${ENTORNO}'`);
-      const spRes = await graphFetch(
-        `${basePath}?$expand=fields&$filter=${filter}&$top=2000`,
-        { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
-      );
-      if (!spRes.ok) { console.error('[limpiezas] history GET failed:', spRes.status); return res.status(200).json({ cleanings: [] }); }
-      const data = (await spRes.json()) as { value: Record<string, unknown>[] };
-      const fromMs = from ? Date.parse(`${from}T00:00:00Z`) : -Infinity;
-      const toMs   = to   ? Date.parse(`${to}T23:59:59Z`)   : Infinity;
-      const cleanings = (data.value ?? [])
-        .map((item: any) => {
-          const f = item.fields as Record<string, unknown>;
-          return {
-            spItemId: String(item.id),
-            bedLabel: String(f.CamaLabel_L ?? ''),
-            area:     String(f.Area_L ?? ''),
-            by:       String(f.AzafataNombre_L ?? ''),
-            at:       String(f.FechaLimpieza_L ?? ''),
-            closedAt: String(f.FechaCierre_L ?? ''),
-            reason:   String(f.MotivoCierre_L ?? ''),
-          };
-        })
-        .filter((c) => {
-          const t = Date.parse(c.closedAt);
-          return !isNaN(t) && t >= fromMs && t <= toMs;
-        });
+      let q = supa.from('limpiezas').select('*').eq('entorno', ENTORNO).eq('status', 'Inactivo').limit(2000);
+      if (from) q = q.gte('fecha_cierre', `${from}T00:00:00Z`);
+      if (to)   q = q.lte('fecha_cierre', `${to}T23:59:59Z`);
+      const { data, error } = await q;
+      if (error) { console.error('[limpiezas] history GET failed:', error.message); return res.status(200).json({ cleanings: [] }); }
+      const cleanings = (data ?? []).map((r: any) => ({
+        spItemId: String(r.id),
+        bedLabel: String(r.cama_label ?? ''),
+        area:     String(r.area ?? ''),
+        by:       String(r.azafata_nombre ?? ''),
+        at:       String(r.fecha_limpieza ?? ''),
+        closedAt: String(r.fecha_cierre ?? ''),
+        reason:   String(r.motivo_cierre ?? ''),
+      }));
       return res.status(200).json({ cleanings });
     } catch (err: any) {
       console.error('[limpiezas] history GET error:', err);
@@ -92,26 +59,19 @@ async function handler(req: any, res: any) {
   // ── GET — limpiezas activas ───────────────────────────────────────────────
   if (req.method === 'GET') {
     try {
-      const filter = encodeURIComponent(`fields/Status_L eq 'Activo' and fields/Entorno_L eq '${ENTORNO}'`);
-      const spRes = await graphFetch(
-        `${basePath}?$expand=fields&$filter=${filter}&$top=500`,
-        { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
-      );
-      if (!spRes.ok) { console.error('[limpiezas] GET failed:', spRes.status); return res.status(200).json({ cleanings: [] }); }
-      const data = (await spRes.json()) as { value: Record<string, unknown>[] };
-      const cleanings = (data.value ?? []).map((item: any) => {
-        const f = item.fields as Record<string, unknown>;
-        return {
-          spItemId:  String(item.id),
-          bedLabel:  String(f.CamaLabel_L ?? ''),
-          bedCode:   String(f.CamaCodigo_L ?? ''),
-          roomCode:  String(f.Habitacion_L ?? ''),
-          area:      String(f.Area_L ?? ''),
-          by:        String(f.AzafataNombre_L ?? ''),
-          byId:      String(f.AzafataId_L ?? ''),
-          at:        String(f.FechaLimpieza_L ?? ''),
-        };
-      });
+      const { data, error } = await supa.from('limpiezas').select('*')
+        .eq('entorno', ENTORNO).eq('status', 'Activo').limit(500);
+      if (error) { console.error('[limpiezas] GET failed:', error.message); return res.status(200).json({ cleanings: [] }); }
+      const cleanings = (data ?? []).map((r: any) => ({
+        spItemId: String(r.id),
+        bedLabel: String(r.cama_label ?? ''),
+        bedCode:  String(r.cama_codigo ?? ''),
+        roomCode: String(r.habitacion ?? ''),
+        area:     String(r.area ?? ''),
+        by:       String(r.azafata_nombre ?? ''),
+        byId:     String(r.azafata_id ?? ''),
+        at:       String(r.fecha_limpieza ?? ''),
+      }));
       return res.status(200).json({ cleanings });
     } catch (err: any) {
       console.error('[limpiezas] GET error:', err);
@@ -124,27 +84,16 @@ async function handler(req: any, res: any) {
     const { bedLabel, bedCode, roomCode, area, userId, userName, closed, reason } = req.body ?? {};
     if (!bedLabel) return res.status(400).json({ error: 'bedLabel is required' });
     const nowIso = new Date().toISOString();
-
-    // Modo "nace cerrada" (closed: true): constancia histórica de que la habitación se preparó
-    // para un ingreso ("Habitación Lista" del ticket). No es una marca operativa: no pasa por
-    // el upsert de activas, no dispara la push ROOM_CLEANED y jamás aparece como overlay en el
-    // mapa (el GET de activas filtra Status_L='Activo'). Motivo default TICKET → el histórico
-    // lo agrupa como "Traslado", igual que el auto-cierre por ticket.
     const naceCerrada = closed === true;
-    const motivoCierre = ['ANULADA', 'TICKET', 'GAMMA', 'CONSOLIDADO'].includes(String(reason)) ? String(reason) : 'TICKET';
+    const motivoCierre = MOTIVOS.includes(String(reason)) ? String(reason) : 'TICKET';
 
-    // "Habitación Limpia" → push + campanita para los roles que tengan tildado
-    // `notif_habitacion_limpia` en el ABM (pensado para Admisión, pero configurable).
-    // sendPushToSubscribers ya filtra por permiso del rol, sede y pisos asignados, y
-    // persiste la fila per-usuario en 10.Notificaciones. Non-blocking: un fallo de push
-    // jamás debe hacer fallar la marca de limpieza (mismo idiom que api/tickets.ts).
+    // "Habitación Limpia" → push + campanita (roles con notif_habitacion_limpia). Non-blocking.
     const notifyRoomCleaned = () => {
       const cama = bedCode ? ` · Cama ${bedCode}` : '';
       sendPushToSubscribers({
         title: 'Habitación Limpia',
         body: `Hab. ${roomCode || '?'}${cama} — marcada limpia por ${userName || 'azafata'}.`,
         type: 'ROOM_CLEANED',
-        // Área real para el match por pisos; el label de cama como fallback fuzzy.
         originArea: String(bedLabel), destinationArea: String(bedLabel),
         originAreaName: String(area ?? ''), destinationAreaName: String(area ?? ''),
         sede: String(req.user?.sede ?? 'HPR'),
@@ -153,63 +102,50 @@ async function handler(req: any, res: any) {
     };
 
     try {
-      // Una fila que nace cerrada NO debe tocar (ni refrescar) una marca activa existente:
-      // si la azafata había marcado limpia esa cama, esa marca la cierra el auto-cierre por
-      // ticket con su propio motivo. Por eso el upsert queda gateado.
-      if (!naceCerrada) {
-        // ¿Ya hay una limpieza activa para esta cama en este entorno? → refrescar.
-        const filter = encodeURIComponent(
-          `fields/CamaLabel_L eq '${esc(bedLabel)}' and fields/Status_L eq 'Activo' and fields/Entorno_L eq '${ENTORNO}'`,
-        );
-        const existing = await graphFetch(
-          `${basePath}?$expand=fields&$filter=${filter}&$top=1`,
-          { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
-        );
-        if (existing.ok) {
-          const data = (await existing.json()) as { value: Record<string, unknown>[] };
-          if (data.value?.length > 0) {
-            const itemId = String(data.value[0].id);
-            await graphFetch(`${basePath}/${itemId}/fields`, {
-              method: 'PATCH',
-              body: JSON.stringify({ AzafataId_L: String(userId ?? ''), AzafataNombre_L: String(userName ?? ''), FechaLimpieza_L: nowIso }),
-            });
-            notifyRoomCleaned(); // re-marca de una limpieza vigente: también es el evento
-            return res.status(200).json({ ok: true, spItemId: itemId });
-          }
-        }
+      // Modo "nace cerrada": constancia histórica ("Habitación Lista" del ticket). No toca la
+      // activa, no dispara push, no aparece como overlay (el GET de activas filtra status='Activo').
+      if (naceCerrada) {
+        const { data, error } = await supa.from('limpiezas').insert({
+          entorno: ENTORNO, cama_label: String(bedLabel), cama_codigo: String(bedCode ?? ''),
+          habitacion: String(roomCode ?? ''), area: String(area ?? ''),
+          status: 'Inactivo', motivo_cierre: motivoCierre,
+          azafata_id: String(userId ?? ''), azafata_nombre: String(userName ?? ''),
+          fecha_limpieza: nowIso, fecha_cierre: nowIso,
+        }).select('id').single();
+        if (error) { console.error('[limpiezas] POST(closed) failed:', error.message); return res.status(500).json({ error: 'Failed to create cleaning' }); }
+        return res.status(200).json({ ok: true, spItemId: String(data.id) });
       }
 
-      const spRes = await graphFetch(basePath, {
-        method: 'POST',
-        body: JSON.stringify({
-          fields: {
-            Title: '[sumar]',
-            CamaLabel_L: String(bedLabel),
-            CamaCodigo_L: String(bedCode ?? ''),
-            Habitacion_L: String(roomCode ?? ''),
-            Area_L: String(area ?? ''),
-            Status_L: naceCerrada ? 'Inactivo' : 'Activo',
-            MotivoCierre_L: naceCerrada ? motivoCierre : '',
-            AzafataId_L: String(userId ?? ''),
-            AzafataNombre_L: String(userName ?? ''),
-            FechaLimpieza_L: nowIso,
-            // FechaCierre_L solo en el modo cerrado — nunca mandar string vacío a una columna
-            // DateTime de SP (Graph lo rechaza con 400).
-            ...(naceCerrada ? { FechaCierre_L: nowIso } : {}),
-            Entorno_L: ENTORNO,
-          },
-        }),
-      });
-      if (!spRes.ok) {
-        const errText = await spRes.text();
-        console.error('[limpiezas] POST failed:', spRes.status, errText);
+      // Upsert de la ACTIVA: si ya hay una para esta cama+entorno → refrescar; si no → crear.
+      const refresh = { azafata_id: String(userId ?? ''), azafata_nombre: String(userName ?? ''), fecha_limpieza: nowIso };
+      const { data: existing } = await supa.from('limpiezas').select('id')
+        .eq('entorno', ENTORNO).eq('cama_label', String(bedLabel)).eq('status', 'Activo').limit(1);
+      if (existing?.length) {
+        await supa.from('limpiezas').update(refresh).eq('id', existing[0].id);
+        notifyRoomCleaned();
+        return res.status(200).json({ ok: true, spItemId: String(existing[0].id) });
+      }
+
+      const { data: created, error } = await supa.from('limpiezas').insert({
+        entorno: ENTORNO, cama_label: String(bedLabel), cama_codigo: String(bedCode ?? ''),
+        habitacion: String(roomCode ?? ''), area: String(area ?? ''), status: 'Activo',
+        ...refresh,
+      }).select('id').single();
+      if (error) {
+        // 23505 = carrera contra el índice único parcial (otra marca activa se creó) → refrescarla.
+        if ((error as any).code === '23505') {
+          const { data: raced } = await supa.from('limpiezas').select('id')
+            .eq('entorno', ENTORNO).eq('cama_label', String(bedLabel)).eq('status', 'Activo').limit(1);
+          if (raced?.length) {
+            await supa.from('limpiezas').update(refresh).eq('id', raced[0].id);
+            notifyRoomCleaned();
+            return res.status(200).json({ ok: true, spItemId: String(raced[0].id) });
+          }
+        }
+        console.error('[limpiezas] POST failed:', error.message);
         return res.status(500).json({ error: 'Failed to create cleaning' });
       }
-      const created = (await spRes.json()) as { id: string };
-      console.log(naceCerrada
-        ? `[limpiezas] Cama "${bedLabel}" registrada preparada (nace cerrada ${motivoCierre}) por ${userName ?? userId}`
-        : `[limpiezas] Cama "${bedLabel}" marcada limpia por ${userName ?? userId}`);
-      if (!naceCerrada) notifyRoomCleaned();
+      notifyRoomCleaned();
       return res.status(200).json({ ok: true, spItemId: String(created.id) });
     } catch (err: any) {
       console.error('[limpiezas] POST error:', err);
@@ -220,31 +156,23 @@ async function handler(req: any, res: any) {
   // ── PATCH — cerrar una limpieza ───────────────────────────────────────────
   if (req.method === 'PATCH') {
     const { spItemId, bedLabel, reason } = req.body ?? {};
-    const motivo = ['ANULADA', 'TICKET', 'GAMMA', 'CONSOLIDADO'].includes(String(reason)) ? String(reason) : 'ANULADA';
+    const motivo = MOTIVOS.includes(String(reason)) ? String(reason) : 'ANULADA';
     const nowIso = new Date().toISOString();
 
     try {
       let itemId = spItemId ? String(spItemId) : '';
       if (!itemId) {
         if (!bedLabel) return res.status(400).json({ error: 'spItemId or bedLabel required' });
-        const filter = encodeURIComponent(
-          `fields/CamaLabel_L eq '${esc(bedLabel)}' and fields/Status_L eq 'Activo' and fields/Entorno_L eq '${ENTORNO}'`,
-        );
-        const existing = await graphFetch(
-          `${basePath}?$expand=fields&$filter=${filter}&$top=1`,
-          { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
-        );
-        if (existing.ok) {
-          const data = (await existing.json()) as { value: Record<string, unknown>[] };
-          if (data.value?.length > 0) itemId = String(data.value[0].id);
-        }
+        const { data } = await supa.from('limpiezas').select('id')
+          .eq('entorno', ENTORNO).eq('cama_label', String(bedLabel)).eq('status', 'Activo').limit(1);
+        if (data?.length) itemId = String(data[0].id);
       }
       if (!itemId) return res.status(200).json({ ok: true, message: 'No active cleaning found' });
 
-      await graphFetch(`${basePath}/${itemId}/fields`, {
-        method: 'PATCH',
-        body: JSON.stringify({ Status_L: 'Inactivo', MotivoCierre_L: motivo, FechaCierre_L: nowIso }),
-      });
+      const { error } = await supa.from('limpiezas')
+        .update({ status: 'Inactivo', motivo_cierre: motivo, fecha_cierre: nowIso })
+        .eq('id', itemId);
+      if (error) { console.error('[limpiezas] PATCH failed:', error.message); return res.status(500).json({ error: 'Failed to close cleaning' }); }
       return res.status(200).json({ ok: true });
     } catch (err: any) {
       console.error('[limpiezas] PATCH error:', err);
