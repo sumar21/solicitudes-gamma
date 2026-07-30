@@ -9,6 +9,7 @@
 
 import { graphFetch }  from './graph.js';
 import { requireAuth } from './jwt.js';
+import { getSupabaseAdmin, isSupabaseAdminConfigured } from './supabase-admin.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = 'e623ad06-ff62-441f-b67d-666224af5805'; // 00.Usuarios
@@ -175,6 +176,28 @@ async function handler(req: any, res: any) {
       );
 
       if (!spRes.ok) throw new Error(`SP PATCH failed (${spRes.status}): ${await spRes.text()}`);
+
+      // ── Propagar sector/rol a las suscripciones push del usuario ─────────────
+      // assigned_areas y user_role en public.push_subscriptions son un SNAPSHOT tomado al
+      // suscribir (login). Sin esto, el filtro por sector del push (subAreaMatches) y el lookup
+      // de rol de la Edge Function usan los valores VIEJOS hasta que el usuario se re-loguee.
+      // Al editarlos acá, se actualizan en el acto todas las subs de ese user_id (spItemId).
+      // Best-effort y NO bloqueante: si falla, el guardado del usuario igual fue OK (el re-login
+      // reconcilia). No se filtra por entorno: sector/rol son atributos globales del usuario.
+      try {
+        const subPatch: Record<string, unknown> = {};
+        if (updates.assignedFloors !== undefined) {
+          subPatch.assigned_areas = String(updates.assignedFloors).split(';').map(s => s.trim()).filter(Boolean);
+        }
+        if (updates.role !== undefined) subPatch.user_role = String(updates.role);
+        if (Object.keys(subPatch).length > 0 && isSupabaseAdminConfigured()) {
+          const { error } = await getSupabaseAdmin()
+            .from('push_subscriptions').update(subPatch).eq('user_id', String(spItemId));
+          if (error) console.error('[api/users] sync push_subscriptions falló:', error.message);
+        }
+      } catch (e: any) {
+        console.error('[api/users] sync push_subscriptions error:', e?.message ?? e);
+      }
 
       return res.status(200).json({ ok: true });
     }
