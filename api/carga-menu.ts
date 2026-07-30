@@ -238,6 +238,7 @@ async function handler(req: any, res: any) {
         });
       }
 
+      const uid = uidOrNull(req?.user?.id);
       const { error } = await supa.from('carga_menu').update({
         turno: v.turno,
         tipo: v.tipo,
@@ -245,7 +246,8 @@ async function handler(req: any, res: any) {
         fecha_fin: v.hasta,
         comanda: v.comanda,
         nombre_user_carga: String(req?.user?.name ?? ''),
-        user_id: uidOrNull(req?.user?.id),
+        // Solo se pisa si hay id numérico; si no, se preserva el previo (igual que `...uidField` original).
+        ...(uid != null ? { user_id: uid } : {}),
         fecha_carga: new Date().toISOString(),
       }).eq('id', spItemId);
       if (error) {

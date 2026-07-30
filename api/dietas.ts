@@ -290,7 +290,11 @@ async function handler(req: any, res: any) {
       const patchFields: Record<string, unknown> = {
         tipo: tipoVal, detalle: det, observaciones: obs,
         paciente_nombre: String(patientName ?? ''), paciente_codigo: String(patientCode ?? ''),
-        nutricionista_nombre: String(userName ?? ''), nutricionista_id: nutriId,
+        nutricionista_nombre: String(userName ?? ''),
+        // Solo se pisa si el request trae un id numérico; si no, se OMITE (un UPDATE sin la clave no
+        // toca la columna) y se preserva el nutricionista_id previo — igual que el `...nutriIdField`
+        // del original en SharePoint. En el INSERT sí va (nace null si no hay id).
+        ...(nutriId != null ? { nutricionista_id: nutriId } : {}),
         // Al re-guardar, la comanda se "muda" a la cama ACTUAL del paciente (si se trasladó) y
         // fecha_carga=now() recomputa la columna `dia` a hoy (clave para reusar una pendiente vieja).
         fecha_carga: nowIso,

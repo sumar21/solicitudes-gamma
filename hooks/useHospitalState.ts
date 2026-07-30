@@ -681,9 +681,10 @@ export const useHospitalState = () => {
   const writingRef = React.useRef(false); // block polls during SP writes
   // Igual que writingRef pero para comandas: al pasar meals de poll a Realtime, un refetch
   // gatillado por un evento ajeno puede pisar un optimista en vuelo (fila sin spItemId todavía).
-  // Cada mutación de comanda lo prende y lo suelta ~1s después de la respuesta; el refetch
-  // Realtime se re-agenda mientras esté prendido (ver el efecto de polling+Realtime).
-  const mealsWritingRef = React.useRef(false);
+  // Es un CONTADOR (no booleano): cada mutación lo incrementa al empezar y lo decrementa ~1s
+  // después de la respuesta. Con mutaciones encadenadas, un release temprano no baja el guard
+  // mientras otra sigue en vuelo. El refetch Realtime se re-agenda mientras sea > 0.
+  const mealsWritingRef = React.useRef(0);
   // Lock anti doble-click por ticket (ver createActionLock). Instancia estable por sesión:
   // un 2º click sincrónico ve el lock en el acto — un guard por estado de React no alcanza.
   const runTicketActionRef = React.useRef<ReturnType<typeof createActionLock>>();
@@ -928,7 +929,7 @@ export const useHospitalState = () => {
     if (!bed?.label) return { ok: false };
     const u = currentUser;
     const at = new Date().toISOString();
-    mealsWritingRef.current = true; // proteger el optimista del refetch Realtime en vuelo
+    mealsWritingRef.current += 1; // proteger el optimista del refetch Realtime en vuelo
     setMeals(prev => {
       const n = new Map<string, MealsInfo>(prev);
       const cur = n.get(bed.label) ?? { patientCode: bed.patientCode ?? '', patientName: bed.patientName ?? '', slots: {} };
@@ -984,7 +985,7 @@ export const useHospitalState = () => {
       fetchMeals();
       return { ok: false, error: `Error de red: ${e?.message ?? 'sin conexión'}` };
     } finally {
-      setTimeout(() => { mealsWritingRef.current = false; }, 1000);
+      setTimeout(() => { mealsWritingRef.current = Math.max(0, mealsWritingRef.current - 1); }, 1000);
     }
   }, [authFetch, currentUser, fetchMeals]);
 
@@ -1004,7 +1005,7 @@ export const useHospitalState = () => {
       }
     }
     const spItemId = meals.get(ownerKey)?.slots[comida]?.titular?.spItemId;
-    mealsWritingRef.current = true;
+    mealsWritingRef.current += 1;
     setMeals(prev => {
       const n = new Map<string, MealsInfo>(prev);
       const cur = n.get(ownerKey);
@@ -1021,18 +1022,20 @@ export const useHospitalState = () => {
       return n;
     });
     try {
-      await authFetch('/api/dietas', {
+      const r = await authFetch('/api/dietas', {
         method: 'PATCH',
         // bedLabel = la clave REAL de la fila (puede ser la cama vieja): es el fallback del
-        // server cuando no hay spItemId. `motivo` → MotivoAnulacion_D (quitar = anular).
+        // server cuando no hay spItemId. `motivo` → motivo_anulacion (quitar = anular).
         body: JSON.stringify({ spItemId: spItemId || undefined, bedLabel: ownerKey, comida: spFromMealSlot(comida), action: 'anular', motivo }),
       });
+      // authFetch NO lanza ante 4xx/5xx → sin el poll de 60s hay que reconciliar también cuando el
+      // server respondió error (p.ej. 500 transitorio o 409): la fila sigue viva en la DB y el
+      // borrado optimista quedaría aplicado en la UI sin nada que lo revierta (no hay evento Realtime).
+      if (!r.ok) fetchMeals();
     } catch {
-      // Sin el poll de 60s ya no hay quién reconcilie un PATCH fallido → refetch explícito para
-      // revertir el borrado optimista si el server no lo aplicó.
-      fetchMeals();
+      fetchMeals(); // error de red: mismo refetch para revertir el optimista
     } finally {
-      setTimeout(() => { mealsWritingRef.current = false; }, 1000);
+      setTimeout(() => { mealsWritingRef.current = Math.max(0, mealsWritingRef.current - 1); }, 1000);
     }
   }, [authFetch, meals, fetchMeals]);
 
@@ -1045,7 +1048,7 @@ export const useHospitalState = () => {
   ): Promise<{ ok: boolean; error?: string }> => {
     if (!bed?.label) return { ok: false };
     const u = currentUser;
-    mealsWritingRef.current = true;
+    mealsWritingRef.current += 1;
     try {
       const r = await authFetch('/api/dietas', {
         method: 'POST',
@@ -1083,7 +1086,7 @@ export const useHospitalState = () => {
       });
       return { ok: true };
     } catch (e: any) { await fetchMeals(); return { ok: false, error: `Error de red: ${e?.message ?? 'sin conexión'}` }; }
-    finally { setTimeout(() => { mealsWritingRef.current = false; }, 1000); }
+    finally { setTimeout(() => { mealsWritingRef.current = Math.max(0, mealsWritingRef.current - 1); }, 1000); }
   }, [authFetch, currentUser, fetchMeals]);
 
   /**
@@ -1098,19 +1101,19 @@ export const useHospitalState = () => {
     spItemId: string, action: 'entregar' | 'pendiente' | 'anular', motivo?: string,
   ): Promise<{ ok: boolean }> => {
     if (!spItemId) return { ok: false };
-    mealsWritingRef.current = true;
+    mealsWritingRef.current += 1;
     try {
       // `motivo` solo viaja al anular (queda como motivo_anulacion para el histórico).
       const r = await authFetch('/api/dietas', { method: 'PATCH', body: JSON.stringify({ spItemId, action, motivo }) });
       await fetchMeals();
       return { ok: r.ok };
     } catch { await fetchMeals(); return { ok: false }; }
-    finally { setTimeout(() => { mealsWritingRef.current = false; }, 1000); }
+    finally { setTimeout(() => { mealsWritingRef.current = Math.max(0, mealsWritingRef.current - 1); }, 1000); }
   }, [authFetch, fetchMeals]);
 
   const clearCompanionLoad = useCallback(async (bed: Bed, comida: MealSlot, spItemId: string, motivo?: string) => {
     if (!bed?.label || !spItemId) return;
-    mealsWritingRef.current = true;
+    mealsWritingRef.current += 1;
     setMeals(prev => {
       const n = new Map<string, MealsInfo>(prev);
       // La fila puede estar keyeada por una cama anterior (la comanda sigue al paciente):
@@ -1130,12 +1133,14 @@ export const useHospitalState = () => {
     });
     try {
       // action anular + motivo → motivo_anulacion (quitar un acompañante = anularlo).
-      await authFetch('/api/dietas', { method: 'PATCH', body: JSON.stringify({ spItemId, action: 'anular', motivo }) });
+      const r = await authFetch('/api/dietas', { method: 'PATCH', body: JSON.stringify({ spItemId, action: 'anular', motivo }) });
+      // authFetch no lanza ante 4xx/5xx → reconciliar también si el server respondió error (la fila
+      // sigue viva y sin evento Realtime, nada revertiría el borrado optimista).
+      if (!r.ok) fetchMeals();
     } catch {
-      // Sin poll que reconcilie: refetch explícito para revertir el borrado optimista si falló.
-      fetchMeals();
+      fetchMeals(); // error de red: mismo refetch
     } finally {
-      setTimeout(() => { mealsWritingRef.current = false; }, 1000);
+      setTimeout(() => { mealsWritingRef.current = Math.max(0, mealsWritingRef.current - 1); }, 1000);
     }
   }, [authFetch, fetchMeals]);
 
@@ -1303,14 +1308,16 @@ export const useHospitalState = () => {
     const triggerMealRefetch = () => {
       if (mealsDebounce) clearTimeout(mealsDebounce);
       mealsDebounce = setTimeout(() => {
-        if (mealsWritingRef.current) { triggerMealRefetch(); return; }
+        if (mealsWritingRef.current > 0) { triggerMealRefetch(); return; }
         fetchMeals();
       }, 300);
     };
     const comandasChannel = supabase
       .channel('comandas-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'comandas' }, triggerMealRefetch)
-      .subscribe(status => { if (String(status) === 'SUBSCRIBED') fetchMeals(); });
+      // catch-up al (re)conectar POR EL MISMO camino guardado: si hay una mutación propia en vuelo,
+      // triggerMealRefetch se re-agenda en vez de pisar el optimista (a diferencia de un fetchMeals directo).
+      .subscribe(status => { if (String(status) === 'SUBSCRIBED') triggerMealRefetch(); });
 
     return () => {
       clearInterval(bedPoll);
