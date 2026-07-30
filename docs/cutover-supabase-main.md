@@ -92,10 +92,11 @@ npx tsx scripts/backfill-carga-menu.mts --entorno=PRODUCTIVO --apply --yes-borra
 npx tsx scripts/backfill-comandas.mts   --entorno=PRODUCTIVO
 npx tsx scripts/backfill-comandas.mts   --entorno=PRODUCTIVO --apply --yes-borra-vivas
 
-# Notificaciones no leídas recientes (opcional; el badge de pendientes). El delete se acota a la
-# misma ventana --days (A4). Correr DESPUÉS de traslados (que puede generar notis vía webhook).
-npx tsx scripts/backfill-notificaciones.mts --entorno=PRODUCTIVO --days=7
-npx tsx scripts/backfill-notificaciones.mts --entorno=PRODUCTIVO --days=7 --apply --yes-borra-vivas
+# Notificaciones no leídas recientes → "mini histórico" de la campanita. Ventana elegida: 48h
+# (--days=2 ≈ 1190 no-leídas al 30/07; --days=1 ≈ 547). El delete se acota a la misma ventana (A4).
+# Correr DESPUÉS de traslados (que puede generar notis vía webhook).
+npx tsx scripts/backfill-notificaciones.mts --entorno=PRODUCTIVO --days=2
+npx tsx scripts/backfill-notificaciones.mts --entorno=PRODUCTIVO --days=2 --apply --yes-borra-vivas
 
 # Suscripciones push AL FINAL (para que TODOS reciban push desde el minuto 0, sin reabrir la app).
 # El script verifica el par VAPID (A1) y aborta si VAPID_PUBLIC_KEY ≠ VITE_VAPID_PUBLIC_KEY.
