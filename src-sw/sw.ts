@@ -37,55 +37,6 @@ self.addEventListener('message', (event) => {
 });
 
 // ── Push log (IndexedDB) ────────────────────────────────────────────────────
-// Registra cada push recibido para diagnóstico. Si el cliente reporta que no le
-// llegan notifs, podemos revisar este log para distinguir entre:
-//   · el push NO llegó al SW (red, sub inválida, server) → log vacío.
-//   · el push SÍ llegó pero el banner heads-up no apareció (channel Android,
-//     battery optimization, etc.) → log con entrada para el evento esperado.
-// TTL 24h y cap de 50 entradas para no crecer indefinidamente.
-const PUSH_LOG_DB    = 'mediflow-push-log';
-const PUSH_LOG_STORE = 'entries';
-const PUSH_LOG_MAX   = 50;
-const PUSH_LOG_TTL_MS = 24 * 60 * 60 * 1000;
-
-function openPushLog(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(PUSH_LOG_DB, 1);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(PUSH_LOG_STORE)) {
-        db.createObjectStore(PUSH_LOG_STORE, { keyPath: 'id', autoIncrement: true });
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror   = () => reject(req.error);
-  });
-}
-
-async function logPushReceived(entry: Record<string, unknown>): Promise<void> {
-  try {
-    const db = await openPushLog();
-    const tx = db.transaction(PUSH_LOG_STORE, 'readwrite');
-    const store = tx.objectStore(PUSH_LOG_STORE);
-    store.add({ ...entry, ts: Date.now() });
-    // Cleanup: borrar entradas viejas y limitar el total.
-    const cursorReq = store.openCursor();
-    const now = Date.now();
-    let count = 0;
-    cursorReq.onsuccess = () => {
-      const cursor = cursorReq.result;
-      if (!cursor) return;
-      count++;
-      const value = cursor.value as { ts: number };
-      const tooOld = now - value.ts > PUSH_LOG_TTL_MS;
-      if (tooOld || count > PUSH_LOG_MAX) cursor.delete();
-      cursor.continue();
-    };
-    await new Promise<void>((resolve) => { tx.oncomplete = () => resolve(); tx.onerror = () => resolve(); });
-    db.close();
-  } catch { /* no-op: el logging nunca debe romper el flujo del push */ }
-}
-
 // ── Push notification handler ───────────────────────────────────────────────
 self.addEventListener('push', (event) => {
   const data = event.data?.json() ?? {};
@@ -117,76 +68,18 @@ self.addEventListener('push', (event) => {
     actions: [{ action: 'open', title: 'Ver' }],
   };
 
-  // UN solo waitUntil y showNotification PRIMERO (iOS cancela la suscripción si recibe un
-  // push sin mostrar notif). Si falla, reintenta con opciones mínimas. Después reporta a
-  // /api/push-debug (para diagnosticar el iPhone SIN cable) y loguea en IndexedDB.
+  // UN solo waitUntil y showNotification PRIMERO (iOS cancela la suscripción si recibe un push
+  // sin mostrar notif). Si falla, reintenta con opciones mínimas.
   event.waitUntil((async () => {
-    let shown = false;
-    let errMsg = '';
     try {
       await self.registration.showNotification(title ?? 'MediFlow', options);
-      shown = true;
-    } catch (e) {
-      errMsg = String((e as any)?.message ?? e);
+    } catch {
       try {
         await self.registration.showNotification(title ?? 'MediFlow', { body: body ?? '', tag: notifTag, data: base.data });
-        shown = true;
-      } catch (e2) {
-        errMsg += ' | fallback: ' + String((e2 as any)?.message ?? e2);
-      }
+      } catch { /* no-op: no se pudo mostrar la notificación */ }
     }
-
-    // Reporte de diagnóstico (best-effort). TEMPORAL: se quita cuando el push de iOS quede confirmado.
-    try {
-      await fetch('/api/push-debug', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          // NO se manda `body` (contiene nombre de paciente) — solo metadata de diagnóstico.
-          title, type, ticketId, shown, error: errMsg, isIOS,
-          permission: typeof Notification !== 'undefined' ? Notification.permission : 'unknown',
-        }),
-      });
-    } catch { /* no-op */ }
-
-    try {
-      await logPushReceived({
-        title, body, ticketId, type, tag, payloadTs: timestamp,
-        permission: typeof Notification !== 'undefined' ? Notification.permission : 'unknown',
-        scope: self.registration.scope,
-      });
-    } catch { /* no-op */ }
   })());
 });
-
-// ── Cómo leer el push-log desde el browser del cliente ─────────────────────
-// Pegá esto en DevTools → Console (estando en el dominio de la PWA):
-//
-//   (async () => {
-//     const db = await new Promise((r, rej) => {
-//       const req = indexedDB.open('mediflow-push-log', 1);
-//       req.onsuccess = () => r(req.result);
-//       req.onerror   = () => rej(req.error);
-//     });
-//     const tx = db.transaction('entries', 'readonly');
-//     const all = await new Promise((r) => {
-//       const out = []; const c = tx.objectStore('entries').openCursor();
-//       c.onsuccess = () => {
-//         const cur = c.result;
-//         if (!cur) { r(out); return; }
-//         out.push(cur.value); cur.continue();
-//       };
-//     });
-//     console.table(all.map(e => ({
-//       hora: new Date(e.ts).toLocaleString('es-AR'),
-//       title: e.title, body: e.body, type: e.type, ticketId: e.ticketId,
-//       permission: e.permission,
-//     })));
-//   })();
-//
-// Si el array está vacío → el push NO está llegando al SW (revisar sub/red/server).
-// Si el array tiene entradas pero el cliente no vio banner → es config Android
-// (channel importance + battery optimization).
 
 // ── Notification click → focus or open the app + propagar ticketId/type ─────
 // El SW no tiene JWT, así que no puede marcar la notif como leída por sí mismo.
