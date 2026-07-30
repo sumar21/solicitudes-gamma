@@ -39,7 +39,11 @@ const L_OBS       = '1c524476-f88f-47c8-ad22-4b3f7f429e46'; // 13.ObservacionesT
 
 const SUPA_URL = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL ?? '';
 const SUPA_SECRET = process.env.SUPABASE_SECRET_KEY ?? '';
-const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
+// Entorno EXPLÍCITO por flag (--entorno=PRODUCTIVO) para no depender del .env, que en dev apunta
+// a TESTING. Sin el flag, cae al ENTORNO del env (default TESTING). Para el cutover a prod se
+// corre: npx tsx scripts/backfill-traslados.mts --entorno=PRODUCTIVO --apply
+const entornoArg = process.argv.find(a => a.startsWith('--entorno='));
+const ENTORNO = (entornoArg ? entornoArg.split('=')[1] : (process.env.ENTORNO ?? 'TESTING')).trim();
 const APPLY = process.argv.includes('--apply');
 
 if (!TENANT_ID || !CLIENT_ID || !CLIENT_SECRET || !SITE_ID) { console.error('❌ Faltan envs Azure/SharePoint'); process.exit(1); }

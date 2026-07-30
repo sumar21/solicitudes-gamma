@@ -34,7 +34,9 @@ const L_LIMPIEZAS = (process.env.LIMPIEZAS_LIST_ID ?? '3665d496-0e52-465e-b40f-5
 
 const SUPA_URL = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL ?? '';
 const SUPA_SECRET = process.env.SUPABASE_SECRET_KEY ?? '';
-const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
+// Entorno EXPLÍCITO por flag (--entorno=PRODUCTIVO); sin el flag cae al env (default TESTING).
+const entornoArg = process.argv.find(a => a.startsWith('--entorno='));
+const ENTORNO = (entornoArg ? entornoArg.split('=')[1] : (process.env.ENTORNO ?? 'TESTING')).trim();
 const APPLY = process.argv.includes('--apply');
 
 if (!TENANT_ID || !CLIENT_ID || !CLIENT_SECRET || !SITE_ID) { console.error('❌ Faltan envs Azure/SharePoint'); process.exit(1); }
