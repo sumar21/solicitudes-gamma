@@ -417,7 +417,7 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
           }
         }
         for (const s of Object.values(merged.slots)) {
-          s?.acompanantes.sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0) || Number(a.spItemId) - Number(b.spItemId));
+          s?.acompanantes.sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0) || String(a.spItemId).localeCompare(String(b.spItemId)));
         }
         return merged;
       }
@@ -679,6 +679,11 @@ export const useHospitalState = () => {
   const [bedsError, setBedsError]                  = useState<string | null>(null);
   const [ticketActionLoading, setTicketActionLoading] = useState(false);
   const writingRef = React.useRef(false); // block polls during SP writes
+  // Igual que writingRef pero para comandas: al pasar meals de poll a Realtime, un refetch
+  // gatillado por un evento ajeno puede pisar un optimista en vuelo (fila sin spItemId todavía).
+  // Cada mutación de comanda lo prende y lo suelta ~1s después de la respuesta; el refetch
+  // Realtime se re-agenda mientras esté prendido (ver el efecto de polling+Realtime).
+  const mealsWritingRef = React.useRef(false);
   // Lock anti doble-click por ticket (ver createActionLock). Instancia estable por sesión:
   // un 2º click sincrónico ve el lock en el acto — un guard por estado de React no alcanza.
   const runTicketActionRef = React.useRef<ReturnType<typeof createActionLock>>();
@@ -909,7 +914,7 @@ export const useHospitalState = () => {
       // mientras alguien tipea. Por `orden` asc; desempate por spItemId (filas viejas sin orden).
       for (const info of map.values()) {
         for (const s of Object.values(info.slots)) {
-          s?.acompanantes.sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0) || Number(a.spItemId) - Number(b.spItemId));
+          s?.acompanantes.sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0) || String(a.spItemId).localeCompare(String(b.spItemId)));
         }
       }
       setMeals(map);
@@ -923,6 +928,7 @@ export const useHospitalState = () => {
     if (!bed?.label) return { ok: false };
     const u = currentUser;
     const at = new Date().toISOString();
+    mealsWritingRef.current = true; // proteger el optimista del refetch Realtime en vuelo
     setMeals(prev => {
       const n = new Map<string, MealsInfo>(prev);
       const cur = n.get(bed.label) ?? { patientCode: bed.patientCode ?? '', patientName: bed.patientName ?? '', slots: {} };
@@ -972,11 +978,13 @@ export const useHospitalState = () => {
       // qué. Devolvemos el mensaje del server (ej. el 409 de comanda ya entregada) para que la
       // tarjeta lo muestre.
       const err = await r.json().catch(() => ({} as any));
-      fetchMeals(); // reconciliar contra SP ante fallo
+      fetchMeals(); // reconciliar contra la base ante fallo
       return { ok: false, error: err?.message ?? err?.error ?? `No se pudo guardar (HTTP ${r.status}).` };
     } catch (e: any) {
       fetchMeals();
       return { ok: false, error: `Error de red: ${e?.message ?? 'sin conexión'}` };
+    } finally {
+      setTimeout(() => { mealsWritingRef.current = false; }, 1000);
     }
   }, [authFetch, currentUser, fetchMeals]);
 
@@ -996,6 +1004,7 @@ export const useHospitalState = () => {
       }
     }
     const spItemId = meals.get(ownerKey)?.slots[comida]?.titular?.spItemId;
+    mealsWritingRef.current = true;
     setMeals(prev => {
       const n = new Map<string, MealsInfo>(prev);
       const cur = n.get(ownerKey);
@@ -1018,8 +1027,14 @@ export const useHospitalState = () => {
         // server cuando no hay spItemId. `motivo` → MotivoAnulacion_D (quitar = anular).
         body: JSON.stringify({ spItemId: spItemId || undefined, bedLabel: ownerKey, comida: spFromMealSlot(comida), action: 'anular', motivo }),
       });
-    } catch { /* best-effort */ }
-  }, [authFetch, meals]);
+    } catch {
+      // Sin el poll de 60s ya no hay quién reconcilie un PATCH fallido → refetch explícito para
+      // revertir el borrado optimista si el server no lo aplicó.
+      fetchMeals();
+    } finally {
+      setTimeout(() => { mealsWritingRef.current = false; }, 1000);
+    }
+  }, [authFetch, meals, fetchMeals]);
 
   // ── Acompañantes ─────────────────────────────────────────────────────────
   // Alta SIN update optimista: el `orden` lo asigna el SERVER, así que el cliente no puede
@@ -1030,6 +1045,7 @@ export const useHospitalState = () => {
   ): Promise<{ ok: boolean; error?: string }> => {
     if (!bed?.label) return { ok: false };
     const u = currentUser;
+    mealsWritingRef.current = true;
     try {
       const r = await authFetch('/api/dietas', {
         method: 'POST',
@@ -1067,6 +1083,7 @@ export const useHospitalState = () => {
       });
       return { ok: true };
     } catch (e: any) { await fetchMeals(); return { ok: false, error: `Error de red: ${e?.message ?? 'sin conexión'}` }; }
+    finally { setTimeout(() => { mealsWritingRef.current = false; }, 1000); }
   }, [authFetch, currentUser, fetchMeals]);
 
   /**
@@ -1081,16 +1098,19 @@ export const useHospitalState = () => {
     spItemId: string, action: 'entregar' | 'pendiente' | 'anular', motivo?: string,
   ): Promise<{ ok: boolean }> => {
     if (!spItemId) return { ok: false };
+    mealsWritingRef.current = true;
     try {
-      // `motivo` solo viaja al anular (queda como MotivoAnulacion_D para el histórico).
+      // `motivo` solo viaja al anular (queda como motivo_anulacion para el histórico).
       const r = await authFetch('/api/dietas', { method: 'PATCH', body: JSON.stringify({ spItemId, action, motivo }) });
       await fetchMeals();
       return { ok: r.ok };
     } catch { await fetchMeals(); return { ok: false }; }
+    finally { setTimeout(() => { mealsWritingRef.current = false; }, 1000); }
   }, [authFetch, fetchMeals]);
 
   const clearCompanionLoad = useCallback(async (bed: Bed, comida: MealSlot, spItemId: string, motivo?: string) => {
     if (!bed?.label || !spItemId) return;
+    mealsWritingRef.current = true;
     setMeals(prev => {
       const n = new Map<string, MealsInfo>(prev);
       // La fila puede estar keyeada por una cama anterior (la comanda sigue al paciente):
@@ -1109,10 +1129,15 @@ export const useHospitalState = () => {
       return n;
     });
     try {
-      // action anular + motivo → MotivoAnulacion_D (quitar un acompañante = anularlo).
+      // action anular + motivo → motivo_anulacion (quitar un acompañante = anularlo).
       await authFetch('/api/dietas', { method: 'PATCH', body: JSON.stringify({ spItemId, action: 'anular', motivo }) });
-    } catch { /* best-effort — el poll reconcilia */ }
-  }, [authFetch]);
+    } catch {
+      // Sin poll que reconcilie: refetch explícito para revertir el borrado optimista si falló.
+      fetchMeals();
+    } finally {
+      setTimeout(() => { mealsWritingRef.current = false; }, 1000);
+    }
+  }, [authFetch, fetchMeals]);
 
   // ── On-demand bed enrichment (single bed) ─────────────────────────────────
   const enrichBed = useCallback(async (bed: Bed): Promise<Bed> => {
@@ -1233,19 +1258,19 @@ export const useHospitalState = () => {
   }, [token, currentView, fetchAllTickets]);
 
   // ── Polling + Realtime ──────────────────────────────────────────────────────────
-  // Tickets y limpiezas: se reemplazó el poll por suscripciones Realtime (public.traslados y
-  // public.limpiezas). Un cambio de fila dispara un refetch DEBOUNCED (que ya lee de Supabase):
-  // el request corre SOLO cuando algo cambió, no en un intervalo fijo por dispositivo (era el
-  // mayor costo de Vercel). El refetch completo reconcilia todo el set → robusto ante eventos
-  // perdidos por desconexión. Beds y comandas (meals) siguen con su poll de 60s hasta migrarse.
+  // Tickets, limpiezas y comandas: se reemplazó el poll por suscripciones Realtime
+  // (public.traslados, public.limpiezas, public.comandas). Un cambio de fila dispara un refetch
+  // DEBOUNCED (que ya lee de Supabase): el request corre SOLO cuando algo cambió, no en un
+  // intervalo fijo por dispositivo (era el mayor costo de Vercel). El refetch completo reconcilia
+  // todo el set → robusto ante eventos perdidos por desconexión. Beds sigue con su poll de 60s
+  // (no se migró; el mapa de camas se sirve desde Gamma/SharePoint).
   useEffect(() => {
     if (!token) return;
     fetchBeds();
     fetchTickets();
     fetchCleanings();
     fetchMeals();
-    const bedPoll   = setInterval(fetchBeds, POLL_BEDS_MS);
-    const mealsPoll = setInterval(fetchMeals, POLL_BEDS_MS);
+    const bedPoll = setInterval(fetchBeds, POLL_BEDS_MS);
 
     // Realtime traslados: un cambio → refetch debounced. Reseteamos el ETag antes del refetch
     // para no comernos un 304 justo cuando acabamos de saber que algo cambió.
@@ -1271,13 +1296,30 @@ export const useHospitalState = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'limpiezas' }, triggerCleaningRefetch)
       .subscribe(status => { if (String(status) === 'SUBSCRIBED') fetchCleanings(); });
 
+    // Realtime comandas: un cambio en el overlay de meals → refetch debounced. Si hay una mutación
+    // propia en vuelo (mealsWritingRef), se re-agenda para no pisar el update optimista (fetchMeals
+    // hace REEMPLAZO TOTAL del Map, no merge).
+    let mealsDebounce: ReturnType<typeof setTimeout> | null = null;
+    const triggerMealRefetch = () => {
+      if (mealsDebounce) clearTimeout(mealsDebounce);
+      mealsDebounce = setTimeout(() => {
+        if (mealsWritingRef.current) { triggerMealRefetch(); return; }
+        fetchMeals();
+      }, 300);
+    };
+    const comandasChannel = supabase
+      .channel('comandas-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'comandas' }, triggerMealRefetch)
+      .subscribe(status => { if (String(status) === 'SUBSCRIBED') fetchMeals(); });
+
     return () => {
       clearInterval(bedPoll);
-      clearInterval(mealsPoll);
       if (ticketDebounce) clearTimeout(ticketDebounce);
       if (cleaningDebounce) clearTimeout(cleaningDebounce);
+      if (mealsDebounce) clearTimeout(mealsDebounce);
       supabase.removeChannel(ticketsChannel);
       supabase.removeChannel(limpiezasChannel);
+      supabase.removeChannel(comandasChannel);
     };
   }, [token, fetchBeds, fetchTickets, fetchCleanings, fetchMeals]);
 

@@ -37,12 +37,26 @@ const L_NOTIF = '240f00dd-715b-4c78-9661-3147b7650a0f'; // 10.Notificaciones
 
 const SUPA_URL = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL ?? '';
 const SUPA_SECRET = process.env.SUPABASE_SECRET_KEY ?? '';
+// Entorno OBLIGATORIO por flag (allowlist) — sin default silencioso a TESTING (que está vivo en
+// develop): el delete de no-leídas borra la campanita VIVA. Para el cutover:
+//   npx tsx scripts/backfill-notificaciones.mts --entorno=PRODUCTIVO --days=7 --apply --yes-borra-vivas
+const ALLOWED_ENTORNOS = ['TESTING', 'PRODUCTIVO'];
 const entornoArg = process.argv.find(a => a.startsWith('--entorno='));
-const ENTORNO = (entornoArg ? entornoArg.split('=')[1] : (process.env.ENTORNO ?? 'TESTING')).trim();
+const ENTORNO = (entornoArg ? entornoArg.split('=')[1] : '').trim();
 const daysArg = process.argv.find(a => a.startsWith('--days='));
 const DAYS = daysArg ? Math.max(1, Number(daysArg.split('=')[1]) || 7) : 7;
 const APPLY = process.argv.includes('--apply');
+const CONFIRM_VIVAS = process.argv.includes('--yes-borra-vivas');
 
+if (!ALLOWED_ENTORNOS.includes(ENTORNO)) {
+  console.error(`❌ --entorno es OBLIGATORIO y debe ser uno de: ${ALLOWED_ENTORNOS.join(', ')} (recibí "${ENTORNO}").`);
+  process.exit(1);
+}
+if (APPLY && ENTORNO === 'PRODUCTIVO' && !CONFIRM_VIVAS) {
+  console.error('❌ --apply contra PRODUCTIVO borra las no-leídas de esa partición (campanita viva si ya hubo cutover).');
+  console.error('   Corré el backfill de traslados ANTES (ese sí puede generar notis vía webhook) y reejecutá con --yes-borra-vivas.');
+  process.exit(1);
+}
 if (!TENANT_ID || !CLIENT_ID || !CLIENT_SECRET || !SITE_ID) { console.error('❌ Faltan envs Azure/SharePoint'); process.exit(1); }
 if (!SUPA_URL || !SUPA_SECRET) { console.error('❌ Faltan VITE_SUPABASE_URL / SUPABASE_SECRET_KEY'); process.exit(1); }
 
@@ -103,8 +117,13 @@ async function graphGetAll(token: string, listId: string, query: string): Promis
   if (!APPLY) { console.log('\n(DRY-RUN — no se escribió nada. Corré con --apply.)'); return; }
 
   const supa = createClient(SUPA_URL, SUPA_SECRET, { auth: { persistSession: false, autoRefreshToken: false } });
-  // Idempotente y SEGURO SOLO pre-cutover: limpia las no-leídas del entorno y reinserta.
-  await supa.from('notificaciones').delete().eq('entorno', ENTORNO).eq('status', 'Enviada');
+  // Idempotente y SEGURO SOLO pre-cutover. A4: el delete se ACOTA a la MISMA ventana que se
+  // reinserta (created_at >= cutoff) — si no, una no-leída legítima más vieja que --days se borraría
+  // sin reinsertarse. A3: se chequea el error del delete y se aborta antes de insertar.
+  const cutoffIso = new Date(cutoff).toISOString();
+  const { error: delErr } = await supa.from('notificaciones').delete()
+    .eq('entorno', ENTORNO).eq('status', 'Enviada').gte('created_at', cutoffIso);
+  if (delErr) { console.error('❌ delete notificaciones:', delErr.message); process.exit(1); }
   let ins = 0;
   for (const c of chunk(rows, 500)) {
     const { error } = await supa.from('notificaciones').insert(c);

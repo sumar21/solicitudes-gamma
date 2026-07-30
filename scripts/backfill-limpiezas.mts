@@ -34,11 +34,24 @@ const L_LIMPIEZAS = (process.env.LIMPIEZAS_LIST_ID ?? '3665d496-0e52-465e-b40f-5
 
 const SUPA_URL = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL ?? '';
 const SUPA_SECRET = process.env.SUPABASE_SECRET_KEY ?? '';
-// Entorno EXPLÍCITO por flag (--entorno=PRODUCTIVO); sin el flag cae al env (default TESTING).
+// Entorno OBLIGATORIO por flag (allowlist) — sin default silencioso a TESTING (que está vivo en
+// develop): el delete-por-entorno borra la partición ENTERA. Para el cutover:
+//   npx tsx scripts/backfill-limpiezas.mts --entorno=PRODUCTIVO --apply --yes-borra-vivas
+const ALLOWED_ENTORNOS = ['TESTING', 'PRODUCTIVO'];
 const entornoArg = process.argv.find(a => a.startsWith('--entorno='));
-const ENTORNO = (entornoArg ? entornoArg.split('=')[1] : (process.env.ENTORNO ?? 'TESTING')).trim();
+const ENTORNO = (entornoArg ? entornoArg.split('=')[1] : '').trim();
 const APPLY = process.argv.includes('--apply');
+const CONFIRM_VIVAS = process.argv.includes('--yes-borra-vivas');
 
+if (!ALLOWED_ENTORNOS.includes(ENTORNO)) {
+  console.error(`❌ --entorno es OBLIGATORIO y debe ser uno de: ${ALLOWED_ENTORNOS.join(', ')} (recibí "${ENTORNO}").`);
+  process.exit(1);
+}
+if (APPLY && ENTORNO === 'PRODUCTIVO' && !CONFIRM_VIVAS) {
+  console.error('❌ --apply contra PRODUCTIVO borra+reinserta TODA la partición de limpiezas (datos vivos si ya hubo cutover).');
+  console.error('   Reejecutá con --yes-borra-vivas para confirmar que corre ANTES del cutover.');
+  process.exit(1);
+}
 if (!TENANT_ID || !CLIENT_ID || !CLIENT_SECRET || !SITE_ID) { console.error('❌ Faltan envs Azure/SharePoint'); process.exit(1); }
 if (!SUPA_URL || !SUPA_SECRET) { console.error('❌ Faltan VITE_SUPABASE_URL / SUPABASE_SECRET_KEY'); process.exit(1); }
 
@@ -73,14 +86,18 @@ async function graphGetAll(token: string, listId: string, query: string): Promis
 
 function mapLimpieza(item: any) {
   const f = item.fields ?? {};
-  const status = String(f.Status_L ?? 'Activo');
+  // Fail-CLOSED: solo un 'Activo' explícito (con trim) queda activo; nulo/vacío/desconocido →
+  // 'Inactivo'. En un histórico no querés RESUCITAR una limpieza cerrada como overlay activo.
+  const status = String(f.Status_L ?? '').trim() === 'Activo' ? 'Activo' : 'Inactivo';
   return {
-    entorno:        String(f.Entorno_L ?? ENTORNO),
+    // entorno FORZADO: ya se filtró por entorno en la query; el valor crudo (casing distinto) dejaría
+    // filas huérfanas que el endpoint (igualdad exacta) nunca lee.
+    entorno:        ENTORNO,
     cama_label:     String(f.CamaLabel_L ?? '').trim(),
     cama_codigo:    f.CamaCodigo_L != null ? String(f.CamaCodigo_L) : null,
     habitacion:     f.Habitacion_L != null ? String(f.Habitacion_L) : null,
     area:           f.Area_L != null ? String(f.Area_L) : null,
-    status:         status === 'Inactivo' ? 'Inactivo' : 'Activo',
+    status,
     motivo_cierre:  f.MotivoCierre_L != null && f.MotivoCierre_L !== '' ? String(f.MotivoCierre_L) : null,
     azafata_id:     f.AzafataId_L != null ? String(f.AzafataId_L) : null,
     azafata_nombre: f.AzafataNombre_L != null ? String(f.AzafataNombre_L) : null,
@@ -112,8 +129,11 @@ function mapLimpieza(item: any) {
   if (!APPLY) { console.log('\n(DRY-RUN — no se escribió nada. Corré con --apply.)'); return; }
 
   const supa = createClient(SUPA_URL, SUPA_SECRET, { auth: { persistSession: false, autoRefreshToken: false } });
-  // Idempotente pre-cutover: limpiar el entorno y reinsertar.
-  await supa.from('limpiezas').delete().eq('entorno', ENTORNO);
+  // Idempotente pre-cutover: limpiar el entorno y reinsertar. A3: chequear el error del delete y
+  // abortar ANTES de insertar (si falla y seguíamos, con solo históricos Inactivo preexistentes se
+  // duplicaría el histórico).
+  const { error: delErr } = await supa.from('limpiezas').delete().eq('entorno', ENTORNO);
+  if (delErr) { console.error('❌ delete limpiezas:', delErr.message); process.exit(1); }
   let ins = 0;
   for (const c of chunk(rows, 500)) {
     const { error } = await supa.from('limpiezas').insert(c);

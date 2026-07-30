@@ -39,13 +39,24 @@ const L_OBS       = '1c524476-f88f-47c8-ad22-4b3f7f429e46'; // 13.ObservacionesT
 
 const SUPA_URL = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL ?? '';
 const SUPA_SECRET = process.env.SUPABASE_SECRET_KEY ?? '';
-// Entorno EXPLÍCITO por flag (--entorno=PRODUCTIVO) para no depender del .env, que en dev apunta
-// a TESTING. Sin el flag, cae al ENTORNO del env (default TESTING). Para el cutover a prod se
-// corre: npx tsx scripts/backfill-traslados.mts --entorno=PRODUCTIVO --apply
+// Entorno OBLIGATORIO por flag (allowlist) — sin default silencioso a TESTING (que está vivo en
+// develop): un delete/insert por error sobre un entorno vivo es pérdida de datos. Para el cutover:
+//   npx tsx scripts/backfill-traslados.mts --entorno=PRODUCTIVO --apply --yes-borra-vivas
+const ALLOWED_ENTORNOS = ['TESTING', 'PRODUCTIVO'];
 const entornoArg = process.argv.find(a => a.startsWith('--entorno='));
-const ENTORNO = (entornoArg ? entornoArg.split('=')[1] : (process.env.ENTORNO ?? 'TESTING')).trim();
+const ENTORNO = (entornoArg ? entornoArg.split('=')[1] : '').trim();
 const APPLY = process.argv.includes('--apply');
+const CONFIRM_VIVAS = process.argv.includes('--yes-borra-vivas');
 
+if (!ALLOWED_ENTORNOS.includes(ENTORNO)) {
+  console.error(`❌ --entorno es OBLIGATORIO y debe ser uno de: ${ALLOWED_ENTORNOS.join(', ')} (recibí "${ENTORNO}").`);
+  process.exit(1);
+}
+if (APPLY && ENTORNO === 'PRODUCTIVO' && !CONFIRM_VIVAS) {
+  console.error('❌ --apply contra PRODUCTIVO pisa traslados y borra+reinserta eventos/obs de esa partición.');
+  console.error('   Reejecutá con --yes-borra-vivas para confirmar que corre ANTES del cutover.');
+  process.exit(1);
+}
 if (!TENANT_ID || !CLIENT_ID || !CLIENT_SECRET || !SITE_ID) { console.error('❌ Faltan envs Azure/SharePoint'); process.exit(1); }
 if (!SUPA_URL || !SUPA_SECRET) { console.error('❌ Faltan VITE_SUPABASE_URL / SUPABASE_SECRET_KEY'); process.exit(1); }
 
@@ -150,6 +161,26 @@ const chunk = <T,>(arr: T[], n: number): T[][] => {
   const idSet = new Set(traslados.map(t => t.id_univoco));
   console.log(`07.Traslados: ${trasladosAll.length} filas → ${traslados.length} válidas, ${invalidT.length} descartadas (falta id/paciente/cama/status/workflow)`);
 
+  // ── Pre-scan del índice único parcial traslados_cama_destino_activa_idx ────
+  // (entorno, cama_destino) WHERE status NOT IN (Consolidado,Cancelado) AND cama_destino IS NOT NULL.
+  // El upsert usa onConflict:'id_univoco,entorno' → NO tapa este segundo índice. Si dos activos
+  // comparten cama_destino, el insert dispara 23505. Lo detectamos ACÁ (id_univoco no es PHI) para
+  // resolverlos en SP antes, en vez de morir a mitad del backfill. En APPLY igual se aísla fila a
+  // fila (abajo), así una colisión no tira abajo el chunk entero.
+  const activosConDestino = traslados.filter(t => t.status !== 'Consolidado' && t.status !== 'Cancelado' && t.cama_destino);
+  const porDestino = new Map<string, string[]>();
+  for (const t of activosConDestino) {
+    const arr = porDestino.get(t.cama_destino!) ?? [];
+    arr.push(t.id_univoco);
+    porDestino.set(t.cama_destino!, arr);
+  }
+  const colisiones = [...porDestino.entries()].filter(([, ids]) => ids.length > 1);
+  if (colisiones.length > 0) {
+    console.warn(`\n⚠️  ${colisiones.length} cama(s) destino con MÁS DE UN traslado activo (chocan contra traslados_cama_destino_activa_idx):`);
+    for (const [cama, ids] of colisiones) console.warn(`   · cama_destino "${cama}": id_univocos ${ids.join(', ')} → resolvé (consolidá/cancelá) en SP; sólo el primero entrará, el resto se saltea.`);
+    console.warn('');
+  }
+
   // 2) EVENTOS (08 no tiene entorno): traer todo y quedarnos con los de nuestros traslados
   const rawE = await graphGetAll(token, L_EVENTOS, `$expand=fields&$top=500`);
   const eventos = rawE.map(mapEvento).filter(e => e.traslado_id && idSet.has(e.traslado_id) && e.tipo);
@@ -168,36 +199,62 @@ const chunk = <T,>(arr: T[], n: number): T[][] => {
 
   const supa = createClient(SUPA_URL, SUPA_SECRET, { auth: { persistSession: false, autoRefreshToken: false } });
 
-  // TRASLADOS: upsert idempotente por (id_univoco, entorno)
-  let upT = 0;
+  // B1: silenciar el trigger de push de traslados durante el backfill. Sin esto, cada fila
+  // histórica dispara net.http_post → Edge Function → "Nueva Solicitud" a TODO el hospital.
+  const { error: offErr } = await supa.rpc('set_traslados_notify_enabled', { p_enabled: false });
+  if (offErr) { console.error('❌ no se pudo desactivar el trigger de push (set_traslados_notify_enabled):', offErr.message); process.exit(1); }
+  console.log('🔕 trigger notify_push_traslados DESACTIVADO durante el backfill');
+  const reenable = async () => {
+    const { error } = await supa.rpc('set_traslados_notify_enabled', { p_enabled: true });
+    if (error) console.error(`⚠️ NO se pudo reactivar el trigger notify_push_traslados: ${error.message} — REACTIVALO A MANO.`);
+    else console.log('🔔 trigger notify_push_traslados REACTIVADO');
+  };
+  // Nunca process.exit sin reactivar el trigger primero (un exit se saltearía cualquier finally).
+  const die = async (msg: string): Promise<never> => { console.error(msg); await reenable(); process.exit(1); };
+
+  // TRASLADOS: upsert idempotente por (id_univoco, entorno). B2: ante 23505 (índice de cama_destino
+  // activa, que onConflict NO tapa) se aísla el chunk fila a fila y se SALTEA la ofensora sin abortar.
+  let upT = 0; const saltados: string[] = [];
   for (const c of chunk(traslados, 500)) {
     const { error } = await supa.from('traslados').upsert(c, { onConflict: 'id_univoco,entorno' });
-    if (error) { console.error('❌ upsert traslados:', error.message); process.exit(1); }
-    upT += c.length;
+    if (!error) { upT += c.length; continue; }
+    if ((error as any).code !== '23505') await die(`❌ upsert traslados: ${error.message}`);
+    // Colisión de cama_destino en algún lado del chunk → reintentar fila por fila.
+    for (const row of c) {
+      const { error: e1 } = await supa.from('traslados').upsert([row], { onConflict: 'id_univoco,entorno' });
+      if (!e1) { upT++; continue; }
+      if ((e1 as any).code === '23505') { saltados.push(row.id_univoco); console.warn(`   ⚠️ 23505 en id_univoco ${row.id_univoco} (cama_destino "${row.cama_destino}") → salteado`); }
+      else await die(`❌ upsert traslados (id_univoco ${row.id_univoco}): ${e1.message}`);
+    }
   }
-  console.log(`\n✅ traslados upsert: ${upT}`);
+  console.log(`\n✅ traslados upsert: ${upT}${saltados.length ? ` · ⚠️ ${saltados.length} salteados por cama_destino duplicada: ${saltados.join(', ')}` : ''}`);
 
-  // EVENTOS/OBS: delete de este entorno para los ids backfilleados + insert (idempotente pre-cutover)
+  // EVENTOS/OBS: delete de este entorno para los ids backfilleados + insert (idempotente pre-cutover).
+  // A3: se chequea el error del delete y se aborta ANTES de insertar (no dejar el hueco).
   const ids = [...idSet];
   for (const c of chunk(ids, 200)) {
-    await supa.from('traslado_eventos').delete().eq('entorno', ENTORNO).in('traslado_id', c);
-    await supa.from('traslado_obs').delete().eq('entorno', ENTORNO).in('traslado_id', c);
+    const { error: de }   = await supa.from('traslado_eventos').delete().eq('entorno', ENTORNO).in('traslado_id', c);
+    if (de) await die(`❌ delete eventos: ${de.message}`);
+    const { error: dobs } = await supa.from('traslado_obs').delete().eq('entorno', ENTORNO).in('traslado_id', c);
+    if (dobs) await die(`❌ delete obs: ${dobs.message}`);
   }
   let upE = 0;
   for (const c of chunk(eventos, 500)) {
     const { error } = await supa.from('traslado_eventos').insert(c);
-    if (error) { console.error('❌ insert eventos:', error.message); process.exit(1); }
+    if (error) await die(`❌ insert eventos: ${error.message}`);
     upE += c.length;
   }
   let upO = 0;
   for (const c of chunk(obs, 500)) {
     const { error } = await supa.from('traslado_obs').insert(c);
-    if (error) { console.error('❌ insert obs:', error.message); process.exit(1); }
+    if (error) await die(`❌ insert obs: ${error.message}`);
     upO += c.length;
   }
   console.log(`✅ eventos insert: ${upE}\n✅ obs insert: ${upO}`);
 
+  await reenable();
+
   // VALIDACIÓN: conteos en Supabase
   const { count: cT } = await supa.from('traslados').select('*', { count: 'exact', head: true }).eq('entorno', ENTORNO);
-  console.log(`\n=== VALIDACIÓN ===\ntraslados en Supabase (entorno ${ENTORNO}): ${cT} ${cT === traslados.length ? '✅' : '⚠️ (puede diferir si ya había filas de otra corrida)'}`);
+  console.log(`\n=== VALIDACIÓN ===\ntraslados en Supabase (entorno ${ENTORNO}): ${cT} ${cT === traslados.length ? '✅' : `⚠️ (puede diferir por ${saltados.length} salteados o filas de otra corrida)`}`);
 })();

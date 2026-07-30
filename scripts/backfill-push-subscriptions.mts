@@ -39,10 +39,22 @@ const L_SUBS = '648fde7b-89d2-40ac-bc4a-63661508b50a'; // 09.PushSubscriptions
 
 const SUPA_URL = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL ?? '';
 const SUPA_SECRET = process.env.SUPABASE_SECRET_KEY ?? '';
+// A1: el par VAPID con el que se ENVÍA (sender) debe ser el mismo con el que la app SUSCRIBIÓ, o el
+// push service devuelve 403 EN SILENCIO (el 403 no está en la rama de borrado → la sub queda viva
+// pero nunca entrega). VAPID_PUBLIC_KEY = sender; VITE_VAPID_PUBLIC_KEY = con la que suscribe el
+// navegador. Si difieren, abortamos.
+const VAPID_PUB = (process.env.VAPID_PUBLIC_KEY ?? '').trim();
+const VITE_VAPID_PUB = (process.env.VITE_VAPID_PUBLIC_KEY ?? '').trim();
+
+const ALLOWED_ENTORNOS = ['TESTING', 'PRODUCTIVO'];
 const entornoArg = process.argv.find(a => a.startsWith('--entorno='));
-const ENTORNO = (entornoArg ? entornoArg.split('=')[1] : (process.env.ENTORNO ?? 'TESTING')).trim();
+const ENTORNO = (entornoArg ? entornoArg.split('=')[1] : '').trim();
 const APPLY = process.argv.includes('--apply');
 
+if (!ALLOWED_ENTORNOS.includes(ENTORNO)) {
+  console.error(`❌ --entorno es OBLIGATORIO y debe ser uno de: ${ALLOWED_ENTORNOS.join(', ')} (recibí "${ENTORNO}").`);
+  process.exit(1);
+}
 if (!TENANT_ID || !CLIENT_ID || !CLIENT_SECRET || !SITE_ID) { console.error('❌ Faltan envs Azure/SharePoint'); process.exit(1); }
 if (!SUPA_URL || !SUPA_SECRET) { console.error('❌ Faltan VITE_SUPABASE_URL / SUPABASE_SECRET_KEY'); process.exit(1); }
 
@@ -81,14 +93,31 @@ interface SubRow {
 }
 
 (async () => {
-  console.log(`Modo: ${APPLY ? 'APPLY (escribe en Supabase)' : 'DRY-RUN (no escribe)'} · ENTORNO=${ENTORNO}\n`);
+  console.log(`Modo: ${APPLY ? 'APPLY (escribe en Supabase)' : 'DRY-RUN (no escribe)'} · ENTORNO=${ENTORNO}`);
+  // A1: verificación del par VAPID (make-or-break de este backfill).
+  console.log(`VAPID público (sender): ${VAPID_PUB ? VAPID_PUB.slice(0, 12) + '…' : '(no seteado en este .env)'}`);
+  if (VAPID_PUB && VITE_VAPID_PUB && VAPID_PUB !== VITE_VAPID_PUB) {
+    console.error('❌ VAPID_PUBLIC_KEY (sender) ≠ VITE_VAPID_PUBLIC_KEY (con la que la app suscribió).');
+    console.error('   Las subs migradas darían 403 EN SILENCIO (el 403 no auto-limpia). Alineá el par VAPID antes de correr.');
+    process.exit(1);
+  }
+  if (!VAPID_PUB) console.warn('⚠️  VAPID_PUBLIC_KEY no está en este .env — no puedo verificar el par. Confirmá A MANO que el sender (Vercel/Edge Function) usa el MISMO VAPID que la app.');
+  console.log('');
   const token = await getGraphToken();
 
   const raw = await graphGetAll(token, L_SUBS, `$expand=fields&$filter=${encodeURIComponent(`fields/Entorno_PS eq '${ENTORNO}'`)}&$top=500`);
   const mapped: SubRow[] = raw.map((item: any) => {
     const f = item.fields ?? {};
     let keys = { p256dh: '', auth: '' };
-    try { keys = JSON.parse(String(f.Keys_PS ?? '{}')); } catch { /* inválido */ }
+    // Guard de tipo: JSON.parse('null') es válido y devuelve null (no lo agarra el catch) → luego
+    // `s.keys.p256dh` tiraría TypeError y mataría TODO el backfill. Cualquier cosa que no sea objeto
+    // se descarta (queda con keys vacías → la fila se filtra abajo).
+    try {
+      const parsed = JSON.parse(String(f.Keys_PS ?? '{}'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        keys = { p256dh: String(parsed.p256dh ?? ''), auth: String(parsed.auth ?? '') };
+      }
+    } catch { /* inválido → keys vacías */ }
     return {
       endpoint:       String(f.Endpoint_PS ?? ''),
       keys,
@@ -97,7 +126,7 @@ interface SubRow {
       assigned_areas: String(f.AssignedAreas_PS ?? '').split(';').map(s => s.trim()).filter(Boolean),
       sede:           String(f.Sede_PS ?? 'HPR'),
       entorno:        String(f.Entorno_PS ?? ENTORNO),
-      last_seen_at:   isoOrNull(item.lastModifiedDateTime),
+      last_seen_at:   isoOrNull(item.lastModifiedDateTime) ?? new Date().toISOString(), // columna NOT NULL
       _lm:            String(item.lastModifiedDateTime ?? ''),
     };
   }).filter(s => s.endpoint && s.keys.p256dh && s.keys.auth);
