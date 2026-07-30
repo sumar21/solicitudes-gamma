@@ -91,53 +91,72 @@ self.addEventListener('push', (event) => {
   const data = event.data?.json() ?? {};
   const { title, body, ticketId, type, tag, timestamp } = data;
 
-  // Log en IndexedDB ANTES de showNotification (no bloqueante).
-  event.waitUntil(
-    logPushReceived({
-      title, body, ticketId, type, tag, payloadTs: timestamp,
-      permission: typeof Notification !== 'undefined' ? Notification.permission : 'unknown',
-      scope: self.registration.scope,
-    })
-  );
-
   // Stable tag per (ticketId, type): the backend always sends one; the fallback
-  // mirrors it so a repeated push for the same event collapses into a single
-  // bubble instead of stacking a new one on every PATCH.
+  // mirrors it so a repeated push for the same event collapses into a single bubble.
   const notifTag = tag ?? `${ticketId ?? 'nt'}-${type ?? 'evt'}`;
 
-  const options: NotificationOptions & {
-    vibrate?: number[];
-    renotify?: boolean;
-    requireInteraction?: boolean;
-    timestamp?: number;
-    actions?: { action: string; title: string }[];
-  } = {
+  // iOS/WebKit soporta un SUBCONJUNTO mínimo de opciones. actions/vibrate/renotify/
+  // requireInteraction son de Android; en iOS conviene NO pasarlas (hay reportes de que
+  // WebKit no pinta la notificación con opciones que no soporta). Detectamos iOS por el UA
+  // del SW y ahí mandamos solo lo básico. En Android/desktop se mantiene todo como estaba.
+  const isIOS = /iPad|iPhone|iPod/i.test(self.navigator.userAgent || '');
+  const base: any = {
     body: body ?? '',
     icon: '/logo.svg',
-    // Badge dedicado (sin fondo, shapes en blanco) para que Android lo trate
-    // correctamente como alpha mask en la status bar. Usar el logo full color
-    // hacía que algunos builds de Chrome degradaran la prioridad visual de la notif.
     badge: '/badge.svg',
     tag: notifTag,
     data: { ticketId, type, tag: notifTag },
-    // Stronger vibration pattern — Android treats non-silent + vibrate as high-priority.
-    vibrate: [300, 120, 300, 120, 300],
-    // IMPORTANT: do NOT set requireInteraction: true on Android. Some Chrome
-    // builds treat such notifications as "ongoing" and skip the heads-up banner,
-    // sending the notif straight to the tray without a toast. Letting it
-    // auto-dismiss is the cost for guaranteeing the heads-up shows up.
-    requireInteraction: false,
-    renotify: false,            // reused tag → replace the bubble silently (one bubble, no second buzz)
-    silent: false,              // explicit — some Android builds treat missing flag as silent
     timestamp: timestamp ?? Date.now(),
-    // Having at least one action bumps notification importance on many Android devices
-    // and makes it more likely to trigger the heads-up banner.
+  };
+  const options: any = isIOS ? base : {
+    ...base,
+    vibrate: [300, 120, 300, 120, 300],
+    requireInteraction: false,
+    renotify: false,
+    silent: false,
     actions: [{ action: 'open', title: 'Ver' }],
   };
 
-  event.waitUntil(
-    self.registration.showNotification(title ?? 'MediFlow', options as NotificationOptions)
-  );
+  // UN solo waitUntil y showNotification PRIMERO (iOS cancela la suscripción si recibe un
+  // push sin mostrar notif). Si falla, reintenta con opciones mínimas. Después reporta a
+  // /api/push-debug (para diagnosticar el iPhone SIN cable) y loguea en IndexedDB.
+  event.waitUntil((async () => {
+    let shown = false;
+    let errMsg = '';
+    try {
+      await self.registration.showNotification(title ?? 'MediFlow', options);
+      shown = true;
+    } catch (e) {
+      errMsg = String((e as any)?.message ?? e);
+      try {
+        await self.registration.showNotification(title ?? 'MediFlow', { body: body ?? '', tag: notifTag, data: base.data });
+        shown = true;
+      } catch (e2) {
+        errMsg += ' | fallback: ' + String((e2 as any)?.message ?? e2);
+      }
+    }
+
+    // Reporte de diagnóstico (best-effort). TEMPORAL: se quita cuando el push de iOS quede confirmado.
+    try {
+      await fetch('/api/push-debug', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          // NO se manda `body` (contiene nombre de paciente) — solo metadata de diagnóstico.
+          title, type, ticketId, shown, error: errMsg, isIOS,
+          permission: typeof Notification !== 'undefined' ? Notification.permission : 'unknown',
+        }),
+      });
+    } catch { /* no-op */ }
+
+    try {
+      await logPushReceived({
+        title, body, ticketId, type, tag, payloadTs: timestamp,
+        permission: typeof Notification !== 'undefined' ? Notification.permission : 'unknown',
+        scope: self.registration.scope,
+      });
+    } catch { /* no-op */ }
+  })());
 });
 
 // ── Cómo leer el push-log desde el browser del cliente ─────────────────────
