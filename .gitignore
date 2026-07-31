@@ -15,3 +15,6 @@ reporte-sesion-*.pdf
 
 # Export de facturación de Vercel (datos de toda la cuenta, no del proyecto)
 vercel-costs.csv
+
+# Vercel log exports (pueden traer data sensible de push) — nunca commitear
+docs/vercel-logs/

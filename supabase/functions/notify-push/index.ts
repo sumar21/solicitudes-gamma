@@ -196,8 +196,10 @@ Deno.serve(async (req: Request) => {
         { urgency: 'high', TTL: 3600 },
       );
     } catch (err: any) {
+      // Solo 404/410 = sub vencida → se borra. El 403 NO (podría ser misconfig VAPID global del
+      // sender → borraría toda la tabla en un broadcast). El chequeo client-side ya regenera.
       if (err?.statusCode === 404 || err?.statusCode === 410) {
-        await supa.from('push_subscriptions').delete().eq('endpoint', sub.endpoint); // sub vencida
+        await supa.from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
       } else {
         console.error('[notify-push] send failed:', err?.statusCode ?? err?.message ?? err);
       }

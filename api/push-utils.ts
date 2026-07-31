@@ -243,6 +243,10 @@ export async function sendPushToSubscribers(params: PushParams): Promise<void> {
           { urgency: 'high', TTL: 60 * 60 },
         );
       } catch (err: any) {
+        // Solo 404/410 = sub muerta (desuscrita/rotada) → se borra. El 403 NO se borra a propósito:
+        // un 403 puede ser un fallo de auth VAPID GLOBAL del sender (misconfig), y borrar en 403
+        // vaciaría TODA la tabla en un broadcast. El chequeo de VAPID client-side (pushSubscription.ts)
+        // ya regenera cualquier sub con llave vieja en la próxima apertura, sin ese riesgo.
         if (err?.statusCode === 404 || err?.statusCode === 410) {
           console.log(`[push-utils] Removing expired subscription for user ${sub.userId}`);
           await deleteSubscription(sub.endpoint);

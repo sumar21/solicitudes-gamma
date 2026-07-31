@@ -193,6 +193,7 @@ async function handler(req: any, res: any) {
         fecha_fin: v.hasta,
         comanda: v.comanda,
         status: 'Activo',
+        version: String(req.body?.version ?? ''),
         nombre_user_carga: String(req?.user?.name ?? ''),
         user_id: uidOrNull(req?.user?.id),
         fecha_carga: new Date().toISOString(),
@@ -248,6 +249,7 @@ async function handler(req: any, res: any) {
         nombre_user_carga: String(req?.user?.name ?? ''),
         // Solo se pisa si hay id numérico; si no, se preserva el previo (igual que `...uidField` original).
         ...(uid != null ? { user_id: uid } : {}),
+        version: String(req.body?.version ?? ''),
         fecha_carga: new Date().toISOString(),
       }).eq('id', spItemId);
       if (error) {
@@ -279,7 +281,7 @@ async function handler(req: any, res: any) {
       }
 
       // Soft-delete (regla del repo: nunca borrar).
-      const { error } = await supa.from('carga_menu').update({ status: 'Inactivo' }).eq('id', spItemId);
+      const { error } = await supa.from('carga_menu').update({ status: 'Inactivo', version: String(req.body?.version ?? '') }).eq('id', spItemId);
       if (error) {
         console.error('[api/carga-menu] soft-delete failed:', error.message);
         return res.status(500).json({ error: 'No se pudo eliminar la planificación.' });

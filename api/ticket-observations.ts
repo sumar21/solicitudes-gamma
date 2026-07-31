@@ -64,6 +64,7 @@ async function handler(req: any, res: any) {
       texto:         cleanText.slice(0, MAX_TEXT),
       usuario:       usuario != null && usuario !== '' ? String(usuario) : null,
       usuario_id:    Number.isFinite(idNum) && usuarioId != null && usuarioId !== '' ? idNum : null,
+      version:       String(req.body?.version ?? ''),
     }).select('id').single();
     if (error) throw new Error(`Supabase POST failed: ${error.message}`);
 

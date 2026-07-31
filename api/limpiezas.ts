@@ -111,13 +111,14 @@ async function handler(req: any, res: any) {
           status: 'Inactivo', motivo_cierre: motivoCierre,
           azafata_id: String(userId ?? ''), azafata_nombre: String(userName ?? ''),
           fecha_limpieza: nowIso, fecha_cierre: nowIso,
+          version: String(req.body?.version ?? ''),
         }).select('id').single();
         if (error) { console.error('[limpiezas] POST(closed) failed:', error.message); return res.status(500).json({ error: 'Failed to create cleaning' }); }
         return res.status(200).json({ ok: true, spItemId: String(data.id) });
       }
 
       // Upsert de la ACTIVA: si ya hay una para esta cama+entorno → refrescar; si no → crear.
-      const refresh = { azafata_id: String(userId ?? ''), azafata_nombre: String(userName ?? ''), fecha_limpieza: nowIso };
+      const refresh = { azafata_id: String(userId ?? ''), azafata_nombre: String(userName ?? ''), fecha_limpieza: nowIso, version: String(req.body?.version ?? '') };
       const { data: existing } = await supa.from('limpiezas').select('id')
         .eq('entorno', ENTORNO).eq('cama_label', String(bedLabel)).eq('status', 'Activo').limit(1);
       if (existing?.length) {
@@ -170,7 +171,7 @@ async function handler(req: any, res: any) {
       if (!itemId) return res.status(200).json({ ok: true, message: 'No active cleaning found' });
 
       const { error } = await supa.from('limpiezas')
-        .update({ status: 'Inactivo', motivo_cierre: motivo, fecha_cierre: nowIso })
+        .update({ status: 'Inactivo', motivo_cierre: motivo, fecha_cierre: nowIso, version: String(req.body?.version ?? '') })
         .eq('id', itemId);
       if (error) { console.error('[limpiezas] PATCH failed:', error.message); return res.status(500).json({ error: 'Failed to close cleaning' }); }
       return res.status(200).json({ ok: true });

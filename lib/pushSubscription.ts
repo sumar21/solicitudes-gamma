@@ -3,6 +3,8 @@
  * Subscribes the browser to push notifications and sends the subscription to the backend.
  */
 
+import { APP_VERSION } from './version';
+
 const VAPID_PUBLIC_KEY = (import.meta as any).env?.VITE_VAPID_PUBLIC_KEY as string;
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
@@ -12,6 +14,17 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const outputArray = new Uint8Array(rawData.length);
   for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
   return outputArray;
+}
+
+/** True si la applicationServerKey de una sub existente coincide con la VAPID actual.
+ *  Si el browser NO expone la key (algunos Safari sobre una sub válida), devolvemos true = NO forzar
+ *  re-suscripción — evita churn de endpoints en cada apertura cuando no podemos comparar. */
+function sameApplicationServerKey(existing: ArrayBuffer | null | undefined, current: Uint8Array): boolean {
+  if (!existing) return true;
+  const a = new Uint8Array(existing);
+  if (a.length !== current.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== current[i]) return false;
+  return true;
 }
 
 export async function subscribeToPush(
@@ -33,12 +46,22 @@ export async function subscribeToPush(
     }
 
     const registration = await navigator.serviceWorker.ready;
+    const currentKey = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
 
     // Check if already subscribed
     let subscription = await registration.pushManager.getSubscription();
 
+    // Si la sub existente fue creada con OTRA applicationServerKey (VAPID viejo/rotado), NO sirve:
+    // el sender firma con el VAPID actual → el push service devuelve 403 y nunca entrega. La
+    // descartamos para re-suscribir con la actual (si solo la re-posteáramos, el 403 sería eterno).
+    if (subscription && !sameApplicationServerKey(subscription.options?.applicationServerKey, currentKey)) {
+      console.warn('[push] Sub con VAPID distinto al actual → re-suscribiendo');
+      await subscription.unsubscribe().catch(() => {});
+      subscription = null;
+    }
+
     if (!subscription) {
-      // Request permission if needed
+      // Request permission if needed (si ya está 'granted', resuelve sin prompt).
       const permission = await Notification.requestPermission();
       if (permission !== 'granted') {
         console.warn('[push] Notification permission denied');
@@ -48,7 +71,7 @@ export async function subscribeToPush(
       // Subscribe
       subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+        applicationServerKey: currentKey,
       });
     }
 
@@ -67,6 +90,7 @@ export async function subscribeToPush(
         role: userRole,
         assignedAreas: assignedAreas.join(';'),
         sede,
+        version: APP_VERSION,
       }),
     });
 
@@ -117,6 +141,7 @@ export async function touchPushSubscription(
         role: userRole,
         assignedAreas: assignedAreas.join(';'),
         sede,
+        version: APP_VERSION,
       }),
       keepalive: true,
     });

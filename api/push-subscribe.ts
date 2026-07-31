@@ -38,6 +38,7 @@ async function handlePost(req: any, res: any) {
         sede: String(sede ?? 'HPR'),
         entorno: ENTORNO,
         last_seen_at: new Date().toISOString(),
+        version: String(req.body?.version ?? ''), // versión del build del cliente (captura en login/heartbeat)
       },
       { onConflict: 'endpoint' },          // UNIQUE(endpoint) → alta idempotente, sin duplicados
     );

@@ -159,6 +159,7 @@ async function handler(req: any, res: any) {
       const { originAreaName, destinationAreaName } = req.body ?? {};
       const row = ticketToRow(req.body ?? {});
       row.entorno = ENTORNO;
+      row.version = String(req.body?.version ?? ''); // versión del build del cliente que creó el ticket
       // Nombres de área reales (para que el webhook filtre por piso). No están en Ticket.
       if (originAreaName !== undefined) row.cama_origen_area = originAreaName ? String(originAreaName) : null;
       if (destinationAreaName !== undefined) row.cama_destino_area = destinationAreaName ? String(destinationAreaName) : null;
@@ -219,6 +220,7 @@ async function handler(req: any, res: any) {
       const fields = ticketToRow(updates);
       delete fields.id_univoco; // no reescribir la clave de join
       fields.last_actor_id = Number(req.user?.id) || null; // quién hizo la acción → excludeUser del webhook
+      fields.version = String(req.body?.version ?? ''); // versión del build del cliente que hizo el cambio
       if (originArea !== undefined) fields.cama_origen_area = originArea ? String(originArea) : null;
       if (destinationArea !== undefined) fields.cama_destino_area = destinationArea ? String(destinationArea) : null;
 

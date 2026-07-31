@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogTitle, DialogHeader, DialogFooter } from '
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { cn, formatDateTime, formatTime } from '../lib/utils';
+import { APP_VERSION } from '../lib/version';
 
 interface TicketEvent {
   id: string;
@@ -154,7 +155,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
       const r = await fetch('/api/ticket-observations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ ticketId: ticket.id, status: ticket.status, texto: text, usuario, usuarioId }),
+        body: JSON.stringify({ ticketId: ticket.id, status: ticket.status, texto: text, usuario, usuarioId, version: APP_VERSION }),
       });
       if (!r.ok) throw new Error('post failed');
       // Append optimista: aparece al instante en la línea de tiempo (marcada post-cierre).

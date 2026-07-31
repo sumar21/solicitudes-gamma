@@ -295,6 +295,7 @@ async function handler(req: any, res: any) {
         // toca la columna) y se preserva el nutricionista_id previo — igual que el `...nutriIdField`
         // del original en SharePoint. En el INSERT sí va (nace null si no hay id).
         ...(nutriId != null ? { nutricionista_id: nutriId } : {}),
+        version: String(req.body?.version ?? ''),
         // Al re-guardar, la comanda se "muda" a la cama ACTUAL del paciente (si se trasladó) y
         // fecha_carga=now() recomputa la columna `dia` a hoy (clave para reusar una pendiente vieja).
         fecha_carga: nowIso,
@@ -354,6 +355,7 @@ async function handler(req: any, res: any) {
         nutricionista_nombre: String(userName ?? ''), nutricionista_id: nutriId,
         fecha_carga: nowIso,
         comensal: comensalVal, orden_comensal: ordenVal,
+        version: String(req.body?.version ?? ''),
       };
       const { data: created, error: insErr } = await supa.from('comandas').insert(insertRow).select('id').single();
       if (insErr) {
@@ -410,6 +412,7 @@ async function handler(req: any, res: any) {
           const { error: upErr } = await supa.from('comandas').update({
             cama_label: String(bedLabel), cama_codigo: String(bedCode ?? ''),
             habitacion: String(roomCode ?? ''), area: String(area ?? ''),
+            version: String(req.body?.version ?? ''),
           }).in('id', ids);
           if (upErr) { console.error('[dietas] reubicar update failed:', upErr.message); return res.status(500).json({ error: upErr.message }); }
           console.log(`[dietas] reubicar: ${aMigrar.length} bandeja(s) pendiente(s) del paciente movida(s) a "${bedLabel}"`);
@@ -459,7 +462,7 @@ async function handler(req: any, res: any) {
         }
       }
 
-      const { error } = await supa.from('comandas').update(fields).eq('id', itemId);
+      const { error } = await supa.from('comandas').update({ ...fields, version: String(req.body?.version ?? '') }).eq('id', itemId);
       if (error) { console.error('[dietas] PATCH failed:', error.message, act); return res.status(500).json({ error: 'No se pudo actualizar la comanda.' }); }
       return res.status(200).json({ ok: true, spItemId: itemId, status: fields.status });
     } catch (err: any) {

@@ -20,6 +20,7 @@ import {
 } from '../../types';
 import { can } from '../../lib/permissions';
 import { cn, formatDateReadable } from '../../lib/utils';
+import { APP_VERSION } from '../../lib/version';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Popover, PopoverTrigger, PopoverContent } from '../ui/popover';
@@ -161,6 +162,7 @@ export const PlanificacionMenuModal: React.FC<Props> = ({ open, onOpenChange, cu
       turno: slot?.sp, tipo: draft.tipo,
       desde: draft.desde, hasta: draft.hasta,
       comanda: draft.comanda.trim(),
+      version: APP_VERSION,
     };
     try {
       const r = await authFetch('/api/carga-menu', {

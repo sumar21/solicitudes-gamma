@@ -10,6 +10,7 @@ import { MOCK_TICKETS } from '../lib/constants';
 import { can, hasModule, canReceiveNotif } from '../lib/permissions';
 import { effectiveHostessAreas, formatDateTime, createActionLock } from '../lib/utils';
 import { supabase, resetSupabasePase } from '../lib/supabase';
+import { APP_VERSION } from '../lib/version';
 
 // ── JWT helpers (client-side, solo lectura — sin verificar firma) ─────────────
 function parseJwtPayload(token: string): Record<string, unknown> | null {
@@ -609,6 +610,22 @@ export const useHospitalState = () => {
   const [tokenExpirySoon, setExpirySoon]  = useState(false);
   const [tokenMinutesLeft, setMinutesLeft]= useState(() => getTokenMinutesLeft(localStorage.getItem(TOKEN_KEY)));
 
+  // Re-suscribe a Web Push en cada apertura/restauración de sesión (mount), NO solo en el login.
+  // Sin esto un F5 / relanzar la PWA no regenera la sub, así que una sub borrada por el server
+  // (p.ej. 403 por VAPID viejo) no volvería hasta un re-login real — y los tokens duran ~10 años.
+  // También hace de heartbeat (refresca last_seen → la sub no caduca por >36h). NO pide permiso
+  // acá (eso requiere gesto del usuario): solo re-suscribe si YA está concedido; si no, se
+  // suscribe en el próximo login. subscribeToPush regenera la sub si su VAPID no matchea el actual.
+  useEffect(() => {
+    const u = currentUser, tk = token;
+    if (!tk || !u?.id) return;
+    if (!('Notification' in window) || window.Notification.permission !== 'granted') return;
+    import('../lib/pushSubscription').then(({ subscribeToPush }) => {
+      subscribeToPush(tk, u.id, u.roleName ?? u.role, u.assignedAreas ?? [], u.sede);
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, currentUser?.id]);
+
   // Check token expiry every minute
   useEffect(() => {
     const check = () => {
@@ -824,6 +841,7 @@ export const useHospitalState = () => {
         body: JSON.stringify({
           bedLabel: bed.label, bedCode: bed.bedCode ?? '', roomCode: bed.roomCode ?? '',
           area: bed.area ?? '', userId: u?.id ?? '', userName: u?.name ?? '',
+          version: APP_VERSION,
         }),
       });
       if (r.ok) {
@@ -854,7 +872,7 @@ export const useHospitalState = () => {
     try {
       await authFetch('/api/limpiezas', {
         method: 'PATCH',
-        body: JSON.stringify({ spItemId: info?.spItemId || undefined, bedLabel, reason }),
+        body: JSON.stringify({ spItemId: info?.spItemId || undefined, bedLabel, reason, version: APP_VERSION }),
       });
     } catch { /* best-effort */ }
   }, [authFetch, cleanings]);
@@ -871,7 +889,7 @@ export const useHospitalState = () => {
     authFetch('/api/limpiezas', {
       method: 'POST',
       body: JSON.stringify({
-        closed: true, reason: 'TICKET',
+        closed: true, reason: 'TICKET', version: APP_VERSION,
         bedLabel: ticket.destination,
         bedCode: dest?.bedCode ?? ticket.destinationBedCode ?? '',
         roomCode: dest?.roomCode ?? '',
@@ -958,6 +976,7 @@ export const useHospitalState = () => {
           // el server elegía "la más reciente por UpdatedAt" y podía rechazar (409) una carga
           // que la UI habilitó, cuando el paciente tiene un evento viejo residual en la lista.
           eventOrigin: bed.eventOrigin ?? '', eventNumber: bed.eventNumber ?? '',
+          version: APP_VERSION,
         }),
       });
       if (r.ok) {
@@ -1026,7 +1045,7 @@ export const useHospitalState = () => {
         method: 'PATCH',
         // bedLabel = la clave REAL de la fila (puede ser la cama vieja): es el fallback del
         // server cuando no hay spItemId. `motivo` → motivo_anulacion (quitar = anular).
-        body: JSON.stringify({ spItemId: spItemId || undefined, bedLabel: ownerKey, comida: spFromMealSlot(comida), action: 'anular', motivo }),
+        body: JSON.stringify({ spItemId: spItemId || undefined, bedLabel: ownerKey, comida: spFromMealSlot(comida), action: 'anular', motivo, version: APP_VERSION }),
       });
       // authFetch NO lanza ante 4xx/5xx → sin el poll de 60s hay que reconciliar también cuando el
       // server respondió error (p.ej. 500 transitorio o 409): la fila sigue viva en la DB y el
@@ -1055,7 +1074,7 @@ export const useHospitalState = () => {
         body: JSON.stringify({
           bedLabel: bed.label, bedCode: bed.bedCode ?? '', roomCode: bed.roomCode ?? '', area: bed.area ?? '',
           patientName: bed.patientName ?? '', patientCode: bed.patientCode ?? '',
-          comida: spFromMealSlot(comida), comensal: 'ACOMPANANTE', spItemId: data.spItemId,
+          comida: spFromMealSlot(comida), comensal: 'ACOMPANANTE', spItemId: data.spItemId, version: APP_VERSION,
           tipo: data.tipo, detalle: data.detalle, observaciones: data.observaciones,
           userId: u?.id ?? '', userName: u?.name ?? '',
         }),
@@ -1104,7 +1123,7 @@ export const useHospitalState = () => {
     mealsWritingRef.current += 1;
     try {
       // `motivo` solo viaja al anular (queda como motivo_anulacion para el histórico).
-      const r = await authFetch('/api/dietas', { method: 'PATCH', body: JSON.stringify({ spItemId, action, motivo }) });
+      const r = await authFetch('/api/dietas', { method: 'PATCH', body: JSON.stringify({ spItemId, action, motivo, version: APP_VERSION }) });
       await fetchMeals();
       return { ok: r.ok };
     } catch { await fetchMeals(); return { ok: false }; }
@@ -1133,7 +1152,7 @@ export const useHospitalState = () => {
     });
     try {
       // action anular + motivo → motivo_anulacion (quitar un acompañante = anularlo).
-      const r = await authFetch('/api/dietas', { method: 'PATCH', body: JSON.stringify({ spItemId, action: 'anular', motivo }) });
+      const r = await authFetch('/api/dietas', { method: 'PATCH', body: JSON.stringify({ spItemId, action: 'anular', motivo, version: APP_VERSION }) });
       // authFetch no lanza ante 4xx/5xx → reconciliar también si el server respondió error (la fila
       // sigue viva y sin evento Realtime, nada revertiría el borrado optimista).
       if (!r.ok) fetchMeals();
@@ -1389,7 +1408,7 @@ export const useHospitalState = () => {
       setCleanings(prev => { const n = new Map(prev); n.delete(label); return n; });
       authFetch('/api/limpiezas', {
         method: 'PATCH',
-        body: JSON.stringify({ spItemId, reason }),
+        body: JSON.stringify({ spItemId, reason, version: APP_VERSION }),
       })
         // Si el cierre falla (HTTP no-ok o red), soltamos el candado para reintentar en el
         // próximo poll — sino la fila queda 'Activo' en SP y el overlay puede reaparecer falso.
@@ -1581,7 +1600,7 @@ export const useHospitalState = () => {
       const destinationAreaName = ticket.destination ? rawBeds.find((b: Bed) => b.label === ticket.destination)?.area : undefined;
       const r = await authFetch('/api/tickets', {
         method: 'POST',
-        body: JSON.stringify({ ...ticket, originAreaName, destinationAreaName }),
+        body: JSON.stringify({ ...ticket, originAreaName, destinationAreaName, version: APP_VERSION }),
       });
       if (r.status === 409) {
         const data = await r.json().catch(() => ({} as any));
@@ -1612,7 +1631,7 @@ export const useHospitalState = () => {
       } : {};
       const r = await authFetch('/api/tickets', {
         method: 'PATCH',
-        body:   JSON.stringify({ spItemId, ...context, ...updates }),
+        body:   JSON.stringify({ spItemId, ...context, ...updates, version: APP_VERSION }),
       });
       if (r.status === 409) {
         const data = await r.json().catch(() => ({} as any));
@@ -1666,6 +1685,7 @@ export const useHospitalState = () => {
         body: JSON.stringify({
           ticketId,
           tipo,
+          version: APP_VERSION,
           usuario: currentUser?.name ?? '',
           usuarioId: currentUser?.id ?? '',
         }),
@@ -1683,6 +1703,7 @@ export const useHospitalState = () => {
           ticketId,
           status,
           texto,
+          version: APP_VERSION,
           usuario: currentUser?.name ?? '',
           usuarioId: currentUser?.id ?? '',
         }),
@@ -1793,6 +1814,7 @@ export const useHospitalState = () => {
       }
 
       localStorage.setItem(TOKEN_KEY, data.token);
+      localStorage.setItem('mediflow_version', APP_VERSION); // versión capturada en el login (para inspección/soporte)
       localStorage.setItem(USER_KEY,  JSON.stringify(user));
       setToken(data.token);
       setCurrentUser(user);
@@ -2206,7 +2228,7 @@ export const useHospitalState = () => {
     authFetch('/api/dietas', {
       method: 'PATCH',
       body: JSON.stringify({
-        action: 'reubicar', patientCode: ticket.patientCode,
+        action: 'reubicar', patientCode: ticket.patientCode, version: APP_VERSION,
         bedLabel: ticket.destination,
         bedCode: dest?.bedCode ?? ticket.destinationBedCode ?? '',
         roomCode: dest?.roomCode ?? '', area: dest?.area ?? '',

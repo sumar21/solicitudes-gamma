@@ -7,6 +7,7 @@ import {
 import { Globe, MapPin as MapPinIcon, RefreshCw, Utensils } from 'lucide-react';
 import { GammaLogo } from './components/GammaLogo';
 import { IS_TESTING } from './lib/env';
+import { APP_VERSION } from './lib/version';
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
@@ -296,6 +297,8 @@ export default function App() {
             </Button>
           </form>
 
+          <div className="mt-3 text-center text-[10px] font-mono text-slate-400 select-all" title="Versión del cliente">{APP_VERSION}</div>
+
           {/* Zócalo de debug — IP que ve el server + geo del browser. Útil para que
               el usuario nos mande captura si le rebota la validación de ubicación. */}
           <div className="mt-6 pt-4 border-t border-slate-100">
@@ -434,6 +437,7 @@ export default function App() {
             <RefreshCw className={cn("w-4 h-4", syncingRoles && "animate-spin")} /> Actualizar accesos
           </Button>
           <Button variant="ghost" className="w-full justify-start gap-3 text-red-400 hover:text-red-300 hover:bg-red-950/20" onClick={actions.handleLogout}><LogOut className="w-4 h-4" /> Salir</Button>
+          <div className="px-3 pt-1 text-[9px] font-mono text-white/25 tracking-wider select-all" title="Versión del cliente">{APP_VERSION}</div>
         </div>
       </aside>
 
@@ -547,6 +551,7 @@ export default function App() {
                 <RefreshCw className={cn("w-4 h-4", syncingRoles && "animate-spin")} /> Actualizar accesos
               </Button>
               <Button variant="ghost" className="w-full justify-start gap-3 text-red-400 hover:text-red-300 hover:bg-red-950/20" onClick={() => { actions.handleLogout(); setIsMobileMenuOpen(false); }}><LogOut className="w-4 h-4" /> Salir</Button>
+              <div className="px-3 pt-1 text-[9px] font-mono text-white/25 tracking-wider select-all" title="Versión del cliente">{APP_VERSION}</div>
             </div>
           </div>
 

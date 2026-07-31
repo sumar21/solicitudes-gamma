@@ -60,6 +60,7 @@ async function handler(req: any, res: any) {
       tipo:        String(tipo),
       usuario:     usuario != null && usuario !== '' ? String(usuario) : null,
       usuario_id:  Number.isFinite(idNum) && usuarioId != null && usuarioId !== '' ? idNum : null,
+      version:     String(req.body?.version ?? ''),
     }).select('id').single();
     if (error) throw new Error(`Supabase POST failed: ${error.message}`);
 
