@@ -3,13 +3,13 @@ import { Bed, BedStatus, Ticket, TicketStatus, User, Area, IsolationEntry, MealS
 import { can, canLoadMealSlot, canLoadAnyMealSlot } from '../lib/permissions';
 import { hasLiveFasting, fastingOccurrences, formatFastingDateTime, fastingTimesForToday } from '../lib/fasting';
 import { Input } from '../components/ui/input';
-import { cn, dietRequiresCustomComanda, suggestedRoomSex } from '../lib/utils';
-import { BedDouble, User as UserIcon, Info, Search, X, Plus, ChevronDown, ChevronRight, Check, AlertTriangle, AlertCircle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan, History, Lock } from 'lucide-react';
+import { cn, dietRequiresCustomComanda, suggestedRoomSex, formatBedName } from '../lib/utils';
+import { BedDouble, User as UserIcon, Info, Search, X, Plus, ChevronDown, ChevronRight, Check, AlertTriangle, AlertCircle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan, History, Lock, Activity } from 'lucide-react';
 import { Dialog, DialogContent } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { PatientJourney } from '../components/PatientJourney';
-import { WORKFLOW_LABELS } from '../lib/constants';
+import { WORKFLOW_LABELS, CIRUGIA_ESTADO_LABEL, CIRUGIA_PILL_CLASS } from '../lib/constants';
 import jsPDF from 'jspdf';
 
 const AREA_LABELS: Record<string, string> = {
@@ -62,6 +62,11 @@ interface BedsViewProps {
   onClearMeal?: (bed: Bed, comida: MealSlot, motivo?: string) => void | Promise<void>;
   onSaveCompanion?: (bed: Bed, comida: MealSlot, data: { spItemId?: string; tipo: 'MENU' | 'OPCION' | 'OTROS'; detalle: string; observaciones: string }) => Promise<{ ok: boolean; error?: string }>;
   onClearCompanion?: (bed: Bed, comida: MealSlot, spItemId: string, motivo?: string) => void | Promise<void>;
+  // Cirugía (feature Cx): Enfermería marca "Listo para cirugía" (alta) sobre una cama ocupada y
+  // "Recibida" (recepción confirmada) cuando el paciente vuelve. La pill Cx por color la pinta
+  // mergeBeds (bed.cirugia). El gating fino por permiso cirugia_* llega en F5/go-live.
+  onMarcarListo?: (bed: Bed) => Promise<{ ok: boolean; id?: string; error?: string }>;
+  onCirugiaRecibida?: (id: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
 // Mapa de clave de color (la define api/isolations-summary.ts) → clases Tailwind.
@@ -684,7 +689,90 @@ const CompanionEditor: React.FC<{
   );
 };
 
-export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onFetchPatientTickets, onRefresh, onMarkClean, onUndoClean, onSaveMeal, onClearMeal, onSaveCompanion, onClearCompanion }) => {
+// ── Bloque de Cirugía en el detalle de la cama (Enfermería) ──────────────────
+// · Cama OCUPADA sin cirugía viva → botón "Listo para cirugía" (alta). Si el paciente es
+//   quirúrgico (admissionTypeCode==='Q') se muestra un aviso con la fecha probable.
+// · Cama con cirugía viva → pill Cx por color; si está EN_DEVOLUCION, botón "Recibida"
+//   (recepción confirmada, la marca enfermería del piso destino).
+// NO gateado por permiso cirugia_* (aún no existen; F5/go-live) — así el Admin testea todo.
+const CirugiaBedBlock: React.FC<{
+  bed: Bed;
+  onMarcarListo?: (bed: Bed) => Promise<{ ok: boolean; id?: string; error?: string }>;
+  onCirugiaRecibida?: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  onDone: () => void;
+}> = ({ bed, onMarcarListo, onCirugiaRecibida, onDone }) => {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const cx = bed.cirugia;
+  const esQuirurgico = (bed.admissionTypeCode ?? '').toUpperCase() === 'Q';
+  const fmtFecha = (iso?: string) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? '' : d.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
+  };
+
+  // Cama con operatoria viva → pill + (Recibida si está volviendo).
+  if (cx) {
+    return (
+      <div className="rounded-2xl p-3.5 border border-slate-200 bg-slate-50/70 flex flex-col gap-2.5">
+        <div className="flex items-center gap-2">
+          <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-tight', CIRUGIA_PILL_CLASS[cx.estado])}>
+            <Activity className="w-3 h-3" strokeWidth={3} /> Cx · {CIRUGIA_ESTADO_LABEL[cx.estado]}
+          </span>
+          {cx.role === 'destino' && (
+            <span className="text-[10px] font-bold text-violet-700">Cama destino</span>
+          )}
+        </div>
+        {cx.camaDestino && cx.camaDestino !== cx.camaOrigen && (
+          <p className="text-[11px] font-medium text-slate-600">
+            Devolución con cambio de cama: {formatBedName(cx.camaOrigen)} → <strong>{formatBedName(cx.camaDestino)}</strong>
+          </p>
+        )}
+        {error && <p className="text-[10px] font-bold text-red-600">{error}</p>}
+        {cx.estado === 'EN_DEVOLUCION' && onCirugiaRecibida && (
+          <button disabled={busy}
+            onClick={async () => {
+              setBusy(true); setError(null);
+              const r = await onCirugiaRecibida(cx.id);
+              setBusy(false);
+              if (r.ok) onDone(); else setError(r.error ?? 'No se pudo confirmar.');
+            }}
+            className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm disabled:opacity-50">
+            <CheckCircle2 className="w-4 h-4" /> {busy ? 'Confirmando…' : 'Recibida (recepción confirmada)'}
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // Cama ocupada sin cirugía → alta (Enfermería marca "listo").
+  if (bed.status !== BedStatus.OCCUPIED || !onMarcarListo) return null;
+  return (
+    <div className="rounded-2xl p-3.5 border border-amber-200 bg-amber-50/50 flex flex-col gap-2.5">
+      {esQuirurgico && (
+        <div className="flex items-start gap-2">
+          <Activity className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" strokeWidth={2.5} />
+          <p className="text-[11px] font-medium text-amber-800">
+            Paciente quirúrgico (PROGAL){bed.expectedSurgeryDate ? ` · cirugía probable: ${fmtFecha(bed.expectedSurgeryDate)}` : ''}.
+          </p>
+        </div>
+      )}
+      {error && <p className="text-[10px] font-bold text-red-600">{error}</p>}
+      <button disabled={busy}
+        onClick={async () => {
+          setBusy(true); setError(null);
+          const r = await onMarcarListo(bed);
+          setBusy(false);
+          if (r.ok) onDone(); else setError(r.error ?? 'No se pudo marcar.');
+        }}
+        className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm disabled:opacity-50">
+        <Activity className="w-4 h-4" /> {busy ? 'Marcando…' : 'Listo para cirugía'}
+      </button>
+    </div>
+  );
+};
+
+export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onFetchPatientTickets, onRefresh, onMarkClean, onUndoClean, onSaveMeal, onClearMeal, onSaveCompanion, onClearCompanion, onMarcarListo, onCirugiaRecibida }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
   // Turnos abiertos en el modal de la cama. Vive en el PADRE y no en cada box: si viviera adentro,
   // se perdería al cerrar/reabrir. Se resetea al cambiar de cama (el default se recalcula abajo).
@@ -866,6 +954,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   const [showIsolatedOnly, setShowIsolatedOnly] = useState(false);
   const [showDietOnly, setShowDietOnly] = useState(false);
   const [showFastingOnly, setShowFastingOnly] = useState(false);
+  const [showCirugiaOnly, setShowCirugiaOnly] = useState(false);
   const [showFilters, setShowFilters] = useState(false); // colapsa los chips en mobile (desktop siempre visibles)
   const [financierFilters, setFinancierFilters] = useState<Set<string>>(new Set());
   const [financierSearch, setFinancierSearch] = useState('');
@@ -875,6 +964,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
 
   const [dietTypeFilters, setDietTypeFilters] = useState<Set<string>>(new Set());
   const [dietTypeSearch, setDietTypeSearch]   = useState('');
+  const [admissionTypeFilters, setAdmissionTypeFilters] = useState<Set<string>>(new Set());
 
   // Camas con dieta cargada (al menos un tag: tipo de dieta o condición marcada "Sí").
   // Análogo a `isolatedBeds` pero derivado del enrich que ya traen las camas (cron).
@@ -891,20 +981,31 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     return s;
   }, [beds]);
 
+  // Camas con una operatoria de cirugía viva (overlay bed.cirugia, lo pinta mergeBeds).
+  const cirugiaBeds = useMemo(() => {
+    const s = new Set<string>();
+    for (const b of beds) if (b.cirugia) s.add(b.label);
+    return s;
+  }, [beds]);
+
   // Cantidad de filtros activos (chips) — feedback en el botón "Filtros" de mobile.
   const activeFilterCount =
     statusFilters.size +
     (showIsolatedOnly ? 1 : 0) +
     (showDietOnly ? 1 : 0) +
     (showFastingOnly ? 1 : 0) +
+    (showCirugiaOnly ? 1 : 0) +
     financierFilters.size +
     physicianFilters.size +
-    dietTypeFilters.size;
+    dietTypeFilters.size +
+    admissionTypeFilters.size;
 
   const uniqueFinanciers = useMemo(() => [...new Set(beds.filter((b: Bed) => b.institution).map((b: Bed) => b.institution!))].sort(), [beds]);
   const uniquePhysicians = useMemo(() => [...new Set(beds.filter((b: Bed) => b.prescribingPhysician).map((b: Bed) => b.prescribingPhysician!))].sort(), [beds]);
   // Tipos de dieta presentes en las camas cargadas, ordenados alfabéticamente (locale es).
   const uniqueDietTypes = useMemo(() => [...new Set(beds.map(dietTypeOf).filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b, 'es')), [beds]);
+  // Tipos de internación presentes (admissionType: Quirúrgica/Trasplante/Hemodinamia/Quemados/Oncológica/Clínica), para el filtro.
+  const uniqueAdmissionTypes = useMemo(() => [...new Set(beds.map((b: Bed) => b.admissionType).filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b, 'es')), [beds]);
 
   const toggleArea = (area: string) => {
     setAreaFilters((prev: Set<string>) => {
@@ -982,6 +1083,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     if (showFastingOnly) {
       result = result.filter(bed => fastingBeds.has(bed.label));
     }
+    if (showCirugiaOnly) {
+      result = result.filter(bed => cirugiaBeds.has(bed.label));
+    }
     if (financierFilters.size > 0) {
       result = result.filter(bed => bed.institution && financierFilters.has(bed.institution));
     }
@@ -991,9 +1095,12 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     if (dietTypeFilters.size > 0) {
       result = result.filter(bed => { const dt = dietTypeOf(bed); return !!dt && dietTypeFilters.has(dt); });
     }
+    if (admissionTypeFilters.size > 0) {
+      result = result.filter(bed => !!bed.admissionType && admissionTypeFilters.has(bed.admissionType));
+    }
 
     return result;
-  }, [beds, currentUser, searchFilter, areaFilters, statusFilters, allowedAreas, areaFiltersVisibles, bedTicketMap, showIsolatedOnly, isolatedBeds, showDietOnly, dietBeds, showFastingOnly, fastingBeds, financierFilters, physicianFilters, dietTypeFilters]);
+  }, [beds, currentUser, searchFilter, areaFilters, statusFilters, allowedAreas, areaFiltersVisibles, bedTicketMap, showIsolatedOnly, isolatedBeds, showDietOnly, dietBeds, showFastingOnly, fastingBeds, showCirugiaOnly, cirugiaBeds, financierFilters, physicianFilters, dietTypeFilters, admissionTypeFilters]);
 
   // Conteo de camas para el badge del header: excluimos HRA ("Sala de Espera"),
   // que son sillones de pre-internación y no camas reales. El grid y los PDFs
@@ -2087,6 +2194,20 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
               Ayunos ({fastingBeds.size})
             </button>
           )}
+          {cirugiaBeds.size > 0 && (
+            <button
+              onClick={() => setShowCirugiaOnly(v => !v)}
+              className={cn(
+                "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
+                showCirugiaOnly
+                  ? "bg-cyan-600 text-white border-cyan-600 shadow-sm"
+                  : "bg-white text-cyan-700 border-cyan-200 hover:bg-cyan-50"
+              )}
+            >
+              <Activity className="w-3 h-3" />
+              Cirugía ({cirugiaBeds.size})
+            </button>
+          )}
 
           {/* Financier filter */}
           {uniqueFinanciers.length > 0 && (
@@ -2228,6 +2349,43 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
               </PopoverContent>
             </Popover>
           )}
+
+          {/* Filtro por tipo de internación (admissionType: Q/T/H/K/O/C — lo que pidió HPR) */}
+          {uniqueAdmissionTypes.length > 0 && (
+            <Popover>
+              <PopoverTrigger asChild>
+                <button className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
+                  admissionTypeFilters.size > 0 ? "bg-slate-900 text-white border-slate-900 shadow-sm" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                )}>
+                  <Activity className="w-2.5 h-2.5" />
+                  Tipo internación {admissionTypeFilters.size > 0 && `(${admissionTypeFilters.size})`}
+                  <ChevronDown className="w-2.5 h-2.5" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-64 p-2">
+                <div className="flex items-center justify-between px-2 pb-2 border-b border-slate-100 mb-1">
+                  <span className="text-[9px] font-bold uppercase text-slate-400">Tipo de internación</span>
+                  {admissionTypeFilters.size > 0 && (
+                    <button onClick={() => setAdmissionTypeFilters(new Set())} className="text-[9px] font-bold text-red-500">Limpiar</button>
+                  )}
+                </div>
+                <div className="max-h-48 overflow-y-auto">
+                  {uniqueAdmissionTypes.map((tp: string) => (
+                    <label key={tp} className={cn(
+                      "flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer text-xs transition-colors",
+                      admissionTypeFilters.has(tp) ? "bg-emerald-50 text-emerald-800 font-bold" : "hover:bg-slate-50 text-slate-600"
+                    )}>
+                      <input type="checkbox" checked={admissionTypeFilters.has(tp)} onChange={() => {
+                        setAdmissionTypeFilters((prev: Set<string>) => { const next = new Set(prev); next.has(tp) ? next.delete(tp) : next.add(tp); return next; });
+                      }} className="accent-emerald-600 w-3.5 h-3.5" />
+                      {tp}
+                    </label>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
         </div>
       </div>
 
@@ -2363,6 +2521,21 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     )}
                     {/* Esquina inf. derecha: platito = comanda cargada (sólo si puede verla) +
                         pill de ayuno. En flex para que no se pisen si el paciente tiene ambos. */}
+                    {/* Pill Cx: operatoria de cirugía viva sobre esta cama. Color por estado
+                        (listo=ámbar · en camino=naranja · en cirugía=cyan · volviendo=violeta).
+                        `role: 'destino'` = cama destino en limbo (EN_DEVOLUCION con cambio de cama). */}
+                    {bed.cirugia && (
+                      <div
+                        className={cn(
+                          'absolute top-0.5 left-1/2 -translate-x-1/2 flex items-center gap-0.5 px-1 h-3 md:h-3.5 rounded-full ring-1 ring-white shadow-sm text-[7px] md:text-[8px] font-black uppercase z-10',
+                          CIRUGIA_PILL_CLASS[bed.cirugia.estado],
+                        )}
+                        title={`Cirugía: ${CIRUGIA_ESTADO_LABEL[bed.cirugia.estado]}${bed.cirugia.role === 'destino' ? ' (cama destino)' : ''}`}
+                      >
+                        <Activity className="w-2 h-2 md:w-2.5 md:h-2.5" strokeWidth={3} />
+                        <span>Cx</span>
+                      </div>
+                    )}
                     {((canViewComanda && hasAnyMealLoad(bed.meals)) || hasLiveFasting(bed.fasting) || suggestedSex) && (
                       <div className="absolute bottom-0.5 right-0.5 flex items-center gap-0.5">
                         {/* Sexo SUGERIDO para una cama libre, derivado de quién ocupa el resto de
@@ -2534,6 +2707,17 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     }
                     return null;
                   })()}
+
+                  {/* Cirugía (feature Cx): alta "Listo para cirugía" (Enfermería, cama ocupada) o
+                      pill + "Recibida" cuando el paciente vuelve. Ver CirugiaBedBlock. */}
+                  {(onMarcarListo || onCirugiaRecibida) && (
+                    <CirugiaBedBlock
+                      bed={selectedBed}
+                      onMarcarListo={onMarcarListo}
+                      onCirugiaRecibida={onCirugiaRecibida}
+                      onDone={() => setSelectedBed(null)}
+                    />
+                  )}
 
                   {/* Sexo sugerido — solo en camas libres. Usa el MISMO gate que el chip de la
                       grilla, así no pueden divergir. Es una sugerencia derivada de quién ocupa el

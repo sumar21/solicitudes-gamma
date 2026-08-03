@@ -19,6 +19,7 @@ import { RequestsView } from './views/RequestsView';
 import { HistoryView } from './views/HistoryView';
 import { BedsView } from './views/BedsView';
 import { CleaningManagementView } from './views/CleaningManagementView';
+import { CirugiasView } from './views/CirugiasView';
 import { ComandasManagementView } from './views/ComandasManagementView';
 import { UserManagementView } from './views/UserManagementView';
 import { RoleManagementView } from './views/RoleManagementView';
@@ -162,12 +163,22 @@ export default function App() {
   const canViewOperativa = hasModule(state.currentUser, 'Operativa') || hasModule(state.currentUser, 'Gestion Limpieza');
   const canSeeTraslados  = hasModule(state.currentUser, 'Operativa');
   const canSeeLimpiezas  = hasModule(state.currentUser, 'Gestion Limpieza');
-  // La botonera solo tiene sentido si hay más de una solapa para mostrar.
-  const showOperativaTabs = canSeeTraslados && canSeeLimpiezas;
-  // Solapa efectiva: si el rol no puede ver la seleccionada, cae en la que sí puede.
-  const operativaTab = showOperativaTabs
+  // Cirugías vive como solapa de Operativa (feature Cirugía). El gating fino por permiso
+  // cirugia_* llega en F5/go-live; por ahora la ve cualquiera con Operativa o Mapa de Camas
+  // (así el Admin ve todo para testear). Ver contrato F4.
+  const canSeeCirugias   = hasModule(state.currentUser, 'Operativa') || hasModule(state.currentUser, 'Mapa de Camas');
+  // Solapas disponibles, en orden. La botonera solo aparece si hay más de una.
+  const operativaTabDefs = ([
+    canSeeTraslados && (['traslados', 'Traslados'] as const),
+    canSeeLimpiezas && (['limpiezas', 'Limpiezas'] as const),
+    canSeeCirugias  && (['cirugias', 'Cirugías'] as const),
+  ].filter(Boolean)) as ReadonlyArray<readonly ['traslados' | 'limpiezas' | 'cirugias', string]>;
+  const showOperativaTabs = operativaTabDefs.length > 1;
+  // Solapa efectiva: si el rol no puede ver la seleccionada, cae en la primera disponible.
+  const availableSubviews = new Set(operativaTabDefs.map(([v]) => v));
+  const operativaTab = availableSubviews.has(state.operativaSubview)
     ? state.operativaSubview
-    : (canSeeLimpiezas ? 'limpiezas' : 'traslados');
+    : (operativaTabDefs[0]?.[0] ?? 'traslados');
   const canViewHistorial = hasModule(state.currentUser, 'Historial');
   const canViewBeds      = hasModule(state.currentUser, 'Mapa de Camas');
   const canViewComandas  = hasModule(state.currentUser, 'Gestion Comandas');
@@ -453,7 +464,7 @@ export default function App() {
               <GammaLogo size={20} />
             </button>
             <h1 className="text-lg md:text-xl font-black text-slate-900 tracking-tight truncate max-w-[100px] xs:max-w-[180px] sm:max-w-none">
-              {state.currentView === 'HOME' ? 'Monitor' : state.currentView === 'REQUESTS' ? (operativaTab === 'limpiezas' ? 'Operativa · Limpiezas' : 'Operativa') : state.currentView === 'BEDS' ? 'Mapa de Camas' : state.currentView === 'COMANDAS' ? 'Gestión de Comandas' : state.currentView === 'USERS' ? 'Usuarios' : (state.currentView as string) === 'ROLES' ? 'Roles' : 'Historial'}
+              {state.currentView === 'HOME' ? 'Monitor' : state.currentView === 'REQUESTS' ? (operativaTab === 'limpiezas' ? 'Operativa · Limpiezas' : operativaTab === 'cirugias' ? 'Operativa · Cirugías' : 'Operativa') : state.currentView === 'BEDS' ? 'Mapa de Camas' : state.currentView === 'COMANDAS' ? 'Gestión de Comandas' : state.currentView === 'USERS' ? 'Usuarios' : (state.currentView as string) === 'ROLES' ? 'Roles' : 'Historial'}
             </h1>
             {IS_TESTING && (
               <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-600 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-white shadow-sm shrink-0">
@@ -658,7 +669,7 @@ export default function App() {
               {showOperativaTabs && (
                 <div className="px-4 md:px-8 pt-4 md:pt-8">
                   <div className="flex items-center gap-1 border-b border-slate-200">
-                    {([['traslados', 'Traslados'], ['limpiezas', 'Limpiezas']] as const).map(([val, label]) => (
+                    {operativaTabDefs.map(([val, label]) => (
                       <button key={val} onClick={() => actions.setOperativaSubview(val)}
                         className={cn(
                           'px-4 py-2 text-xs font-bold uppercase tracking-wide border-b-2 -mb-px transition-colors',
@@ -674,6 +685,21 @@ export default function App() {
                 canSeeLimpiezas && (
                   <CleaningManagementView beds={state.beds} currentUser={state.currentUser}
                     onConsolidate={(label) => actions.undoBedClean(label, 'CONSOLIDADO')} onRefresh={actions.refreshAll} />
+                )
+              ) : operativaTab === 'cirugias' ? (
+                canSeeCirugias && (
+                  <CirugiasView
+                    cirugias={Array.from(state.cirugias.values())}
+                    beds={state.beds}
+                    currentUser={state.currentUser}
+                    onVanABuscar={actions.cirugiaVanABuscar}
+                    onEnCirugia={actions.cirugiaEnCirugia}
+                    onEnDevolucion={actions.cirugiaEnDevolucion}
+                    onRecibida={actions.cirugiaRecibida}
+                    onCancelar={actions.cancelarCirugia}
+                    onConsolidar={actions.consolidarCirugia}
+                    onRefresh={actions.refreshAll}
+                  />
                 )
               ) : (
                 canSeeTraslados && (
@@ -707,7 +733,7 @@ export default function App() {
           {/* Roles — gateado por permiso abm_roles */}
           {canSeeRoles && (state.currentView as string) === 'ROLES' && <RoleManagementView currentUser={state.currentUser} onSessionRoleUpdate={actions.refreshSessionRole} />}
           {/* Mapa de Camas — gateado por Acceso_RT */}
-          {canViewBeds && state.currentView === 'BEDS' && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} onEnrichBed={actions.enrichBed} onFetchPatientTickets={actions.fetchPatientTickets} onRefresh={actions.refreshAll} onMarkClean={actions.markBedClean} onUndoClean={actions.undoBedClean} onSaveMeal={actions.saveMealLoad} onClearMeal={actions.clearMealLoad} onSaveCompanion={actions.saveCompanionLoad} onClearCompanion={actions.clearCompanionLoad} />}
+          {canViewBeds && state.currentView === 'BEDS' && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} onEnrichBed={actions.enrichBed} onFetchPatientTickets={actions.fetchPatientTickets} onRefresh={actions.refreshAll} onMarkClean={actions.markBedClean} onUndoClean={actions.undoBedClean} onSaveMeal={actions.saveMealLoad} onClearMeal={actions.clearMealLoad} onSaveCompanion={actions.saveCompanionLoad} onClearCompanion={actions.clearCompanionLoad} onMarcarListo={actions.marcarListoParaCirugia} onCirugiaRecibida={actions.cirugiaRecibida} />}
           {canViewComandas && state.currentView === 'COMANDAS' && <ComandasManagementView beds={state.beds} currentUser={state.currentUser} onRefresh={actions.refreshAll} onSetMealStatus={actions.setMealStatus} />}
         </main>
       </div>

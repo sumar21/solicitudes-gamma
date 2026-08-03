@@ -1,6 +1,58 @@
 
 import { MOCK_API_RESPONSE, transformApiDataToBeds, generateMockTickets } from "./mock-api-data";
-import { Area, Bed, BedStatus, Role, SedeType, Ticket, TicketStatus, User, WorkflowType } from "../types";
+import { Area, Bed, BedStatus, CirugiaEstado, Role, SedeType, Ticket, TicketStatus, User, WorkflowType } from "../types";
+
+// ── Cirugía: label + color de la pill "Cx" por estado ────────────────────────
+// Fuente única compartida (BedsView pinta la pill de la celda, CirugiasView agrupa la cola).
+// Colores tomados del plan (docs/planes/plan-traslados-cirugia.html):
+//   listo=ámbar · en camino=naranja · en cirugía=cyan · volviendo=violeta.
+// Las clases van como literales para que el JIT de Tailwind las incluya en el build.
+export const CIRUGIA_ESTADO_LABEL: Record<CirugiaEstado, string> = {
+  LISTO_PARA_CIRUGIA: 'Listo para cirugía',
+  VAN_A_BUSCAR:       'En camino',
+  EN_CIRUGIA:         'En cirugía',
+  EN_DEVOLUCION:      'Volviendo',
+  RECIBIDA:           'Recibida',
+  PENDIENTE_CONSOLIDACION: 'Pendiente consolidar',
+  CONSOLIDADO:        'Consolidada',
+  CANCELADO:          'Cancelada',
+};
+
+// Label corto para la pill de la celda del mapa (con prefijo "Cx").
+export const CIRUGIA_ESTADO_SHORT: Record<CirugiaEstado, string> = {
+  LISTO_PARA_CIRUGIA: 'Listo',
+  VAN_A_BUSCAR:       'En camino',
+  EN_CIRUGIA:         'En cirugía',
+  EN_DEVOLUCION:      'Volviendo',
+  RECIBIDA:           'Recibida',
+  PENDIENTE_CONSOLIDACION: 'Consolidar',
+  CONSOLIDADO:        'Consolidada',
+  CANCELADO:          'Cancelada',
+};
+
+// Clases Tailwind (fondo + texto) de la pill por estado.
+export const CIRUGIA_PILL_CLASS: Record<CirugiaEstado, string> = {
+  LISTO_PARA_CIRUGIA: 'bg-amber-100 text-amber-700 border-amber-200',
+  VAN_A_BUSCAR:       'bg-orange-100 text-orange-700 border-orange-200',
+  EN_CIRUGIA:         'bg-cyan-100 text-cyan-700 border-cyan-200',
+  EN_DEVOLUCION:      'bg-violet-100 text-violet-700 border-violet-200',
+  RECIBIDA:           'bg-emerald-100 text-emerald-700 border-emerald-200',
+  PENDIENTE_CONSOLIDACION: 'bg-amber-100 text-amber-800 border-amber-300',
+  CONSOLIDADO:        'bg-slate-100 text-slate-600 border-slate-200',
+  CANCELADO:          'bg-red-100 text-red-700 border-red-200',
+};
+
+// Color sólido del punto/indicador (celda del mapa).
+export const CIRUGIA_DOT_CLASS: Record<CirugiaEstado, string> = {
+  LISTO_PARA_CIRUGIA: 'bg-amber-500',
+  VAN_A_BUSCAR:       'bg-orange-500',
+  EN_CIRUGIA:         'bg-cyan-500',
+  EN_DEVOLUCION:      'bg-violet-500',
+  RECIBIDA:           'bg-emerald-500',
+  PENDIENTE_CONSOLIDACION: 'bg-amber-500',
+  CONSOLIDADO:        'bg-slate-400',
+  CANCELADO:          'bg-red-500',
+};
 
 export const AREAS = [
   Area.PISO_4, Area.PISO_5, Area.PISO_6, Area.PISO_7, Area.PISO_8, Area.HIT, Area.HSS, Area.HUC, Area.HUQ, Area.HUT

@@ -5,6 +5,7 @@ import {
   Notification, NotificationType, ViewMode, SortConfig, Bed, BedStatus,
   RoleModule, Permission, MealLoad, MealSlot, MealSlotLoad, COMANDA_STATUS, ComandaStatus, OperativaSubview,
   MEAL_SLOTS, spFromMealSlot, mealSlotFromSp,
+  CirugiaTraslado, CirugiaEstado, BedCirugiaOverlay,
 } from '../types';
 import { MOCK_TICKETS } from '../lib/constants';
 import { can, hasModule, canReceiveNotif } from '../lib/permissions';
@@ -269,7 +270,7 @@ export function cleaningAutoCloseReason(
 
 // Exportada para poder testear los escenarios de overlay (limpieza/tickets) contra la
 // función REAL y no contra una réplica.
-export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?: Map<string, CleaningInfo>, meals?: Map<string, MealsInfo>): Bed[] {
+export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?: Map<string, CleaningInfo>, meals?: Map<string, MealsInfo>, cirugias?: Map<string, BedCirugiaOverlay>): Bed[] {
   const result = gammaBeds.map(b => ({ ...b }));
   // Ver bedsInUseByTickets: destinos + orígenes aún ocupados. El overlay del ticket tiene
   // prioridad sobre el de limpieza SOLO en esas camas.
@@ -450,6 +451,28 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
         // Cama sin ocupante mostrando bandejas (entregadas que quedaron acá, o la carga
         // huérfana de siempre): conservar a quién se le sirvió para el panel de comandas.
         if (!bed.patientName && m.patientName) bed.mealsPatientName = m.patientName;
+      }
+    }
+  }
+
+  // ── Overlay de traslados a cirugía (pill "Cx" + limbo del cambio de cama) ────
+  // El Map viene keyed por label de cama: la cama_origen de cada operatoria VIVA lleva su
+  // overlay (`role: 'origin'`) y, en EN_DEVOLUCION con cambio de cama, la cama_destino además
+  // lleva el suyo (`role: 'destino'`). BedsView/CirugiasView leen `bed.cirugia.estado` para
+  // pintar la pill Cx por color.
+  //
+  // Limbo del cambio de cama: cuando el paciente vuelve de cirugía a OTRA cama, esa cama_destino
+  // se RESERVA —igual que el destino de un traslado en tránsito (ver el switch de arriba: dest →
+  // ASSIGNED)— para que no se ofrezca como Disponible antes de que Enfermería confirme la
+  // recepción (RECIBIDA) y Admisión consolide el cambio en PROGAL. La cama_origen NO se toca: el
+  // paciente sigue "Ocupando" en PROGAL hasta la consolidación, solo se le adjunta la pill.
+  if (cirugias && cirugias.size) {
+    for (const bed of result) {
+      const info = cirugias.get(bed.label);
+      if (!info) continue;
+      bed.cirugia = info;
+      if (info.role === 'destino' && bed.status === BedStatus.AVAILABLE && !ticketTouched.has(bed.label)) {
+        bed.status = BedStatus.ASSIGNED; // reservada para el paciente que vuelve de cirugía
       }
     }
   }
@@ -732,6 +755,12 @@ export const useHospitalState = () => {
   const closedCleaningsRef                         = React.useRef<Set<string>>(new Set());
   // Cargas de menú de Nutrición (overlay de 15.CargasDieta), key = label de cama.
   const [meals, setMeals]                          = useState<Map<string, MealsInfo>>(new Map());
+  // Traslados a cirugía VIVOS (overlay "Cx"), key = uuid de la fila (fuente de verdad de la cola
+  // de la solapa Cirugías). El overlay POR CAMA se deriva en `cirugiaByBed`. El índice único
+  // parcial de la tabla garantiza UNA operatoria viva por cama_origen.
+  const [cirugias, setCirugias]                    = useState<Map<string, CirugiaTraslado>>(new Map());
+  // Contador (como mealsWritingRef): protege el update optimista del refetch Realtime en vuelo.
+  const cirugiasWritingRef                         = React.useRef(0);
 
   // Snapshot del enrich por patientCode — se actualiza en cada fetchBeds con los beds
   // cuyo enriched===true. Permite que la pill de ayuno/dieta/diagnóstico "siga" al
@@ -739,11 +768,31 @@ export const useHospitalState = () => {
   // useRef porque mutamos en cada poll sin querer disparar re-renders extra.
   const patientEnrichMapRef = useRef<Map<string, PatientEnrichSnapshot>>(new Map());
 
+  // Overlay de cirugía POR CAMA (igual que `cleanings`: Map<label, …> que consume mergeBeds).
+  // De cada operatoria VIVA: cama_origen → overlay (role 'origin'); en EN_DEVOLUCION con cambio
+  // de cama, además cama_destino → overlay (role 'destino', para el limbo). Las terminales
+  // (RECIBIDA/CANCELADO) no entran (fetchCirugias solo trae vivas, pero el guard es defensivo).
+  const cirugiaByBed = useMemo(() => {
+    const m = new Map<string, BedCirugiaOverlay>();
+    for (const c of cirugias.values()) {
+      if (c.estado === 'RECIBIDA' || c.estado === 'CANCELADO' || c.estado === 'CONSOLIDADO') continue; // no-terminales (PENDIENTE_CONSOLIDACION sostiene el limbo)
+      const base: BedCirugiaOverlay = {
+        id: c.id, estado: c.estado, camaOrigen: c.camaOrigen, camaDestino: c.camaDestino,
+        pacienteNombre: c.pacienteNombre, pacienteCodigo: c.pacienteCodigo, area: c.area, role: 'origin',
+      };
+      m.set(c.camaOrigen, base);
+      if ((c.estado === 'EN_DEVOLUCION' || c.estado === 'PENDIENTE_CONSOLIDACION') && c.camaDestino && c.camaDestino !== c.camaOrigen) {
+        m.set(c.camaDestino, { ...base, role: 'destino' });
+      }
+    }
+    return m;
+  }, [cirugias]);
+
   const beds = useMemo(() => {
     const active = tickets.filter(t => t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED);
-    const merged = mergeBeds(rawBeds, active, cleanings, meals);
+    const merged = mergeBeds(rawBeds, active, cleanings, meals, cirugiaByBed);
     return reapplyEnrichFromMap(merged, patientEnrichMapRef.current);
-  }, [rawBeds, tickets, cleanings, meals]);
+  }, [rawBeds, tickets, cleanings, meals, cirugiaByBed]);
 
   // Derive isolatedBeds (bed labels) directly from the enrich. Los aislamientos vienen
   // de PROGAL en `bed.isolations` y "siguen" al paciente como el resto del enrich
@@ -1163,6 +1212,147 @@ export const useHospitalState = () => {
     }
   }, [authFetch, fetchMeals]);
 
+  // ── Traslados a cirugía (overlay "Cx", máquina de estados propia) ─────────
+  // Calca el patrón de limpiezas/comandas: Map keyed por uuid = cola viva; refetch full-replace;
+  // mutaciones optimistas que estampan version=APP_VERSION y reconcilian con fetchCirugias ante
+  // !ok. cirugiasWritingRef protege el optimista del refetch Realtime en vuelo. El overlay por
+  // cama (pill + limbo) se deriva en `cirugiaByBed` y lo aplica mergeBeds.
+  const fetchCirugias = useCallback(async () => {
+    try {
+      const r = await authFetch('/api/cirugia');
+      if (!r.ok) return; // mantiene el estado actual ante fallo transitorio
+      const data = await r.json();
+      const map = new Map<string, CirugiaTraslado>();
+      for (const c of (data.cirugias ?? []) as CirugiaTraslado[]) {
+        if (!c?.id) continue;
+        map.set(String(c.id), c);
+      }
+      setCirugias(map);
+    } catch { /* keep current */ }
+  }, [authFetch]);
+
+  // Alta = LISTO_PARA_CIRUGIA (la marca Enfermería desde la cama del Mapa). POST idempotente:
+  // idUnivoco estable por cama+paciente → un doble-click no duplica (el server además tiene el
+  // índice único de "una viva por cama_origen"). Optimista con id provisional que se reemplaza
+  // por el uuid real al responder.
+  const marcarListoParaCirugia = useCallback(async (bed: Bed): Promise<{ ok: boolean; id?: string; error?: string }> => {
+    if (!bed?.label) return { ok: false };
+    const u = currentUser;
+    const camaOrigen     = bed.label;
+    const pacienteCodigo = bed.patientCode || undefined;
+    const pacienteNombre = bed.patientName || bed.mealsPatientName || undefined;
+    const area           = bed.area || undefined;
+    const tipo           = bed.admissionType || undefined;   // "Tipo" de la solapa Internación (Quirúrgica/Trasplante/Hemodinamia/…)
+    const idUnivoco      = `cx:${camaOrigen}:${pacienteCodigo ?? pacienteNombre ?? 'sp'}`;
+    const tempId         = `temp-${idUnivoco}`;
+    const now            = new Date().toISOString();
+    cirugiasWritingRef.current += 1;
+    setCirugias(prev => {
+      // No pisar si ya hay una operatoria viva para esa cama (idempotencia del lado cliente).
+      for (const c of prev.values()) {
+        if (c.camaOrigen === camaOrigen && !['RECIBIDA', 'CONSOLIDADO', 'CANCELADO', 'PENDIENTE_CONSOLIDACION'].includes(c.estado)) return prev;
+      }
+      const n = new Map(prev);
+      n.set(tempId, {
+        id: tempId, entorno: '', idUnivoco, pacienteCodigo, pacienteNombre,
+        camaOrigen, area, tipo, estado: 'LISTO_PARA_CIRUGIA', version: APP_VERSION, createdAt: now, updatedAt: now,
+      });
+      return n;
+    });
+    try {
+      const r = await authFetch('/api/cirugia', {
+        method: 'POST',
+        body: JSON.stringify({
+          idUnivoco, pacienteCodigo, pacienteNombre, camaOrigen, area, tipo,
+          userId: u?.id ?? '', userName: u?.name ?? '', version: APP_VERSION,
+        }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({} as any));
+        setCirugias(prev => { const n = new Map(prev); n.delete(tempId); return n; }); // rollback
+        return { ok: false, error: err?.error ?? err?.message ?? `No se pudo marcar (HTTP ${r.status}).` };
+      }
+      const respData = await r.json().catch(() => ({} as any));
+      const realId   = respData?.id ? String(respData.id) : undefined;
+      setCirugias(prev => {
+        const cur = prev.get(tempId);
+        const n = new Map(prev);
+        n.delete(tempId);
+        if (realId && cur) n.set(realId, { ...cur, id: realId });
+        return n;
+      });
+      fetchCirugias(); // reconciliar contra la base (entorno/timestamps/idempotencia)
+      return { ok: true, id: realId };
+    } catch (e: any) {
+      setCirugias(prev => { const n = new Map(prev); n.delete(tempId); return n; }); // rollback
+      return { ok: false, error: `Error de red: ${e?.message ?? 'sin conexión'}` };
+    } finally {
+      setTimeout(() => { cirugiasWritingRef.current = Math.max(0, cirugiasWritingRef.current - 1); }, 1000);
+    }
+  }, [authFetch, currentUser, fetchCirugias]);
+
+  // Transición genérica (PATCH, máquina de estados guardada server-side). `action` == estado
+  // destino. Optimista sobre el Map keyed por id; las terminales (RECIBIDA/CANCELADO) salen de
+  // las vivas (dropea cola + overlay). Reconcilia (fetchCirugias, reemplazo total) ante !ok.
+  const transicionarCirugia = useCallback(async (
+    id: string,
+    action: Exclude<CirugiaEstado, 'LISTO_PARA_CIRUGIA' | 'PENDIENTE_CONSOLIDACION'>,
+    extra?: { camaDestino?: string; motivoCancelacion?: string },
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (!id) return { ok: false };
+    const u = currentUser;
+    cirugiasWritingRef.current += 1;
+    setCirugias(prev => {
+      const cur = prev.get(id);
+      if (!cur) return prev;
+      const n = new Map(prev);
+      // RECIBIDA con cambio de cama NO cierra: pasa a PENDIENTE_CONSOLIDACION (queda para Admisión).
+      const bedChanged   = !!cur.camaDestino && cur.camaDestino !== cur.camaOrigen;
+      const goesTerminal = action === 'CANCELADO' || action === 'CONSOLIDADO' || (action === 'RECIBIDA' && !bedChanged);
+      if (goesTerminal) {
+        n.delete(id); // sale de la cola
+      } else {
+        const nextEstado: CirugiaEstado = action === 'RECIBIDA' ? 'PENDIENTE_CONSOLIDACION' : action;
+        n.set(id, {
+          ...cur,
+          estado: nextEstado,
+          camaDestino: action === 'EN_DEVOLUCION' ? (extra?.camaDestino || cur.camaOrigen) : cur.camaDestino,
+        });
+      }
+      return n;
+    });
+    try {
+      const r = await authFetch('/api/cirugia', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          id, action,
+          camaDestino:       extra?.camaDestino,
+          motivoCancelacion: extra?.motivoCancelacion,
+          userId: u?.id ?? '', userName: u?.name ?? '', version: APP_VERSION,
+        }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({} as any));
+        await fetchCirugias(); // reconciliar (revierte el optimista contra la base)
+        return { ok: false, error: err?.error ?? err?.message ?? `No se pudo actualizar (HTTP ${r.status}).` };
+      }
+      return { ok: true };
+    } catch (e: any) {
+      await fetchCirugias();
+      return { ok: false, error: `Error de red: ${e?.message ?? 'sin conexión'}` };
+    } finally {
+      setTimeout(() => { cirugiasWritingRef.current = Math.max(0, cirugiasWritingRef.current - 1); }, 1000);
+    }
+  }, [authFetch, currentUser, fetchCirugias]);
+
+  // Wrappers finos por transición (quién marca cada una en el orden feliz).
+  const cirugiaVanABuscar   = useCallback((id: string) => transicionarCirugia(id, 'VAN_A_BUSCAR'), [transicionarCirugia]);        // Cirugía
+  const cirugiaEnCirugia    = useCallback((id: string) => transicionarCirugia(id, 'EN_CIRUGIA'), [transicionarCirugia]);          // Cirugía
+  const cirugiaEnDevolucion = useCallback((id: string, camaDestino?: string) => transicionarCirugia(id, 'EN_DEVOLUCION', { camaDestino }), [transicionarCirugia]); // Cirugía
+  const cirugiaRecibida     = useCallback((id: string) => transicionarCirugia(id, 'RECIBIDA'), [transicionarCirugia]);            // Enfermería destino
+  const cancelarCirugia     = useCallback((id: string, motivoCancelacion: string) => transicionarCirugia(id, 'CANCELADO', { motivoCancelacion }), [transicionarCirugia]);
+  const consolidarCirugia   = useCallback((id: string) => transicionarCirugia(id, 'CONSOLIDADO'), [transicionarCirugia]);   // Admisión — cierra el cambio de cama tras actualizar PROGAL
+
   // ── On-demand bed enrichment (single bed) ─────────────────────────────────
   const enrichBed = useCallback(async (bed: Bed): Promise<Bed> => {
     if (!bed.patientCode) return bed;
@@ -1294,6 +1484,7 @@ export const useHospitalState = () => {
     fetchTickets();
     fetchCleanings();
     fetchMeals();
+    fetchCirugias();
     const bedPoll = setInterval(fetchBeds, POLL_BEDS_MS);
 
     // Realtime traslados: un cambio → refetch debounced. Reseteamos el ETag antes del refetch
@@ -1338,16 +1529,35 @@ export const useHospitalState = () => {
       // triggerMealRefetch se re-agenda en vez de pisar el optimista (a diferencia de un fetchMeals directo).
       .subscribe(status => { if (String(status) === 'SUBSCRIBED') triggerMealRefetch(); });
 
+    // Realtime cirugía: un cambio en cirugia_traslados → refetch debounced. Mismo patrón que
+    // comandas: si hay una mutación propia en vuelo (cirugiasWritingRef), se re-agenda para no
+    // pisar el optimista (fetchCirugias hace REEMPLAZO TOTAL del Map, no merge).
+    let cirugiaDebounce: ReturnType<typeof setTimeout> | null = null;
+    const triggerCirugiaRefetch = () => {
+      if (cirugiaDebounce) clearTimeout(cirugiaDebounce);
+      cirugiaDebounce = setTimeout(() => {
+        if (cirugiasWritingRef.current > 0) { triggerCirugiaRefetch(); return; }
+        fetchCirugias();
+      }, 300);
+    };
+    const cirugiaChannel = supabase
+      .channel('cirugia-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cirugia_traslados' }, triggerCirugiaRefetch)
+      // catch-up al (re)conectar por el mismo camino guardado (re-agenda si hay optimista en vuelo).
+      .subscribe(status => { if (String(status) === 'SUBSCRIBED') triggerCirugiaRefetch(); });
+
     return () => {
       clearInterval(bedPoll);
       if (ticketDebounce) clearTimeout(ticketDebounce);
       if (cleaningDebounce) clearTimeout(cleaningDebounce);
       if (mealsDebounce) clearTimeout(mealsDebounce);
+      if (cirugiaDebounce) clearTimeout(cirugiaDebounce);
       supabase.removeChannel(ticketsChannel);
       supabase.removeChannel(limpiezasChannel);
       supabase.removeChannel(comandasChannel);
+      supabase.removeChannel(cirugiaChannel);
     };
-  }, [token, fetchBeds, fetchTickets, fetchCleanings, fetchMeals]);
+  }, [token, fetchBeds, fetchTickets, fetchCleanings, fetchMeals, fetchCirugias]);
 
   // ── Resync de rol en caliente (para TODOS los usuarios) ──────────────────────
   // Los módulos/permisos sólo se hidratan en el login. Sin esto, cuando un admin edita
@@ -2905,6 +3115,7 @@ export const useHospitalState = () => {
       tokenExpirySoon, tokenMinutesLeft,
       isolatedBeds,
       unreadSpNotifications,
+      cirugias,
     },
     actions: {
       setCurrentUser, setCurrentView, setActiveRole, setSortConfig, setRequestsSearchTerm,
@@ -2914,6 +3125,8 @@ export const useHospitalState = () => {
       fetchBeds, enrichBed, fetchPatientTickets, refreshAll, fetchAllTickets,
       markBedClean, undoBedClean,
       saveMealLoad, clearMealLoad, saveCompanionLoad, clearCompanionLoad, setMealStatus,
+      fetchCirugias, marcarListoParaCirugia, transicionarCirugia,
+      cirugiaVanABuscar, cirugiaEnCirugia, cirugiaEnDevolucion, cirugiaRecibida, cancelarCirugia, consolidarCirugia,
       setOperativaSubview,
       handleUpdateUserAreas, refreshSessionRole, syncSessionRole, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleOpenNotifications, handleDismissToast,
       handleStartTransport,

@@ -128,6 +128,11 @@ export interface Bed {
   // ENTREGADAS que quedan visibles donde se sirvieron tras un traslado). Fallback de
   // patientName para el panel de comandas; lo setea mergeBeds al adjuntar el overlay.
   mealsPatientName?: string;
+  // Traslado a cirugía VIVO sobre esta cama (overlay "Cx", keyed por cama_origen). En
+  // EN_DEVOLUCION con cambio de cama, mergeBeds también lo adjunta sobre la cama_destino
+  // (limbo, `role==='destino'`). BedsView/CirugiasView leen `cirugia.estado` para pintar la
+  // pill Cx por color. Lo setea mergeBeds a partir del Map de cirugías vivas. Ver mergeBeds.
+  cirugia?: BedCirugiaOverlay;
 }
 
 // Una carga de menú de Nutrición sobre una comida de la cama (fila de 15.CargasDieta).
@@ -339,7 +344,7 @@ export interface CargaMenu {
 export type ViewMode = 'HOME' | 'REQUESTS' | 'USERS' | 'HISTORY' | 'BEDS' | 'COMANDAS';
 
 /** Solapa activa dentro de Operativa. */
-export type OperativaSubview = 'traslados' | 'limpiezas';
+export type OperativaSubview = 'traslados' | 'limpiezas' | 'cirugias';
 export type SortKey = 'status' | 'patientName' | 'origin' | 'createdAt';
 export type SortDirection = 'asc' | 'desc';
 
@@ -472,4 +477,65 @@ export interface Ticket {
   observations?: string;
   canCancel?: boolean;          // true while no hostess action has touched this ticket
   intervenedByHostess?: 'SI' | 'NO'; // IntervinoAzafata_T in SP — "NO" at creation, "SI" after first hostess action
+}
+
+// ── Traslados a Cirugía (quirófano) ──────────────────────────────────────────
+// Máquina de estados propia de un traslado a cirugía (overlay "Cx" sobre la cama, NO un
+// Ticket de public.traslados). Calca el patrón de limpiezas: tabla entorno-scoped en Supabase
+// (public.cirugia_traslados) + Realtime (canal 'cirugia-live'). Ver docs/planes/plan-traslados-cirugia.html.
+//
+// Orden de transiciones (quién marca cada una):
+//   LISTO_PARA_CIRUGIA  (Enfermería, o auto por admissionTypeCode==='Q')
+//     → VAN_A_BUSCAR     (Cirugía — despacha al camillero, que NO usa app)
+//     → EN_CIRUGIA       (Cirugía — confirma que recibió al paciente)
+//     → EN_DEVOLUCION    (Cirugía — elige destino: misma cama u otra de las Disponibles)
+//     → RECIBIDA         (Enfermería del piso destino — cierra el circuito; la cama muere)
+//   CANCELADO            (terminal; libera la cama — política D3 pendiente en el plan)
+// Estados VIVOS = todos menos los terminales (RECIBIDA / CANCELADO). El índice único parcial
+// garantiza UNA operatoria viva por (entorno, cama_origen).
+export type CirugiaEstado =
+  | 'LISTO_PARA_CIRUGIA'
+  | 'VAN_A_BUSCAR'
+  | 'EN_CIRUGIA'
+  | 'EN_DEVOLUCION'
+  | 'PENDIENTE_CONSOLIDACION'
+  | 'RECIBIDA'
+  | 'CONSOLIDADO'
+  | 'CANCELADO';
+
+// Calca las columnas de public.cirugia_traslados (camelCase). Lean, SIN campo `tipo`: el
+// contexto (quirúrgico, fecha probable, diagnóstico) se lee del enrich de la cama, no se guarda.
+// Los campos server-only created_by_id / last_actor_id (exclusión del push / auditoría de la
+// última transición) no se exponen al cliente.
+export interface CirugiaTraslado {
+  id: string;                    // uuid
+  entorno: string;               // TESTING | PRODUCTIVO
+  idUnivoco: string;             // idempotencia del alta (POST reintentado no duplica)
+  pacienteCodigo?: string;       // identidad primaria (Gamma)
+  pacienteNombre?: string;
+  camaOrigen: string;            // cama donde está el paciente (clave de la operatoria viva)
+  camaDestino?: string;          // se setea al devolver, solo si cambia de cama
+  area?: string;                 // área/piso del origen (filtro de notis por sector + agrupar la cola)
+  tipo?: string;                 // "Tipo" de la solapa Internación (admissionType: Quirúrgica/Trasplante/…). Snapshot al alta.
+  estado: CirugiaEstado;
+  motivoCancelacion?: string;
+  version?: string;              // APP_VERSION del cliente que escribió (versionado)
+  fechaCierre?: string;          // ISO — RECIBIDA / CANCELADO
+  createdAt: string;             // ISO
+  updatedAt: string;             // ISO
+}
+
+// Overlay que mergeBeds adjunta a una cama (`Bed.cirugia`) a partir de las cirugías VIVAS.
+// Deriva de CirugiaTraslado — lean, lo justo para pintar la pill Cx y armar la cola de la
+// solapa Cirugías. `role` distingue la cama de origen ('origin', donde está/estaba el paciente)
+// de la cama destino en limbo ('destino', reservada en EN_DEVOLUCION con cambio de cama).
+export interface BedCirugiaOverlay {
+  id: string;                    // uuid de la fila (para disparar las transiciones desde la UI)
+  estado: CirugiaEstado;         // color de la pill Cx
+  camaOrigen: string;
+  camaDestino?: string;          // seteada en EN_DEVOLUCION si cambia de cama
+  pacienteNombre?: string;
+  pacienteCodigo?: string;
+  area?: string;
+  role: 'origin' | 'destino';
 }
