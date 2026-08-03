@@ -18,3 +18,10 @@ vercel-costs.csv
 
 # Vercel log exports (pueden traer data sensible de push) — nunca commitear
 docs/vercel-logs/
+
+# TestSprite: los intermedios (tmp/config.json, tmp/mcp.log) Y los tests generados
+# (testsprite_tests/*.py) traen el password del test account HARDCODEADO. No commitear nada.
+testsprite_tests/
+
+# Graphify: grafo + caches (output de la herramienta, se regenera). No commitear.
+graphify-out/

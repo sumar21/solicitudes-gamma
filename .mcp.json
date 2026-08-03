@@ -3,6 +3,13 @@
     "supabase": {
       "type": "http",
       "url": "https://mcp.supabase.com/mcp"
+    },
+    "TestSprite": {
+      "command": "sh",
+      "args": [
+        "-c",
+        "API_KEY=$(grep -E '^[[:space:]]*(export[[:space:]]+)?TESTSPRITE_KEY=' .env | head -n1 | sed -E 's/^[^=]*=//; s/^\"//; s/\"$//'); export API_KEY; exec npx @testsprite/testsprite-mcp@latest"
+      ]
     }
   }
 }
