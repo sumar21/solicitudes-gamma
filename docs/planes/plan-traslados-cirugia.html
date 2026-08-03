@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Traslados a Cirugía — Plan · MediFlow</title>
+<style>html{background:#f5f8fa}@media(prefers-color-scheme:dark){html{background:#0c141b}}</style>
+</head>
+<body>
+<style>
+  :root{
+    --bg:#f5f8fa; --surface:#ffffff; --surface-2:#eef3f7; --surface-3:#e6edf2;
+    --ink:#142029; --ink-soft:#4a5c6b; --ink-faint:#79899a;
+    --line:#d9e2ea; --line-soft:#e7eef3;
+    --accent:#0e7490; --accent-2:#0891b2; --accent-soft:#d6f1f7; --accent-ink:#0a4a5c;
+    --rose:#be123c; --rose-soft:#fbe0e6;
+    --good:#0f766e; --warn:#b45309; --alert:#be123c;
+    --radius:14px; --radius-s:9px;
+    --maxw:960px;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0c141b; --surface:#111d26; --surface-2:#17242f; --surface-3:#1d2d39;
+      --ink:#e8eff5; --ink-soft:#a2b4c3; --ink-faint:#75899a;
+      --line:#25353f; --line-soft:#1e2d37;
+      --accent:#38bdf8; --accent-2:#22d3ee; --accent-soft:#0f2f3c; --accent-ink:#9fe4f5;
+      --rose:#fb7185; --rose-soft:#3a1520;
+      --good:#2dd4bf; --warn:#fbbf24; --alert:#fb7185;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0c141b; --surface:#111d26; --surface-2:#17242f; --surface-3:#1d2d39;
+    --ink:#e8eff5; --ink-soft:#a2b4c3; --ink-faint:#75899a;
+    --line:#25353f; --line-soft:#1e2d37;
+    --accent:#38bdf8; --accent-2:#22d3ee; --accent-soft:#0f2f3c; --accent-ink:#9fe4f5;
+    --rose:#fb7185; --rose-soft:#3a1520; --good:#2dd4bf; --warn:#fbbf24; --alert:#fb7185;
+  }
+  :root[data-theme="light"]{
+    --bg:#f5f8fa; --surface:#ffffff; --surface-2:#eef3f7; --surface-3:#e6edf2;
+    --ink:#142029; --ink-soft:#4a5c6b; --ink-faint:#79899a;
+    --line:#d9e2ea; --line-soft:#e7eef3;
+    --accent:#0e7490; --accent-2:#0891b2; --accent-soft:#d6f1f7; --accent-ink:#0a4a5c;
+    --rose:#be123c; --rose-soft:#fbe0e6; --good:#0f766e; --warn:#b45309; --alert:#be123c;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    font-size:16px;line-height:1.62;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:clamp(28px,5vw,64px) clamp(18px,4vw,40px) 96px;}
+  h1,h2,h3{text-wrap:balance;line-height:1.15;margin:0;}
+  p{margin:0}
+  .eyebrow{font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);}
+  a{color:var(--accent);text-decoration:none}
+
+  /* Masthead */
+  .mast{border-bottom:1px solid var(--line);padding-bottom:30px;margin-bottom:44px;}
+  .mast h1{font-size:clamp(30px,5.2vw,46px);font-weight:800;letter-spacing:-.02em;margin:14px 0 12px;}
+  .mast .thesis{font-size:clamp(17px,2.2vw,20px);color:var(--ink-soft);max-width:64ch;}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px;}
+  .chip{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;
+    padding:6px 12px;border-radius:999px;background:var(--surface);border:1px solid var(--line);color:var(--ink-soft);}
+  .chip b{color:var(--ink);font-weight:700}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);flex:none}
+
+  section{margin-top:52px}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin-bottom:22px;}
+  .sec-head h2{font-size:22px;font-weight:750;letter-spacing:-.01em;}
+  .sec-num{font-family:var(--mono);font-size:13px;color:var(--accent);font-weight:600;padding-top:3px}
+  .lead{color:var(--ink-soft);max-width:70ch;margin-bottom:24px}
+
+  /* State flow */
+  .flow{display:flex;flex-direction:column;gap:0;}
+  .step{position:relative;display:grid;grid-template-columns:44px 1fr;gap:18px;padding-bottom:26px;}
+  .step:last-child{padding-bottom:0}
+  .rail{display:flex;flex-direction:column;align-items:center;}
+  .num{width:44px;height:44px;flex:none;border-radius:12px;display:grid;place-items:center;
+    font-family:var(--mono);font-weight:700;font-size:16px;background:var(--accent-soft);
+    color:var(--accent-ink);border:1px solid color-mix(in srgb,var(--accent) 30%,transparent);}
+  .line-v{flex:1;width:2px;background:var(--line);margin-top:6px;border-radius:2px}
+  .step:last-child .line-v{display:none}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:18px 20px;box-shadow:0 1px 0 rgba(20,32,41,.02)}
+  .state-name{font-family:var(--mono);font-size:13.5px;font-weight:700;color:var(--accent-ink);
+    letter-spacing:.01em;margin-bottom:4px}
+  .step h3{font-size:18px;font-weight:700;margin-bottom:12px}
+  .rows{display:flex;flex-direction:column;gap:7px}
+  .row{display:grid;grid-template-columns:112px 1fr;gap:12px;font-size:14.5px;align-items:start}
+  .row .k{color:var(--ink-faint);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.06em;padding-top:2px}
+  .row .v{color:var(--ink-soft)}
+  .row .v b{color:var(--ink);font-weight:650}
+  .pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;padding:2px 9px;border-radius:999px;vertical-align:middle}
+  .pill.cx{background:var(--accent-soft);color:var(--accent-ink);border:1px solid color-mix(in srgb,var(--accent) 32%,transparent)}
+  .pill.notif{background:color-mix(in srgb,var(--good) 15%,transparent);color:var(--good);border:1px solid color-mix(in srgb,var(--good) 30%,transparent)}
+  .pill.alert{background:var(--rose-soft);color:var(--alert);border:1px solid color-mix(in srgb,var(--alert) 30%,transparent)}
+  .pill.jr{background:var(--surface-2);color:var(--ink-soft);border:1px solid var(--line)}
+  /* pill de Cx por estado (color = señal para enfermería) */
+  .pill.s0{background:var(--surface-2);color:var(--ink-soft);border:1px solid var(--line)}
+  .pill.s1{background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--warn);border:1px solid color-mix(in srgb,var(--warn) 34%,transparent)}
+  .pill.s2{background:color-mix(in srgb,#e8710a 16%,transparent);color:#e8710a;border:1px solid color-mix(in srgb,#e8710a 36%,transparent)}
+  .pill.s3{background:var(--accent-soft);color:var(--accent-ink);border:1px solid color-mix(in srgb,var(--accent) 32%,transparent)}
+  .pill.s4{background:color-mix(in srgb,#9d6bf0 18%,transparent);color:#9d6bf0;border:1px solid color-mix(in srgb,#9d6bf0 38%,transparent)}
+  .step.cancel .num{background:var(--rose-soft);color:var(--alert);border-color:color-mix(in srgb,var(--alert) 30%,transparent)}
+  .step.cancel .state-name{color:var(--alert)}
+  .step.adm .num{background:color-mix(in srgb,var(--good) 15%,transparent);color:var(--good);border-color:color-mix(in srgb,var(--good) 30%,transparent)}
+
+  /* two-col reuse/new */
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media(max-width:680px){.split{grid-template-columns:1fr}}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:20px 22px}
+  .panel.new{border-color:color-mix(in srgb,var(--accent) 34%,var(--line))}
+  .panel h3{font-size:14px;font-weight:750;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+  .tag{font-family:var(--mono);font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:6px;letter-spacing:.04em}
+  .tag.re{background:var(--surface-2);color:var(--ink-soft);border:1px solid var(--line)}
+  .tag.nw{background:var(--accent-soft);color:var(--accent-ink)}
+  ul.clean{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+  ul.clean li{display:grid;grid-template-columns:16px 1fr;gap:10px;font-size:14.5px;color:var(--ink-soft)}
+  ul.clean li::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);margin-top:8px}
+  .panel.re ul.clean li::before{background:var(--ink-faint)}
+  ul.clean li b{color:var(--ink);font-weight:650}
+  code{font-family:var(--mono);font-size:.86em;background:var(--surface-2);padding:1.5px 6px;border-radius:5px;color:var(--accent-ink);border:1px solid var(--line-soft)}
+
+  /* data model */
+  .scroll{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)}
+  table{border-collapse:collapse;width:100%;min-width:520px;font-size:14px}
+  th,td{text-align:left;padding:11px 16px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+  th{font-size:11.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-faint);font-weight:700;background:var(--surface-2)}
+  tr:last-child td{border-bottom:none}
+  td .st{font-family:var(--mono);font-size:12.5px;font-weight:650;color:var(--ink)}
+  .note{display:flex;gap:12px;background:var(--surface);border:1px solid var(--line);
+    border-left:3px solid var(--accent);border-radius:var(--radius-s);padding:14px 18px;margin-top:16px;font-size:14px;color:var(--ink-soft)}
+  .note b{color:var(--ink)}
+
+  /* notif matrix */
+  .matrix{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+  .mrow{display:grid;grid-template-columns:1fr auto;gap:14px;align-items:center;background:var(--surface);
+    border:1px solid var(--line);border-radius:var(--radius-s);padding:13px 16px}
+  .mrow .t{font-family:var(--mono);font-size:12.5px;font-weight:700;color:var(--accent-ink)}
+  .mrow .d{font-size:13px;color:var(--ink-soft);margin-top:2px}
+  .mrow .to{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+
+  /* decisions */
+  .decisions{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:680px){.decisions{grid-template-columns:1fr}}
+  .dec{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;position:relative}
+  .dec .qn{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--rose);letter-spacing:.05em}
+  .dec h3{font-size:15.5px;font-weight:700;margin:8px 0 7px}
+  .dec p{font-size:14px;color:var(--ink-soft)}
+  .callout{background:linear-gradient(180deg,var(--accent-soft),transparent);border:1px solid color-mix(in srgb,var(--accent) 24%,var(--line));
+    border-radius:var(--radius);padding:20px 22px 8px;margin-bottom:22px}
+  .callout p{color:var(--ink-soft);font-size:14.5px;max-width:74ch}
+  .callout b{color:var(--ink)}
+
+  /* phases */
+  .phases{display:flex;flex-direction:column;gap:2px}
+  .ph{display:grid;grid-template-columns:52px 1fr;gap:16px;padding:16px 4px;border-bottom:1px solid var(--line-soft)}
+  .ph:last-child{border-bottom:none}
+  .ph .pn{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--accent);padding-top:2px}
+  .ph h3{font-size:15.5px;font-weight:700;margin-bottom:4px}
+  .ph p{font-size:14px;color:var(--ink-soft)}
+
+  /* risks */
+  .risks{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media(max-width:680px){.risks{grid-template-columns:1fr}}
+  .risk{display:grid;grid-template-columns:22px 1fr;gap:10px;font-size:14px;color:var(--ink-soft);
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-s);padding:14px 16px}
+  .risk .ic{color:var(--warn);font-weight:800;font-family:var(--mono);text-align:center}
+  .risk b{color:var(--ink)}
+
+  footer{margin-top:56px;padding-top:22px;border-top:1px solid var(--line);color:var(--ink-faint);font-size:13px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+
+  /* Cirugías queue mockup */
+  .subhead{font-size:17px;font-weight:750;margin:34px 0 6px;letter-spacing:-.01em}
+  .qframe{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-top:14px}
+  .qbar{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--surface)}
+  .qbar .qt{font-weight:800;font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink)}
+  .qbar .qlive{font-size:11px;color:var(--accent-ink);background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 30%,transparent);padding:3px 10px;border-radius:999px;font-weight:700}
+  .qgroup{padding:14px 16px;border-bottom:1px solid var(--line-soft)}
+  .qgroup:last-child{border-bottom:none}
+  .qgh{display:flex;align-items:center;gap:9px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-faint);margin-bottom:9px}
+  .qgh .cnt{background:var(--surface-3);color:var(--ink-soft);border-radius:6px;padding:1px 8px;font-family:var(--mono);font-size:11px}
+  .qgh .who{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:700;color:var(--accent);font-size:11.5px}
+  .qrow{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding:10px 12px;border-radius:9px;background:var(--surface);border:1px solid var(--line-soft)}
+  .qrow+.qrow{margin-top:7px}
+  .qrow .who2{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .qrow .cama{font-family:var(--mono);font-size:12px;color:var(--ink-faint)}
+  .qrow .pac{font-weight:700;font-size:14px}
+  .qrow .meta{font-size:12px;color:var(--ink-faint)}
+  .qbtn{font-size:12px;font-weight:700;padding:6px 12px;border-radius:8px;background:var(--accent);color:#fff;white-space:nowrap}
+  @media (prefers-color-scheme:dark){.qbtn{color:#04222c}}
+  :root[data-theme="dark"] .qbtn{color:#04222c}
+  :root[data-theme="light"] .qbtn{color:#fff}
+</style>
+
+<div class="wrap">
+
+  <header class="mast">
+    <div class="eyebrow">MediFlow · Plan de feature · HPR — Grupo Gamma · Planning definitivo 03/08/2026</div>
+    <h1>Traslados a Cirugía</h1>
+    <p class="thesis">Mover un paciente de su cama al quirófano y de vuelta, operado desde el Mapa de Camas, con la <b>pill Cx cambiando de color</b> según el estado y sincronizándose solo. Circuito cerrado con <b>Julieta y Anabel (Gamma)</b>.</p>
+    <div class="chips">
+      <span class="chip"><span class="dot"></span>Disparador: <b>admissionType = Q (enrich)</b></span>
+      <span class="chip"><span class="dot"></span>Tablas nuevas: <b>Supabase</b></span>
+      <span class="chip"><span class="dot"></span>Auto-refresh: <b>Realtime</b></span>
+      <span class="chip"><span class="dot"></span>Rol nuevo: <b>Cirugía</b> (1)</span>
+    </div>
+  </header>
+
+  <div class="callout">
+    <p><b>Planning definitivo.</b> Lo que cerramos: <b>el camillero NO usa la app</b> — Cirugía gestiona todo (lo despacha verbalmente). La <b>pill Cx cambia de color</b> por estado (la señal para enfermería). El <b>cambio de cama al volver reusa la consolidación de traslados</b>, pero se ve en la <b>solapa Cirugías</b> (no en Traslados). <b>No hay "tipo de cirugía"</b> (D8): ni se tipea ni viene de PROGAL — solo el flag <code>Q</code> + fecha probable. Se <b>desarrolla y testea con el rol Admin</b>; los roles reales se crean al <b>go-live</b>. Único pendiente: <b>D3 · Cancelación</b>.</p>
+  </div>
+
+  <!-- FLOW -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>El flujo, paso a paso</h2></div>
+    <p class="lead">Máquina de estados propia (no reusa el pipeline de un traslado). <b>2 roles con app: Enfermería y Cirugía.</b> El camillero es un actor físico sin app. El flujo arranca cuando <b>enfermería marca "listo"</b> — sea una cirugía programada (pill Cx automática por <code>admissionType='Q'</code>) o emergente (la enfermera marca a mano, mismo botón). La <b>pill Cx cambia de color</b> en cada paso para que la enfermera lo lea de un vistazo.</p>
+
+    <div class="flow">
+
+      <div class="step">
+        <div class="rail"><div class="num">0</div><div class="line-v"></div></div>
+        <div class="card">
+          <div class="state-name">DISPARADOR · quirúrgico</div>
+          <h3>El paciente es quirúrgico</h3>
+          <div class="rows">
+            <div class="row"><span class="k">Origen</span><span class="v"><b>Automático</b> si <code>admissionTypeCode==='Q'</code> (ya viene en el enrich); o <b>manual</b> por enfermería en el caso emergente</span></div>
+            <div class="row"><span class="k">Pill</span><span class="v"><span class="pill s0">Cx programada</span> · con la fecha probable (<code>expectedSurgeryDate</code>). Paciente todavía en su cama</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="rail"><div class="num">1</div><div class="line-v"></div></div>
+        <div class="card">
+          <div class="state-name">LISTO_PARA_CIRUGIA</div>
+          <h3>Enfermería marca "listo"</h3>
+          <div class="rows">
+            <div class="row"><span class="k">Quién</span><span class="v"><b>Enfermería</b> de piso — un solo botón en la cama</span></div>
+            <div class="row"><span class="k">Notifica</span><span class="v"><span class="pill notif">🔔 Cirugía</span></span></div>
+            <div class="row"><span class="k">Pill</span><span class="v"><span class="pill s1">Cx listo</span> (ámbar)</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="rail"><div class="num">2</div><div class="line-v"></div></div>
+        <div class="card">
+          <div class="state-name">VAN_A_BUSCAR</div>
+          <h3>Cirugía va a buscar al paciente</h3>
+          <div class="rows">
+            <div class="row"><span class="k">Quién</span><span class="v"><b>Cirugía</b> — despacha al camillero (verbal) y lo marca</span></div>
+            <div class="row"><span class="k">Notifica</span><span class="v"><span class="pill notif">🔔 Enfermería</span> "van a buscar a {paciente}"</span></div>
+            <div class="row"><span class="k">Pill</span><span class="v"><span class="pill s2">Cx en camino</span> (naranja)</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="rail"><div class="num">3</div><div class="line-v"></div></div>
+        <div class="card">
+          <div class="state-name">EN_CIRUGIA</div>
+          <h3>Paciente entregado / en cirugía</h3>
+          <div class="rows">
+            <div class="row"><span class="k">Quién</span><span class="v"><b>Cirugía</b> — confirma que recibió al paciente</span></div>
+            <div class="row"><span class="k">Cama</span><span class="v"><b>No se libera</b> · se habilita el filtro Cx</span></div>
+            <div class="row"><span class="k">Pill</span><span class="v"><span class="pill s3">Cx en cirugía</span> (cyan)</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="rail"><div class="num">4</div><div class="line-v"></div></div>
+        <div class="card">
+          <div class="state-name">EN_DEVOLUCION</div>
+          <h3>Paciente en devolución</h3>
+          <div class="rows">
+            <div class="row"><span class="k">Quién</span><span class="v"><b>Cirugía</b> — marca que lo devuelve. Elige destino: <b>misma cama</b> o <b>otra</b> (de las Disponibles)</span></div>
+            <div class="row"><span class="k">Notifica</span><span class="v"><span class="pill notif">🔔 Enfermería</span> "van a entregar a {paciente}" · <span class="pill alert">⚠ + Azafata</span> si cambió la cama</span></div>
+            <div class="row"><span class="k">Pill</span><span class="v"><span class="pill s4">Cx volviendo</span> (violeta)</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="rail"><div class="num">5</div><div class="line-v"></div></div>
+        <div class="card">
+          <div class="state-name">RECIBIDA</div>
+          <h3>Recibido por enfermería → circuito cerrado</h3>
+          <div class="rows">
+            <div class="row"><span class="k">Quién</span><span class="v"><b>Enfermería</b> del piso destino confirma la recepción</span></div>
+            <div class="row"><span class="k">Pill</span><span class="v"><b>Desaparece la Cx</b></span></div>
+            <div class="row"><span class="k">Journey</span><span class="v"><span class="pill jr">Recepción Confirmada</span></span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step adm">
+        <div class="rail"><div class="num">A</div><div class="line-v"></div></div>
+        <div class="card">
+          <div class="state-name">CONSOLIDA · solo si cambió de cama</div>
+          <h3>Admisión consolida el cambio</h3>
+          <div class="rows">
+            <div class="row"><span class="k">Dónde</span><span class="v">En la <b>solapa Cirugías</b> (no en Traslados). Reusa la <b>mecánica de consolidación de traslados</b>: cama vieja → <i>En preparación</i>, nueva → <i>Ocupada</i></span></div>
+            <div class="row"><span class="k">Mientras tanto</span><span class="v">La cama se comporta igual que en un traslado pendiente (limbo por <code>mergeBeds</code>). Si vuelve a la misma cama, Admisión no interviene</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step cancel">
+        <div class="rail"><div class="num">×</div></div>
+        <div class="card">
+          <div class="state-name">CANCELADO</div>
+          <h3>Cancelación <span style="font-weight:500;color:var(--ink-faint);font-size:14px">· D3 pendiente</span></h3>
+          <div class="rows">
+            <div class="row"><span class="k">Quién / cuándo</span><span class="v"><span class="pill alert">⚠ sin definir</span> No se tocó en la reunión (ver <b>Decisiones · D3</b>). Guarda motivo y libera la cama.</span></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="subhead">Cirugía trabaja desde su solapa; Enfermería desde el Mapa de Camas</div>
+    <p class="lead" style="margin-bottom:0"><b>Cirugía</b> tiene una <b>nueva solapa en Operativa</b> con todos sus tickets abiertos (cola por estado). <b>Enfermería</b> se maneja desde el <b>Mapa de Camas</b>: la pill Cx por color + las notis le alcanzan (no toca la grilla salvo que quiera). <b>Admisión</b> ve en esa misma solapa solo lo suyo: el "Consolidar" de los cambios de cama.</p>
+
+    <div class="qframe">
+      <div class="qbar"><span class="qt">Cirugías</span><span class="qlive">🔄 en vivo</span></div>
+      <div class="qgroup">
+        <div class="qgh">Listos <span class="cnt">2</span><span class="who">acción: cirugía</span></div>
+        <div class="qrow"><div class="who2"><span class="cama">407 · C1</span><span class="pac">KRUGER NORMA</span><span class="pill s1">Cx listo</span></div><span class="qbtn">Voy a buscar</span></div>
+        <div class="qrow"><div class="who2"><span class="cama">512 · C2</span><span class="pac">GÓMEZ JUAN</span><span class="pill s1">Cx listo</span></div><span class="qbtn">Voy a buscar</span></div>
+      </div>
+      <div class="qgroup">
+        <div class="qgh">En cirugía <span class="cnt">3</span></div>
+        <div class="qrow"><div class="who2"><span class="cama">407 · C1</span><span class="pac">KRUGER NORMA</span><span class="pill s3">Cx en cirugía</span><span class="meta">1h 20′</span></div><span class="qbtn">En devolución</span></div>
+      </div>
+      <div class="qgroup">
+        <div class="qgh">Volviendo <span class="cnt">1</span></div>
+        <div class="qrow"><div class="who2"><span class="cama">→ 610 · C1</span><span class="pac">PÉREZ ANA</span><span class="pill s4">Cx volviendo</span><span class="pill alert">⚠ cama cambió (era 605)</span></div><span class="qbtn">— espera recepción —</span></div>
+      </div>
+      <div class="qgroup">
+        <div class="qgh">Cambio de cama a consolidar <span class="cnt">1</span><span class="who">acción: admisión</span></div>
+        <div class="qrow"><div class="who2"><span class="cama">605 → 610</span><span class="pac">PÉREZ ANA</span><span class="meta">recibida hace 6′</span></div><span class="qbtn">Consolidar PROGAL</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- REUSE / NEW -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>Qué reusamos, qué construimos</h2></div>
+    <p class="lead">La clave: casi todo se apoya en patrones ya probados (limpiezas, traslados, roles). Lo nuevo es acotado.</p>
+    <div class="split">
+      <div class="panel re">
+        <h3><span class="tag re">YA EXISTE</span> Se reusa tal cual</h3>
+        <ul class="clean">
+          <li>El patrón de <b>tabla entorno-scoped + RLS + Realtime</b> (de limpiezas)</li>
+          <li>El <b>motor de push síncrono + campanita</b> (<code>push-utils</code>, como limpiezas)</li>
+          <li>La tabla compartida <code>traslado_eventos</code> para el <b>journey</b></li>
+          <li>El sistema de <b>roles/permisos</b> (los permisos son data en <code>roles</code>)</li>
+          <li>El patrón de <b>overlay sobre la cama</b> para la pill</li>
+          <li>El <b>flag quirúrgico del enrich</b> — <code>admissionTypeCode='Q'</code> + <code>expectedSurgeryDate</code> (dispara la Cx sin código nuevo)</li>
+          <li>La <b>mecánica de consolidación de traslados</b> (cama vieja/nueva + limbo) para el cambio de cama al volver</li>
+        </ul>
+      </div>
+      <div class="panel new">
+        <h3><span class="tag nw">NUEVO</span> Se construye</h3>
+        <ul class="clean">
+          <li>Tabla <code>cirugia_traslados</code> (lean, <b>sin campo tipo</b>) + su máquina de estados</li>
+          <li>Endpoint <code>api/cirugia.ts</code> (CRUD + push por paso)</li>
+          <li>Canal Realtime <code>cirugia-live</code> + overlay en el mapa</li>
+          <li><b>Pill Cx que cambia de color</b> por estado (programada → listo → en camino → en cirugía → volviendo)</li>
+          <li><b>Solapa Cirugías</b> en Operativa (cola por estado) — landing de Cirugía</li>
+          <li><b>Un solo rol nuevo: Cirugía</b> (+ permisos a Enfermería). Permisos <code>cirugia_*</code> y notis <code>notif_cirugia_*</code></li>
+          <li>Enseñar a <code>mergeBeds</code> a mirar las filas de cirugía en devolución-con-cambio (para el limbo)</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- DATA MODEL -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>Modelo de datos</h2></div>
+    <p class="lead">Tabla nueva <code>public.cirugia_traslados</code> en <b>Supabase</b> (todas las tablas nuevas van a Supabase), calcando limpiezas. <b>Lean, sin <code>tipo</code></b>: el contexto (quirúrgico, fecha probable, diagnóstico) se lee del enrich de la cama, no se guarda.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Estado</th><th>Quién marca</th><th>Pill (color)</th><th>¿Cama viva?</th></tr></thead>
+        <tbody>
+          <tr><td><span class="st">LISTO_PARA_CIRUGIA</span></td><td>Enfermería</td><td><span class="pill s1">listo</span></td><td>Sí</td></tr>
+          <tr><td><span class="st">VAN_A_BUSCAR</span></td><td>Cirugía</td><td><span class="pill s2">en camino</span></td><td>Sí</td></tr>
+          <tr><td><span class="st">EN_CIRUGIA</span></td><td>Cirugía</td><td><span class="pill s3">en cirugía</span></td><td>Sí</td></tr>
+          <tr><td><span class="st">EN_DEVOLUCION</span></td><td>Cirugía</td><td><span class="pill s4">volviendo</span></td><td>Sí</td></tr>
+          <tr><td><span class="st">RECIBIDA</span></td><td>Enfermería</td><td>—</td><td>No</td></tr>
+          <tr><td><span class="st">CANCELADO</span></td><td>a definir (D3)</td><td>—</td><td>No</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note"><span>🧱</span><div><b>Columnas (lean):</b> <code>id_univoco · entorno · paciente_codigo · paciente_nombre · cama_origen · cama_destino · estado · motivo_cancelacion · version · created_at · updated_at</code>. El <b>journey/timeline se reusa de <code>traslado_eventos</code></b> (no tabla nueva). <b>Sin <code>tipo_cirugia</code></b> — no hay dato con qué llenarlo (D8 + PROGAL no lo manda).</div></div>
+    <div class="note" style="border-left-color:var(--accent)"><span>🔗</span><div><b>Cambio de cama = mecánica de traslados.</b> Vive en <code>cirugia_traslados</code> y se ve en la solapa Cirugías, pero para que el <b>limbo</b> se comporte idéntico hay que <b>extender <code>mergeBeds</code></b> para que también mire las filas de cirugía en <code>EN_DEVOLUCION</code> con cambio de cama. Extensión chica (a confirmar contra el código).</div></div>
+  </section>
+
+  <!-- ROLES + NOTIFS -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>Roles y notificaciones</h2></div>
+    <p class="lead"><b>Solo un rol nuevo (Cirugía)</b>; Enfermería suma permisos; Admisión ya existe. El destinatario de cada notificación se define dándole el permiso al rol. Todo <b>filtra por sector/piso</b> (como las azafatas).</p>
+
+    <div class="split" style="margin-bottom:22px">
+      <div class="panel new">
+        <h3><span class="tag nw">ROL</span> Cirugía <span style="font-weight:600;color:var(--ink-soft)">(nuevo)</span></h3>
+        <ul class="clean">
+          <li>Home = la <b>solapa Cirugías</b> (cola de trabajo)</li>
+          <li>Gestiona todo: <b>va a buscar → en cirugía → devuelve</b> (despacha al camillero verbal)</li>
+          <li>Recibe <code>notif_cirugia_solicitada</code></li>
+        </ul>
+      </div>
+      <div class="panel new">
+        <h3><span class="tag re">EXISTE</span> Enfermería + Admisión</h3>
+        <ul class="clean">
+          <li><b>Enfermería</b>: <code>cirugia_listo</code> + <code>cirugia_recepcion</code> + notis — <b>por piso</b>. Trabaja desde el Mapa de Camas</li>
+          <li><b>Admisión</b>: consolida el cambio de cama en la solapa Cirugías (solo si cambió)</li>
+          <li><b>Camillero</b>: actor físico <b>sin app</b> — Cirugía lo despacha</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="matrix">
+      <div class="mrow"><div><div class="t">CIRUGIA_SOLICITADA</div><div class="d">Enfermería marca "listo para cirugía"</div></div><div class="to"><span class="pill notif">Cirugía</span></div></div>
+      <div class="mrow"><div><div class="t">CIRUGIA_VAN_A_BUSCAR</div><div class="d">Cirugía va a buscar al paciente</div></div><div class="to"><span class="pill notif">Enfermería</span></div></div>
+      <div class="mrow"><div><div class="t">CIRUGIA_VAN_A_ENTREGAR</div><div class="d">Cirugía lo devuelve</div></div><div class="to"><span class="pill notif">Enfermería destino</span></div></div>
+      <div class="mrow"><div><div class="t">CIRUGIA_CAMA_CAMBIADA</div><div class="d">La cama de regreso difiere</div></div><div class="to"><span class="pill notif">Azafata</span><span class="pill notif">Admisión</span></div></div>
+    </div>
+
+    <div class="note"><span>🔐</span><div><b>Roles compartidos entre entornos.</b> <code>public.roles</code> no tiene columna <code>entorno</code> → un rol nuevo aparece en TESTING y PRODUCTIVO. Por eso: <b>se desarrolla y testea con el rol <code>Admin</code></b> (ya existe, full permisos + bypass) y el <b>rol <code>Cirugía</code> real se crea recién en el go-live</b> (es inerte en prod hasta que haya código + usuarios asignados). Aislar roles por entorno queda como deuda técnica aparte.</div></div>
+  </section>
+
+  <!-- DECISIONS -->
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>Decisiones del proceso — definidas 03/08</h2></div>
+    <div class="callout">
+      <p><b>Resueltas con Julieta y Anabel.</b> Registro de la definición del proceso. La única pendiente es <b>D3 · Cancelación</b>.</p>
+    </div>
+    <div class="decisions">
+      <div class="dec"><div class="qn">D1 · CAMA</div><h3>La cama durante la cirugía</h3><p>La cama de retorno se elige de las <b>Disponibles</b>. Durante la cirugía <b>no se libera</b>. El número de cama lo consolida <b>Admisión</b>. <span class="pill notif">✓</span></p></div>
+      <div class="dec"><div class="qn">D2 · CAMINOS INFELICES</div><h3>Si no vuelve a la cama</h3><p>Área crítica/UTI: la <b>coordinadora</b> gestiona con Admisión, se libera el origen y se <b>notifica a la azafata</b> (como dieta/ayuno). <span class="pill notif">✓</span></p></div>
+      <div class="dec"><div class="qn">D3 · CANCELACIÓN</div><h3>Quién cancela y cuándo</h3><p>No se definió. Propuesta a confirmar: cancela Enfermería/Cirugía en estados vivos, motivo obligatorio, la cama vuelve a su estado previo. <span class="pill alert">⚠ pendiente</span></p></div>
+      <div class="dec"><div class="qn">D4 · NOTIFICACIONES</div><h3>Alcance por paso</h3><p>Listo → Cirugía; va a buscar → Enfermería; devuelve → Enfermería; cambio de cama → Azafata + Admisión. Todo por sector/piso. <span class="pill notif">✓</span></p></div>
+      <div class="dec"><div class="qn">D5 · RECEPCIÓN</div><h3>Quién recibe</h3><p>La confirma <b>Enfermería del piso</b> destino (no cualquiera). Cierra el circuito. <span class="pill notif">✓</span></p></div>
+      <div class="dec"><div class="qn">D6 · CAMILLERO</div><h3>¿App para el camillero?</h3><p><b>NO.</b> Julieta/Anabel: "no le vamos a dar nada, cumple la indicación de la RQ". <b>Cirugía marca los hitos</b> y lo despacha verbal. Se pierde el timestamp fino del camillero; se ganan los hitos clave + simplicidad. <span class="pill notif">✓</span></p></div>
+      <div class="dec"><div class="qn">D7 · CAMA CAMBIADA</div><h3>Quién decide la nueva cama</h3><p>Cirugía la elige de las <b>Disponibles</b> al devolver; <b>Admisión consolida</b> (en la solapa Cirugías). Reusa la mecánica de traslados. <span class="pill notif">✓</span></p></div>
+      <div class="dec"><div class="qn">D8 · TIPO DE CIRUGÍA</div><h3>¿Se carga el tipo?</h3><p><b>No.</b> Botón genérico (mínima carga para enfermería) y <b>PROGAL tampoco manda el procedimiento</b> — solo el flag <code>Q</code> + fecha probable + diagnóstico. <span class="pill notif">✓</span></p></div>
+    </div>
+  </section>
+
+  <!-- PHASES -->
+  <section>
+    <div class="sec-head"><span class="sec-num">06</span><h2>Plan de implementación</h2></div>
+    <p class="lead">Se construye y prueba en <code>TESTING</code> <b>con el rol Admin</b>; se avisa antes de mergear a develop (envs). Los roles reales y el QA con sprite van al final.</p>
+    <div class="phases">
+      <div class="ph"><div class="pn">F1</div><div><h3>Migración Supabase</h3><p>Tabla <code>cirugia_traslados</code> calcando limpiezas: índice único "una viva por cama", RLS por entorno, Realtime (replica identity + publicación), grants, columna <code>version</code>.</p></div></div>
+      <div class="ph"><div class="pn">F2</div><div><h3>Endpoint <code>api/cirugia.ts</code></h3><p>Molde de <code>limpiezas.ts</code>: GET (overlay) + GET por paciente (journey), POST alta, PATCH por transición con push síncrono no-bloqueante por paso.</p></div></div>
+      <div class="ph"><div class="pn">F3</div><div><h3>Estado cliente + Realtime + mergeBeds</h3><p>Map de cirugías + mutaciones optimistas, canal <code>cirugia-live</code>, overlay en el mapa, y la <b>extensión de <code>mergeBeds</code></b> para el limbo del cambio de cama.</p></div></div>
+      <div class="ph"><div class="pn">F4</div><div><h3>UI: solapa Cirugías + pill por color</h3><p>Solapa Cirugías en Operativa (cola por estado). En el mapa: botón de la enfermera + <b>pill Cx que cambia de color</b> + filtro Cx. Vista de Admisión = solo "Consolidar" del cambio de cama.</p></div></div>
+      <div class="ph"><div class="pn">F5</div><div><h3>Notificaciones</h3><p>Registrar los tipos <code>CIRUGIA_*</code> y emitirlos desde el endpoint, filtrados por sector/piso.</p></div></div>
+      <div class="ph"><div class="pn">F6</div><div><h3>Journey del paciente</h3><p>Sumar el vocabulario de los hitos y adjuntar cada ronda de cirugía a la trayectoria (reusa <code>traslado_eventos</code>).</p></div></div>
+      <div class="ph"><div class="pn">F7</div><div><h3>QA con Admin en TESTING</h3><p>Ciclo completo con el rol Admin: pill aparece/cambia de color/desaparece, notis, cambio de cama + consolidación, journey. Entrega palpable para Jorge.</p></div></div>
+      <div class="ph"><div class="pn">F8</div><div><h3>Go-live: roles reales + sprite</h3><p>Crear el rol <b>Cirugía</b> + sumar permisos a Enfermería, asignar usuarios, y correr el <b>QA con sprite (TestSprite)</b>. Merge a main.</p></div></div>
+    </div>
+  </section>
+
+  <!-- RISKS -->
+  <section>
+    <div class="sec-head"><span class="sec-num">07</span><h2>Puntos de atención</h2></div>
+    <div class="risks">
+      <div class="risk"><span class="ic">!</span><div><b>mergeBeds debe ver cirugía.</b> Para que el limbo del cambio de cama se comporte igual que un traslado, hay que enseñarle a mirar las filas de <code>cirugia_traslados</code> en devolución-con-cambio.</div></div>
+      <div class="risk"><span class="ic">!</span><div><b>Roles compartidos entre entornos.</b> Crear el rol en la tabla lo pone en prod también → por eso se crea al go-live; el desarrollo va con Admin.</div></div>
+      <div class="risk"><span class="ic">!</span><div><b>Caso emergente = manual.</b> El paciente clínico al que le programan cirugía no flipea a <code>Q</code> → la enfermera lo marca a mano. Sin dependencia de Gamma.</div></div>
+      <div class="risk"><span class="ic">!</span><div><b>Realtime = 2 líneas.</b> Sin <code>replica identity full</code> + agregar a la publicación, el canal se suscribe pero nunca dispara.</div></div>
+      <div class="risk"><span class="ic">!</span><div><b>Roles primero (al go-live).</b> Si se emiten notis sin el rol Cirugía creado/asignado, no encuentran a nadie.</div></div>
+      <div class="risk"><span class="ic">!</span><div><b>D3 sin definir.</b> Falta cerrar quién cancela y en qué estados.</div></div>
+    </div>
+  </section>
+
+  <footer>
+    <span>MediFlow · Plan de Traslados a Cirugía · planning definitivo 03/08/2026 (Julieta + Anabel)</span>
+    <span>2 roles con app · pill Cx por color · desarrollo con Admin · pendiente D3 (cancelación)</span>
+  </footer>
+
+</div>
+</body>
+</html>

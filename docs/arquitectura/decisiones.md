@@ -96,6 +96,8 @@ Registro de decisiones técnicas inferidas del código fuente. Cada entrada docu
 - **Sin transacciones:** no hay atomicidad. Si un PATCH al ticket falla después de un POST al evento, quedan datos inconsistentes. Se mitiga con try/catch y logging.
 - **Sin relaciones:** las "relaciones" entre listas (ej: ticket → eventos) se resuelven por filtros en campos de texto (`IDUnivocoTraslado_DT eq '...'`), no por foreign keys.
 
+> **Actualización (2026-07-29 → 2026-07-31): decisión revertida para el subsistema transaccional.** Los datos que cambian en vivo (traslados/eventos/observaciones, limpiezas, comandas/menú, roles, notificaciones, suscripciones push) se migraron a **Supabase (Postgres)** — exactamente la alternativa que esta sección había descartado. Los problemas que la justificaban (queries lentas, sin transacciones, sin índices, sin relaciones) eran los mismos que empujaron el cambio. **SharePoint sigue vivo** solo para lo NO migrado: `00.Usuarios` (login), `12.EnrichCamas` (enrich del mapa), `99.ABM_GeoIPS` (ubicación) y `11.DietaSnapshot`. Ver **§28**.
+
 ---
 
 ### 2.2. Soft-delete universal
@@ -188,6 +190,8 @@ Registro de decisiones técnicas inferidas del código fuente. Cada entrada docu
 - El ETag evita transferir ~500 tickets si no hay cambios, reduciendo ancho de banda y procesamiento.
 - El hash DJB2 es rápido y no criptográfico — suficiente para detectar cambios, no para seguridad.
 - **Detección de cambios local:** al recibir tickets nuevos, el hook compara un snapshot `Map<id, status>` contra los datos anteriores para generar notificaciones in-app. Esto permite detectar tickets nuevos y cambios de estado sin un sistema de eventos del servidor.
+
+> **Actualización (2026-07-29 → 2026-07-31): decisión revertida para el subsistema transaccional.** Traslados, limpiezas y comandas ya **no se pollean**: llegan por **Supabase Realtime** (canales `traslados-live`/`limpiezas-live`/`comandas-live` en `hooks/useHospitalState.ts`), justo la alternativa que esta sección había descartado por "costo/dependencia externa". El poll de 8s de tickets ya no existe. **Solo `/api/beds` sigue con poll** (60s, `POLL_BEDS_MS`) porque el mapa vive en Gamma/SharePoint. La "detección de cambios local" con snapshot `Map<id, status>` se conserva (alimenta la campanita in-app). Ver **§28.5**.
 
 ---
 
@@ -1252,7 +1256,7 @@ Resultado del bug: Catering recibía "Nueva Solicitud de Traslado" (NEW_TICKET) 
 
 **Bonus (bug latente):** antes, si PROGAL reasignaba el origen a otro paciente antes de consolidar, `copyPatientToBed(origin, dest)` copiaba el enrich (dieta/diagnóstico) del paciente **equivocado** al destino. Ahora la copia se omite cuando el origen ya cambió; el destino toma su enrich de `reapplyEnrichFromMap` por `patientCode`.
 
-**Refina** [docs/arquitectura.md](docs/arquitectura.md) §38.2, que describía el comportamiento previo de `mergeBeds` en `WAITING_CONSOLIDATION`.
+**Refina** [docs/arquitectura.md](arquitectura.md) §38.2, que describía el comportamiento previo de `mergeBeds` en `WAITING_CONSOLIDATION`.
 
 ### 24.3. "Ingreso a ITR": origen filtrado a `eventOrigin === 'HIN'` (no 'HIT')
 
@@ -1372,3 +1376,127 @@ Para un mismo evento, en desktop con la pestaña en foco, el usuario recibía la
 ```
 
 Alternativa a revertir del todo: **blindar** el canal de página en vez de eliminarlo — dispararlo solo si `document.hidden`, capado a 1-2 y con `tag` estable (`n.ticketId ?? n.id`) para que el OS dedupe. Cubre al usuario sin Web Push sin reintroducir la lluvia en foco.
+
+---
+
+## 28. Migración a Supabase (2026-07-29 → 2026-07-31)
+
+> El cambio arquitectónico más grande del proyecto: el subsistema transaccional dejó de vivir en SharePoint y pasó a **Supabase (Postgres)**. Revierte explícitamente §2.1 (SharePoint como DB) y §4.1 (polling en vez de Realtime), que habían descartado justamente esta opción. Se mergea a `develop` y se corta a producción con el runbook [docs/cutover-supabase-main.md](../historial/cutover-supabase-main.md). Proyecto único `qnxckwtssevvhnhyprcl`, separado por columna, no por instancia.
+
+### 28.1. Migrar el subsistema transaccional de SharePoint a Supabase
+
+**Qué:** Los datos que cambian en vivo se movieron a tablas Postgres en Supabase: `public.traslados` (ex `07.Traslados`), `traslado_eventos` (`08.DetalleTraslados`), `traslado_obs` (`13.ObservacionesTraslados`), `limpiezas` (`14.Limpiezas`), `comandas` (`15.CargaComandas`), `carga_menu` (`16.CargaMenu`), `roles` (`99.ABMRoles_Traslados`), `notificaciones` (`10.Notificaciones`) y `push_subscriptions` (`09.PushSubscriptions`). **SharePoint queda solo para lo NO migrado:** `00.Usuarios` (login, join usuario→rol por `Perfil_U`↔`roles.name`), `12.EnrichCamas` (enrich del mapa; leída híbrida por `api/dietas.ts` para el backstop `sin_dieta`), `99.ABM_GeoIPS` (ubicación) y `11.DietaSnapshot`. El **mapa de camas** sigue en Gamma/PROGAL (no migró).
+
+**Por qué:** los problemas que §2.1 aceptaba como costo (queries de 200-800ms, cero transacciones, sin índices útiles, sin foreign keys, chequeos de unicidad racy) se volvieron el cuello de botella real: el poll de tickets cada 8s contra SharePoint era el mayor consumo de Vercel y la fuente de las carreras de doble-asignación (§13.2). Postgres da transacciones, índices únicos parciales que **hacen imposible** el estado inválido (§28.6), y Realtime que elimina el poll (§28.5). El equipo ya venía tratando SharePoint "como si fuera una DB" con funciones de mapeo bidireccional por lista — mover eso a una DB real fue barato conceptualmente.
+
+**Alternativas descartadas:**
+- **Seguir en SharePoint** y optimizar el poll (ETag más agresivo, menos frecuencia): no ataca la raíz (carreras, latencia, costo Vercel) y ya se había exprimido.
+- **Migrar TODO de un saque** (incluyendo usuarios, enrich, geo): más riesgo en un hospital 24/7. Se migró solo el núcleo transaccional; `00.Usuarios`/`12.EnrichCamas`/geo se dejaron en SP porque no eran el problema (usuarios cambian poco; el enrich ya está desacoplado por cron).
+
+**Impacto:**
+- Cada `api/*.ts` transaccional escribe con el cliente admin ([api/supabase-admin.ts](../api/supabase-admin.ts), `service_role`) y el browser lee por Realtime (§28.3–28.5).
+- La interface `Ticket` no cambió: `rowToTicket`/`ticketToRow` mapean fila↔objeto igual que antes lo hacían `spToTicket`/`ticketToFields`. El front casi no se tocó.
+- **Deuda documentada:** varios comentarios de código y nombres en `types.ts` todavía citan columnas SP (`Status_D`, `Comida_D`, `15.CargaComandas`) aunque el runtime ya use Supabase. Son stale pero funcionalmente equivalentes.
+- **Riesgo de cutover:** nunca re-correr un backfill después del merge (pisa datos vivos con los viejos de SP); un traslado creado entre backfill y deploy con código viejo queda invisible tras el corte. El runbook congela ediciones durante la ventana.
+
+### 28.2. Separar TESTING/PRODUCTIVO por columna `entorno` en un proyecto compartido (no branches, no proyectos separados)
+
+**Qué:** Un solo proyecto Supabase (`qnxckwtssevvhnhyprcl`) aloja ambos entornos. Cada tabla tiene una columna `entorno` (`TESTING`/`PRODUCTIVO`); el backend estampa y filtra por `process.env.ENTORNO ?? 'TESTING'`, y la RLS de lectura filtra por el claim `entorno` del pase (§28.3). Es la misma estrategia que §15.1 usó en SharePoint, portada a Postgres.
+
+**Por qué:**
+- **Supabase Branching (descartado):** las database branches de Supabase son de **plan pago** y están pensadas para preview de PRs efímeros, no para un TESTING permanente conviviendo con PRODUCTIVO. Pagaríamos por infra que la columna resuelve gratis.
+- **Dos proyectos separados (descartado):** duplica migraciones, keys, secrets de VAPID, y la Edge Function; hay que mantenerlos sincronizados a mano. Mismo costo operativo que "duplicar listas" que §15.1 ya había rechazado.
+- **Ventaja de la columna:** una migración, un set de policies, un `unique(id_univoco, entorno)` que deja coexistir el mismo `id_univoco` en ambos entornos. La separación es lógica, no física.
+
+**Default seguro `'TESTING'`:** si `ENTORNO` no está cargada en un deploy, cae a TESTING (fail-closed) — un misconfig en Production no dispara push ni expone datos a usuarios reales.
+
+**Trade-off / riesgo (PHI):** la separación depende de que cada deploy tenga su `ENTORNO` correcta. Si Production quedara en `TESTING`, el pase firmaría `entorno='TESTING'` y, vía Realtime+RLS, el browser de prod vería/escribiría filas de testing (fuga cross-entorno). Se mitiga con el default fail-closed y con QA sobre el claim del pase; no hay aislamiento físico que lo garantice.
+
+### 28.3. Lecturas del cliente por RLS + "pase" JWT ES256 (no Supabase Auth)
+
+**Qué:** El browser NO usa Supabase Auth. La identidad sigue en SharePoint (`mediflow_token`, HS256, ~10 años). Para leer por Realtime, el cliente pide un **pase** a [api/supabase-token.ts](../api/supabase-token.ts): un JWT corto (TTL **1h**, [api/supabase-token.ts:28](../api/supabase-token.ts#L28)) firmado **ES256** con claims `{ role:'authenticated', entorno, sede, sub=userId }`. Las policies RLS de lectura evalúan `entorno = auth.jwt()->>'entorno'`. El pase se cachea en [lib/supabase.ts:38](../lib/supabase.ts#L38) y se inyecta como `accessToken` de supabase-js.
+
+**Por qué ES256 y no HS256:** el proyecto es de la generación de "JWT signing keys" (ECC P-256) — **no tiene shared secret HS256**. La clave se genera aparte, se importa en Supabase y solo la privada (`SUPABASE_JWT_PRIVATE_KEY`, JWK) vive en el backend; Supabase verifica contra la pública. El `kid` del header debe matchear la clave importada.
+
+**Por qué no Supabase Auth:** obligaría a duplicar/migrar la identidad y los roles (que viven en `00.Usuarios` + `public.roles`) al sistema de auth de Supabase. El pase reusa la identidad existente sin tocar el login.
+
+**Por qué TTL 1h y `no-store` obligatorio:** el `mediflow_token` dura ~10 años (PWA que no desloguea), pero un token de Supabase de 10 años no se puede rotar. El cliente re-mintea el pase on-demand. **Crítico:** `Cache-Control: no-store` en el server ([api/supabase-token.ts:51](../api/supabase-token.ts#L51)) + `cache:'no-store'` en el fetch ([lib/supabase.ts:47](../lib/supabase.ts#L47)); sin eso el browser/CDN sirve un pase viejo vencido en loop.
+
+**Impacto / fallback seguro:** sin `mediflow_token` (deslogueado) el pase es `''` → conexión `anon`, que no tiene policy de lectura → no ve nada. `resetSupabasePase()` ([lib/supabase.ts:59](../lib/supabase.ts#L59)) invalida el cache en login/logout.
+
+### 28.4. Escrituras solo por `service_role`; candado total en `roles` y `push_subscriptions`
+
+**Qué:** El browser nunca escribe directo a Supabase. Toda mutación pasa por un endpoint Vercel que usa el cliente admin ([api/supabase-admin.ts](../api/supabase-admin.ts), secret key `sb_secret_`, bypassa RLS). Las policies de las tablas transaccionales dan `SELECT` a `authenticated` (su entorno) pero **ninguna** policy de write → escritura denegada al cliente. `roles` y `push_subscriptions` tienen **RLS ON sin policies** y grant solo a `service_role`: candado total, ni siquiera lectura desde el browser.
+
+**Por qué:** mantener la superficie de escritura en el backend (donde ya vive `requireAuth`, el enforcement de piso de `api/tickets.ts`, y el gating por permiso de comandas) en vez de replicar toda esa lógica de negocio en policies RLS. Los roles son datos sensibles de autorización: exponerlos al cliente no aporta y amplía la superficie.
+
+**Impacto:** un `403/503` de estos endpoints significa "backend no configurado" (falta env Supabase), no un problema de permisos del usuario. Editar un rol/áreas de un usuario propaga en el acto a `push_subscriptions` desde `api/users.ts` (los usuarios siguen en SP, pero su snapshot de rol/áreas vive en la sub de Supabase).
+
+### 28.5. Realtime en vez de poll (revierte §4.1)
+
+**Qué:** Traslados, limpiezas y comandas llegan por Supabase Realtime: canales `traslados-live` ([useHospitalState.ts:1307](../hooks/useHospitalState.ts#L1307)), `limpiezas-live` ([:1319](../hooks/useHospitalState.ts#L1319)) y `comandas-live` ([:1335](../hooks/useHospitalState.ts#L1335)), suscritos a `postgres_changes event:*`. Cada cambio dispara un **refetch debounced (300ms)** al endpoint (respetando el optimistic en vuelo); al `(re)SUBSCRIBED` se hace **catch-up** con un fetch completo. El GET de tickets quedó on-demand (`?all=1` para Monitor/Historial, `?patientCode=` para la historia). **Beds NO usa Realtime:** sigue con poll 60s porque el mapa vive en Gamma.
+
+**Por qué:** el poll de 8s de tickets era el mayor consumo de Vercel (§16.2 lo menciona como acumulador de triggers) y agregaba hasta 8s de latencia. Realtime empuja el cambio en ms y elimina las N invocaciones. §4.1 lo había descartado por "costo/dependencia externa"; con Supabase ya adoptado como DB, el Realtime viene incluido y la dependencia ya está paga.
+
+**Alternativas descartadas:**
+- **Seguir poleando la tabla Postgres:** desperdicia lo que Supabase ya ofrece; mantiene la latencia.
+- **Realtime también para beds:** el estado de cama es crítico (riesgo de doble-asignación) y su fuente es Gamma, no Supabase — no hay tabla a la que suscribirse. Se deja en poll.
+
+**Impacto / caso borde:** Realtime **no reenvía** eventos perdidos mientras el socket estuvo caído; el catch-up en `SUBSCRIBED` (un fetch completo) es lo que reconcilia tras una desconexión. QA: cortar red 2 min, mover un traslado desde otro dispositivo, reconectar → debe ponerse al día por refetch.
+
+### 28.6. Índices únicos parciales reemplazan los chequeos racy de SharePoint
+
+**Qué:** Las validaciones que antes eran "query-then-write" con ventana de carrera (§13.2) ahora son restricciones de Postgres: `traslados_cama_destino_activa_idx` (un traslado activo por cama destino), `limpiezas_activa_uidx` (una limpieza `Activo` por cama+entorno), `comandas_titular_viva_uidx` (un titular vivo por entorno/identidad/comida/día — acompañantes fuera a propósito), `push_subscriptions UNIQUE(endpoint)`, `roles_name_lower_uidx` (join case-insensitive único). Una violación (Postgres `23505`) se traduce a `409` con el id conflictivo.
+
+**Por qué:** cierra la "limitación conocida" que §13.2 aceptaba explícitamente ("no hay locking real en SP... la ventana es de ~200ms... si fuera necesario eliminarla, habría que migrar a una DB con `INSERT ... WHERE NOT EXISTS`"). Ahora la DB garantiza atomicidad: dos admisiones cargando a la misma cama destino → el segundo recibe `409` sin ventana. El upsert `onConflict (id_univoco, entorno) ignoreDuplicates` hace además idempotente la creación (reintentos no duplican).
+
+**Impacto:** el chequeo de conflicto ya no vive en el handler antes del write; se deja fallar el `INSERT`/`UPDATE` y se mapea el `23505`. Menos código, cero carrera.
+
+### 28.7. Comandas: tablas nuevas con esquema rediseñado (no un port 1:1 de las listas SP)
+
+**Qué:** Comandas y planificación se modelaron **de cero** en `public.comandas` y `public.carga_menu` en vez de calcar columna por columna `15.CargaComandas`/`16.CargaMenu`. El nuevo esquema agrega **columnas GENERATED de Postgres** (`dia` = día-ART derivado de `fecha_carga`, `identidad` = paciente o cama), un **índice único parcial** sobre el titular vivo, y modela acompañantes como filas extra con `orden_comensal` inmutable — cosas imposibles o frágiles en SharePoint.
+
+**Por qué:** SharePoint no tiene columnas computadas ni índices únicos parciales. La "Deuda #2" de [docs/plan-comandas-planificacion.md](../planes/plan-comandas-planificacion.md) (la comanda de ayer se pisaba) se pensaba resolver con una columna manual `DiaComanda_D`; con Postgres se resolvió mejor con la columna GENERATED `dia` + reuso/reactivación de pendientes. Aprovechar Postgres en serio (no emularlo) justificó el rediseño en vez del port literal.
+
+**Impacto:** el mapeo conceptual del plan (D1..D14, catálogo único `MEAL_SLOTS`, OTROS no planificable, sin solapamiento) sigue válido; cambian los nombres de tabla/columna. Comandas es un módulo **silencioso**: NO emite push (a diferencia de traslados/dietas). El único backstop híbrido que sigue tocando SharePoint es `sin_dieta` del titular (lee `12.EnrichCamas`, fail-open total).
+
+### 28.8. Push híbrido: Edge Function (traslados) vs Vercel `push-utils` (dietas/ayunos/limpiezas)
+
+**Qué:** Dos caminos de Web Push coexisten. **(1) Traslados** (`NEW_TICKET`/`STATUS_UPDATE`/`RECEPTION_CONFIRMED`) → Edge Function [notify-push](../supabase/functions/notify-push/index.ts) (Deno, corre EN Supabase), disparada por un **Database Webhook** (`pg_net`) sobre `public.traslados`. **(2) Dietas/ayunos/habitación limpia** (`DIET_CHANGE`/`FASTING_CHANGE`/`ROOM_CLEANED`) → [api/push-utils.ts](../api/push-utils.ts) (web-push desde Vercel), disparado por los crons y por `api/limpiezas.ts`. Ambos leen `push_subscriptions`, filtran por entorno + freshness ≤36h + permiso (`NOTIF_TYPE_TO_PERMISSION`) + `filter_by_floors`, y escriben la campanita en `public.notificaciones`.
+
+**Por qué el webhook para traslados:** mata el bug **"TIN TIN TIN"** (§27.1 lo resolvió del lado cliente; esto lo resuelve del lado servidor). La escritura a `traslados` y el envío de push estaban acoplados en el handler → un reintento o doble-PATCH duplicaba la notif. Con el webhook, el push sale **una sola vez por versión de fila commiteada**, con triple candado: el webhook dispara 1 vez por cambio, `push_dispatch_log` deduplica por `id_univoco:status:updated_at` (insert on conflict do nothing, [notify-push/index.ts:123](../supabase/functions/notify-push/index.ts#L123)), y `UNIQUE(endpoint)` evita doble entrega. El actor no se auto-notifica (`excludeUser` = `created_by_id` en INSERT, `last_actor_id` en UPDATE, [:109/:116](../supabase/functions/notify-push/index.ts#L109)).
+
+**Por qué NO se unificaron los dos caminos:** dietas/ayunos/limpiezas se disparan desde **crons y acciones de Vercel** (no hay cambio de fila en Supabase que un webhook pueda observar limpiamente — el enrich vive en `12.EnrichCamas` de SharePoint). Moverlos al webhook exigiría materializar esos eventos en Postgres. Traslados sí tiene una tabla propia cuyo cambio es exactamente la señal → el webhook calza natural. Unificar por unificar hubiera sido peor.
+
+**Alternativas descartadas:**
+- **Todo por push-utils (Vercel):** vuelve al acoplamiento write+push que causaba los duplicados de traslados.
+- **Todo por Edge Function:** requiere materializar dieta/ayuno/limpieza como filas Supabase solo para tener un webhook que observar.
+
+**Caveat de seguridad (prod):** con `WEBHOOK_SECRET` vacío (como en dev) la Edge Function queda pública — cualquiera con la URL puede POSTear y disparar push/campanitas arbitrarias. La función valida el header `x-webhook-secret` ([:94](../supabase/functions/notify-push/index.ts#L94)); hay que setear el secret en prod (paso del runbook). La función se deploya con `verify_jwt=false` porque el proyecto usa API keys nuevas (`sb_*`, no JWTs).
+
+### 28.9. Self-heal de push + por qué NO se borra la suscripción en un 403
+
+**Qué:** Dos mecanismos de auto-recuperación. **Cliente:** `subscribeToPush` compara la `applicationServerKey` de la sub existente contra el VAPID actual; si no coincide (VAPID rotado) hace `unsubscribe` + re-suscribe ([lib/pushSubscription.ts:57](../lib/pushSubscription.ts#L57)); corre en cada mount/F5 + `touchPushSubscription` cada 6h como heartbeat ([:120](../lib/pushSubscription.ts#L120)). **Servidor:** al enviar, solo se borra la sub ante `404`/`410` (desuscrita/rotada); un **`403` NO se borra** ([api/push-utils.ts:246-252](../api/push-utils.ts#L246)).
+
+**Por qué NO borrar en 403 (contraintuitivo):** un `403` del push service puede ser un fallo de auth VAPID **global del sender** (misconfig de las claves en Vercel/Supabase), no un problema de esa sub puntual. Si se borrara en 403, un solo broadcast con VAPID mal configurado **vaciaría toda la tabla** `push_subscriptions` de un golpe, y habría que re-suscribir a todos manualmente. El `403` se loguea y se deja la sub; el self-heal client-side ya regenera la sub cuando el VAPID no matchea, sin intervención.
+
+**Impacto:** una sub muerta de verdad (404/410) se limpia sola; una rotación de VAPID se auto-cura en la próxima apertura de la PWA; un misconfig global no es destructivo (se arregla corrigiendo las 3 puntas de VAPID: Vercel Production = secrets Edge Function = `VITE_VAPID_PUBLIC_KEY` del build). Subs sin heartbeat >36h se saltean del envío.
+
+### 28.10. Versionado de clientes con constante hardcodeada (no env var)
+
+**Qué:** `APP_VERSION` es un **literal hardcodeado** en [lib/version.ts:11](../lib/version.ts#L11) (hoy `v20260731_1.0.1`, formato `vYYYYMMDD_<semver>`), no una variable de entorno. Se captura en el login (se persiste en la sesión), cada escritura transaccional la manda en el body, y el endpoint la guarda en la columna `version` de la fila. Badge en login y sidebar (migración `20260731120000_version_columns.sql`).
+
+**Por qué hardcodeada y NO env:** al cambiar el literal cambia el **hash del bundle** (cache-bust real). Una env var de Vercel NO cambia el bundle: un cliente con un build viejo cacheado seguiría corriendo el JS viejo y reportaría la versión "nueva" de la env → señal falsa. El literal baked-at-build garantiza que la versión reportada sea la del **código que realmente corre**. Un cliente que no recargó el deploy escribe la versión vieja (o `''` si es pre-feature) → esa es exactamente la señal que soporte busca.
+
+**Impacto:** hay que bumpear el literal a mano en cada deploy que se quiera trazar (fricción aceptada: es un acto consciente de "esta build es trazable"). Filas server-side o pre-feature quedan con `version` `''`/NULL. Sirve para diagnosticar "el cliente X corre build viejo" sin adivinar.
+
+### 28.11. "Traslados a Cirugía": tabla nueva `cirugia_traslados` (PLANIFICADO, no construido)
+
+**Qué:** La feature **Traslados a Cirugía** (ver [docs/plan-traslados-cirugia.html](../planes/plan-traslados-cirugia.html)) está **planificada, NO implementada**. Su decisión de diseño ya tomada: modelar una **tabla nueva** `public.cirugia_traslados` **calcando limpiezas**, en vez de reusar `public.traslados`.
+
+**Por qué tabla nueva y no reusar `traslados`** ([plan:352](../planes/plan-traslados-cirugia.html)):
+- El **webhook de push de traslados** (§28.8) es ciego a estados nuevos — meter estados de cirugía en `traslados` dispararía notificaciones mal (o exigiría reescribir la Edge Function).
+- El **índice único de cama** (`traslados_cama_destino_activa_idx`, §28.6) chocaría en el regreso del paciente (ida a quirófano + vuelta a la misma cama).
+- En cirugía la cama **no se libera** (el paciente vuelve): la semántica correcta es un **overlay sobre la cama** (símil ayuno/dieta, pill `Cx`), no un ticket con ciclo de vida de traslado.
+
+**Impacto (cuando se construya):** máquina de estados propia, `api/cirugia.ts` moldeado sobre `api/limpiezas.ts` (índice "una viva por cama", RLS por entorno, Realtime `cirugia-live`, grants), y vista "Gestión de Cirugías". **Mencionar como upcoming; no documentar como existente.**

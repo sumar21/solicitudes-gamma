@@ -12,11 +12,75 @@ MediFlow es una aplicación web para gestionar traslados de pacientes dentro del
 | Componentes UI | Radix UI (Dialog, Popover, Select) + componentes custom |
 | Build | Vite 6 + vite-plugin-pwa |
 | Backend API | Vercel Serverless Functions (Node.js) |
-| Base de datos | SharePoint Online (listas) vía Microsoft Graph API |
-| API externa | Grupo Gamma REST API (mapa de camas, pacientes, eventos) |
-| Autenticación | JWT (jose) con tokens de ~10 años (PWA, sin re-login para ningún rol) |
-| Notificaciones | Web Push (VAPID) + Service Worker |
-| Deploy | Vercel |
+| Base de datos transaccional | **Supabase (Postgres)** — traslados, limpiezas, comandas, roles, notificaciones, push_subscriptions |
+| Base de datos legacy | **SharePoint Online** (Microsoft Graph) — usuarios (login), enrich del mapa, geo-IP, dieta-snapshot |
+| API externa | Grupo Gamma REST API (mapa de camas en vivo, pacientes, eventos) |
+| Tiempo real | **Supabase Realtime** (traslados / limpiezas / comandas) + poll 60s (solo camas) |
+| Autenticación | JWT de sesión HS256 (jose) ~10 años + "pase" de lectura ES256 para la RLS de Supabase (TTL 1h) |
+| Notificaciones | Web Push (VAPID) por **dos caminos**: Edge Function (traslados) + Vercel push-utils (dieta/ayuno/limpieza) |
+| Deploy | Vercel + Supabase (Edge Functions, migraciones SQL) |
+
+### 1.1. Stack de datos: qué vive en Supabase, SharePoint y Gamma
+
+> **Contexto (jul-2026):** el dominio transaccional se **migró de SharePoint a Supabase** (en producción). Las secciones **§21–§47** de este documento son un **changelog histórico** escrito en la época SharePoint; para el estado ACTUAL de traslados / limpiezas / comandas / roles / notificaciones mandan §1.1, §3, §4, §6, §7 y §9. Donde el changelog contradiga a estas secciones, **gana el código** (y estas secciones). El runbook del cutover develop→main es [docs/cutover-supabase-main.md](../historial/cutover-supabase-main.md).
+
+MediFlow corre sobre **tres backends simultáneos**:
+
+**1) Supabase (Postgres)** — proyecto único `qnxckwtssevvhnhyprcl`, compartido por ambos entornos (columna `entorno` = `TESTING` / `PRODUCTIVO`, mismo proyecto). Aloja el dominio transaccional migrado:
+
+| Tabla Supabase | Reemplazó a (SP) | Escribe | Lee el cliente |
+|---|---|---|---|
+| `public.traslados` | 07.Traslados | [api/tickets.ts](../api/tickets.ts) (service_role) | Realtime `traslados-live` (RLS por entorno) |
+| `public.traslado_eventos` | 08.DetalleTraslados | [api/ticket-events.ts](../api/ticket-events.ts) | on-demand / Realtime |
+| `public.traslado_obs` | 13.ObservacionesTraslados | [api/ticket-observations.ts](../api/ticket-observations.ts) | on-demand |
+| `public.limpiezas` | 14.Limpiezas | [api/limpiezas.ts](../api/limpiezas.ts) | Realtime `limpiezas-live` |
+| `public.comandas` | 15.CargaComandas | [api/dietas.ts](../api/dietas.ts) | Realtime `comandas-live` |
+| `public.carga_menu` | 16.CargaMenu | [api/carga-menu.ts](../api/carga-menu.ts) | via `/api/carga-menu` |
+| `public.roles` | 99.ABMRoles_Traslados | [api/roles.ts](../api/roles.ts) | solo backend (RLS ON, **sin policy**) |
+| `public.notificaciones` | 10.Notificaciones | push-utils / Edge Function | via `/api/notifications` |
+| `public.push_subscriptions` | 09.PushSubscriptions | [api/push-subscribe.ts](../api/push-subscribe.ts) | solo backend (RLS ON, **sin policy**) |
+| `public.push_dispatch_log` | (nuevo) | Edge Function `notify-push` | — (idempotencia del webhook) |
+
+**Patrón de acceso a Supabase:**
+- **Lectura del cliente** por Realtime bajo **RLS** que filtra `entorno = auth.jwt() ->> 'entorno'`, usando el "pase" JWT ES256 (§1.2). `roles` y `push_subscriptions` tienen RLS ON pero **sin policies** → candado total, solo backend; `anon` sin grants en ninguna tabla.
+- **Escritura** SOLO por `service_role` (secret key `sb_secret_…`, [api/supabase-admin.ts](../api/supabase-admin.ts), bypassa RLS). El browser nunca escribe directo: pega a los endpoints `api/*`. La RLS de las tablas transaccionales **no tiene policy de write** → `authenticated` no puede escribir.
+- **Índices-candado** que reemplazan chequeos racy de SharePoint: `traslados_cama_destino_activa_idx` (1 traslado activo por cama destino → violación = 409 `conflictingTicketId`), `limpiezas_activa_uidx` (1 limpieza Activo por cama+entorno), `comandas_titular_viva_uidx` (1 titular vivo por entorno/identidad/comida/día), `push_subscriptions UNIQUE(endpoint)`, `roles_name_lower_uidx` (join case-insensitive único), `traslados UNIQUE(id_univoco, entorno)`.
+
+**2) SharePoint (Microsoft Graph, [api/graph.ts](../api/graph.ts))** — sigue vivo para:
+- `00.Usuarios` — login ([api/auth.ts](../api/auth.ts)); join usuario→rol por `Perfil_U` ↔ `roles.name`. Los usuarios **NO** se migraron.
+- `12.EnrichCamas` — enrich del mapa (cron `cron-enrich-beds`); [api/dietas.ts](../api/dietas.ts) la lee híbrida para el backstop `sin_dieta`.
+- `11.DietaSnapshot` — cron `cron-diet-changes` (hoy **desprogramado**, §42).
+- `08.Aislamientos` — [api/isolations.ts](../api/isolations.ts) (**deprecado**: la fuente única de aislamientos es PROGAL vía enrich, §46).
+- `99.ABM_GeoIPS` — validación de ubicación.
+- `10.Notificaciones` (viejo) — todavía podado por `cron-cleanup-notifs` (**cruft**; NO es la campanita actual, que vive en `public.notificaciones`).
+
+**3) Gamma API (VM 35.224.5.114, [api/beds.ts](../api/beds.ts) + [api/gamma-client.ts](../api/gamma-client.ts))** — mapa de camas en vivo (`obtenermapacamas` + `obtenermapacamasocupadas`). Es el **ÚNICO** dominio que sigue con **poll** (60s); no se migró a Realtime.
+
+**Crons vigentes ([vercel.json](../vercel.json), corren solo en Production):**
+
+| Cron | Schedule | Qué hace | maxDuration |
+|---|---|---|---|
+| `cron-enrich-beds` | `0,15,30,45 * * * *` | enrich del mapa (12.EnrichCamas) + detección dieta/ayuno → push | 300s |
+| `cron-cleanup-notifs` | `0 4 * * *` | poda `10.Notificaciones` **VIEJO** en SharePoint (cruft; no toca `public.notificaciones`) | 300s |
+| `cron-trigger-testing` | `5,20,35,50 * * * *` | forwarder que dispara el enrich de la partición TESTING contra el Preview de `develop` (env `TESTING_BASE_URL`) | 15s |
+| `cron-diet-changes` | **desprogramado** | (sin schedule; la detección de dieta vive en `cron-enrich-beds`, §42) | 300s |
+
+### 1.2. Dos JWT: sesión (SharePoint) vs pase (Supabase)
+
+|  | `mediflow_token` (sesión) | "pase" de Supabase |
+|---|---|---|
+| Firma | HS256 (`JWT_SECRET`) | ES256 (`SUPABASE_JWT_PRIVATE_KEY`, JWK P-256) |
+| Vida | ~10 años (`EXPIRY_DEFAULT='3650d'`) | 1h |
+| Emite | [api/auth.ts](../api/auth.ts) (login) | [api/supabase-token.ts](../api/supabase-token.ts) (valida el mediflow_token) |
+| Claims | `id, name, role, sede, email` | `role:'authenticated', entorno, sede, sub=userId` |
+| Dónde vive | `localStorage.mediflow_token` | cache in-memory en [lib/supabase.ts](../lib/supabase.ts), `cache:'no-store'` |
+| Para qué | `authFetch` a `api/*` | Realtime + RLS de Supabase |
+
+> **Nota:** los headers de `api/jwt.ts` y `api/auth.ts` dicen "8h", pero la constante real es `EXPIRY_DEFAULT='3650d'` (~10 años). El comportamiento real es 10 años; el comentario miente. El "pase" es de un solo uso lógico: el cliente lo re-mintea on-demand y `resetSupabasePase()` lo invalida en login/logout. `cache:'no-store'` (cliente) + `Cache-Control: no-store` (endpoint) evitan que el CDN sirva un pase vencido en loop. Sin `mediflow_token`, el pase es `''` → conexión `anon` → la RLS no deja ver nada (fallback seguro).
+
+### 1.3. Versionado de cliente (APP_VERSION)
+
+[lib/version.ts](../lib/version.ts) exporta `APP_VERSION` (hoy `v20260731_1.0.1`), un literal **baked-at-build** (NO env var) que se bumpéa a mano por deploy que se quiera trazar. Se captura en login (`localStorage.mediflow_version`) y se estampa en la columna `version` de **cada escritura transaccional** (traslados, eventos, obs, limpiezas, comandas, planificación). Migración [`20260731120000_version_columns.sql`](../supabase/migrations/20260731120000_version_columns.sql). Sirve para detectar clientes con build viejo/cacheado (filas server-side o pre-feature quedan `''`/NULL). Badge visible en login + sidebar.
 
 ---
 
@@ -28,20 +92,41 @@ solicitudes-gamma/
 ├── index.tsx                # Entry point React
 ├── types.ts                 # Tipos, enums e interfaces compartidas
 ├── api/                     # Serverless functions (Vercel / dev-server)
-│   ├── auth.ts              # Login contra SP (00.Usuarios)
-│   ├── beds.ts              # Proxy a API Gamma (mapa de camas)
-│   ├── tickets.ts           # CRUD de traslados (07.Traslados)
-│   ├── ticket-events.ts     # Log de movimientos (08.DetalleTraslados)
-│   ├── users.ts             # ABM de usuarios (00.Usuarios)
-│   ├── roles.ts             # ABM de roles (99.ABMRoles_Traslados)
-│   ├── isolations.ts        # Aislamientos (08.Aislamientos)
-│   ├── limpiezas.ts         # CRUD de limpiezas por azafata (14.Limpiezas)
-│   ├── notifications.ts     # Historial de notificaciones (10.Notificaciones)
-│   ├── push-subscribe.ts    # Registro de suscripciones push (09.PushSubscriptions)
-│   ├── push-utils.ts        # Envío de push a suscriptores
+│   │  # — Supabase (dominio transaccional) —
+│   ├── supabase-admin.ts    # Cliente service_role (secret key, bypassa RLS) — SOLO backend
+│   ├── supabase-token.ts    # Mintea el "pase" ES256 de lectura (RLS por entorno)
+│   ├── tickets.ts           # CRUD de traslados (public.traslados)
+│   ├── ticket-events.ts     # Timeline de traslado (public.traslado_eventos)
+│   ├── ticket-observations.ts # Observaciones por traslado (public.traslado_obs)
+│   ├── limpiezas.ts         # CRUD de limpiezas por azafata (public.limpiezas)
+│   ├── dietas.ts            # CRUD de comandas (public.comandas) — híbrido: sin_dieta lee 12.EnrichCamas
+│   ├── carga-menu.ts        # CRUD de planificación de menú (public.carga_menu)
+│   ├── roles.ts             # ABM de roles (public.roles, mantiene shape SP para el front)
+│   ├── role-cache.ts        # Cache in-memory de roles (TTL 5min, serve-stale-on-error)
+│   ├── me.ts                # Resync de sesión en caliente (?roleName → config vigente)
+│   ├── notifications.ts     # Campanita in-app (public.notificaciones)
+│   ├── push-subscribe.ts    # Upsert de suscripción push (public.push_subscriptions)
+│   ├── push-utils.ts        # Envío de push (dieta/ayuno/limpieza) por Vercel web-push
+│   │  # — SharePoint (Graph) —
+│   ├── auth.ts              # Login contra SP (00.Usuarios) + rate-limit
+│   ├── users.ts             # ABM de usuarios (00.Usuarios; propaga rol/áreas a push_subscriptions)
+│   ├── isolations.ts        # Aislamientos (08.Aislamientos) — DEPRECADO (fuente única PROGAL)
 │   ├── validate-location.ts # Validación IP/geolocalización (99.ABM_GeoIPS)
-│   ├── graph.ts             # Helper Microsoft Graph (token cache + fetch)
-│   ├── jwt.ts               # Sign/verify JWT + middleware requireAuth
+│   ├── graph.ts             # Helper Microsoft Graph (token cache + fetch + $batch)
+│   │  # — Gamma (mapa de camas) + enrich —
+│   ├── beds.ts              # Mapa de camas en vivo (Gamma) + merge de 12.EnrichCamas
+│   ├── bed-enrich.ts        # Enrich on-demand por cama (fallback del cron)
+│   ├── enrich-core.ts       # buildEnrich compartido (cron + on-demand)
+│   ├── gamma-client.ts      # Cliente Gamma (token cache, fetchWithTimeout, getEventCached)
+│   ├── diet-tags.ts         # parseDiets(); ayunos.ts, isolations-summary.ts, room-formatter.ts
+│   │  # — crons —
+│   ├── cron-enrich-beds.ts  # Precomputa 12.EnrichCamas + detección dieta/ayuno (0,15,30,45)
+│   ├── cron-trigger-testing.ts # Forwarder que dispara el enrich de TESTING (5,20,35,50)
+│   ├── cron-cleanup-notifs.ts  # Poda 10.Notificaciones VIEJO en SP (diario 4am)
+│   ├── cron-diet-changes.ts # DESPROGRAMADO (detección de dieta migró a cron-enrich-beds)
+│   │  # — infra —
+│   ├── jwt.ts               # Sign/verify mediflow_token (HS256) + middleware requireAuth
+│   ├── rate-limit.ts        # Anti brute-force del login (Upstash + fallback memoria)
 │   └── test.ts              # Endpoint de prueba
 ├── hooks/
 │   └── useHospitalState.ts  # Hook central: estado global, polling, acciones
@@ -70,12 +155,19 @@ solicitudes-gamma/
 │   ├── NotificationsDropdown.tsx
 │   └── StatusBadge.tsx
 ├── lib/
-│   ├── utils.ts             # cn(), formatDate, calculateTicketMetrics
-│   ├── constants.ts         # Áreas, mock data, constantes de negocio
-│   ├── mock-api-data.ts     # Datos de prueba (camas y tickets)
-│   ├── pushSubscription.ts  # Suscripción push client-side
+│   ├── supabase.ts          # Cliente Supabase FRONTEND (publishable key + pase ES256 + RLS)
+│   ├── version.ts           # APP_VERSION (baked-at-build, se estampa en cada escritura)
+│   ├── permissions.ts       # can()/hasModule()/canReceiveNotif() + NOTIF_TYPE_TO_PERMISSION
+│   ├── fasting.ts           # Reloj de ayunos client-side (hora Argentina)
+│   ├── utils.ts             # cn(), formatDate, calculateTicketMetrics, isHraArea/isHitArea
+│   ├── constants.ts         # Áreas, constantes de negocio
+│   ├── pushSubscription.ts  # Suscripción push client-side (self-heal VAPID + heartbeat)
 │   ├── ticketEvents.tsx     # Config centralizada de eventos de ticket (label, icono, color)
 │   └── real-beds-data.ts    # Datos reales de referencia
+├── supabase/
+│   ├── migrations/          # Migraciones SQL (tablas, RLS, índices-candado, webhook)
+│   └── functions/
+│       └── notify-push/     # Edge Function (Deno): push de traslados por Database Webhook
 ├── src-sw/
 │   └── sw.ts                # Service Worker: precache + push handler
 ├── dev-server.ts            # Servidor local que emula Vercel serverless
@@ -91,33 +183,35 @@ solicitudes-gamma/
 ### 3.1. Arquitectura general
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    FRONTEND (React SPA)                  │
-│                                                         │
-│  App.tsx ──► useHospitalState() ──► Views + Components  │
-│                   │                                     │
-│           authFetch() con JWT                           │
-│                   │                                     │
-│         ┌─────────▼──────────┐                         │
-│         │   /api/* endpoints │                         │
-│         └─────────┬──────────┘                         │
-└───────────────────┼─────────────────────────────────────┘
-                    │
-        ┌───────────┼───────────┐
-        ▼                       ▼
- Microsoft Graph API      Grupo Gamma API
- (SharePoint Online)      (VM 35.224.5.114)
-        │                       │
-        ▼                       ▼
- Listas SharePoint        Endpoints REST
- (00.Usuarios,            (obtenermapacamas,
-  07.Traslados,            consultarpaciente,
-  08.Aislamientos,         obtenereventointernacion)
-  09.PushSubscriptions,
-  10.Notificaciones,
-  99.ABMRoles_Traslados,
-  99.ABM_GeoIPS)
+┌──────────────────────────────────────────────────────────────────┐
+│                        FRONTEND (React SPA)                        │
+│  App.tsx ──► useHospitalState() ──► Views + Components             │
+│      │                          │                                  │
+│  authFetch() (mediflow_token)   supabase-js (pase ES256)           │
+│      │                          │                                  │
+│  ┌───▼──────────┐          ┌────▼───────────────────┐             │
+│  │ /api/* (Vercel)│         │ Supabase Realtime (RLS) │             │
+│  └───┬──────────┘          └────┬───────────────────┘             │
+└──────┼──────────────────────────┼─────────────────────────────────┘
+       │                          │  canales *-live (traslados,
+       │ service_role             │  limpiezas, comandas)
+       ▼                          ▼
+ ┌──────────────┐   ┌────────────────────┐   ┌────────────────────┐
+ │ SharePoint   │   │ Supabase (Postgres)│   │ Grupo Gamma API    │
+ │ (Graph)      │   │ traslados/limpiezas│   │ (VM 35.224.5.114)  │
+ │ 00.Usuarios  │   │ comandas/carga_menu│   │ obtenermapacamas   │
+ │ 12.EnrichCamas│  │ roles/notificaciones│  │ obtenermapacamas-  │
+ │ 99.ABM_GeoIPS│   │ push_subscriptions │   │   ocupadas         │
+ └──────────────┘   └─────────┬──────────┘   └────────────────────┘
+   login, enrich,             │ Database Webhook (pg_net)
+   geo-IP                     ▼
+                     ┌────────────────────┐
+                     │ Edge Function      │  Web Push (traslados)
+                     │ notify-push (Deno) │
+                     └────────────────────┘
 ```
+
+El browser habla con **tres planos**: (a) los endpoints `api/*` de Vercel con el `mediflow_token` (todas las escrituras + lecturas on-demand), (b) **Supabase Realtime** con el "pase" ES256 (lecturas en vivo de traslados/limpiezas/comandas bajo RLS por entorno), y (c) nada directo con SharePoint/Gamma (siempre vía `api/*`).
 
 ### 3.2. Flujo de autenticación
 
@@ -131,6 +225,8 @@ solicitudes-gamma/
 
 **Nota:** el token tiene ~10 años de vida para todos los roles. La app se usa instalada como PWA en celulares y tablets; el re-login frecuente es más una molestia operativa que una ganancia de seguridad en este contexto. La principal barrera de seguridad es el control de ubicación (IP + GPS).
 
+**Pase de Supabase (paso adicional post-login):** con el `mediflow_token` en mano, el cliente pide `GET /api/supabase-token` (Bearer del mediflow_token) y recibe un JWT ES256 corto (1h, claim `entorno`) que [lib/supabase.ts](../lib/supabase.ts) inyecta como `accessToken` en cada request/reconexión de Realtime. Es lo que habilita las lecturas del cliente bajo RLS. Ver §1.2. El login también hidrata permisos/módulos/`filterByFloors`/`bypassLocationCheck` desde `public.roles` (via role-cache) y, si el rol tiene notificaciones concedidas, registra la suscripción push (snapshot de rol+áreas+sede+entorno).
+
 ### 3.3. Flujo de un traslado (ciclo de vida del Ticket)
 
 ```
@@ -141,38 +237,40 @@ solicitudes-gamma/
                                                                           (Cancelado)
 ```
 
-| Estado | Quién actúa | Acción |
+| Estado | Quién actúa (permiso) | Acción |
 |--------|-------------|--------|
-| `WAITING_ROOM` | Admisión crea el ticket | `POST /api/tickets` + `POST /api/ticket-events` |
-| `IN_TRANSIT` | Housekeeping confirma limpieza o cama ya limpia | `PATCH /api/tickets` (status + cleaningDoneAt) |
-| `IN_TRANSPORT` | Se inicia el traslado físico | `PATCH /api/tickets` (status + transportStartedAt) |
-| `WAITING_CONSOLIDATION` | Se confirma recepción del paciente | `PATCH /api/tickets` (status + receptionConfirmedAt) |
-| `COMPLETED` | Admisión consolida | `PATCH /api/tickets` (status + completedAt) |
-| `REJECTED` | Cualquiera con permiso cancela | `PATCH /api/tickets` (status + rejectionReason) |
+| **crear** | Admisión (`crear_ticket`) | `POST /api/tickets` → arranca en `WAITING_ROOM` (destino EN PREPARACIÓN) **o directo** en `IN_TRANSIT` (destino DISPONIBLE, se saltea limpieza) |
+| `WAITING_ROOM → IN_TRANSIT` | **Azafata de destino** (`confirmar_limpieza`, "Habitación Lista") | `PATCH /api/tickets` (status + cama destino "Asignada") |
+| `IN_TRANSIT → IN_TRANSPORT` | **Azafata de origen** (`iniciar_traslado`, "Iniciar Traslado") | `PATCH /api/tickets` (status + cama origen "En preparación") |
+| `IN_TRANSPORT → WAITING_CONSOLIDATION` | **Azafata de destino** (`confirmar_recepcion`, "Recepción OK") | `PATCH /api/tickets` (status + cama destino "Ocupada" + migra comandas) |
+| `WAITING_CONSOLIDATION → COMPLETED` | Admisión/Admin (`consolidar`, "Consolidar PROGAL") | `PATCH /api/tickets` (status + completedAt) |
+| `* → REJECTED` | Admisión/Admin (`cancelar_ticket`, motivo obligatorio) | `PATCH /api/tickets` (status + motivo_cancelacion) |
+
+> **Ojo con dos matices que la tabla vieja tenía mal:** (1) quien confirma la limpieza previa al ingreso es la **azafata de destino** (rol HOSTESS, `confirmar_limpieza`), no un "Housekeeping" genérico; (2) un traslado con cama destino **DISPONIBLE** nace directo en `IN_TRANSIT` (salta el paso de limpieza), solo con destino **EN PREPARACIÓN** nace en `WAITING_ROOM`. El enforcement de piso de la azafata se valida server-side en `api/tickets.ts` (403 si el traslado no pertenece a sus áreas; regla HRA remapea al piso real del otro extremo). La columna `intervino_azafata` pasa de `'NO'` a `'SI'` en la primera acción de azafata y bloquea la **edición** (no la cancelación).
 
 Cada transición genera:
-- Un evento en `08.DetalleTraslados` (via `POST /api/ticket-events`) para trazabilidad.
-- Una notificación push a los suscriptores relevantes (via `push-utils.ts`).
-- Una notificación in-app detectada por polling (en `useHospitalState`).
+- Un evento en `public.traslado_eventos` (via `POST /api/ticket-events`, append-only) para la trayectoria.
+- Una notificación push, **disparada por la Edge Function `notify-push`** (Database Webhook sobre `public.traslados`, no por `push-utils`) — una sola vez por versión de fila commiteada (§7).
+- Una fila en `public.notificaciones` (campanita in-app) por usuario destinatario; el propio actor ve su acción por `addNotification` local optimista y **no** recibe su propia push.
 
-### 3.4. Polling y sincronización en tiempo real
+### 3.4. Sincronización: Realtime (transaccional) + poll (solo camas)
 
-El hook `useHospitalState` implementa polling dual:
+> **Cambio de arquitectura:** el **poll de tickets cada 8s y de limpiezas cada 60s YA NO existe.** Los tres dominios transaccionales llegan por **Supabase Realtime**. El único poll que queda es el de **camas** (Gamma no está en Supabase).
 
-- **Tickets:** cada **8 segundos** (`GET /api/tickets?all=1`). Usa **ETag** para evitar transferir datos sin cambios (responde `304 Not Modified`).
-- **Camas:** cada **60 segundos** (`GET /api/beds`). La API de Gamma cambia menos frecuentemente.
-- **Limpiezas:** cada **60 segundos** (`GET /api/limpiezas`), sincronizado con el poll de camas. Los registros activos de `14.Limpiezas` se mergean en `mergeBeds()` para mostrar camas "En preparación" como disponibles cuando una azafata las marcó limpias.
-- **Aislamientos:** se cargan al inicio de la sesión junto con camas y tickets (`fetchIsolations()`).
+**Realtime (`useHospitalState` monta 3 canales al tener token + pase):**
+- `traslados-live`, `limpiezas-live`, `comandas-live` — `postgres_changes` (`event:*`) sobre `public.traslados` / `public.limpiezas` / `public.comandas`.
+- Un cambio de fila dispara un **refetch debounced (300ms)** al endpoint del dominio (`/api/tickets`, `/api/limpiezas`, `/api/dietas`), respetando el optimistic update en vuelo (`mealsWritingRef` para comandas).
+- Al **(re)conectar** (status `SUBSCRIBED`) se hace **catch-up** con un fetch completo: Realtime **no** reenvía los eventos perdidos mientras el socket estuvo caído.
+- El `GET /api/tickets` quedó **on-demand**: `?all=1` (Monitor/Historial), `?patientCode=` (historia de un paciente) y una "vista viva" (activos + cerrados en ventana de gracia de 30 min) casi sin uso porque Realtime empuja los cambios.
 
-**Camas con cache y ETag:** El endpoint `/api/beds` tiene cache server-side de 45s y soporte ETag. El frontend envía `If-None-Match` y recibe `304` si nada cambió, evitando transferir datos innecesarios.
+**Camas — único poll que queda (Gamma, sigue en SharePoint):**
+- `GET /api/beds` cada **60s** (`POLL_BEDS_MS`) con `If-None-Match`. Cache server-side de **45s** + ETag (combina firma del mapa + del enrich, §31.4). El enrich (DNI/dieta/ayuno/diagnóstico) lo **precomputa** el cron `cron-enrich-beds` en `12.EnrichCamas`; `/api/beds` lo lee en 1 query y lo mergea (ver §31). El click en cama usa `/api/bed-enrich` solo como fallback para camas que el cron aún no procesó.
 
-**Enriquecimiento on-demand:** Los datos detallados del paciente (DNI, edad, sexo, diagnóstico) se cargan al click en una cama via `/api/bed-enrich`, con cache server-side de 10 minutos por paciente. Solo 2 llamadas a Gamma por click.
+**Resiliencia en camas:** Si un poll de camas falla (error HTTP, JSON inválido, array vacío), se conservan los datos anteriores. Si Gamma responde con camas sin ocupación pero el estado anterior tenía ocupadas, se descarta la respuesta (fallo parcial de Gamma → sirve cache stale con `X-Beds-Stale`, evita mostrar ocupadas como Disponibles).
 
-**Resiliencia en camas:** Si un poll de camas falla (error HTTP, JSON inválido, array vacío), se conservan los datos anteriores. Si Gamma responde con camas sin ocupación pero el estado anterior tenía ocupadas, se descarta la respuesta (fallo parcial de Gamma).
+**Detección de cambios (campanita/toast):** al recibir tickets, se compara un snapshot previo (`Map<id, status>`) contra los nuevos. Los cambios generan notificaciones in-app con sonido (Web Audio API, G5 + C6). El envío real de push lo hacen los dos caminos del §7 (Edge Function + push-utils), no el cliente.
 
-**Detección de cambios:** Al recibir tickets actualizados, se compara un snapshot previo (`Map<id, status>`) contra los datos nuevos. Los cambios generan notificaciones in-app con sonido (Web Audio API, dos notas: G5 + C6).
-
-**Protección de escritura:** Un `writingRef` bloquea el polling mientras se está escribiendo a SharePoint para evitar condiciones de carrera donde datos obsoletos sobrescriban el estado optimista.
+**Protección de escritura:** Un `writingRef` (tickets) / `mealsWritingRef` (comandas) evita que un refetch de Realtime pise el estado optimista mientras la escritura viaja al backend.
 
 ---
 
@@ -220,12 +318,13 @@ Endpoint para obtener datos detallados de un paciente específico. Se llama cuan
 - Solo 2 llamadas a Gamma por request (nunca más).
 - Devuelve: `{ dni, age, sex, institution, diagnosis, prescribingPhysician }`.
 
-### 4.3. `api/tickets.ts` — CRUD de Traslados
+### 4.3. `api/tickets.ts` — CRUD de Traslados (Supabase)
 
-Mapea bidireccionalmente entre el modelo `Ticket` de la app y los campos internos de SharePoint (`IDUnivocoTraslado_T`, `Paciente_T`, `Status_T`, etc.). Soporta:
-- `GET` — tickets activos o historial completo (`?all=1`). Genera ETag para optimizar polling.
-- `POST` — crea ticket en SharePoint. Dispara push notification asíncrona.
-- `PATCH` — actualiza campos. Dispara push notification en cambios de estado relevantes.
+Escribe `public.traslados` con el cliente **service_role** ([api/supabase-admin.ts](../api/supabase-admin.ts), bypassa RLS). Mapea bidireccionalmente entre el modelo `Ticket` (types.ts) y la fila vía `rowToTicket`/`ticketToRow` (columnas `id_univoco`, `paciente`, `status`, `intervino_azafata`, `entorno`, `version`, …). El browser **no** escribe directo: pega a este endpoint.
+- `GET` — **on-demand**: `?all=1` (Monitor/Historial), `?patientCode=` (historia de un paciente), y la "vista viva" (activos + cerrados en ventana de gracia de 30 min). El grueso de la actualización llega por Realtime (§3.4).
+- `POST` — crea el ticket (upsert idempotente `onConflict (id_univoco, entorno)`). **No** dispara push; el push lo hace la Edge Function por webhook (§7). El índice único parcial `traslados_cama_destino_activa_idx` garantiza 1 traslado activo por cama destino (Postgres 23505 → **409** con `conflictingTicketId`).
+- `PATCH` — transiciones de estado. **Enforcement de piso server-side**: si el rol tiene `filter_by_floors` y no es full access (≥9 áreas), la acción de azafata solo pasa si el piso requerido está en sus áreas → si no, **403**. Mapeo status→extremo: `IN_TRANSIT`→destino, `IN_TRANSPORT`→origen, `WAITING_CONSOLIDATION`→destino (regla HRA: remapea al piso real del otro extremo). Editar destino revalida el 409 de cama y solo se permite con `intervino_azafata='NO'`.
+- Códigos: 400 (falta id/spItemId), 403 (piso), 409 (cama destino tomada), 503 (Supabase sin configurar).
 
 ### 4.4. `api/validate-location.ts` — Validación de ubicación
 
@@ -236,16 +335,21 @@ Verifica que el usuario acceda desde una ubicación autorizada:
 
 ### 4.5. Otros endpoints
 
-| Endpoint | Lista SP | Función |
+| Endpoint | Fuente de datos | Función |
 |----------|----------|---------|
-| `api/users.ts` | `00.Usuarios` | CRUD de usuarios (soft-delete via `Status_U = 'Inactivo'`) |
-| `api/roles.ts` | `99.ABMRoles_Traslados` | CRUD de roles con permisos por módulo |
-| `api/isolations.ts` | `08.Aislamientos` | Activar/desactivar aislamiento por paciente |
-| `api/limpiezas.ts` | `14.Limpiezas` | GET activas / POST marcar limpia (upsert) / PATCH cerrar (`ANULADA`\|`TICKET`\|`GAMMA`) |
-| `api/ticket-events.ts` | `08.DetalleTraslados` | Log de movimientos por ticket |
-| `api/ticket-observations.ts` | `13.ObservacionesTraslados` | Observaciones por traslado ligadas al status (auditoría) |
-| `api/notifications.ts` | `10.Notificaciones` | Historial de notificaciones por usuario |
-| `api/push-subscribe.ts` | `09.PushSubscriptions` | Registro de suscripciones Web Push |
+| `api/tickets.ts` | **Supabase** `traslados` | CRUD de traslados (service_role) — ver §4.3 |
+| `api/ticket-events.ts` | **Supabase** `traslado_eventos` | Timeline append-only (trayectoria) |
+| `api/ticket-observations.ts` | **Supabase** `traslado_obs` | Observaciones por traslado, snapshotean el status |
+| `api/limpiezas.ts` | **Supabase** `limpiezas` | GET activas / POST marcar limpia (upsert) / PATCH cerrar (`ANULADA`\|`TICKET`\|`GAMMA`\|`CONSOLIDADO`) |
+| `api/dietas.ts` | **Supabase** `comandas` (+ SP `12.EnrichCamas` para `sin_dieta`) | CRUD de comandas por turno/acompañante + reubicar al trasladar |
+| `api/carga-menu.ts` | **Supabase** `carga_menu` | CRUD de planificación de menú (rango sin solapamiento) |
+| `api/roles.ts` | **Supabase** `roles` | CRUD de roles (mantiene el shape SP para el front; `invalidateRoleCache()` en cada mutación) |
+| `api/me.ts` | **Supabase** `roles` (via role-cache) | `?roleName` → config vigente del rol (resync de sesión en caliente, pollea 60s) |
+| `api/notifications.ts` | **Supabase** `notificaciones` | Campanita in-app por usuario+entorno (GET no-leídas / PATCH marcar) |
+| `api/push-subscribe.ts` | **Supabase** `push_subscriptions` | Upsert por endpoint (UNIQUE) + heartbeat `last_seen_at` |
+| `api/supabase-token.ts` | — | Mintea el "pase" ES256 de lectura (RLS por entorno, §1.2) |
+| `api/users.ts` | SharePoint `00.Usuarios` | CRUD de usuarios (soft-delete `Status_U='Inactivo'`; propaga rol/áreas a `push_subscriptions`) |
+| `api/isolations.ts` | SharePoint `08.Aislamientos` | **DEPRECADO** — la fuente única de aislamientos es PROGAL vía enrich (§46) |
 
 ---
 
@@ -272,60 +376,69 @@ Responsabilidades:
 
 **Acciones que expone:**
 - `handleLogin`, `handleLogout` — autenticación.
-- `handleCreateTicket`, `handleEditTicket`, `handleValidateTicket`, `handleAssignBedAction`, `handleHousekeepingAction`, `handleStartTransport`, `handleCompleteTransport`, `handleRoomReady`, `handleConfirmReception`, `handleConsolidate`, `handleRejectTicket` — ciclo de vida del ticket.
+- `handleCreateTicket`, `handleRoomReady`, `handleStartTransport`, `handleConfirmReception`, `handleConsolidate`, `handleRejectTicket`, `handleEditTicket`, `handleAddObservation` — ciclo de vida del traslado (§3.3). `handleAssignBedAction` quedó **legacy/no-op** (la cama se asigna al crear).
 - `fetchBeds`, `fetchTickets`, `refreshAll` — fetch manual (este último invalida ETags y trae camas + tickets + aislamientos en paralelo; se dispara desde el botón "Refrescar" del mapa).
 - `toggleIsolation(bedLabel, nextTypes?)` — aislamientos multi-tipo (`nextTypes` es array; `undefined` o `[]` borra todos los tipos del paciente).
-- `markBedClean(bed)` — marca una cama "En preparación" como limpia (POST a `14.Limpiezas`, actualiza el estado optimísticamente).
-- `undoBedClean(bedLabel)` — deshace la limpieza (PATCH `reason=ANULADA`).
+- `markBedClean(bed)` — marca una cama "En preparación" como limpia (POST a `/api/limpiezas` → `public.limpiezas`, optimista + push `ROOM_CLEANED`).
+- `undoBedClean(bedLabel)` — deshace la limpieza (PATCH `motivo=ANULADA`).
 - `handleUpdateUserAreas` — áreas de azafata.
 - Setters: `setCurrentView`, `setActiveRole`, `setLoginEmail`, etc.
 
-**Merge de camas:** la función `mergeBeds()` combina tres fuentes: datos reales de Gamma, tickets activos, y limpiezas activas (`14.Limpiezas`). Una cama que PROGAL reporta "En preparación" y tiene una limpieza activa se muestra como disponible con el overlay `cleaned=true` (chip "Limpia ✓" en BedsView). PROGAL es read-only: el overlay es solo visual, no escribe a PROGAL.
+**Merge de camas:** la función `mergeBeds()` combina **cuatro** fuentes: datos reales de Gamma, tickets activos (Supabase), overlay de limpiezas (`public.limpiezas`) y overlay de comandas (`public.comandas`). Una cama que PROGAL reporta "En preparación" y tiene una limpieza activa se muestra como disponible con el overlay `cleaned=true` (chip "Limpia ✓" en BedsView). PROGAL es read-only: el overlay es solo visual, no escribe a PROGAL.
 
-**Edición de ticket (`handleEditTicket`):** admite cambiar workflow, destino, motivo de cambio, financiador ITR, observaciones y aislamiento (este último afecta al paciente globalmente, no solo al ticket). Valida que la nueva cama destino siga `AVAILABLE` o `PREPARATION` al momento del guardado (protege contra race conditions con otros admins), recalcula `status` y `targetBedOriginalStatus` según el estado Gamma de la nueva cama, y registra un único evento `"Modificacion - {cambios} - Motivo: {motivo}"` en `08.DetalleTraslados` con los cambios concatenados por ` | `. La liberación de la cama vieja es **implícita** gracias a `mergeBeds`: al dejar de apuntar a ella, el overlay se retira y la cama vuelve a mostrar su estado Gamma original (respeta AVAILABLE vs PREPARATION).
+**Edición de ticket (`handleEditTicket`):** admite cambiar workflow, destino, motivo de cambio, financiador ITR y observaciones. Solo disponible mientras `intervino_azafata='NO'`. Valida que la nueva cama destino siga `AVAILABLE` o `PREPARATION` al momento del guardado (protege contra race conditions con otros admins; **409** si otro admin la tomó), recalcula `status` (IN_TRANSIT vs WAITING_ROOM) según el estado Gamma de la nueva cama, y registra un único evento `"Modificacion - {cambios} - Motivo: {motivo}"` en `public.traslado_eventos`. La liberación de la cama vieja es **implícita** gracias a `mergeBeds`. (La edición de **aislamiento** desde la app ya **no** existe: la fuente única es PROGAL vía enrich, §46.)
 
-**Polling:**
-- `tickets`: cada 8 s.
-- `beds`: cada 60 s.
-- `isolations`: cada 30 s (antes solo se cargaba al login, lo que causaba que cambios de aislamiento no se propagaran a otros dispositivos hasta re-loguear).
+**Sincronización (ver §3.4):**
+- `tickets` / `limpiezas` / `comandas`: **Supabase Realtime** (canales `*-live`, refetch debounced 300ms). El poll de tickets de 8s **ya no existe**.
+- `beds`: poll cada 60 s (`POLL_BEDS_MS`) — único dominio que no está en Supabase.
+- `isolations`: **eliminado** — el aislamiento viaja en el enrich (`bed.isolations`), fuente única PROGAL (§46).
 
 ### 5.3. Vistas
 
-| Vista | Acceso | Descripción |
+El acceso a cada vista lo gobierna `hasModule(user, mod)` (los módulos del rol, `public.roles.modules`), no un rol hardcodeado.
+
+| Vista | Módulo (`hasModule`) | Descripción |
 |-------|--------|-------------|
-| `DashboardView` | Admin, Admisión | KPIs (activos, completados, espera media), gráficos (volumen por workflow con desglose de motivos en Traslado Interno, donut de estados), tickets recientes |
-| `RequestsView` | Admin, Admisión, Azafata | Tabla de tickets activos con acciones contextuales por rol. Tabs de filtro por perfil operativo. Búsqueda y ordenamiento |
-| `HistoryView` | Todos | Dos modos: **Lista** (tickets completados/cancelados, filtros por fecha/estado/tipo, export XLSX, modal de auditoría) y **Trayectoria** (combobox "Seleccionar paciente" → `PatientJourney` con toda la historia de traslados del paciente, sin filtro de fecha) |
-| `BedsView` | Todos | Grilla visual de camas por sector/piso. Código de colores por estado. Detalle expandido del paciente. Exportación a PDF (3 variantes: por sector, alfabético, dietas/ayunos — todas con zócalo de totales al pie). Aislamientos. Marcar/deshacer limpieza |
-| `UserManagementView` | Admin | ABM de usuarios. CRUD contra SharePoint. Asignación de pisos a azafatas |
-| `RoleManagementView` | Admin | ABM de roles. Permisos por módulo (Home, Operativa, Historial, Mapa, Config) |
+| `DashboardView` | Home | KPIs (activos, completados, espera media), gráficos (volumen por workflow, donut de estados), tickets recientes |
+| `RequestsView` | Operativa | Tabla de traslados activos + solapa de limpiezas, con acciones contextuales por permiso. Tabs de perfil operativo. Búsqueda/orden |
+| `HistoryView` | Historial | **Lista** (cerrados, filtros fecha/estado/tipo, export XLSX, AuditModal) + **Trayectoria** (paciente → `PatientJourney`) |
+| `BedsView` | Mapa de Camas | Grilla de camas por sector/piso, colores por estado, detalle del paciente (4 tabs), PDFs (sector / A-Z / dietas-ayunos). Marcar/deshacer limpieza |
+| `CleaningManagementView` | Gestion Limpieza | Supervisor: tab Activas (consolidar `CONSOLIDADO PROGAL`, permiso `consolidar_limpieza`) + tab Histórico por `fecha_cierre` |
+| `ComandasManagementView` | Gestion Comandas | Nutrición/Catering: tab "De hoy" (Pendientes/Entregadas, entregar/anular/volver-a-pendiente) + Histórico + Planificación de menú |
+| `UserManagementView` | Configuracion (`abm_usuarios`) | ABM de usuarios (SharePoint `00.Usuarios`). Asignación de pisos a azafatas |
+| `RoleManagementView` | Configuracion (`abm_roles`) | ABM de roles (`public.roles`). Permisos agrupados por módulo |
 
 ---
 
 ## 6. Sistema de roles y permisos
 
-Los roles y sus permisos se gestionan dinámicamente desde la lista SharePoint `99.ABMRoles_Traslados`. El campo `Acceso_RT` define qué módulos puede ver cada rol, separados por `/`.
+Los roles y sus permisos se gestionan dinámicamente desde **`public.roles` en Supabase** (migrados de la lista SP `99.ABMRoles_Traslados`). La tabla tiene RLS ON **sin policies** y grants solo a `service_role` → el backend la lee con la secret key ([api/supabase-admin.ts](../api/supabase-admin.ts)); `anon`/`authenticated` no la ven nunca. `api/roles.ts` reconstruye el **shape SP** (campo `access` unido por `/`, `permissions` como array, `spItemId`=uuid) para no tocar el front. Columnas: `name` (join case-insensitive por `lower(name)`, único), `modules text[]`, `permissions text[]`, `filter_by_floors bool`, `bypass_location_check bool`, `status` (`Activo`/`Inactivo`).
 
-### 6.1. Roles configurados en SharePoint
+### 6.1. Roles (100% dinámicos, editables desde el ABM)
 
-| Rol (NombreRol_RT) | Status_RT | Acceso_RT (módulos permitidos) |
+Ya no hay roles "fijos por SharePoint": cualquier rol se crea/edita/elimina (soft-delete `status='Inactivo'`) desde el ABM (`views/RoleManagementView.tsx`, permiso `abm_roles`). Ejemplos de configuración típica:
+
+| Rol | Módulos típicos | Notas |
 |---------------------|-----------|-------------------------------|
-| **Admin** | Activo | Home / Operativa / Historial / Mapa de Camas / Configuracion |
-| **Admision** | Activo | Home / Operativa / Historial / Mapa de Camas |
-| **Azafata** | Activo | Operativa / Historial / Mapa de Camas |
-| **Enfermeria** | Activo | Mapa de Camas |
-| **Catering** | Activo | Mapa de Camas |
+| **Admin** | Home / Operativa / Historial / Mapa de Camas / Gestion Limpieza / Gestion Comandas / Configuracion | full access |
+| **Admision** | Home / Operativa / Historial / Mapa de Camas | crea/consolida traslados |
+| **Azafata** | Operativa / Historial / Mapa de Camas | `filter_by_floors=Sí` |
+| **Enfermeria** | Mapa de Camas | solo lectura |
+| **Catering / Cocina** | Mapa de Camas / Gestion Comandas | `ver_dieta`, recibe DIET/FASTING/RECEPTION |
+| **Nutricion** | Mapa de Camas / Gestion Comandas | carga comandas + planificación |
 
-> **Nota:** todos los registros tienen `Title = [sumar]` (convención de la app para identificar items propios en SharePoint).
+> Un usuario cuyo `Perfil_U` no matchea ningún `roles.name` loguea igual pero queda `permissions:[] modules:[]` → **solo-lectura** (modo seguro).
 
 ### 6.2. Mapeo de módulos a vistas
 
-| Módulo (Acceso_RT) | Vista en la app | Descripción |
+| Módulo (`roles.modules`) | Vista en la app | Descripción |
 |---------------------|-----------------|-------------|
 | Home | `DashboardView` | Monitor con KPIs y gráficos |
-| Operativa | `RequestsView` | Tabla de tickets con acciones por rol |
-| Historial | `HistoryView` | Modo Lista (tickets completados/cancelados, export XLSX) + modo Trayectoria (búsqueda por paciente → historia completa) |
-| Mapa de Camas | `BedsView` | Grilla visual de camas, detalle paciente, export PDF |
+| Operativa | `RequestsView` | Traslados + limpiezas con acciones por permiso |
+| Historial | `HistoryView` | Modo Lista (cerrados, export XLSX) + modo Trayectoria (por paciente) |
+| Mapa de Camas | `BedsView` | Grilla de camas, detalle paciente (4 tabs), export PDF |
+| Gestion Limpieza | `CleaningManagementView` | Supervisor de limpiezas (Activas + Histórico) |
+| Gestion Comandas | `ComandasManagementView` | Panel de comandas + planificación de menú |
 | Configuracion | `UserManagementView` + `RoleManagementView` | ABM de usuarios y roles |
 
 ### 6.3. Acciones en Operativa por rol
@@ -342,29 +455,54 @@ Los roles y sus permisos se gestionan dinámicamente desde la lista SharePoint `
 
 - **Azafatas:** solo ven tickets cuyas camas de origen o destino estén en sus `assignedAreas` (pisos asignados vía el campo `PisosAzafata_u` en `00.Usuarios`). Al primer login sin áreas asignadas, se les muestra `AreaSelectionModal`.
 - **Enfermería y Catering:** al no tener acceso a Operativa ni Home, la app los redirige automáticamente a Mapa de Camas como vista por defecto.
-- **Admin:** es el único rol con acceso a Configuración, que incluye tanto el ABM de usuarios como el ABM de roles.
+- **Configuración es dinámica:** cualquier rol con el módulo `Configuracion` + los permisos `abm_usuarios`/`abm_roles` entra al ABM. Ya **no** hay privilegio hardcodeado por rol "Admin".
+- **Resync en caliente + límite:** `syncSessionRole` pollea `/api/me?roleName` cada 60s y actualiza módulos/permisos/flags **sin re-loguear**. Limitación: refresca por el `roleName` al que el usuario ya pertenece; si un admin **reasigna** el usuario a OTRO rol, ese cambio se toma recién al re-loguear.
+- **Enforcement server-side:** `bypass_location_check` y el filtro de piso de la azafata se deciden server-side con lookup fresco del rol (no confían en el flag del cliente, que se hidrata en login y queda viejo).
+
+### 6.5. Catálogo de permisos vigente (`types.ts` `PERMISSIONS`)
+
+Catálogo **cerrado** (`as const`). `can(user, perm)` gatea botones/mutaciones (UI); `hasModule` gatea vistas; `canReceiveNotif` gatea la campanita. (Se eliminaron `editar_aislamiento` —§46— y el viejo `recibe_push` —§28.)
+
+| Grupo | Permisos |
+|---|---|
+| Traslados | `crear_ticket`, `editar_ticket`, `cancelar_ticket`, `asignar_cama` (**legacy**, no-op), `confirmar_limpieza`, `iniciar_traslado`, `confirmar_recepcion`, `consolidar` |
+| Limpiezas | `consolidar_limpieza` |
+| Comandas | `cargar_dieta` (todos los turnos), `cargar_comanda_{desayuno,almuerzo,merienda,cena}` (granular, derivados de `MEAL_SLOTS`), `ver_dieta`, `ver_planificacion`, `abm_planificacion` |
+| Configuración | `abm_usuarios`, `abm_roles` |
+| Notificaciones (una por tipo) | `notif_new_ticket`, `notif_status_update`, `notif_reception_confirmed`, `notif_diet_change`, `notif_fasting_change`, `notif_habitacion_limpia` |
+
+Módulos (`ROLE_MODULES`): `Home`, `Operativa`, `Historial`, `Mapa de Camas`, `Gestion Limpieza`, `Gestion Comandas`, `Configuracion`.
 
 ---
 
 ## 7. Notificaciones
 
-### 7.1. In-app (polling)
+### 7.1. In-app (campanita)
 
-El hook `useHospitalState` detecta cambios entre polls comparando el snapshot de `id → status`. Genera objetos `Notification` que se muestran como:
+La campanita persiste en **`public.notificaciones`** (una fila por usuario+evento); el cliente la lee por `GET /api/notifications` (no-leídas, o `?window=24h`). Además, el hook `useHospitalState` detecta cambios al recibir actualizaciones de Realtime comparando el snapshot de `id → status` y genera objetos `Notification` locales que se muestran como:
 - **Toast:** banner efímero con sonido (Web Audio, dos tonos G5+C6).
-- **Dropdown:** listado de notificaciones con marca de lectura.
+- **Dropdown:** listado con marca de lectura (`bellNotifications` deduplica el historial por evento).
 
-Filtrado por relevancia: las Azafatas solo reciben notificaciones de tickets en sus áreas asignadas.
+Filtrado por relevancia (`canReceiveNotif` + área): las Azafatas solo ven notificaciones de tickets en sus áreas asignadas; Catering recibe solo por push server-side (§25). El propio actor ve su acción por `addNotification` optimista y no recibe su propia push.
 
-### 7.2. Web Push
+### 7.2. Web Push — DOS caminos
 
-Flujo:
-1. Al login, `lib/pushSubscription.ts` registra la suscripción del navegador vía `POST /api/push-subscribe`.
-2. Al crear o actualizar un ticket, `api/push-utils.ts` consulta `09.PushSubscriptions`, filtra por rol/área/sede, y envía la notificación con `web-push`.
-3. El Service Worker (`src-sw/sw.ts`) recibe el push, muestra una notificación nativa, y al hacer click redirige a la app.
-4. Cada notificación enviada se registra en `10.Notificaciones` para historial.
+Las suscripciones viven en **`public.push_subscriptions`** (Supabase, `UNIQUE(endpoint)` → duplicado imposible; columnas `user_id`, `user_role`, `assigned_areas text[]`, `sede`, `entorno`, `last_seen_at` heartbeat). La campanita in-app es **`public.notificaciones`** (una fila por usuario por evento). Hay **dos emisores** de push, ambos leen `push_subscriptions` + `roles` de Supabase y aplican el mismo filtro:
 
-Las suscripciones expiradas (HTTP 404/410) se limpian automáticamente.
+| Camino | Tipos | Corre en | Disparo |
+|---|---|---|---|
+| **Edge Function `notify-push`** (Deno) | `NEW_TICKET`, `STATUS_UPDATE`, `RECEPTION_CONFIRMED` | **Supabase** | Database Webhook (`pg_net`) sobre INSERT/UPDATE de `public.traslados` |
+| **`api/push-utils.ts`** (web-push) | `DIET_CHANGE`, `FASTING_CHANGE`, `ROOM_CLEANED` | **Vercel** | crons (`cron-enrich-beds`) y acciones (`api/limpiezas.ts`) |
+
+**Por qué el split:** mover el push de traslados al webhook lo dispara **una sola vez por versión de fila commiteada** — mató el bug "TIN TIN TIN" de duplicados. Idempotencia extra por `public.push_dispatch_log` (key `id_univoco:status:updated_at`, insert on conflict do nothing).
+
+**Matriz de filtrado (`isRelevant`, idéntica en ambos emisores):** (a) `excludeUser` — el actor NO se autonotifica (`created_by_id` en INSERT, `last_actor_id` en UPDATE); (b) sede; (c) rol activo (join por nombre case-insensitive); (d) **permiso granular** (`NOTIF_TYPE_TO_PERMISSION[type]` ∈ `roles.permissions`); (e) `filter_by_floors` → `subAreaMatches` por áreas (remap HRA; ≥9 áreas = full access); (f) suscripción fresca (`last_seen_at` ≤36h). CATERING recibe título/cuerpo custom en `RECEPTION_CONFIRMED` ("Traslado concretado…").
+
+**Reglas de la sub:** solo 404/410 borran la sub (vencida); un **403 NO** (podría ser misconfig VAPID global → vaciaría toda la tabla). El VAPID debe coincidir en 3 puntas (Vercel Production, secrets de la Edge Function, `VITE_VAPID_PUBLIC_KEY` del build). El cliente se auto-cura: `subscribeToPush` regenera la sub si la llave pública no matchea (self-heal en mount/F5) + `touchPushSubscription` refresca el heartbeat cada 6h.
+
+**Entorno:** solo se notifica a subs del `ENTORNO` actual (default `TESTING` para no disparar a reales por misconfig). El Service Worker (`src-sw/sw.ts`) muestra la notificación nativa y al hacer click enruta a la app (marca leído por `ticketId+type`).
+
+> El `STATUS_LABELS` de la Edge Function decide el label de cada transición: `Habitacion Lista`→"Habitación Lista", `En Traslado`→"Traslado en Curso", `Por Consolidar`→"Recepción Confirmada" (RECEPTION_CONFIRMED), `Consolidado`→"Traslado Finalizado", `Cancelado`→"Traslado Cancelado". **`Esperando Habitacion` (WAITING_ROOM) no tiene label → NO dispara push.**
 
 ---
 
@@ -378,38 +516,66 @@ Las suscripciones expiradas (HTTP 404/410) se limpian automáticamente.
 
 ---
 
-## 9. Listas SharePoint utilizadas
+## 9. Persistencia: tablas Supabase + listas SharePoint
 
-| Lista | ID | Propósito |
-|-------|----|-----------|
-| `00.Usuarios` | `e623ad06-ff62-441f-b67d-666224af5805` | Usuarios de la app (login, ABM) |
-| `07.Traslados` | `c7417674-9084-416d-a955-7024161a3194` | Tickets de traslado |
-| `08.DetalleTraslados` | `bd50c2be-0ec7-45d7-b1f5-abf10546675d` | Log de movimientos por ticket |
-| `08.Aislamientos` | `0a36e3e2-1ca2-4951-86f9-afd288465022` | Aislamientos activos por paciente |
-| `09.PushSubscriptions` | `648fde7b-89d2-40ac-bc4a-63661508b50a` | Suscripciones Web Push |
-| `10.Notificaciones` | `240f00dd-715b-4c78-9661-3147b7650a0f` | Historial de notificaciones |
-| `13.ObservacionesTraslados` | `1c524476-f88f-47c8-ad22-4b3f7f429e46` | Observaciones por traslado ligadas al status (auditoría) |
-| `14.Limpiezas` | `3665d496-0e52-465e-b40f-54ca39cd5856` | Limpiezas marcadas por azafatas (overlay sobre camas "En preparación") |
-| `99.ABMRoles_Traslados` | `68836bbe-18c5-4cb2-8cc6-e21ecae96710` | Roles y permisos |
-| `99.ABM_GeoIPS` | `c30a13f0-070a-45bf-9ff2-415b36325af5` | IPs y geolocalizaciones permitidas |
+### 9.0. Tablas Supabase (dominio transaccional migrado)
 
-**Columnas de `14.Limpiezas` (creada 2026-06-30):**
+Proyecto `qnxckwtssevvhnhyprcl`, entorno-scoped por columna `entorno`. Ver §1.1 para el patrón de acceso (RLS + pase + service_role) y los índices-candado.
 
-| Campo | Tipo SP | Indexado | Descripción |
-|-------|---------|:--------:|-------------|
-| `CamaLabel_L` | Texto | ✅ | Label legible de la cama (join visual con mapa) |
-| `CamaCodigo_L` | Texto | — | Código de cama Gamma (bedCode) |
-| `Habitacion_L` | Texto | — | Código de habitación Gamma (roomCode) |
-| `Area_L` | Texto | ✅ | Sector / piso (para filtrar por área de azafata) |
-| `Status_L` | Opción (`Activo`/`Inactivo`) | ✅ | Activo = overlay vigente; Inactivo = cerrada (soft-delete) |
-| `MotivoCierre_L` | Opción (`ANULADA`/`TICKET`/`GAMMA`) | — | Por qué se cerró |
-| `AzafataId_L` | **Número** | — | SP item ID del usuario que marcó (integer — creada manualmente como Número en SP) |
-| `AzafataNombre_L` | Texto | — | Nombre de la azafata (denormalizado para UI/auditoría) |
-| `FechaLimpieza_L` | Fecha y hora | — | Cuándo se marcó limpia (ISO) |
-| `FechaCierre_L` | Fecha y hora | — | Cuándo se cerró (ISO) |
-| `Entorno_L` | Texto | ✅ | `PRODUCTIVO` / `TESTING` |
+| Tabla | Migración | Reemplazó a | Estados / notas |
+|-------|-----------|-------------|-----------------|
+| `public.traslados` | `20260729163447` (+`170658`) | 07.Traslados | status español; `intervino_azafata`; `version` |
+| `public.traslado_eventos` | `20260729163447` | 08.DetalleTraslados | append-only; ahora con `entorno` (08 no lo tenía) |
+| `public.traslado_obs` | `20260729163447` | 13.ObservacionesTraslados | snapshotea el status del ticket |
+| `public.limpiezas` | `20260729172000` | 14.Limpiezas | `status` Activo/Inactivo; `motivo_cierre` ANULADA/TICKET/GAMMA/CONSOLIDADO |
+| `public.comandas` | `20260730120000` | 15.CargaComandas | Activo(pendiente)/Entregado/Inactivo; cols GENERATED `dia`+`identidad` |
+| `public.carga_menu` | `20260730120000` | 16.CargaMenu | plantilla por rango; `fecha_inicio/fin` (date) |
+| `public.roles` | `20260729155507` | 99.ABMRoles_Traslados | RLS ON **sin policy**; solo service_role |
+| `public.notificaciones` | `20260729160711` | 10.Notificaciones | campanita in-app; RLS SELECT/UPDATE own |
+| `public.push_subscriptions` | `20260729153848` | 09.PushSubscriptions | `UNIQUE(endpoint)`; RLS ON **sin policy** |
+| `public.push_dispatch_log` | `20260729170658` | (nuevo) | idempotencia del webhook |
 
-> Las 4 columnas indexadas (`CamaLabel_L`, `Area_L`, `Status_L`, `Entorno_L`) requieren permisos `Sites.Manage.All` para indexarse vía Graph API. Si se crean a mano desde la UI de SP, indexarlas manualmente en **Configuración de lista → Columnas → Columna indexada**. Sin índices funciona hasta ~5.000 filas (tardará años en pasar). El script `scripts/create-limpiezas-list.mts` puede crear e indexar con los permisos correctos, o solo indexar si la lista ya existe.
+RLS de lectura: `20260729171716` (SELECT por entorno en traslados/eventos/obs; el resto análogo). Grants: `20260729182257`. Webhook de push: `20260729183000`. Columnas `version`: `20260731120000`.
+
+### 9.1. Listas SharePoint todavía en uso
+
+| Lista | ID | Propósito | Estado |
+|-------|----|-----------|--------|
+| `00.Usuarios` | `e623ad06-ff62-441f-b67d-666224af5805` | Usuarios de la app (login, ABM) | **vigente** (no migró) |
+| `12.EnrichCamas` | `443c4ff0-bc98-43ef-a49c-7fd91cc63734` | Enrich precomputado del mapa (cron) | **vigente** |
+| `11.DietaSnapshot` | — | Snapshot de dieta (cron-diet-changes) | vigente pero cron **desprogramado** (§42) |
+| `99.ABM_GeoIPS` | `c30a13f0-070a-45bf-9ff2-415b36325af5` | IPs y geolocalizaciones permitidas | **vigente** |
+| `08.Aislamientos` | `0a36e3e2-1ca2-4951-86f9-afd288465022` | Aislamientos por paciente | **deprecado** (fuente única PROGAL, §46) |
+| `10.Notificaciones` | `240f00dd-715b-4c78-9661-3147b7650a0f` | Historial viejo de notifs | **cruft**: solo lo poda `cron-cleanup-notifs`; la campanita real es `public.notificaciones` |
+
+### 9.2. Listas SharePoint MIGRADAS a Supabase (ya no se leen/escriben)
+
+Se mantienen los GUIDs como registro histórico; el runtime ya **no** las usa (ver §9.0).
+
+| Lista SP (histórica) | ID | Ahora en |
+|-------|----|----------|
+| `07.Traslados` | `c7417674-9084-416d-a955-7024161a3194` | `public.traslados` |
+| `08.DetalleTraslados` | `bd50c2be-0ec7-45d7-b1f5-abf10546675d` | `public.traslado_eventos` |
+| `09.PushSubscriptions` | `648fde7b-89d2-40ac-bc4a-63661508b50a` | `public.push_subscriptions` |
+| `13.ObservacionesTraslados` | `1c524476-f88f-47c8-ad22-4b3f7f429e46` | `public.traslado_obs` |
+| `14.Limpiezas` | `3665d496-0e52-465e-b40f-54ca39cd5856` | `public.limpiezas` |
+| `99.ABMRoles_Traslados` | `68836bbe-18c5-4cb2-8cc6-e21ecae96710` | `public.roles` |
+
+**Columnas de `public.limpiezas`** (Supabase, migración `20260729172000` — reemplaza a la vieja lista SP `14.Limpiezas` y sus columnas `_L`):
+
+| Columna | Tipo | Descripción |
+|-------|---------|-------------|
+| `cama_label` | text | Label legible de la cama (join visual con el mapa) |
+| `cama_codigo` / `habitacion` | text | Código de cama / habitación Gamma |
+| `area` | text | Sector / piso (para filtrar por área de azafata) |
+| `status` | text (`Activo`/`Inactivo`) | Activo = overlay vigente; Inactivo = cerrada (soft-delete) |
+| `motivo_cierre` | text (`ANULADA`/`TICKET`/`GAMMA`/`CONSOLIDADO`) | Por qué se cerró |
+| `azafata_id` / `azafata_nombre` | text | Quién marcó (denormalizado para auditoría) |
+| `fecha_limpieza` / `fecha_cierre` | timestamptz | Cuándo se marcó limpia / cuándo se cerró |
+| `entorno` | text | `PRODUCTIVO` / `TESTING` |
+| `version` | text | `APP_VERSION` del cliente que escribió (§1.3) |
+
+> Índice-candado `limpiezas_activa_uidx`: una sola limpieza `Activo` por `cama_label`+`entorno` (23505 en carrera → el POST re-busca y refresca la existente). Ya no aplica lo de "indexar columnas en la UI de SP" ni el script `create-limpiezas-list.mts`: la tabla y sus índices los define la migración SQL.
 
 **Columnas nuevas (2026-04-22):**
 - `07.Traslados.IntervinoAzafata_T` (Text): `"NO"` al crear el ticket, pasa a `"SI"` en la primera acción de azafata (`handleRoomReady`, `handleStartTransport`, `handleConfirmReception`). Gatekeepa la cancelación y edición: solo se permite mientras esté en `"NO"`.
@@ -488,13 +654,19 @@ npm run dev           # → http://localhost:5173
 npm run dev:full
 ```
 
-Variables de entorno necesarias en `.env.local`:
+Variables de entorno necesarias (ver [.env.example](../.env.example)):
 - `AZURE_TENANT_ID`, `AZURE_CLIENTE_ID`, `AZURE_CLIENT_SECRET` — Microsoft Graph
 - `SHAREPOINT_SITE_ID` — Site de SharePoint
 - `GAMMA_VM_URL`, `CLIENT_ID`, `CLIENT_SECRET` — API de Grupo Gamma
-- `JWT_SECRET` — Secreto para firmar tokens
-- `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` — Web Push
-- `VITE_VAPID_PUBLIC_KEY` — Clave pública VAPID expuesta al frontend
+- `JWT_SECRET` — Secreto para firmar el `mediflow_token` (HS256)
+- `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` — Web Push (server)
+- `VITE_VAPID_PUBLIC_KEY` — Clave pública VAPID expuesta al frontend (debe coincidir con el par de arriba y con los secrets de la Edge Function)
+- **Supabase (backend):** `SUPABASE_URL`, `SUPABASE_SECRET_KEY` (`sb_secret_…`, service_role), `SUPABASE_JWT_PRIVATE_KEY` (JWK P-256 para firmar el pase ES256)
+- **Supabase (frontend):** `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` (pública por diseño; lo que protege es la RLS)
+- `ENTORNO` — `PRODUCTIVO` / `TESTING` (default `TESTING`)
+- **Crons / Edge:** `CRON_SECRET` (auth de los crons), `MEDIFLOW_URL` (GitHub Secrets), `TESTING_BASE_URL` (alias del Preview de develop para `cron-trigger-testing`), `WEBHOOK_SECRET` (auth del Database Webhook → Edge Function `notify-push`)
+
+> 🔴 **Nunca** documentar valores de secrets (passwords, tokens, claves privadas). Solo los nombres. La secret key de Supabase y `SUPABASE_JWT_PRIVATE_KEY` no deben llegar jamás al bundle del cliente (se importan solo desde `api/`).
 
 ---
 
@@ -525,12 +697,13 @@ Complementariamente, `App.tsx` calcula `activeTransferDestinations: Set<string>`
 
 ### 12.3. Tabs internos en el detalle de cama (BedsView)
 
-El modal de detalle de paciente (`BedsView.tsx`) ahora tiene tres tabs:
-- **Generales**: DNI, edad, sexo, financiador, profesional, diagnóstico (datos enriquecidos via `/api/bed-enrich`).
-- **Internación**: tipo de internación (mapeado desde códigos C/CO/H/K/O/Q/R/T), fecha/hora de ingreso, profesional prescriptor.
-- **Dieta**: información de dieta del paciente.
+El modal de detalle de paciente (`BedsView.tsx`) hoy tiene **cuatro tabs** (esta sección decía "tres"; se agregó Ayunos, ver §29.4/§34):
+- **Generales**: DNI, edad, sexo, financiador, profesional, diagnóstico (datos del enrich).
+- **Internación**: tipo de internación (códigos C/CO/H/K/O/Q/R/T), fecha/hora de ingreso, días de estadía vs autorizados, fecha probable de cirugía.
+- **Dieta**: condiciones + tipo de dieta + sección Menú donde Nutrición carga comandas por turno (§ dominio Comandas).
+- **Ayunos**: ocurrencias vigentes por indicación en hora Argentina.
 
-Estado: `useState<'general' | 'internacion' | 'dieta'>('general')` con reset por `useEffect` al cambiar `selectedBed?.id`.
+La botonera de tabs es scrolleable en mobile (§37). Aislamientos se muestran en solo lectura (fuente PROGAL, §46).
 
 ### 12.4. Auto-update de PWA sin intervención del usuario
 
@@ -652,31 +825,31 @@ Si Upstash falla 3 veces consecutivas (timeout, cuota agotada, error de red), el
 
 ---
 
-## 20. Separación de entornos por columna SP
+## 20. Separación de entornos (`TESTING` / `PRODUCTIVO`)
 
-Para permitir que producción y testing convivan en las **mismas listas SharePoint** sin pisarse, se agregó un campo `Entorno` a 5 listas y una variable `ENTORNO` en backend (valores `PRODUCTIVO` / `TESTING`).
+Producción y testing conviven en el **mismo proyecto Supabase** y en las **mismas listas SharePoint** sin pisarse, discriminados por una columna `entorno`/`Entorno_*` y la env `ENTORNO` (default seguro `TESTING`).
+
+**En Supabase (dominio transaccional):** cada tabla tiene columna `entorno`. La **lectura del cliente** la filtra la **RLS** (`entorno = auth.jwt() ->> 'entorno'`) usando el "pase" ES256 cuyo claim `entorno` mintea `api/supabase-token.ts` con `process.env.ENTORNO`. Las **escrituras** (service_role) estampan `ENTORNO` en cada fila. Un entorno **no puede** ver filas del otro aunque compartan proyecto. `traslados UNIQUE(id_univoco, entorno)` permite que el mismo `id_univoco` coexista en TESTING y PRODUCTIVO.
+
+> ⚠️ **Fuga cross-entorno (PHI):** si `ENTORNO` se omite/pisa a `TESTING` en Production, el pase firma `entorno='TESTING'` y el navegador de prod vería/escribiría filas de TESTING. Verificación: golpear `/api/supabase-token` en prod y confirmar que el claim `entorno` sea `PRODUCTIVO`.
+
+**En SharePoint (lo que queda):**
 
 | Lista | Campo | Endpoint que filtra |
 |-------|-------|---------------------|
-| `07.Traslados` | `Entorno_T` | [api/tickets.ts](api/tickets.ts) — GET activos, GET historial, conflict-check POST/PATCH |
-| `08.Aislamientos` | `Entorno_A` | [api/isolations.ts](api/isolations.ts) — GET, POST upsert, DELETE |
-| `09.PushSubscriptions` | `Entorno_PS` | [api/push-subscribe.ts](api/push-subscribe.ts) y [api/push-utils.ts](api/push-utils.ts) `fetchSubscriptions` |
-| `10.Notificaciones` | `Entorno_N` | [api/notifications.ts](api/notifications.ts) GET y POST desde push-utils |
-| `11.DietaSnapshot` | `Entorno_DS` | [api/cron-diet-changes.ts](api/cron-diet-changes.ts) bulk read y upsert |
-| `13.ObservacionesTraslados` | `Entorno_OBS` | [api/ticket-observations.ts](api/ticket-observations.ts) GET y POST |
-| `14.Limpiezas` | `Entorno_L` | [api/limpiezas.ts](api/limpiezas.ts) — GET activas, POST crear, PATCH cerrar |
+| `12.EnrichCamas` | `Entorno_EC` | [api/beds.ts](../api/beds.ts) (lectura), [api/cron-enrich-beds.ts](../api/cron-enrich-beds.ts) (upsert) |
+| `11.DietaSnapshot` | `Entorno_DS` | [api/cron-diet-changes.ts](../api/cron-diet-changes.ts) (desprogramado) |
+| `08.Aislamientos` | `Entorno_A` | [api/isolations.ts](../api/isolations.ts) — deprecado |
+| `10.Notificaciones` (viejo) | `Entorno_N` | [api/cron-cleanup-notifs.ts](../api/cron-cleanup-notifs.ts) (poda) |
 
-`08.DetalleTraslados` no tiene columna propia — filtrado por transitividad vía `IDUnivocoTraslado_DT` (los IDs son únicos globales y el frontend solo conoce los del entorno actual).
+Las listas `07/08/09/13/14` y roles/comandas **ya no** figuran acá porque migraron a Supabase (su segregación por entorno la hace la columna `entorno` + RLS, arriba).
 
 **Contrato**:
-- Cada archivo declara `const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim()` — default seguro `TESTING` evita disparar push a usuarios reales si la env no está cargada.
-- Las **lecturas** filtran SP-side con `$filter=fields/Entorno_X eq '{ENTORNO}'`.
-- Las **escrituras** estampan el entorno en cada POST nuevo.
-- Los **PATCH/DELETE de modificación** no tocan el campo Entorno (preservan el entorno original del item).
+- Cada archivo declara `const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim()` — default seguro `TESTING`.
+- Lecturas SP filtran `$filter=fields/Entorno_X eq '{ENTORNO}'`; lecturas Supabase por RLS.
+- Escrituras estampan el entorno; los PATCH/DELETE no lo tocan (preservan el original).
 
-**Setup operativo**:
-- `Vercel Production` → `ENTORNO=PRODUCTIVO`
-- `Vercel Preview` / dev local → `ENTORNO=TESTING`
+**Setup operativo**: `Vercel Production` → `ENTORNO=PRODUCTIVO`; `Vercel Preview` / dev local → `ENTORNO=TESTING`.
 
 ---
 

@@ -12,12 +12,18 @@ MediFlow es una aplicación web para gestionar traslados de pacientes dentro del
 
 ## Documentación detallada
 
-Para contexto completo, consultá estos archivos:
+Para contexto completo, consultá estos archivos (índice completo en [docs/README.md](docs/README.md)):
 
-- [docs/arquitectura.md](docs/arquitectura.md) — Estructura del proyecto, flujo de datos, API endpoints, listas SharePoint, sistema de roles, notificaciones, PWA, desarrollo local.
-- [docs/decisiones.md](docs/decisiones.md) — Decisiones técnicas con justificación, alternativas descartadas e impacto. Incluye: arquitectura, base de datos, autenticación, polling vs websockets, integración Gamma.
-- [docs/convenciones.md](docs/convenciones.md) — Convenciones de código: nombrado, estructura de archivos, patrones de componentes, manejo de estado, estilos Tailwind, imports.
-- [docs/troubleshooting.md](docs/troubleshooting.md) — Síntoma → causa probable → qué mirar/escalar, para soporte/QA (limpiezas, Monitor, Trayectoria, PDF).
+La carpeta `docs/` está organizada por propósito: `arquitectura/` (referencia técnica), `qa/`
+(testing y soporte), `guias/`, `planes/`, `historial/` (runbooks/incidentes/reportes) y `referencia/`.
+
+- [docs/arquitectura/arquitectura.md](docs/arquitectura/arquitectura.md) — Estructura del proyecto, flujo de datos, API endpoints, tablas Supabase + listas SharePoint, sistema de roles, notificaciones, Realtime, PWA, desarrollo local.
+- [docs/arquitectura/decisiones.md](docs/arquitectura/decisiones.md) — Decisiones técnicas con justificación, alternativas descartadas e impacto. Incluye: arquitectura, base de datos, migración a Supabase, autenticación, Realtime vs polling, integración Gamma.
+- [docs/arquitectura/convenciones.md](docs/arquitectura/convenciones.md) — Convenciones de código: nombrado, estructura de archivos, patrones de componentes, manejo de estado, estilos Tailwind, imports.
+- [docs/qa/casos-de-uso.md](docs/qa/casos-de-uso.md) — Casos de uso por rol, paso a paso (Admisión, Azafata, Enfermería/Catering, Nutrición, Admin + transversales). Mapa central para arrancar QA.
+- [docs/qa/escenarios-qa.md](docs/qa/escenarios-qa.md) — Escenarios testeables (`QA-<módulo>-NN`) en formato Precondición → Acción → Resultado esperado, con charter para TestSprite, códigos de error y regresiones a vigilar.
+- [docs/arquitectura/roles-permisos-notificaciones.md](docs/arquitectura/roles-permisos-notificaciones.md) — Catálogo de módulos/permisos, matriz notificación → permiso, dos caminos de push, `filter_by_floors`/`assigned_areas`, `bypass_location_check`, excepciones hardcodeadas.
+- [docs/qa/troubleshooting.md](docs/qa/troubleshooting.md) — Síntoma → causa probable → qué mirar/escalar, para soporte/QA (push/campanita, Realtime, entorno, comandas, limpiezas, Monitor, Trayectoria, PDF).
 
 ## Reglas clave para desarrollo
 
