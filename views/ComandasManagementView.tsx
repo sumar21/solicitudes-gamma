@@ -176,19 +176,20 @@ const StatusCell: React.FC<{
         : canAct && !anulada && (
           r.status === COMANDA_STATUS.PENDIENTE ? (
             <>
-              <button onClick={() => onAction(r.spItemId, 'entregar')} title="Marcar entregada"
-                className="w-6 h-6 rounded-md flex items-center justify-center text-slate-300 hover:bg-emerald-50 hover:text-emerald-600">
-                <Check className="w-3.5 h-3.5" />
+              <button onClick={() => onAction(r.spItemId, 'entregar')} title="Marcar entregada" aria-label="Marcar entregada"
+                className="h-9 w-9 md:h-6 md:w-6 rounded-xl md:rounded-md flex items-center justify-center border border-emerald-200 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 active:scale-95 md:border-transparent md:bg-transparent md:text-slate-500 md:hover:bg-emerald-50 md:hover:text-emerald-600 transition-all">
+                <Check className="w-4 h-4 md:w-3.5 md:h-3.5" strokeWidth={2.75} />
               </button>
-              <button onClick={() => onAction(r.spItemId, 'anular', `${r.patientName} · ${r.comida}`)} title="Anular comanda"
-                className="w-6 h-6 rounded-md flex items-center justify-center text-slate-300 hover:bg-red-50 hover:text-red-500">
-                <X className="w-3.5 h-3.5" />
+              <button onClick={() => onAction(r.spItemId, 'anular', `${r.patientName} · ${r.comida}`)} title="Anular comanda" aria-label="Anular comanda"
+                className="h-9 w-9 md:h-6 md:w-6 rounded-xl md:rounded-md flex items-center justify-center border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 active:scale-95 md:border-transparent md:bg-transparent md:text-slate-500 md:hover:bg-red-50 md:hover:text-red-500 transition-all">
+                <X className="w-4 h-4 md:w-3.5 md:h-3.5" strokeWidth={2.75} />
               </button>
             </>
           ) : (
-            <button onClick={() => onAction(r.spItemId, 'pendiente')} title="Volver a pendiente"
-              className="w-6 h-6 rounded-md flex items-center justify-center text-slate-300 hover:bg-amber-50 hover:text-amber-600">
-              <Undo2 className="w-3.5 h-3.5" />
+            <button onClick={() => onAction(r.spItemId, 'pendiente')} title="Volver a pendiente" aria-label="Volver a pendiente"
+              className="h-9 md:h-6 px-3 md:px-0 md:w-6 rounded-xl md:rounded-md flex items-center justify-center gap-1.5 border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 active:scale-95 md:border-transparent md:bg-transparent md:text-slate-500 md:hover:bg-amber-50 md:hover:text-amber-600 transition-all">
+              <Undo2 className="w-4 h-4 md:w-3.5 md:h-3.5" strokeWidth={2.75} />
+              <span className="text-[11px] font-bold md:hidden">Volver</span>
             </button>
           )
         )}
@@ -749,16 +750,9 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
                   <div className="text-[10px] text-slate-400 flex items-center gap-3 pt-1 flex-wrap">
                     <span className="flex items-center gap-1"><UserIcon className="w-3 h-3" />{r.by || '—'}</span>
                     {tab === 'historico' && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{fmtWhen(r.at)}</span>}
-                    {/* Estado + hora de entrega/anulación (en desktop lo muestra StatusCell) */}
-                    {(() => {
-                      const p = STATUS_PILL[r.status] ?? STATUS_PILL[COMANDA_STATUS.PENDIENTE];
-                      const cierre = r.status !== COMANDA_STATUS.PENDIENTE ? fmtCierre(r.closedAt, r.at) : '';
-                      return (
-                        <span className={cn('text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border', p.cls)}>
-                          {p.label}{cierre && <span className="normal-case tabular-nums"> · {cierre}</span>}
-                        </span>
-                      );
-                    })()}
+                    {/* Estado + hora + acciones (entregar/anular/volver) — mismo StatusCell que el desktop */}
+                    <StatusCell r={r} busy={busyId === r.spItemId}
+                      canAct={!!onSetMealStatus && tab === 'activas'} onAction={doAction} />
                   </div>
                 </div>
               );
