@@ -176,10 +176,19 @@ type CleaningInfo = { by: string; byId: string; at: string; spItemId: string };
 // se le cargó (para no mostrarla si la cama cambió de paciente).
 // `slots` va anidado bajo su propia clave (y no intersectado con patientCode) para que agregar
 // un turno nuevo no pueda colisionar jamás con un campo de metadata.
-type MealsInfo = { patientCode: string; patientName?: string; slots: Partial<Record<MealSlot, MealSlotLoad>> };
+type MealsInfo = { patientCode: string; patientName?: string; label: string; slots: Partial<Record<MealSlot, MealSlotLoad>> };
 
 /** Slot vacío. Helper para no repetir el `{ acompanantes: [] }` en cada rama. */
 const emptySlot = (): MealSlotLoad => ({ acompanantes: [] });
+
+// Clave del mapa de cargas: (paciente, cama). Dos comandas en una MISMA cama_label —una
+// vieja colgada de un paciente que ya dejó la cama + el ocupante actual— son entradas
+// SEPARADAS. Antes se keyeaba solo por label: la segunda comanda se fundía en la primera y
+// le pisaba el patientCode (`cur.patientCode || …` se quedaba con el PRIMERO) → la del
+// paciente actual no matcheaba por paciente en mergeBeds y "desaparecía" del mapa apenas se
+// guardaba. El mismo paciente en dos camas (se mudó) también quedan separadas: es lo que
+// necesita la lógica de "las bandejas entregadas se quedan en la cama donde se sirvieron".
+const mealKey = (patientCode: string | null | undefined, label: string) => `${patientCode || ''}::${label}`;
 
 // ¿La bandeja ya fue servida? Las entregadas NO viajan con el paciente: se siguen
 // mostrando en la cama donde se sirvieron. `status` undefined cuenta como pendiente
@@ -193,7 +202,7 @@ const bandejaEntregada = (l: MealLoad): boolean => l.status === COMANDA_STATUS.E
 // muestra donde corresponde. No muta la entrada original (los arrays salen de filter).
 // Devuelve undefined si no sobrevive ninguna, para que el caller no adjunte nada.
 function filtrarBandejas(info: MealsInfo, keep: (l: MealLoad) => boolean): MealsInfo | undefined {
-  const out: MealsInfo = { patientCode: info.patientCode, patientName: info.patientName, slots: {} };
+  const out: MealsInfo = { patientCode: info.patientCode, patientName: info.patientName, label: info.label, slots: {} };
   let alguna = false;
   for (const { slot } of MEAL_SLOTS) {
     const s = info.slots[slot];
@@ -203,6 +212,31 @@ function filtrarBandejas(info: MealsInfo, keep: (l: MealLoad) => boolean): Meals
     if (titular || acompanantes.length > 0) { out.slots[slot] = { titular, acompanantes }; alguna = true; }
   }
   return alguna ? out : undefined;
+}
+
+// Funde varias entradas de cargas en una sola: el mismo paciente cargado en VARIAS camas
+// (se mudó y arrastra bandejas pendientes), o varias bandejas entregadas de distintos
+// pacientes sobre una misma cama. Por slot, gana el titular más reciente (por `at`) y los
+// acompañantes se deduplican por spItemId. Devuelve el único elemento si no hay que fundir.
+function mergeMealParts(parts: MealsInfo[], patientCode: string, label: string): MealsInfo | undefined {
+  if (parts.length === 0) return undefined;
+  if (parts.length === 1) return parts[0];
+  const merged: MealsInfo = { patientCode, label, slots: {} };
+  for (const info of parts) {
+    for (const { slot } of MEAL_SLOTS) {
+      const s = info.slots[slot];
+      if (!s) continue;
+      const dst = (merged.slots[slot] ??= emptySlot());
+      if (s.titular && (!dst.titular || String(s.titular.at) > String(dst.titular.at))) dst.titular = s.titular;
+      for (const a of s.acompanantes) {
+        if (!dst.acompanantes.some(x => x.spItemId === a.spItemId)) dst.acompanantes.push(a);
+      }
+    }
+  }
+  for (const s of Object.values(merged.slots)) {
+    s?.acompanantes.sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0) || String(a.spItemId).localeCompare(String(b.spItemId)));
+  }
+  return merged;
 }
 
 /**
@@ -376,12 +410,20 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
   // fila entregada nunca se movió (el PATCH 'reubicar' migra solo Status_D='Activo'),
   // así que la UI mentía respecto de la base.
   if (meals && meals.size) {
+    // Dos índices sobre las entradas (keyeadas por (paciente, cama)): por paciente (en qué
+    // camas cargó) y por cama (qué comandas viven en ese label, potencialmente de varios
+    // pacientes — el ocupante actual + alguna vieja colgada del anterior).
     const labelsByPatient = new Map<string, string[]>();
-    for (const [label, info] of meals) {
-      if (!info.patientCode) continue;
-      const arr = labelsByPatient.get(info.patientCode) ?? [];
-      arr.push(label);
-      labelsByPatient.set(info.patientCode, arr);
+    const byLabel = new Map<string, MealsInfo[]>();
+    for (const info of meals.values()) {
+      if (info.patientCode) {
+        const arr = labelsByPatient.get(info.patientCode) ?? [];
+        if (!arr.includes(info.label)) arr.push(info.label);
+        labelsByPatient.set(info.patientCode, arr);
+      }
+      const la = byLabel.get(info.label) ?? [];
+      la.push(info);
+      byLabel.set(info.label, la);
     }
     // ¿En qué cama está HOY cada paciente con cargas? Si aparece en el mapa, reclama ahí.
     const claimedAt = new Map<string, string>();
@@ -400,38 +442,30 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
         // una bandeja entregada en la cama actual se muestra acá, como siempre.
         const parts: MealsInfo[] = [];
         for (const l of labels) {
-          const info = meals.get(l)!;
+          const info = meals.get(mealKey(bed.patientCode, l));
+          if (!info) continue;
           const part = l === bed.label ? info : filtrarBandejas(info, x => !bandejaEntregada(x));
           if (part) parts.push(part);
         }
-        if (parts.length === 0) return undefined;
-        if (parts.length === 1) return parts[0];
-        const merged: MealsInfo = { patientCode: bed.patientCode!, slots: {} };
-        for (const info of parts) {
-          for (const { slot } of MEAL_SLOTS) {
-            const s = info.slots[slot];
-            if (!s) continue;
-            const dst = (merged.slots[slot] ??= emptySlot());
-            if (s.titular && (!dst.titular || String(s.titular.at) > String(dst.titular.at))) dst.titular = s.titular;
-            for (const a of s.acompanantes) {
-              if (!dst.acompanantes.some(x => x.spItemId === a.spItemId)) dst.acompanantes.push(a);
-            }
-          }
-        }
-        for (const s of Object.values(merged.slots)) {
-          s?.acompanantes.sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0) || String(a.spItemId).localeCompare(String(b.spItemId)));
-        }
-        return merged;
+        return mergeMealParts(parts, bed.patientCode!, bed.label);
       }
-      // Por label. Si su paciente reclamó en otra cama, acá quedan SOLO las bandejas ya
-      // ENTREGADAS (se sirvieron en esta cama y su registro pertenece acá); las
-      // pendientes desaparecen de este label — se las llevó el paciente.
-      const direct = meals.get(bed.label);
-      if (!direct) return undefined;
-      if (direct.patientCode && claimedAt.has(direct.patientCode) && claimedAt.get(direct.patientCode) !== bed.label) {
-        return filtrarBandejas(direct, bandejaEntregada);
+      // Por label. De las comandas cargadas en ESTA cama, la de un paciente que reclamó en
+      // OTRA cama deja acá SOLO sus bandejas ya ENTREGADAS (se sirvieron acá y su registro
+      // pertenece a este label); las pendientes se las llevó el paciente. Puede haber varias
+      // (el ocupante que no reclamó + una vieja colgada del anterior) → se funden.
+      const candidatos = byLabel.get(bed.label);
+      if (!candidatos || candidatos.length === 0) return undefined;
+      const kept: MealsInfo[] = [];
+      for (const direct of candidatos) {
+        if (direct.patientCode && claimedAt.get(direct.patientCode) === bed.label) continue; // reclamó ACÁ → ya salió por la rama de arriba
+        if (direct.patientCode && claimedAt.has(direct.patientCode)) {
+          const only = filtrarBandejas(direct, bandejaEntregada);
+          if (only) kept.push(only);
+        } else {
+          kept.push(direct);
+        }
       }
-      return direct;
+      return mergeMealParts(kept, bed.patientCode ?? (kept[0]?.patientCode ?? ''), bed.label);
     };
 
     for (const bed of result) {
@@ -960,7 +994,8 @@ export const useHospitalState = () => {
         // `null` = turno desconocido (fila vieja o valor corrupto en SP) → se descarta.
         const slot = mealSlotFromSp(m.comida);
         if (!slot) continue;
-        const cur = map.get(String(m.bedLabel)) ?? { patientCode: String(m.patientCode ?? ''), slots: {} };
+        const k = mealKey(m.patientCode, String(m.bedLabel));
+        const cur = map.get(k) ?? { patientCode: String(m.patientCode ?? ''), label: String(m.bedLabel), slots: {} };
         cur.patientCode = cur.patientCode || String(m.patientCode ?? '');
         cur.patientName = cur.patientName || String(m.patientName ?? '');
         const load: MealLoad = {
@@ -976,7 +1011,7 @@ export const useHospitalState = () => {
         const s = (cur.slots[slot] ??= emptySlot());
         if (load.comensal === 'ACOMPANANTE') s.acompanantes.push(load);
         else s.titular = load;
-        map.set(String(m.bedLabel), cur);
+        map.set(k, cur);
       }
       // Orden estable de acompañantes: sin él los bloques BAILAN de posición entre polls
       // mientras alguien tipea. Por `orden` asc; desempate por spItemId (filas viejas sin orden).
@@ -997,9 +1032,10 @@ export const useHospitalState = () => {
     const u = currentUser;
     const at = new Date().toISOString();
     mealsWritingRef.current += 1; // proteger el optimista del refetch Realtime en vuelo
+    const k = mealKey(bed.patientCode, bed.label);
     setMeals(prev => {
       const n = new Map<string, MealsInfo>(prev);
-      const cur = n.get(bed.label) ?? { patientCode: bed.patientCode ?? '', patientName: bed.patientName ?? '', slots: {} };
+      const cur = n.get(k) ?? { patientCode: bed.patientCode ?? '', patientName: bed.patientName ?? '', label: bed.label, slots: {} };
       cur.patientCode = bed.patientCode ?? cur.patientCode;
       // ⚠️ Merge, NO reemplazo del slot: `slots[comida] = {...}` pisaría el MealSlotLoad entero
       // y borraría los acompañantes (el poll los restauraría → "parpadean y vuelven", y en esa
@@ -1009,7 +1045,7 @@ export const useHospitalState = () => {
         ...s,
         titular: { tipo, detalle, observaciones, by: u?.name ?? '', at, spItemId: s.titular?.spItemId ?? '', comensal: 'TITULAR', orden: 0 },
       };
-      n.set(bed.label, cur);
+      n.set(k, cur);
       return n;
     });
     try {
@@ -1032,11 +1068,11 @@ export const useHospitalState = () => {
         const data = await r.json().catch(() => ({} as any));
         if (data?.spItemId) setMeals(prev => {
           const n = new Map<string, MealsInfo>(prev);
-          const cur = n.get(bed.label);
+          const cur = n.get(k);
           const t = cur?.slots[comida]?.titular;
           if (cur && t) {
             cur.slots[comida] = { ...cur.slots[comida]!, titular: { ...t, spItemId: String(data.spItemId) } };
-            n.set(bed.label, cur);
+            n.set(k, cur);
           }
           return n;
         });
@@ -1062,21 +1098,24 @@ export const useHospitalState = () => {
     if (!bed?.label) return;
     // La carga puede estar keyeada por una cama ANTERIOR (la comanda sigue al paciente):
     // se busca por paciente primero y por label como fallback, y el optimista se aplica
-    // sobre la clave real — si operara sobre bed.label, quitar desde la cama nueva no
-    // encontraría nada y el spItemId viajaría vacío (el server fallaría en silencio).
-    let ownerKey = bed.label;
+    // sobre la clave real (compuesta paciente+cama) — si operara sobre bed.label, quitar
+    // desde la cama nueva no encontraría nada y el spItemId viajaría vacío (el server
+    // fallaría en silencio). `ownerLabel` (la cama real de la fila) es lo que va al server;
+    // `ownerKey` (la clave del map) es lo que se muta en el optimista.
+    let ownerKey: string | undefined;
+    let ownerLabel = bed.label;
     for (const [key, info] of meals) {
       const delPaciente = !!bed.patientCode && info.patientCode === bed.patientCode;
-      if ((delPaciente || key === bed.label) && info.slots[comida]?.titular) {
-        ownerKey = key;
+      if ((delPaciente || info.label === bed.label) && info.slots[comida]?.titular) {
+        ownerKey = key; ownerLabel = info.label;
         if (delPaciente) break; // prioridad al match por paciente
       }
     }
-    const spItemId = meals.get(ownerKey)?.slots[comida]?.titular?.spItemId;
+    const spItemId = ownerKey ? meals.get(ownerKey)?.slots[comida]?.titular?.spItemId : undefined;
     mealsWritingRef.current += 1;
-    setMeals(prev => {
+    if (ownerKey) setMeals(prev => {
       const n = new Map<string, MealsInfo>(prev);
-      const cur = n.get(ownerKey);
+      const cur = n.get(ownerKey!);
       if (!cur) return n;
       // ⚠️ Se borra SOLO el titular. `delete cur.slots[comida]` volaría el slot completo con sus
       // acompañantes: "Quitar" en el paciente le sacaría la bandeja al acompañante.
@@ -1086,15 +1125,15 @@ export const useHospitalState = () => {
         // El slot sale solo si no queda nada; el bed sale solo si no queda ningún slot.
         if (s.acompanantes.length === 0) delete cur.slots[comida];
       }
-      if (!MEAL_SLOTS.some(x => cur.slots[x.slot])) n.delete(ownerKey); else n.set(ownerKey, cur);
+      if (!MEAL_SLOTS.some(x => cur.slots[x.slot])) n.delete(ownerKey!); else n.set(ownerKey!, cur);
       return n;
     });
     try {
       const r = await authFetch('/api/dietas', {
         method: 'PATCH',
-        // bedLabel = la clave REAL de la fila (puede ser la cama vieja): es el fallback del
+        // bedLabel = la cama REAL de la fila (puede ser la cama vieja): es el fallback del
         // server cuando no hay spItemId. `motivo` → motivo_anulacion (quitar = anular).
-        body: JSON.stringify({ spItemId: spItemId || undefined, bedLabel: ownerKey, comida: spFromMealSlot(comida), action: 'anular', motivo, version: APP_VERSION }),
+        body: JSON.stringify({ spItemId: spItemId || undefined, bedLabel: ownerLabel, comida: spFromMealSlot(comida), action: 'anular', motivo, version: APP_VERSION }),
       });
       // authFetch NO lanza ante 4xx/5xx → sin el poll de 60s hay que reconciliar también cuando el
       // server respondió error (p.ej. 500 transitorio o 409): la fila sigue viva en la DB y el
@@ -1135,9 +1174,10 @@ export const useHospitalState = () => {
       }
       const d = await r.json().catch(() => ({} as any));
       const at = new Date().toISOString();
+      const mk = mealKey(bed.patientCode, bed.label);
       setMeals(prev => {
         const n = new Map<string, MealsInfo>(prev);
-        const cur = n.get(bed.label) ?? { patientCode: bed.patientCode ?? '', patientName: bed.patientName ?? '', slots: {} };
+        const cur = n.get(mk) ?? { patientCode: bed.patientCode ?? '', patientName: bed.patientName ?? '', label: bed.label, slots: {} };
         const s = cur.slots[comida] ?? emptySlot();
         const load: MealLoad = {
           tipo: data.tipo, detalle: data.detalle, observaciones: data.observaciones,
@@ -1149,7 +1189,7 @@ export const useHospitalState = () => {
           ? s.acompanantes.map((a, k) => (k === i ? load : a))
           : [...s.acompanantes, load].sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));
         cur.slots[comida] = { ...s, acompanantes };
-        n.set(bed.label, cur);
+        n.set(mk, cur);
         return n;
       });
       return { ok: true };
