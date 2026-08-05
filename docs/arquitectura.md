@@ -1271,7 +1271,7 @@ Ambos crons corrían en `*/15` (mismo minuto) y saturaban la VM simultáneamente
 - **DELETE sin `requireAuth`** ([api/push-subscribe.ts](api/push-subscribe.ts)): identifica por endpoint (secreto inadivinable), así el logout por vencimiento/ubicación SÍ limpia. Borra **todas** las filas del endpoint (no `$top=1`).
 - **POST idempotente:** si hay filas duplicadas del endpoint, actualiza una y borra el resto.
 - **Logout robusto** ([hooks/useHospitalState.ts](hooks/useHospitalState.ts) `handleLogout`): `keepalive: true`, sin depender del token, borra la fila antes de `unsubscribe()`.
-- **Staleness en el sender** ([api/push-utils.ts](api/push-utils.ts) `fetchSubscriptions`): saltea subs con `lastModifiedDateTime` > 36h (fail-open si falta el dato). Resuelve el caso "app cerrada + token vencido".
+- **Staleness en el sender** ([api/push-utils.ts](api/push-utils.ts) `fetchSubscriptions`): saltea subs con `last_seen_at` > 90 días (fail-open si falta el dato). Era 36h y silenciaba a la mitad del padrón; el corte real de un usuario que se va es ahora el borrado de sus subs en el DELETE de `api/users.ts`.
 - **Heartbeat del cliente:** mientras la sesión está activa, re-POSTea la sub (refresca `lastModifiedDateTime`) al montar, al foreground y cada 6h (`touchPushSubscription`, no pide permiso ni crea sub nueva). Mantiene "vivas" solo las subs de dispositivos en uso.
 
 **Hardening pendiente:** handler `pushsubscriptionchange` en el SW + endpoint "rotate" (frena la acumulación por rotación de endpoint en origen), y un cron de limpieza que borre las filas con `lastModifiedDateTime` viejo (hoy el sender ya las ignora, pero quedan en la lista). Además, hacer idempotente el push del `PATCH` de estado (hoy reenvía aunque el status no cambie de verdad).

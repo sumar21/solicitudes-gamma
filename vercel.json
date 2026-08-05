@@ -32,6 +32,7 @@
     "api/cron-enrich-beds.ts": { "maxDuration": 300 },
     "api/cron-cleanup-notifs.ts": { "maxDuration": 300 },
     "api/cron-trigger-testing.ts": { "maxDuration": 15 },
-    "api/tickets.ts": { "maxDuration": 60 }
+    "api/tickets.ts": { "maxDuration": 60 },
+    "api/limpiezas.ts": { "maxDuration": 30 }
   }
 }

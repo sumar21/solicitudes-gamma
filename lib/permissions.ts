@@ -47,3 +47,11 @@ export const canReceiveNotif = (
   const perm = NOTIF_TYPE_TO_PERMISSION[notifType];
   return perm ? can(user, perm) : false;
 };
+
+/**
+ * ¿El rol recibe ALGÚN tipo de notificación? Gatea el aviso de "notificaciones desactivadas":
+ * a un rol sin ningún permiso `notif_*` (Dirección, Cirugía, read-only) el push no le llega
+ * igual, así que pedirle que lo active sería ruido puro.
+ */
+export const receivesAnyNotif = (user: User | null | undefined): boolean =>
+  Object.values(NOTIF_TYPE_TO_PERMISSION).some(perm => can(user, perm));

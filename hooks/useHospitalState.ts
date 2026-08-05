@@ -644,16 +644,66 @@ export const useHospitalState = () => {
   const [tokenExpirySoon, setExpirySoon]  = useState(false);
   const [tokenMinutesLeft, setMinutesLeft]= useState(() => getTokenMinutesLeft(localStorage.getItem(TOKEN_KEY)));
 
+  // ── Permiso de notificaciones del navegador ─────────────────────────────────
+  // Un permiso en 'denied' (un clic en "Bloquear", o el auto-bloqueo de Chrome tras varios
+  // descartes) deja al usuario mudo EN SILENCIO: subscribeToPush no corre ni al montar ni al
+  // loguear, y hasta ahora NADA en la UI lo decía. Medido en PROD (05/08/2026): 5 usuarios de
+  // Admisión con cientos de traslados creados y CERO suscripción push — trabajaban convencidos
+  // de tener las notificaciones activas. Exponer el estado es lo que habilita el banner de
+  // App.tsx; sin eso cualquier otro arreglo del push se vuelve a degradar solo y en silencio.
+  const [notificationPermission, setNotificationPermission] =
+    useState<NotificationPermission | 'unsupported'>(() =>
+      typeof window !== 'undefined' && 'Notification' in window
+        ? window.Notification.permission
+        : 'unsupported',
+    );
+
+  // El permiso puede cambiar FUERA de la app (candado de la barra de direcciones, ajustes del SO).
+  // Ese cambio no dispara ningún evento confiable en todos los browsers, así que se re-lee al
+  // volver a foreground: alcanza para que el banner desaparezca solo cuando lo destraban.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    const sync = () => {
+      if (document.visibilityState === 'visible') setNotificationPermission(window.Notification.permission);
+    };
+    document.addEventListener('visibilitychange', sync);
+    return () => document.removeEventListener('visibilitychange', sync);
+  }, []);
+
+  // Pide el permiso y suscribe, desde un gesto explícito del usuario (botón del banner).
+  // Devuelve el estado resultante para que la UI sepa si además tiene que explicar cómo
+  // destrabarlo: con 'denied' el navegador ignora requestPermission() sin siquiera preguntar,
+  // y la única salida es el candado de la barra de direcciones.
+  const enableNotifications = useCallback(async (): Promise<NotificationPermission | 'unsupported'> => {
+    if (typeof window === 'undefined' || !('Notification' in window)) return 'unsupported';
+    let perm = window.Notification.permission;
+    if (perm === 'default') {
+      try { perm = await window.Notification.requestPermission(); } catch { /* ignora */ }
+    }
+    setNotificationPermission(perm);
+    const u = currentUserRef.current;
+    const tk = localStorage.getItem(TOKEN_KEY);
+    if (perm === 'granted' && tk && u?.id) {
+      try {
+        const { subscribeToPush } = await import('../lib/pushSubscription');
+        await subscribeToPush(tk, u.id, u.roleName ?? u.role, u.assignedAreas ?? [], u.sede);
+      } catch { /* el alta se reintenta al montar */ }
+    }
+    return perm;
+  }, []);
+
   // Re-suscribe a Web Push en cada apertura/restauración de sesión (mount), NO solo en el login.
   // Sin esto un F5 / relanzar la PWA no regenera la sub, así que una sub borrada por el server
   // (p.ej. 403 por VAPID viejo) no volvería hasta un re-login real — y los tokens duran ~10 años.
-  // También hace de heartbeat (refresca last_seen → la sub no caduca por >36h). NO pide permiso
-  // acá (eso requiere gesto del usuario): solo re-suscribe si YA está concedido; si no, se
-  // suscribe en el próximo login. subscribeToPush regenera la sub si su VAPID no matchea el actual.
+  // También hace de heartbeat (refresca last_seen → la sub no caduca). NO pide permiso acá (eso
+  // requiere gesto del usuario): solo re-suscribe si YA está concedido; si no, lo pide el banner.
+  // subscribeToPush regenera la sub si su VAPID no matchea el actual.
   useEffect(() => {
     const u = currentUser, tk = token;
     if (!tk || !u?.id) return;
-    if (!('Notification' in window) || window.Notification.permission !== 'granted') return;
+    if (!('Notification' in window)) return;
+    setNotificationPermission(window.Notification.permission);
+    if (window.Notification.permission !== 'granted') return;
     import('../lib/pushSubscription').then(({ subscribeToPush }) => {
       subscribeToPush(tk, u.id, u.roleName ?? u.role, u.assignedAreas ?? [], u.sede);
     }).catch(() => {});
@@ -1880,11 +1930,15 @@ export const useHospitalState = () => {
       fetchBeds();
       fetchTickets();
 
-      // Subscribe to Web Push notifications
+      // Subscribe to Web Push notifications.
+      // Si quedó en 'denied' el navegador ignora requestPermission(), así que acá no se puede
+      // hacer nada más: se refleja en notificationPermission y el banner de App.tsx explica
+      // cómo destrabarlo desde el candado. Antes esto fallaba mudo y el usuario nunca se enteraba.
       if ('Notification' in window) {
         if (window.Notification.permission === 'default') {
           await window.Notification.requestPermission();
         }
+        setNotificationPermission(window.Notification.permission);
         if (window.Notification.permission === 'granted') {
           import('../lib/pushSubscription').then(({ subscribeToPush }) => {
             // Enviamos el NombreRol_RT (no el enum) para que el server-side pueda
@@ -2945,11 +2999,12 @@ export const useHospitalState = () => {
       tokenExpirySoon, tokenMinutesLeft,
       isolatedBeds,
       unreadSpNotifications,
+      notificationPermission,
     },
     actions: {
       setCurrentUser, setCurrentView, setActiveRole, setSortConfig, setRequestsSearchTerm,
       setLoginEmail, setLoginPass,
-      handleLogin, handleLogout,
+      handleLogin, handleLogout, enableNotifications,
       handleCreateTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
       fetchBeds, enrichBed, fetchPatientTickets, refreshAll, fetchAllTickets,
       markBedClean, undoBedClean,

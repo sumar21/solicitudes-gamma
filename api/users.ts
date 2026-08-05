@@ -217,6 +217,23 @@ async function handler(req: any, res: any) {
 
       if (!spRes.ok) throw new Error(`SP DELETE failed (${spRes.status}): ${await spRes.text()}`);
 
+      // ── Borrar las suscripciones push del usuario dado de baja ──────────────
+      // Status_U='Inactivo' bloquea el LOGIN (api/auth.ts), pero los dos caminos de push filtran
+      // por rol y permisos — NUNCA miran el estado del usuario. Sin este borrado, el dispositivo
+      // de alguien que se fue sigue recibiendo push con nombres de pacientes. Antes eso se cortaba
+      // solo por la ventana de sub stale; ahora que son 90 días (ver push-utils.ts), la baja
+      // explícita ES el mecanismo de corte y tiene que limpiar acá.
+      // No se filtra por entorno: la baja es global. Best-effort — si falla, la baja igual fue OK.
+      try {
+        if (isSupabaseAdminConfigured()) {
+          const { error } = await getSupabaseAdmin()
+            .from('push_subscriptions').delete().eq('user_id', String(spItemId));
+          if (error) console.error('[api/users] borrado de push_subscriptions falló:', error.message);
+        }
+      } catch (e: any) {
+        console.error('[api/users] borrado de push_subscriptions error:', e?.message ?? e);
+      }
+
       return res.status(200).json({ ok: true });
     }
 
