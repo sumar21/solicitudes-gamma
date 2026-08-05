@@ -27,7 +27,7 @@ import { RoleManagementView } from './views/RoleManagementView';
 // Hooks & Constants
 import { useHospitalState } from './hooks/useHospitalState';
 import { TicketStatus } from './types';
-import { can, hasModule } from './lib/permissions';
+import { can, hasModule, receivesAnyNotif } from './lib/permissions';
 
 import { NotificationsDropdown } from './components/NotificationsDropdown';
 import { Popover, PopoverTrigger, PopoverContent } from './components/ui/popover';
@@ -632,6 +632,43 @@ export default function App() {
               className="text-[10px] font-black uppercase tracking-widest text-red-700 hover:text-red-900 border border-red-300 rounded-lg px-2 py-1 hover:bg-red-100 transition-colors shrink-0"
             >
               Ver pendientes
+            </button>
+          </div>
+        )}
+
+        {/* Banner de notificaciones desactivadas.
+            Sin esto el usuario NO tiene forma de saber que está mudo: con el permiso en 'denied'
+            la app nunca se suscribe y nunca vuelve a preguntar. Se midió en producción gente de
+            Admisión con cientos de traslados creados y cero suscripción push. */}
+        {state.notificationPermission !== 'granted' && state.notificationPermission !== 'unsupported'
+          && receivesAnyNotif(state.currentUser) && (
+          <div className="bg-orange-50 border-b border-orange-200 px-4 py-2 flex items-center justify-between gap-3 shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="w-2 h-2 rounded-full bg-orange-500 shrink-0" />
+              <p className="text-xs font-semibold text-orange-900 truncate">
+                {state.notificationPermission === 'denied'
+                  ? 'Las notificaciones están bloqueadas en este navegador — no vas a recibir avisos de traslados ni de habitación limpia.'
+                  : 'No tenés las notificaciones activadas — no vas a recibir avisos de traslados ni de habitación limpia.'}
+              </p>
+            </div>
+            <button
+              onClick={async () => {
+                const perm = await actions.enableNotifications();
+                // Con 'denied' el navegador ni siquiera muestra el prompt: hay que explicar el
+                // camino manual, que es el único que existe una vez bloqueado.
+                if (perm === 'denied') {
+                  alert(
+                    'El navegador tiene las notificaciones bloqueadas para este sitio.\n\n' +
+                    'Para activarlas:\n' +
+                    '1. Tocá el candado (o el ícono a la izquierda de la dirección web).\n' +
+                    '2. Buscá "Notificaciones" y ponelo en "Permitir".\n' +
+                    '3. Recargá la página.',
+                  );
+                }
+              }}
+              className="text-[10px] font-black uppercase tracking-widest text-orange-800 hover:text-orange-950 border border-orange-300 rounded-lg px-2 py-1 hover:bg-orange-100 transition-colors shrink-0"
+            >
+              Activar
             </button>
           </div>
         )}

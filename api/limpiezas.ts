@@ -87,10 +87,16 @@ async function handler(req: any, res: any) {
     const naceCerrada = closed === true;
     const motivoCierre = MOTIVOS.includes(String(reason)) ? String(reason) : 'TICKET';
 
-    // "Habitación Limpia" → push + campanita (roles con notif_habitacion_limpia). Non-blocking.
+    // "Habitación Limpia" → push + campanita (roles con notif_habitacion_limpia).
+    //
+    // Se AWAITEA antes de responder: si se dispara sin await, Vercel puede congelar el lambda
+    // apenas sale la respuesta y el envío queda a medio camino. Medido sobre 67 limpiezas
+    // nacidas activas, 5 (~7%) no generaron NINGÚN ROOM_CLEANED para nadie. Los crons de
+    // dieta/ayuno ya awaiteaban; este era el único call site suelto. El .catch() se mantiene:
+    // un fallo del push NO debe romper el POST (la limpieza ya se guardó).
     const notifyRoomCleaned = () => {
       const cama = bedCode ? ` · Cama ${bedCode}` : '';
-      sendPushToSubscribers({
+      return sendPushToSubscribers({
         title: 'Habitación Limpia',
         body: `Hab. ${roomCode || '?'}${cama} — marcada limpia por ${userName || 'azafata'}.`,
         type: 'ROOM_CLEANED',
@@ -123,7 +129,7 @@ async function handler(req: any, res: any) {
         .eq('entorno', ENTORNO).eq('cama_label', String(bedLabel)).eq('status', 'Activo').limit(1);
       if (existing?.length) {
         await supa.from('limpiezas').update(refresh).eq('id', existing[0].id);
-        notifyRoomCleaned();
+        await notifyRoomCleaned();
         return res.status(200).json({ ok: true, spItemId: String(existing[0].id) });
       }
 
@@ -139,14 +145,14 @@ async function handler(req: any, res: any) {
             .eq('entorno', ENTORNO).eq('cama_label', String(bedLabel)).eq('status', 'Activo').limit(1);
           if (raced?.length) {
             await supa.from('limpiezas').update(refresh).eq('id', raced[0].id);
-            notifyRoomCleaned();
+            await notifyRoomCleaned();
             return res.status(200).json({ ok: true, spItemId: String(raced[0].id) });
           }
         }
         console.error('[limpiezas] POST failed:', error.message);
         return res.status(500).json({ error: 'Failed to create cleaning' });
       }
-      notifyRoomCleaned();
+      await notifyRoomCleaned();
       return res.status(200).json({ ok: true, spItemId: String(created.id) });
     } catch (err: any) {
       console.error('[limpiezas] POST error:', err);

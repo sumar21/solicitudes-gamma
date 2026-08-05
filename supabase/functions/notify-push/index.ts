@@ -28,7 +28,9 @@ const WEBHOOK_SECRET = Deno.env.get('WEBHOOK_SECRET') ?? '';
 if (VAPID_PUBLIC && VAPID_PRIVATE) webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC, VAPID_PRIVATE);
 const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
 
-const STALE_SUB_MS = 36 * 60 * 60 * 1000;
+// Ver el comentario largo en api/push-utils.ts: era 36h y silenciaba a la mitad del padrón.
+// Ambos valores DEBEN coincidir, sino traslados y limpiezas usan criterios distintos.
+const STALE_SUB_MS = 90 * 24 * 60 * 60 * 1000;
 
 // TicketStatus (valor persistido en español) → label de la notif. Sin label = no se notifica.
 const STATUS_LABELS: Record<string, string> = {

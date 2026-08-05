@@ -57,9 +57,16 @@ interface Subscription {
   lastModified: string;  // last_seen_at (heartbeat)
 }
 
-// Suscripción "vigente": refrescada hace ≤ STALE_SUB_MS (heartbeat del cliente). Una sub no tocada
-// en >36h = dispositivo abandonado → no le mandamos push. Fail-open si no hay timestamp.
-const STALE_SUB_MS = 36 * 60 * 60 * 1000;
+// Suscripción "vigente": refrescada hace ≤ STALE_SUB_MS (heartbeat del cliente). Fail-open si no
+// hay timestamp.
+//
+// Era 36h y silenciaba a la mitad del padrón: el heartbeat solo corre con la app ABIERTA (mount /
+// foreground / cada 6h), así que un fin de semana (~62h) o un teléfono que nadie abre — que es
+// justo el caso de uso del push — vencía la sub. Un envío real medido descartaba 46 de 88 subs.
+// A 90 días el corte por tiempo deja de ser el mecanismo de baja: la baja explícita del usuario
+// borra sus subs (api/users.ts DELETE) y los 404/410 del push service limpian los dispositivos
+// muertos. DEBE coincidir con supabase/functions/notify-push/index.ts (duplicado a propósito).
+const STALE_SUB_MS = 90 * 24 * 60 * 60 * 1000;
 
 function isFresh(lastModified: string, now: number): boolean {
   if (!lastModified) return true; // fail-open

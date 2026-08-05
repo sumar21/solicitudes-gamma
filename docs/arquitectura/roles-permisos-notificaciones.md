@@ -192,7 +192,12 @@ Idéntico en `api/push-utils.ts:149` y en la Edge Function `notify-push/index.ts
 4. **permiso** — `roleCfg.permissions` incluye `NOTIF_TYPE_TO_PERMISSION[type]`. Tipo no mapeado → `false`.
 5. **filter_by_floors** — si el rol filtra, `subAreaMatches` (match exacto de `assigned_areas` contra el
    área origen/destino, con remapeo HRA; ≥ 9 áreas = full access). Ver §5.
-6. **freshness** — `last_seen_at ≤ 36 h` (heartbeat); sub stale se descarta (fail-open si no hay timestamp).
+6. **freshness** — `last_seen_at ≤ 90 días` (heartbeat); sub stale se descarta (fail-open si no hay
+   timestamp). **Era 36 h hasta el 05/08/2026** y silenciaba a la mitad del padrón: el heartbeat solo
+   corre con la app abierta, así que un fin de semana (~62 h) o un teléfono que nadie abre —
+   justamente el caso de uso del push — vencía la sub. Un envío real descartaba 46 de 88 subs. Ahora
+   el corte por tiempo no es el mecanismo de baja: la baja del usuario borra sus subs
+   (`api/users.ts` DELETE) y los 404/410 del push service limpian los dispositivos muertos.
 
 **Override CATERING** (solo `RECEPTION_CONFIRMED`): título "Traslado concretado", cuerpo
 "{paciente} pasó de Habitación X (Piso) a Habitación Y (Piso)" (`notify-push/index.ts:142-149`).
@@ -288,7 +293,9 @@ Vista `views/RoleManagementView.tsx`. Requiere módulo `Configuracion` + permiso
 | Rol filtra pisos con **≥ 9 de 10 áreas** | Full access: ve/recibe TODO (bypass del filtro) | Asignar 9 sectores |
 | Actor recibe su propia notif | NO (excludeUser por `created_by_id`/`last_actor_id`), pero SÍ ve la campanita local optimista | Crear traslado y confirmar que no llega tu propio `NEW_TICKET` |
 | WAITING_ROOM ('Esperando Habitacion') | NO dispara push (sin label). Solo el `NEW_TICKET` del INSERT | Crear traslado con destino EN PREPARACIÓN |
-| Sub stale (>36 h sin heartbeat) | No recibe push aunque el rol tenga el permiso | Dejar un dispositivo sin abrir la PWA >36 h |
+| Sub stale (>90 días sin heartbeat) | No recibe push aunque el rol tenga el permiso | Dejar un dispositivo sin abrir la PWA >90 días |
+| **Permiso del navegador en `denied`** | La app NO se suscribe y NO vuelve a pedirlo; aparece el **banner naranja** "No tenés las notificaciones activadas" (solo para roles con algún permiso `notif_*`). El botón "Activar" explica el camino por el candado | Bloquear notificaciones en Chrome y recargar |
+| Usuario dado de baja (`Status_U='Inactivo'`) | Además de perder el login, se le **borran las `push_subscriptions`** → su dispositivo deja de recibir push en el acto | Dar de baja desde el ABM y verificar que no queden filas suyas |
 | CATERING vs resto en RECEPTION_CONFIRMED | Catering ve "Traslado concretado" (texto custom); el resto ve "Recepción Confirmada" | Comparar el push de ambos para el mismo evento |
 | VAPID rotado / mismatch | Sub vieja da 403 (no se borra); self-heal re-suscribe en la próxima apertura. Si las 3 puntas de VAPID no coinciden → nadie recibe push (403 silencioso) | Rotar VAPID |
 | Entorno cruzado | Solo se disparan subs del `ENTORNO` actual (default `TESTING`) → TESTING↔PRODUCTIVO no se cruzan | Suscribir en PRODUCTIVO, evento TESTING no llega |
