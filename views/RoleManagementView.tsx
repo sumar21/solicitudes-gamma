@@ -60,6 +60,7 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
       // estaba bajo 'Gestion Limpieza', y como un grupo solo se renderiza si su módulo está
       // tildado, era IMPOSIBLE darle este permiso a un rol con Operativa pero sin Limpieza.
       { code: 'consolidar_limpieza', label: 'Consolidar limpieza (solapa Limpiezas)' },
+      { code: 'limpieza_rutina',     label: 'Limpieza de rutina (iniciar / finalizar en camas ocupadas)' },
     ],
   },
 

@@ -172,6 +172,9 @@ function progalStillHasTicketPatientOnOrigin(origin: Bed, ticket: Ticket): boole
 // Limpieza por azafata: label de cama → datos de quién/cuándo la marcó limpia.
 type CleaningInfo = { by: string; byId: string; at: string; spItemId: string };
 
+// Limpieza de RUTINA abierta sobre una cama ocupada: label → quién/cuándo la inició + id (para finalizar).
+type RoutineCleaningInfo = { id: string; by: string; at: string; patientCode: string };
+
 // Carga de menú de Nutrición: label de cama → cargas por turno + el paciente al que
 // se le cargó (para no mostrarla si la cama cambió de paciente).
 // `slots` va anidado bajo su propia clave (y no intersectado con patientCode) para que agregar
@@ -870,6 +873,8 @@ export const useHospitalState = () => {
   const [cirugias, setCirugias]                    = useState<Map<string, CirugiaTraslado>>(new Map());
   // Contador (como mealsWritingRef): protege el update optimista del refetch Realtime en vuelo.
   const cirugiasWritingRef                         = React.useRef(0);
+  // Limpiezas de RUTINA ABIERTAS (overlay sobre camas ocupadas), key = label de cama.
+  const [routineCleanings, setRoutineCleanings]    = useState<Map<string, RoutineCleaningInfo>>(new Map());
 
   // Snapshot del enrich por patientCode — se actualiza en cada fetchBeds con los beds
   // cuyo enriched===true. Permite que la pill de ayuno/dieta/diagnóstico "siga" al
@@ -900,8 +905,21 @@ export const useHospitalState = () => {
   const beds = useMemo(() => {
     const active = tickets.filter(t => t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED);
     const merged = mergeBeds(rawBeds, active, cleanings, meals, cirugiaByBed);
-    return reapplyEnrichFromMap(merged, patientEnrichMapRef.current);
-  }, [rawBeds, tickets, cleanings, meals, cirugiaByBed]);
+    const withEnrich = reapplyEnrichFromMap(merged, patientEnrichMapRef.current);
+    // Overlay de limpieza de RUTINA (camas ocupadas): solo un flag/indicador, NO cambia el estado
+    // de la cama (a diferencia de la limpieza terminal de `cleanings`).
+    if (routineCleanings.size) {
+      for (const bed of withEnrich) {
+        const rc = routineCleanings.get(bed.label);
+        if (!rc) continue;
+        bed.routineCleaningActive = true;
+        bed.routineCleaningId = rc.id;
+        bed.routineCleaningBy = rc.by;
+        bed.routineCleaningAt = rc.at;
+      }
+    }
+    return withEnrich;
+  }, [rawBeds, tickets, cleanings, meals, cirugiaByBed, routineCleanings]);
 
   // Derive isolatedBeds (bed labels) directly from the enrich. Los aislamientos vienen
   // de PROGAL en `bed.isolations` y "siguen" al paciente como el resto del enrich
@@ -1034,6 +1052,75 @@ export const useHospitalState = () => {
       });
     } catch { /* best-effort */ }
   }, [authFetch, cleanings]);
+
+  // ── Limpiezas de RUTINA (camas ocupadas, ~2x/día): iniciar → finalizar ────
+  const fetchRoutineCleanings = useCallback(async () => {
+    try {
+      const r = await authFetch('/api/limpiezas-rutina');
+      if (!r.ok) return; // mantiene el estado actual ante fallo transitorio
+      const data = await r.json();
+      const map = new Map<string, RoutineCleaningInfo>();
+      for (const x of (data.rutinas ?? []) as any[]) {
+        if (!x.bedLabel) continue;
+        map.set(String(x.bedLabel), {
+          id: String(x.spItemId ?? ''), by: String(x.startedBy ?? ''),
+          at: String(x.startedAt ?? ''), patientCode: String(x.patientCode ?? ''),
+        });
+      }
+      setRoutineCleanings(map);
+    } catch { /* keep current */ }
+  }, [authFetch]);
+
+  // Iniciar la limpieza de rutina de una cama ocupada (optimista + POST).
+  const startRoutineCleaning = useCallback(async (bed: Bed) => {
+    if (!bed?.label) return;
+    const u = currentUser;
+    const at = new Date().toISOString();
+    setRoutineCleanings(prev => {
+      const n = new Map(prev);
+      n.set(bed.label, { id: prev.get(bed.label)?.id ?? '', by: u?.name ?? '', at, patientCode: bed.patientCode ?? '' });
+      return n;
+    });
+    try {
+      const r = await authFetch('/api/limpiezas-rutina', {
+        method: 'POST',
+        body: JSON.stringify({
+          bedLabel: bed.label, bedCode: bed.bedCode ?? '', roomCode: bed.roomCode ?? '', area: bed.area ?? '',
+          patientCode: bed.patientCode ?? '', patientName: bed.patientName ?? '',
+          userId: u?.id ?? '', userName: u?.name ?? '', version: APP_VERSION,
+        }),
+      });
+      if (r.ok) {
+        const data = await r.json().catch(() => ({} as any));
+        const rid = data?.rutina?.spItemId;
+        if (rid) setRoutineCleanings(prev => {
+          // Re-agrega el id real si un poll/realtime pisó la entrada optimista mientras el POST viajaba.
+          const cur = prev.get(bed.label);
+          const n = new Map(prev);
+          n.set(bed.label, cur ? { ...cur, id: String(rid) } : { id: String(rid), by: u?.name ?? '', at, patientCode: bed.patientCode ?? '' });
+          return n;
+        });
+      } else {
+        setRoutineCleanings(prev => { const n = new Map(prev); n.delete(bed.label); return n; }); // rollback
+      }
+    } catch {
+      setRoutineCleanings(prev => { const n = new Map(prev); n.delete(bed.label); return n; }); // rollback
+    }
+  }, [authFetch, currentUser]);
+
+  // Finalizar la limpieza de rutina abierta de una cama (optimista + PATCH FINALIZAR).
+  const finishRoutineCleaning = useCallback(async (bed: Bed) => {
+    if (!bed?.label) return;
+    const info = routineCleanings.get(bed.label);
+    const u = currentUser;
+    setRoutineCleanings(prev => { const n = new Map(prev); n.delete(bed.label); return n; });
+    try {
+      await authFetch('/api/limpiezas-rutina', {
+        method: 'PATCH',
+        body: JSON.stringify({ id: info?.id || undefined, bedLabel: bed.label, action: 'FINALIZAR', userId: u?.id ?? '', userName: u?.name ?? '', version: APP_VERSION }),
+      });
+    } catch { /* best-effort; el próximo poll/realtime reconcilia */ }
+  }, [authFetch, currentUser, routineCleanings]);
 
   // "Habitación Lista" deja constancia en el HISTORIAL de limpiezas: preparar la cama
   // destino para el ingreso también es trabajo de la azafata, aunque no pase por la marca
@@ -1601,6 +1688,7 @@ export const useHospitalState = () => {
     fetchCleanings();
     fetchMeals();
     fetchCirugias();
+    fetchRoutineCleanings();
     const bedPoll = setInterval(fetchBeds, POLL_BEDS_MS);
 
     // Realtime traslados: un cambio → refetch debounced. Reseteamos el ETag antes del refetch
@@ -1626,6 +1714,17 @@ export const useHospitalState = () => {
       .channel('limpiezas-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'limpiezas' }, triggerCleaningRefetch)
       .subscribe(status => { if (String(status) === 'SUBSCRIBED') fetchCleanings(); });
+
+    // Realtime limpiezas de rutina: un cambio en limpiezas_rutina → refetch debounced.
+    let routineDebounce: ReturnType<typeof setTimeout> | null = null;
+    const triggerRoutineRefetch = () => {
+      if (routineDebounce) clearTimeout(routineDebounce);
+      routineDebounce = setTimeout(() => { fetchRoutineCleanings(); }, 300);
+    };
+    const routineChannel = supabase
+      .channel('limpiezas-rutina-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'limpiezas_rutina' }, triggerRoutineRefetch)
+      .subscribe(status => { if (String(status) === 'SUBSCRIBED') fetchRoutineCleanings(); });
 
     // Realtime comandas: un cambio en el overlay de meals → refetch debounced. Si hay una mutación
     // propia en vuelo (mealsWritingRef), se re-agenda para no pisar el update optimista (fetchMeals
@@ -1668,12 +1767,14 @@ export const useHospitalState = () => {
       if (cleaningDebounce) clearTimeout(cleaningDebounce);
       if (mealsDebounce) clearTimeout(mealsDebounce);
       if (cirugiaDebounce) clearTimeout(cirugiaDebounce);
+      if (routineDebounce) clearTimeout(routineDebounce);
       supabase.removeChannel(ticketsChannel);
       supabase.removeChannel(limpiezasChannel);
       supabase.removeChannel(comandasChannel);
       supabase.removeChannel(cirugiaChannel);
+      supabase.removeChannel(routineChannel);
     };
-  }, [token, fetchBeds, fetchTickets, fetchCleanings, fetchMeals, fetchCirugias]);
+  }, [token, fetchBeds, fetchTickets, fetchCleanings, fetchMeals, fetchCirugias, fetchRoutineCleanings]);
 
   // ── Resync de rol en caliente (para TODOS los usuarios) ──────────────────────
   // Los módulos/permisos sólo se hidratan en el login. Sin esto, cuando un admin edita
@@ -2887,7 +2988,7 @@ export const useHospitalState = () => {
     ticketsEtagRef.current = null;
     // El histórico solo se re-pide si ya estaba cargado (o sea, si el usuario está parado en
     // Monitor/Historial). Para el resto de las vistas es un request caro que nadie va a mirar.
-    const jobs: Promise<unknown>[] = [fetchBeds(true), fetchTickets(), fetchCleanings(), fetchMeals()];
+    const jobs: Promise<unknown>[] = [fetchBeds(true), fetchTickets(), fetchCleanings(), fetchMeals(), fetchCirugias(), fetchRoutineCleanings()];
     if (allTicketsLoadedRef.current) { allTicketsFetchedAtRef.current = 0; jobs.push(fetchAllTickets()); }
     await Promise.all(jobs);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3245,6 +3346,7 @@ export const useHospitalState = () => {
       handleCreateTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
       fetchBeds, enrichBed, fetchPatientTickets, refreshAll, fetchAllTickets,
       markBedClean, undoBedClean,
+      startRoutineCleaning, finishRoutineCleaning, fetchRoutineCleanings,
       saveMealLoad, clearMealLoad, saveCompanionLoad, clearCompanionLoad, setMealStatus,
       fetchCirugias, marcarListoParaCirugia, transicionarCirugia,
       cirugiaVanABuscar, cirugiaEnTraslado, cirugiaEnCirugia, cirugiaEnDevolucion, cirugiaRecibida, cancelarCirugia, consolidarCirugia,

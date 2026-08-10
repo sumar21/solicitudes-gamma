@@ -102,6 +102,7 @@ const routes: Record<string, () => Promise<any>> = {
   '/api/validate-location':  () => import('./api/validate-location'),
   '/api/isolations':         () => import('./api/isolations'),
   '/api/limpiezas':          () => import('./api/limpiezas'),
+  '/api/limpiezas-rutina':   () => import('./api/limpiezas-rutina'),
   '/api/dietas':             () => import('./api/dietas'),
   '/api/cirugia':            () => import('./api/cirugia'),
   '/api/carga-menu':         () => import('./api/carga-menu'),

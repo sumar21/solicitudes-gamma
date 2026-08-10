@@ -120,6 +120,12 @@ export interface Bed {
   cleaned?: boolean;
   cleanedBy?: string;   // nombre de la azafata que la marcó
   cleanedAt?: string;   // ISO — cuándo se marcó limpia
+  // Limpieza de RUTINA en curso sobre una cama OCUPADA (~2x/día). Overlay de public.limpiezas_rutina
+  // en estado INICIADA. NO cambia el estado de la cama — solo un indicador + habilita "Finalizar".
+  routineCleaningActive?: boolean;
+  routineCleaningId?: string;      // id de la rutina abierta (para finalizar/anular)
+  routineCleaningBy?: string;      // quién la inició
+  routineCleaningAt?: string;      // ISO — cuándo se inició
   // Cargas de menú de Nutrición (overlay de 15.CargasDieta, keyed por comida). Solo se
   // adjuntan si el paciente cargado coincide con el actual de la cama — evita mostrarle a
   // catering la dieta de un paciente anterior tras reasignar la cama. Ver mergeBeds.
@@ -361,6 +367,9 @@ export const PERMISSIONS = [
   'confirmar_limpieza','iniciar_traslado','confirmar_recepcion','consolidar',
   // Acción del módulo Gestión de Limpieza: consolidar una cama marcada limpia contra PROGAL.
   'consolidar_limpieza',
+  // Limpieza de RUTINA de camas ocupadas (iniciar + finalizar). UN permiso: lo hace la misma
+  // persona/rol de arranque a fin (~2 veces por día por cama).
+  'limpieza_rutina',
   // Mapa de Camas — comandas: cargar (Nutrición) vs ver las comandas cargadas (Catering/Nutrición).
   'cargar_dieta',
   // Carga de comandas POR TURNO (derivados de MEAL_SLOTS). `cargar_dieta` de arriba

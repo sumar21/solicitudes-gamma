@@ -68,6 +68,10 @@ interface BedsViewProps {
   onMarcarListo?: (bed: Bed) => Promise<{ ok: boolean; id?: string; error?: string }>;
   onCirugiaEnTraslado?: (id: string) => Promise<{ ok: boolean; error?: string }>;
   onCirugiaRecibida?: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  // Limpieza de rutina (camas ocupadas): iniciar / finalizar. Se pasan solo si el rol tiene el
+  // permiso `limpieza_rutina` (App.tsx los gatea) → undefined = sin permiso = botón escondido.
+  onStartRoutineCleaning?: (bed: Bed) => Promise<void>;
+  onFinishRoutineCleaning?: (bed: Bed) => Promise<void>;
 }
 
 // Mapa de clave de color (la define api/isolations-summary.ts) → clases Tailwind.
@@ -805,7 +809,55 @@ const CirugiaBedBlock: React.FC<{
   );
 };
 
-export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onFetchPatientTickets, onRefresh, onMarkClean, onUndoClean, onSaveMeal, onClearMeal, onSaveCompanion, onClearCompanion, onMarcarListo, onCirugiaEnTraslado, onCirugiaRecibida }) => {
+// Limpieza de RUTINA sobre una cama OCUPADA (~2x/día): Iniciar → Finalizar. Solo aparece si el rol
+// tiene el permiso (App.tsx pasa los handlers según can()). NO cambia el estado de la cama.
+const RoutineCleaningBlock: React.FC<{
+  bed: Bed;
+  onStart?: (bed: Bed) => Promise<void>;
+  onFinish?: (bed: Bed) => Promise<void>;
+  onDone: () => void;
+}> = ({ bed, onStart, onFinish, onDone }) => {
+  const [busy, setBusy] = useState(false);
+  if (bed.status !== BedStatus.OCCUPIED || (!onStart && !onFinish)) return null;
+  const active = !!bed.routineCleaningActive;
+  const fmtFecha = (iso?: string) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? '' : d.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
+  };
+  if (active) {
+    return (
+      <div className="rounded-2xl p-3.5 border border-sky-200 bg-sky-50/60 flex flex-col gap-2.5">
+        <div className="flex items-center gap-2 text-[11px] font-bold text-sky-800">
+          <SprayCan className="w-4 h-4" strokeWidth={2.5} /> Limpieza de rutina en curso
+        </div>
+        {bed.routineCleaningBy && (
+          <p className="text-[11px] font-medium text-slate-500">
+            Iniciada por {bed.routineCleaningBy}{bed.routineCleaningAt ? ` · ${fmtFecha(bed.routineCleaningAt)}` : ''}
+          </p>
+        )}
+        {onFinish && (
+          <button disabled={busy}
+            onClick={async () => { setBusy(true); await onFinish(bed); setBusy(false); onDone(); }}
+            className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-sky-600 hover:bg-sky-700 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm disabled:opacity-50">
+            <Check className="w-4 h-4" /> {busy ? 'Finalizando…' : 'Finalizar limpieza de rutina'}
+          </button>
+        )}
+      </div>
+    );
+  }
+  return onStart ? (
+    <div className="rounded-2xl p-3.5 border border-sky-200 bg-sky-50/40">
+      <button disabled={busy}
+        onClick={async () => { setBusy(true); await onStart(bed); setBusy(false); onDone(); }}
+        className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-sky-500 hover:bg-sky-600 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm disabled:opacity-50">
+        <SprayCan className="w-4 h-4" /> {busy ? 'Iniciando…' : 'Iniciar limpieza de rutina'}
+      </button>
+    </div>
+  ) : null;
+};
+
+export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onFetchPatientTickets, onRefresh, onMarkClean, onUndoClean, onSaveMeal, onClearMeal, onSaveCompanion, onClearCompanion, onMarcarListo, onCirugiaEnTraslado, onCirugiaRecibida, onStartRoutineCleaning, onFinishRoutineCleaning }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
   // Turnos abiertos en el modal de la cama. Vive en el PADRE y no en cada box: si viviera adentro,
   // se perdería al cerrar/reabrir. Se resetea al cambiar de cama (el default se recalcula abajo).
@@ -2775,6 +2827,16 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                       onMarcarListo={onMarcarListo}
                       onCirugiaEnTraslado={onCirugiaEnTraslado}
                       onCirugiaRecibida={onCirugiaRecibida}
+                      onDone={() => setSelectedBed(null)}
+                    />
+                  )}
+
+                  {/* Limpieza de rutina (camas ocupadas): Iniciar / Finalizar. Solo si el rol tiene el permiso. */}
+                  {(onStartRoutineCleaning || onFinishRoutineCleaning) && (
+                    <RoutineCleaningBlock
+                      bed={selectedBed}
+                      onStart={onStartRoutineCleaning}
+                      onFinish={onFinishRoutineCleaning}
                       onDone={() => setSelectedBed(null)}
                     />
                   )}
