@@ -479,9 +479,32 @@
     </div>
   </section>
 
+  <!-- ESTADO + ROADMAP (act. 10/08) -->
+  <section>
+    <div class="sec-head"><span class="sec-num">08</span><h2>Estado y roadmap — act. 10/08</h2></div>
+    <p class="lead">Todo esto vive en <code>develop</code> (NO prod), probándose con el rol <b>Admin</b>. Es el delta respecto del plan original de arriba (F1–F4 hechas; el flujo evolucionó).</p>
+
+    <h3 style="margin:24px 0 12px;font-size:15px;letter-spacing:.02em;color:var(--good)">✓ Construido</h3>
+    <div class="phases">
+      <div class="ph"><div class="pn">✓</div><div><h3>Paso nuevo <code>EN_TRASLADO</code> + flujo estricto</h3><p>Entre "van a buscar" y "en cirugía", la enfermera marca <b>"se lo llevó el camillero"</b> (entrega de custodia). El flujo es estricto: cada click existe y se registra, para poder medir tiempos.</p></div></div>
+      <div class="ph"><div class="pn">✓</div><div><h3>Tabla de detalle <code>cirugia_eventos</code></h3><p>Log append-only de cada transición (calca <code>traslado_eventos</code>) → habilita las métricas de tiempo entre pasos (camillero, quirófano, devolución). Falta la vista de métricas en sí.</p></div></div>
+      <div class="ph"><div class="pn">✓</div><div><h3>Cambio de cama = la app manda hasta consolidar</h3><p>Durante el limbo, la app mueve el paciente + enrich a la cama destino y <b>libera la origen</b> (mecánica de <code>WAITING_CONSOLIDATION</code> de traslados). La recepción se confirma en la cama <b>destino</b>. Al consolidar, vuelve a mandar PROGAL.</p></div></div>
+      <div class="ph"><div class="pn">✓</div><div><h3>Permisos POR ACCIÓN + ABM</h3><p><code>cirugia_listo/entregar/recibir</code> (Enfermería, mapa) + <code>cirugia_buscar/operar/devolver/cancelar</code> (Quirófano, Operativa) + <code>consolidar</code> (Admisión). Botones gateados por permiso: <b>el permiso decide SI podés; la superficie, DÓNDE</b>. Admin ya los tiene todos.</p></div></div>
+      <div class="ph"><div class="pn">✓</div><div><h3>UI + identificación</h3><p>Solapa Cirugías = una tabla con columna Estado (concordancia con los otros módulos). Filtro "Quirúrgica" = tipo Q ∪ cirugía activa → identifica al clínico marcado por enfermería, sin tocar el dato de PROGAL.</p></div></div>
+    </div>
+
+    <h3 style="margin:30px 0 12px;font-size:15px;letter-spacing:.02em;color:var(--warn)">⏳ Pendiente (documentado, sin avanzar)</h3>
+    <div class="phases">
+      <div class="ph"><div class="pn">1c</div><div><h3>Push — reemplazo de Mattermost</h3><p>Emitir el push desde <code>api/cirugia.ts</code>: <b>consolidación pendiente → Admisión</b>, <b>paciente listo → Quirófano</b>, <b>camillero en camino → Azafata del piso</b> (retiro→origen / entrega→destino, filtrado por área). Los permisos <code>notif_cirugia_*</code> ya están en el ABM; falta la emisión + gating server-side. <b>Es el pedido fuerte de Julián.</b></p></div></div>
+      <div class="ph"><div class="pn">1b</div><div><h3>Destino a UCI / área crítica</h3><p>Cuando el paciente NO vuelve a piso sino que queda internado en <b>UTI / Coronaria / Recuperación</b> (esos boxes ya vienen en el feed de Gamma → se eligen del mapa). Reusa la mecánica del cambio de cama; cambia el wording ("pasó a UCI, liberá la cama de piso") y el aviso. Es <b>"informa/consolida"</b>, no transacción de Admisión (D2).</p></div></div>
+      <div class="ph"><div class="pn">2</div><div><h3>Caso Guardia → quirófano → piso</h3><p>Ingreso de urgencia que sube directo desde <b>Guardia</b> a quirófano y en el post-op se le asigna una cama de piso — <b>sin cama de origen</b>, lo que rompe el modelo de overlay sobre la cama. Flujo aparte, a diseñar.</p></div></div>
+      <div class="ph"><div class="pn">GO</div><div><h3>Go-live: roles reales</h3><p>Poblar el rol <b>Cirugía</b> (hoy con permisos vacíos) + sumar los <code>cirugia_*</code>/<code>notif_*</code> a Enfermería / Admisión / Azafata. <code>public.roles</code> es global (sin entorno) → recién al go-live. Merge a main avisando antes por las envs.</p></div></div>
+    </div>
+  </section>
+
   <footer>
     <span>MediFlow · Plan de Traslados a Cirugía · planning definitivo 03/08/2026 (Julieta + Anabel)</span>
-    <span>2 roles con app · pill Cx por color · desarrollo con Admin · pendiente D3 (cancelación)</span>
+    <span>Act. 10/08 · flujo estricto con EN_TRASLADO + detalle/eventos + permisos por acción · en develop (Admin) · pendiente: 1c push · 1b UCI · caso Guardia · go-live</span>
   </footer>
 
 </div>
