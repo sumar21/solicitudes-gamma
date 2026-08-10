@@ -85,7 +85,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
   };
 
   // ── Histórico (limpiezas cerradas) ─────────────────────────────────────────
-  type HistRow = { spItemId: string; bedLabel: string; area: string; by: string; at: string; closedAt: string; reason: string };
+  type HistRow = { spItemId: string; bedLabel: string; area: string; by: string; operador?: string; at: string; closedAt: string; reason: string };
   const [tab, setTab] = useState<'activas' | 'historico' | 'rutina'>('activas');
   const todayStr   = new Date().toISOString().slice(0, 10);
   const weekAgoStr = new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10);
@@ -122,7 +122,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
   useEffect(() => { if (tab === 'historico') fetchHistory(); }, [tab, fetchHistory]);
 
   // ── Rutina del día (limpiezas de rutina de camas ocupadas) ─────────────────
-  type RoutineRow = { spItemId: string; bedLabel: string; area: string; patientName: string; startedBy: string; startedAt: string; finishedBy: string; finishedAt: string; estado: string };
+  type RoutineRow = { spItemId: string; bedLabel: string; area: string; patientName: string; startedBy: string; operador?: string; startedAt: string; finishedBy: string; finishedAt: string; estado: string };
   const [routineDate, setRoutineDate] = useState(todayStr);
   const [routineRows, setRoutineRows] = useState<RoutineRow[]>([]);
   const [loadingRoutine, setLoadingRoutine] = useState(false);
@@ -288,7 +288,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                     </div>
                     <p className="text-[11px] text-slate-500 font-medium">{areaLabel(h.area)}</p>
                     <div className="text-[11px] text-slate-600 space-y-1">
-                      <p className="flex items-center gap-1.5"><UserIcon className="w-3.5 h-3.5 text-slate-400" />{h.by || '—'}</p>
+                      <p className="flex items-center gap-1.5"><UserIcon className="w-3.5 h-3.5 text-slate-400" />{h.operador || h.by || '—'}</p>
                       <p className="flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-slate-400" />Limpia: {fmtWhen(h.at)}</p>
                       <p className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-slate-400" />Cerrada: {fmtWhen(h.closedAt)}</p>
                     </div>
@@ -315,7 +315,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                         <tr key={h.spItemId} className="hover:bg-slate-50/60">
                           <td className="px-4 py-3 font-bold text-slate-800">{h.bedLabel}</td>
                           <td className="px-4 py-3 text-slate-600">{areaLabel(h.area)}</td>
-                          <td className="px-4 py-3 text-slate-600">{h.by || '—'}</td>
+                          <td className="px-4 py-3 text-slate-600">{h.operador || h.by || '—'}</td>
                           <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmtWhen(h.at)}</td>
                           <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmtWhen(h.closedAt)}</td>
                           <td className="px-4 py-3">
@@ -373,7 +373,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                     </div>
                     <p className="text-[11px] text-slate-500 font-medium">{areaLabel(x.area)}{x.patientName ? ` · ${x.patientName}` : ''}</p>
                     <div className="text-[11px] text-slate-600 space-y-1">
-                      <p className="flex items-center gap-1.5"><UserIcon className="w-3.5 h-3.5 text-slate-400" />{x.startedBy || '—'}</p>
+                      <p className="flex items-center gap-1.5"><UserIcon className="w-3.5 h-3.5 text-slate-400" />{x.operador || x.startedBy || '—'}</p>
                       <p className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-slate-400" />Inicio: {fmtWhen(x.startedAt)}</p>
                       <p className="flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-slate-400" />Fin: {fmtWhen(x.finishedAt)}</p>
                     </div>
@@ -402,7 +402,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                           <td className="px-4 py-3 font-bold text-slate-800">{formatBedName(x.bedLabel)}</td>
                           <td className="px-4 py-3 text-slate-600">{areaLabel(x.area)}</td>
                           <td className="px-4 py-3 text-slate-600">{x.patientName || '—'}</td>
-                          <td className="px-4 py-3 text-slate-600">{x.startedBy || '—'}</td>
+                          <td className="px-4 py-3 text-slate-600">{x.operador || x.startedBy || '—'}</td>
                           <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmtWhen(x.startedAt)}</td>
                           <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmtWhen(x.finishedAt)}</td>
                           <td className="px-4 py-3">

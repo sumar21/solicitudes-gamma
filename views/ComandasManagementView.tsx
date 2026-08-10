@@ -220,7 +220,7 @@ type ComandaRow = {
   // `slot` es la identidad del turno; `comida` es solo su texto para mostrar/exportar.
   // En el histórico `slot` puede ser null si SP tiene un `Comida_D` que no está en el catálogo.
   slot: MealSlot | null;
-  comida: string; comensal: string; tipo: string; detalle: string; observaciones: string; by: string; at: string;
+  comida: string; comensal: string; tipo: string; detalle: string; observaciones: string; by: string; operador: string; at: string;
   spItemId: string;
   status: ComandaStatus;
   closedAt: string; // ISO de entrega/anulación (FechaCierre_D); '' si pendiente
@@ -305,7 +305,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
             bedLabel: b.label, area: b.area,
             slot, comida: label, comensal: etiqueta,
             tipo: m.tipo, detalle: m.detalle ?? '', observaciones: m.observaciones ?? '',
-            by: m.by ?? '', at: m.at ?? '',
+            by: m.by ?? '', operador: (m as any).operador ?? '', at: m.at ?? '',
             spItemId: m.spItemId, status: m.status ?? COMANDA_STATUS.PENDIENTE,
             closedAt: m.closedAt ?? '',
           });
@@ -403,7 +403,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
               status: (String(m.status ?? '') || COMANDA_STATUS.PENDIENTE) as ComandaStatus,
               tipo: String(m.tipo ?? ''),
               detalle: String(m.detalle ?? ''), observaciones: String(m.observaciones ?? ''),
-              by: String(m.by ?? ''), at: String(m.at ?? ''),
+              by: String(m.by ?? ''), operador: String(m.operador ?? ''), at: String(m.at ?? ''),
               closedAt: String(m.closedAt ?? ''),
               motivoAnulacion: String(m.motivoAnulacion ?? ''),
             };
@@ -466,7 +466,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
       r.patientName,
       formatBedName(r.bedLabel) + (sectorEsRedundante(r.area, r.bedLabel) ? '' : ` · ${areaLabel(r.area)}`),
       r.comida, r.comensal, comandaTipoPill(r.tipo).label,
-      r.detalle || '—', r.observaciones || '—', r.by || '—',
+      r.detalle || '—', r.observaciones || '—', r.operador || r.by || '—',
       ...(showDate ? [fmtWhen(r.at)] : []),
       ...(showEntrega ? [
         r.status === COMANDA_STATUS.ANULADA
@@ -518,7 +518,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
       comandaTipoPill(g.r.tipo).label,                            // Tipo
       // Comanda + observaciones (la grilla siempre dice algo; un hueco vacío se lee como dato faltante).
       `${g.r.detalle || '—'}\n${g.r.observaciones || 'Sin observaciones'}${g.anulada && g.r.motivoAnulacion ? `\nMotivo anulación: ${g.r.motivoAnulacion}` : ''}`,
-      `${g.r.by || '—'}\n${fmtWhen(g.r.at)}`,                      // Registró (quién + cuándo)
+      `${g.r.operador || g.r.by || '—'}\n${fmtWhen(g.r.at)}`,                      // Registró (quién + cuándo)
       `${g.est.label}${g.cierre ? `\n${g.cierre}` : ''}`,         // Estado + hora de cierre (sin acciones)
     ]);
 
@@ -751,7 +751,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
                     <p className="text-[11px] text-red-500">Motivo anulación: {r.motivoAnulacion}</p>
                   )}
                   <div className="text-[10px] text-slate-400 flex items-center gap-3 pt-1 flex-wrap">
-                    <span className="flex items-center gap-1"><UserIcon className="w-3 h-3" />{r.by || '—'}</span>
+                    <span className="flex items-center gap-1"><UserIcon className="w-3 h-3" />{r.operador || r.by || '—'}</span>
                     {tab === 'historico' && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{fmtWhen(r.at)}</span>}
                     {/* Estado + hora + acciones (entregar/anular/volver) — mismo StatusCell que el desktop */}
                     <StatusCell r={r} busy={busyId === r.spItemId}
@@ -833,7 +833,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
                       </td>
                       {/* Quién + cuándo */}
                       <td className="px-4 py-3 whitespace-nowrap">
-                        <p className="text-[12px] text-slate-600 leading-tight truncate">{r.by || '—'}</p>
+                        <p className="text-[12px] text-slate-600 leading-tight truncate">{r.operador || r.by || '—'}</p>
                         <p className="text-[10px] text-slate-400 mt-0.5">{fmtWhen(r.at)}</p>
                       </td>
                       {/* Estado + acciones */}

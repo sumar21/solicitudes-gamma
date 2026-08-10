@@ -39,6 +39,7 @@ function rowToRutina(r: any) {
     startedBy:       r.iniciada_por != null ? String(r.iniciada_por) : '',
     startedById:     r.iniciada_por_id != null ? String(r.iniciada_por_id) : '',
     finishedBy:      r.finalizada_por != null ? String(r.finalizada_por) : '',
+    operador:        r.operador != null ? String(r.operador) : '',
     startedAt:       r.fecha_inicio != null ? String(r.fecha_inicio) : '',
     finishedAt:      r.fecha_fin != null ? String(r.fecha_fin) : '',
     motivoAnulacion: r.motivo_anulacion != null ? String(r.motivo_anulacion) : '',

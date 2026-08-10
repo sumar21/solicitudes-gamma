@@ -151,7 +151,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
       // Fetch audit events from 08.DetalleTraslados for each filtered ticket, in batches
       // of 10 concurrent requests to avoid saturating SharePoint.
       const token = localStorage.getItem('mediflow_token');
-      const eventsPerTicket = new Map<string, { tipo: string; fecha: string; usuario: string }[]>();
+      const eventsPerTicket = new Map<string, { tipo: string; fecha: string; usuario: string; operador?: string }[]>();
       const BATCH_SIZE = 10;
       for (let i = 0; i < filteredHistory.length; i += BATCH_SIZE) {
         const batch = filteredHistory.slice(i, i + BATCH_SIZE);
@@ -160,10 +160,10 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
             headers: token ? { Authorization: `Bearer ${token}` } : {},
           })
             .then(r => r.ok ? r.json() : { events: [] })
-            .then((d: { events?: { tipo: string; fecha: string; usuario: string }[] }) =>
+            .then((d: { events?: { tipo: string; fecha: string; usuario: string; operador?: string }[] }) =>
               [t.id, d.events ?? []] as const
             )
-            .catch(() => [t.id, [] as { tipo: string; fecha: string; usuario: string }[]] as const)
+            .catch(() => [t.id, [] as { tipo: string; fecha: string; usuario: string; operador?: string }[]] as const)
         ));
         for (const [tid, evts] of results) eventsPerTicket.set(tid, evts);
       }
@@ -190,7 +190,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
           "Destino": t.destination || 'N/A',
           "Resultado": t.status === TicketStatus.REJECTED ? 'CANCELADO' : 'CONSOLIDADO',
           "Motivo Cancelación": t.status === TicketStatus.REJECTED ? (t.rejectionReason ?? '') : '',
-          "Creado por": t.createdBy ?? '',
+          "Creado por": t.operador || t.createdBy || '',
           "Observaciones": t.observations ?? '',
           "Modificaciones": modCount,
           "Movimientos registrados": events.length,
@@ -211,7 +211,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
             "Paciente": t.patientName,
             "Movimiento": label,
             "Detalle": detail,
-            "Usuario": evt.usuario ?? '',
+            "Usuario": evt.operador || evt.usuario || '',
           });
         }
       }

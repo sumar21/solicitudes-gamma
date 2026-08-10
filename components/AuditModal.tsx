@@ -18,6 +18,7 @@ interface TicketEvent {
   fecha: string;
   usuario: string;
   usuarioId: string;
+  operador?: string;
 }
 
 interface Observation {
@@ -27,6 +28,7 @@ interface Observation {
   texto: string;
   usuario: string;
   usuarioId: string;
+  operador?: string;
   fecha: string;
 }
 
@@ -380,7 +382,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                             )}
                             <p className="text-sm text-slate-800 leading-snug whitespace-pre-wrap break-words">{o.texto}</p>
                             <p className="text-[10px] text-slate-400 font-medium mt-2 flex items-center gap-1.5 flex-wrap">
-                              <span className="font-semibold text-slate-600">{o.usuario || 'Usuario'}</span>
+                              <span className="font-semibold text-slate-600">{o.operador || o.usuario || 'Usuario'}</span>
                               <span>·</span>
                               <span>{formatDateTime(o.fecha)}</span>
                               {o.status && !post && (<><span>·</span><span className="italic">{o.status}</span></>)}
@@ -396,7 +398,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                     const isModification = !!modification;
                     const config = isModification
                       ? { label: 'Modificación de Traslado', sublabel: 'Admisión', icon: Pencil }
-                      : (EVENT_CONFIG[evt.tipo] ?? { label: evt.tipo, sublabel: evt.usuario, icon: Plus });
+                      : (EVENT_CONFIG[evt.tipo] ?? { label: evt.tipo, sublabel: evt.operador || evt.usuario, icon: Plus });
                     const Icon = config.icon;
                     const isFinal = evt.tipo === 'Consolidado Progal';
 
@@ -413,7 +415,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                         <div className="flex justify-between items-start">
                           <div className="flex-1 min-w-0 pr-3">
                             <p className={cn("text-sm font-semibold", isFinal ? "text-emerald-950" : isModification ? "text-amber-700" : "text-slate-900")}>{config.label}</p>
-                            <p className="text-xs text-slate-400 font-medium">{evt.usuario || config.sublabel}</p>
+                            <p className="text-xs text-slate-400 font-medium">{evt.operador || evt.usuario || config.sublabel}</p>
                             {modification && (
                               <div className="mt-2 p-3 bg-amber-50/70 border border-amber-100 rounded-lg space-y-1">
                                 {modification.changes.map((c, ix) => (

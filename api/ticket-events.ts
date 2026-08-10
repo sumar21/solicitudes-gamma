@@ -31,7 +31,7 @@ async function handler(req: any, res: any) {
       if (!ticketId) return res.status(400).json({ error: 'ticketId query param required' });
 
       const { data, error } = await supa.from('traslado_eventos')
-        .select('id, traslado_id, tipo, usuario, usuario_id, created_at')
+        .select('id, traslado_id, tipo, usuario, usuario_id, operador, created_at')
         .eq('traslado_id', String(ticketId)).eq('entorno', ENTORNO)
         .order('created_at', { ascending: true });
       if (error) throw new Error(`Supabase GET failed: ${error.message}`);
@@ -43,6 +43,7 @@ async function handler(req: any, res: any) {
         fecha:     String(r.created_at ?? ''),
         usuario:   String(r.usuario ?? ''),
         usuarioId: r.usuario_id != null ? String(r.usuario_id) : '',
+        operador:  String(r.operador ?? ''),
       }));
       return res.status(200).json({ events });
     }

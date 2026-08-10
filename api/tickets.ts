@@ -53,6 +53,7 @@ function rowToTicket(r: Record<string, any>): Ticket {
     financier:              r.financiador ? String(r.financiador) : undefined,
     createdBy:              r.created_by ? String(r.created_by) : undefined,
     createdById:            r.created_by_id != null ? String(r.created_by_id) : undefined,
+    operador:               r.operador ? String(r.operador) : undefined,
     date:                   r.created_at ? String(r.created_at) : undefined,
     isBedClean:             false,
     isReasonValidated:      true,

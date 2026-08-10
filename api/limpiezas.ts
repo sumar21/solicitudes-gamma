@@ -70,6 +70,7 @@ async function handler(req: any, res: any) {
         area:     String(r.area ?? ''),
         by:       String(r.azafata_nombre ?? ''),
         byId:     String(r.azafata_id ?? ''),
+        operador: String(r.operador ?? ''),
         at:       String(r.fecha_limpieza ?? ''),
       }));
       return res.status(200).json({ cleanings });

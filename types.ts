@@ -149,7 +149,8 @@ export interface MealLoad {
   tipo: 'MENU' | 'OPCION' | 'OTROS';
   detalle?: string;       // detalle de la comanda: qué menú/opción o, en OTROS, la comida específica
   observaciones?: string;
-  by: string;       // nombre del/la nutricionista que cargó
+  by: string;       // nombre del/la nutricionista que cargó (cuenta)
+  operador?: string; // nombre del operador identificado (cuentas compartidas), si aplica
   at: string;       // ISO — cuándo se cargó
   spItemId: string;
   comensal?: Comensal;  // TITULAR (default) | ACOMPANANTE
@@ -491,8 +492,9 @@ export interface Ticket {
   createdAt: string;        // FechaInicio_T
   completedAt?: string;     // FechaFin_T (cuando se consolida)
   financier?: string;       // Financiador / Obra Social
-  createdBy?: string;       // ConcatName_Usr del usuario que crea
+  createdBy?: string;       // ConcatName_Usr del usuario que crea (cuenta)
   createdById?: string;     // ID del usuario que crea
+  operador?: string;        // operador identificado (cuentas compartidas) que creó el traslado, si aplica
   date?: string;
   bedAssignedAt?: string;
   cleaningDoneAt?: string;
@@ -552,6 +554,7 @@ export interface CirugiaTraslado {
   tipo?: string;                 // "Tipo" de la solapa Internación (admissionType: Quirúrgica/Trasplante/…). Snapshot al alta.
   estado: CirugiaEstado;
   motivoCancelacion?: string;
+  operador?: string;             // operador identificado (cuentas compartidas) que dio el alta, si aplica
   version?: string;              // APP_VERSION del cliente que escribió (versionado)
   fechaCierre?: string;          // ISO — RECIBIDA / CANCELADO
   createdAt: string;             // ISO

@@ -16,6 +16,7 @@ interface TicketEvent {
   fecha: string;
   usuario: string;
   usuarioId: string;
+  operador?: string;
 }
 
 interface PatientJourneyProps {
@@ -330,7 +331,7 @@ const EpisodeCard: React.FC<{
           <div className="relative pl-7 space-y-3 before:content-[''] before:absolute before:left-[9px] before:top-1.5 before:bottom-1.5 before:w-[1px] before:bg-slate-100">
             {sortedEvents.map((evt) => {
               const mod = parseModification(evt.tipo);
-              const config = eventConfigFor(evt.tipo, evt.usuario);
+              const config = eventConfigFor(evt.tipo, evt.operador || evt.usuario);
               const Icon = config.icon;
               const isFinal = evt.tipo === 'Consolidado Progal';
               return (
@@ -348,7 +349,7 @@ const EpisodeCard: React.FC<{
                       <p className={cn("text-xs font-semibold", isFinal ? "text-emerald-950" : mod ? "text-amber-700" : "text-slate-900")}>
                         {config.label}
                       </p>
-                      <p className="text-[10px] text-slate-400 font-medium">{evt.usuario || config.sublabel}</p>
+                      <p className="text-[10px] text-slate-400 font-medium">{evt.operador || evt.usuario || config.sublabel}</p>
                       {mod && (
                         <div className="mt-1.5 p-2 bg-amber-50/70 border border-amber-100 rounded-lg space-y-0.5">
                           {mod.changes.map((c, ix) => (

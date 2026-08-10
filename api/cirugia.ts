@@ -58,6 +58,7 @@ function rowToCirugia(r: any) {
     tipo:               r.tipo != null ? String(r.tipo) : undefined,
     estado:             String(r.estado ?? ''),
     motivoCancelacion:  r.motivo_cancelacion != null ? String(r.motivo_cancelacion) : undefined,
+    operador:           r.operador != null ? String(r.operador) : undefined,
     version:            r.version != null ? String(r.version) : undefined,
     fechaCierre:        r.fecha_cierre != null ? String(r.fecha_cierre) : undefined,
     createdAt:          String(r.created_at ?? ''),

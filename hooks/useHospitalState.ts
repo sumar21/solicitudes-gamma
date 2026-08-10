@@ -1186,7 +1186,7 @@ export const useHospitalState = () => {
           tipo: m.tipo === 'OPCION' ? 'OPCION' : m.tipo === 'OTROS' ? 'OTROS' : 'MENU',
           detalle: String(m.detalle ?? ''),
           observaciones: String(m.observaciones ?? ''),
-          by: String(m.by ?? ''), at: String(m.at ?? ''), spItemId: String(m.spItemId ?? ''),
+          by: String(m.by ?? ''), operador: String(m.operador ?? ''), at: String(m.at ?? ''), spItemId: String(m.spItemId ?? ''),
           comensal: m.comensal === 'ACOMPANANTE' ? 'ACOMPANANTE' : 'TITULAR',
           orden: Number(m.orden ?? 0) || 0,
           status: (m.status === COMANDA_STATUS.ENTREGADO ? COMANDA_STATUS.ENTREGADO : COMANDA_STATUS.PENDIENTE),
