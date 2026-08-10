@@ -8,7 +8,7 @@ import { Input } from '../components/ui/input';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { Calendar } from '../components/ui/calendar';
-import { CheckCircle2, DoorClosed, User as UserIcon, Clock, RefreshCw, Calendar as CalendarIcon, Search, X } from 'lucide-react';
+import { CheckCircle2, DoorClosed, User as UserIcon, Clock, RefreshCw, Calendar as CalendarIcon, Search, X, SprayCan } from 'lucide-react';
 
 // ponytail: display map copiado de BedsView (no está exportado); exportar si un 3er lugar lo necesita.
 const AREA_LABELS: Record<string, string> = {
@@ -24,6 +24,14 @@ const fmtWhen = (iso?: string) => {
   const d = new Date(iso);
   return isNaN(d.getTime()) ? iso : d.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
 };
+
+// Estado de una limpieza de rutina (reporte del día).
+const ROUTINE_ESTADO_LABEL: Record<string, string> = { INICIADA: 'En curso', FINALIZADA: 'Finalizada', ANULADA: 'Anulada' };
+const routineEstadoLabel = (e: string) => ROUTINE_ESTADO_LABEL[e] ?? (e || '—');
+const routineEstadoClass = (e: string) =>
+  e === 'FINALIZADA' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+  : e === 'ANULADA' ? 'bg-slate-100 text-slate-500 border-slate-200'
+  : 'bg-sky-50 text-sky-700 border-sky-200'; // INICIADA = en curso
 
 // Trigger del datepicker (mismo estilo que HistoryView). asChild → forwardRef.
 const DateRangeTrigger = React.forwardRef<
@@ -78,7 +86,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
 
   // ── Histórico (limpiezas cerradas) ─────────────────────────────────────────
   type HistRow = { spItemId: string; bedLabel: string; area: string; by: string; at: string; closedAt: string; reason: string };
-  const [tab, setTab] = useState<'activas' | 'historico'>('activas');
+  const [tab, setTab] = useState<'activas' | 'historico' | 'rutina'>('activas');
   const todayStr   = new Date().toISOString().slice(0, 10);
   const weekAgoStr = new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10);
   const [from, setFrom] = useState(weekAgoStr);
@@ -112,6 +120,37 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
 
   // Auto-carga al entrar al histórico y al cambiar las fechas.
   useEffect(() => { if (tab === 'historico') fetchHistory(); }, [tab, fetchHistory]);
+
+  // ── Rutina del día (limpiezas de rutina de camas ocupadas) ─────────────────
+  type RoutineRow = { spItemId: string; bedLabel: string; area: string; patientName: string; startedBy: string; startedAt: string; finishedBy: string; finishedAt: string; estado: string };
+  const [routineDate, setRoutineDate] = useState(todayStr);
+  const [routineRows, setRoutineRows] = useState<RoutineRow[]>([]);
+  const [loadingRoutine, setLoadingRoutine] = useState(false);
+  const [openRoutineDate, setOpenRoutineDate] = useState(false);
+
+  const fetchRoutine = useCallback(async () => {
+    setLoadingRoutine(true);
+    try {
+      const r = await authFetch(`/api/limpiezas-rutina?report=1&date=${routineDate}`);
+      if (r.ok) {
+        const data = await r.json();
+        const areaOk = (area: string) =>
+          !currentUser?.filterByFloors || !currentUser?.assignedAreas?.length || currentUser.assignedAreas.includes(area as Area);
+        // Orden por piso → habitación → hora de inicio (como se pidió para los reportes).
+        const rows: RoutineRow[] = (data.rutinas ?? [])
+          .filter((x: RoutineRow) => areaOk(x.area))
+          .sort((a: RoutineRow, b: RoutineRow) =>
+            areaLabel(a.area).localeCompare(areaLabel(b.area), 'es', { numeric: true }) ||
+            formatBedName(a.bedLabel).localeCompare(formatBedName(b.bedLabel), 'es', { numeric: true }) ||
+            String(a.startedAt).localeCompare(String(b.startedAt)));
+        setRoutineRows(rows);
+      }
+    } catch { /* mantiene lo previo */ }
+    finally { setLoadingRoutine(false); }
+  }, [authFetch, routineDate, currentUser]);
+
+  // Auto-carga al entrar a Rutina y al cambiar el día.
+  useEffect(() => { if (tab === 'rutina') fetchRoutine(); }, [tab, fetchRoutine]);
 
   // GAMMA y TICKET se muestran agrupados como "Traslado" (pedido del negocio); los otros igual.
   const REASON_LABEL: Record<string, string> = { GAMMA: 'Traslado', TICKET: 'Traslado', ANULADA: 'Anulada', CONSOLIDADO: 'Consolidado' };
@@ -180,13 +219,13 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
     <div className="p-4 md:p-8 max-w-full w-full space-y-4 md:space-y-5 pb-24 md:pb-8">
       {/* Tabs: Activas (overlay vigente) | Histórico (cerradas por rango de fecha). */}
       <div className="flex items-center gap-1 border-b border-slate-200 mb-4">
-        {(['activas', 'historico'] as const).map(t => (
+        {(['activas', 'historico', 'rutina'] as const).map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={cn(
               "px-4 py-2 text-xs font-bold uppercase tracking-wide border-b-2 -mb-px transition-colors",
               tab === t ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-400 hover:text-slate-600"
             )}>
-            {t === 'activas' ? 'Activas' : 'Histórico'}
+            {t === 'activas' ? 'Activas' : t === 'historico' ? 'Histórico' : 'Rutina (hoy)'}
           </button>
         ))}
       </div>
@@ -281,6 +320,93 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                           <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmtWhen(h.closedAt)}</td>
                           <td className="px-4 py-3">
                             <span className={cn("text-[10px] font-bold uppercase px-2.5 py-1 rounded-lg border", reasonClass(h.reason))}>{reasonLabel(h.reason)}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            </>
+          )}
+        </>
+      ) : tab === 'rutina' ? (
+        <>
+          {/* Rutina del día: limpiezas de rutina de camas ocupadas (iniciar → finalizar). */}
+          <div className="flex flex-wrap items-center gap-3 mb-4">
+            <div className="flex items-center bg-white border border-slate-200 rounded-xl overflow-hidden h-9">
+              <Popover open={openRoutineDate} onOpenChange={setOpenRoutineDate}>
+                <PopoverTrigger asChild>
+                  <DateRangeTrigger label="Día" value={routineDate} className="h-full text-xs" />
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
+                  <Calendar selected={routineDate} onSelect={(date) => { setRoutineDate(date); setOpenRoutineDate(false); }} />
+                </PopoverContent>
+              </Popover>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => fetchRoutine()} disabled={loadingRoutine}
+              className="h-9 px-3 rounded-lg gap-2 text-xs font-bold text-slate-600">
+              <RefreshCw className={cn("w-4 h-4", loadingRoutine && "animate-spin")} /> Actualizar
+            </Button>
+            <p className="text-xs text-slate-500 font-medium ml-auto self-center">
+              {routineRows.length} {routineRows.length === 1 ? 'limpieza de rutina' : 'limpiezas de rutina'}
+            </p>
+          </div>
+
+          {loadingRoutine ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400 text-sm">Cargando…</div>
+          ) : routineRows.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400">
+              <SprayCan className="w-10 h-10 mx-auto mb-3 text-slate-300" />
+              <p className="font-bold text-sm text-slate-500">Sin limpiezas de rutina ese día</p>
+              <p className="text-xs">Se registran cuando alguien inicia una limpieza de rutina en una cama ocupada.</p>
+            </div>
+          ) : (
+            <>
+              {/* Mobile — tarjetas */}
+              <div className="grid grid-cols-1 gap-3 md:hidden">
+                {routineRows.map(x => (
+                  <div key={x.spItemId} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="font-black text-sm text-slate-800 leading-tight">{formatBedName(x.bedLabel)}</p>
+                      <span className={cn("text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border shrink-0", routineEstadoClass(x.estado))}>{routineEstadoLabel(x.estado)}</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 font-medium">{areaLabel(x.area)}{x.patientName ? ` · ${x.patientName}` : ''}</p>
+                    <div className="text-[11px] text-slate-600 space-y-1">
+                      <p className="flex items-center gap-1.5"><UserIcon className="w-3.5 h-3.5 text-slate-400" />{x.startedBy || '—'}</p>
+                      <p className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-slate-400" />Inicio: {fmtWhen(x.startedAt)}</p>
+                      <p className="flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-slate-400" />Fin: {fmtWhen(x.finishedAt)}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Desktop — grilla */}
+              <Card className="hidden md:block shadow-sm border-slate-200 overflow-hidden bg-white rounded-2xl">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500 font-bold">
+                        <th className="px-4 py-3">Cama</th>
+                        <th className="px-4 py-3">Sector</th>
+                        <th className="px-4 py-3">Paciente</th>
+                        <th className="px-4 py-3">Iniciada por</th>
+                        <th className="px-4 py-3">Inicio</th>
+                        <th className="px-4 py-3">Fin</th>
+                        <th className="px-4 py-3">Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {routineRows.map(x => (
+                        <tr key={x.spItemId} className="hover:bg-slate-50/60">
+                          <td className="px-4 py-3 font-bold text-slate-800">{formatBedName(x.bedLabel)}</td>
+                          <td className="px-4 py-3 text-slate-600">{areaLabel(x.area)}</td>
+                          <td className="px-4 py-3 text-slate-600">{x.patientName || '—'}</td>
+                          <td className="px-4 py-3 text-slate-600">{x.startedBy || '—'}</td>
+                          <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmtWhen(x.startedAt)}</td>
+                          <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmtWhen(x.finishedAt)}</td>
+                          <td className="px-4 py-3">
+                            <span className={cn("text-[10px] font-bold uppercase px-2.5 py-1 rounded-lg border", routineEstadoClass(x.estado))}>{routineEstadoLabel(x.estado)}</span>
                           </td>
                         </tr>
                       ))}
