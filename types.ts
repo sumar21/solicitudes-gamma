@@ -372,6 +372,17 @@ export const PERMISSIONS = [
   // Separados porque catering puede querer VER qué menú está planificado sin poder tocarlo.
   'ver_planificacion',
   'abm_planificacion',
+  // Cirugía (traslados a quirófano) — UN permiso por acción de la máquina de estados. La
+  // SUPERFICIE (mapa de camas vs solapa Operativa) decide DÓNDE aparece cada botón; el permiso,
+  // SI podés hacerlo. Un rol con todos los cirugia_* gestiona el circuito entero desde Operativa;
+  // la enfermera hace su parte (listo/entregar/recibir) desde el mapa.
+  'cirugia_listo',      // marcar "listo para cirugía" (alta, desde la cama)
+  'cirugia_buscar',     // "van a buscar" (quirófano despacha al camillero)
+  'cirugia_entregar',   // "se lo llevó el camillero" (entrega de custodia)
+  'cirugia_operar',     // "en cirugía"
+  'cirugia_devolver',   // "en devolución" (elige destino)
+  'cirugia_recibir',    // "recibí al paciente" (recepción)
+  'cirugia_cancelar',   // cancelar la operatoria (transversal)
   'abm_usuarios','abm_roles',
   // Notificaciones granulares por tipo (antes había un solo `recibe_push`).
   // Cada permiso gobierna que el usuario reciba push + in-app de ese tipo.
@@ -383,6 +394,12 @@ export const PERMISSIONS = [
   // Azafata marcó una habitación limpia desde el mapa → aviso a Admisión (u otro rol que
   // lo tenga tildado en el ABM). Push + campanita, mismo pipeline que los demás.
   'notif_habitacion_limpia',
+  // Cirugía: a Admisión (consolidación pendiente: cambio de cama / UCI), a Quirófano (paciente
+  // listo) y a la azafata del piso (camillero en camino, retiro/entrega). El mapeo tipo→permiso y
+  // la emisión del push se cablean en la iteración 1c; acá solo se registran para el ABM.
+  'notif_cirugia_consolidar',
+  'notif_cirugia_lista',
+  'notif_cirugia_camillero',
 ] as const;
 export type Permission = typeof PERMISSIONS[number];
 
@@ -484,10 +501,12 @@ export interface Ticket {
 // Ticket de public.traslados). Calca el patrón de limpiezas: tabla entorno-scoped en Supabase
 // (public.cirugia_traslados) + Realtime (canal 'cirugia-live'). Ver docs/planes/plan-traslados-cirugia.html.
 //
-// Orden de transiciones (quién marca cada una):
+// Orden de transiciones ESTRICTO (quién marca cada una) — cada paso se registra en cirugia_eventos
+// para medir tiempos (camillero, quirófano, devolución):
 //   LISTO_PARA_CIRUGIA  (Enfermería, o auto por admissionTypeCode==='Q')
 //     → VAN_A_BUSCAR     (Cirugía — despacha al camillero, que NO usa app)
-//     → EN_CIRUGIA       (Cirugía — confirma que recibió al paciente)
+//     → EN_TRASLADO      (Enfermería — "se lo llevó el camillero": entrega de custodia)
+//     → EN_CIRUGIA       (Cirugía — comenzó la cirugía)
 //     → EN_DEVOLUCION    (Cirugía — elige destino: misma cama u otra de las Disponibles)
 //     → RECIBIDA         (Enfermería del piso destino — cierra el circuito; la cama muere)
 //   CANCELADO            (terminal; libera la cama — política D3 pendiente en el plan)
@@ -496,6 +515,7 @@ export interface Ticket {
 export type CirugiaEstado =
   | 'LISTO_PARA_CIRUGIA'
   | 'VAN_A_BUSCAR'
+  | 'EN_TRASLADO'
   | 'EN_CIRUGIA'
   | 'EN_DEVOLUCION'
   | 'PENDIENTE_CONSOLIDACION'

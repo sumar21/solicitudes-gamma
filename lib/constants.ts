@@ -5,11 +5,12 @@ import { Area, Bed, BedStatus, CirugiaEstado, Role, SedeType, Ticket, TicketStat
 // ── Cirugía: label + color de la pill "Cx" por estado ────────────────────────
 // Fuente única compartida (BedsView pinta la pill de la celda, CirugiasView agrupa la cola).
 // Colores tomados del plan (docs/planes/plan-traslados-cirugia.html):
-//   listo=ámbar · en camino=naranja · en cirugía=cyan · volviendo=violeta.
+//   listo=ámbar · en camino=naranja · en traslado=amarillo · en cirugía=cyan · volviendo=violeta.
 // Las clases van como literales para que el JIT de Tailwind las incluya en el build.
 export const CIRUGIA_ESTADO_LABEL: Record<CirugiaEstado, string> = {
   LISTO_PARA_CIRUGIA: 'Listo para cirugía',
   VAN_A_BUSCAR:       'En camino',
+  EN_TRASLADO:        'En traslado a quirófano',
   EN_CIRUGIA:         'En cirugía',
   EN_DEVOLUCION:      'Volviendo',
   RECIBIDA:           'Recibida',
@@ -22,6 +23,7 @@ export const CIRUGIA_ESTADO_LABEL: Record<CirugiaEstado, string> = {
 export const CIRUGIA_ESTADO_SHORT: Record<CirugiaEstado, string> = {
   LISTO_PARA_CIRUGIA: 'Listo',
   VAN_A_BUSCAR:       'En camino',
+  EN_TRASLADO:        'En traslado',
   EN_CIRUGIA:         'En cirugía',
   EN_DEVOLUCION:      'Volviendo',
   RECIBIDA:           'Recibida',
@@ -34,6 +36,7 @@ export const CIRUGIA_ESTADO_SHORT: Record<CirugiaEstado, string> = {
 export const CIRUGIA_PILL_CLASS: Record<CirugiaEstado, string> = {
   LISTO_PARA_CIRUGIA: 'bg-amber-100 text-amber-700 border-amber-200',
   VAN_A_BUSCAR:       'bg-orange-100 text-orange-700 border-orange-200',
+  EN_TRASLADO:        'bg-yellow-100 text-yellow-800 border-yellow-200',
   EN_CIRUGIA:         'bg-cyan-100 text-cyan-700 border-cyan-200',
   EN_DEVOLUCION:      'bg-violet-100 text-violet-700 border-violet-200',
   RECIBIDA:           'bg-emerald-100 text-emerald-700 border-emerald-200',
@@ -46,6 +49,7 @@ export const CIRUGIA_PILL_CLASS: Record<CirugiaEstado, string> = {
 export const CIRUGIA_DOT_CLASS: Record<CirugiaEstado, string> = {
   LISTO_PARA_CIRUGIA: 'bg-amber-500',
   VAN_A_BUSCAR:       'bg-orange-500',
+  EN_TRASLADO:        'bg-yellow-500',
   EN_CIRUGIA:         'bg-cyan-500',
   EN_DEVOLUCION:      'bg-violet-500',
   RECIBIDA:           'bg-emerald-500',

@@ -64,6 +64,17 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
   },
 
   {
+    // Cirugía — acciones de QUIRÓFANO, se operan desde la solapa Operativa → Cirugías (la grilla).
+    module: 'Operativa', label: 'Cirugía — Quirófano (solapa Operativa)',
+    perms: [
+      { code: 'cirugia_buscar',   label: 'Van a buscar (despachar camillero)' },
+      { code: 'cirugia_operar',   label: 'En cirugía' },
+      { code: 'cirugia_devolver', label: 'En devolución (elegir destino)' },
+      { code: 'cirugia_cancelar', label: 'Cancelar operatoria' },
+    ],
+  },
+
+  {
     module: 'Mapa de Camas', label: 'Mapa de Camas',
     perms: [
       { code: 'ver_dieta',    label: 'Ver comandas cargadas (Catering / Nutrición)' },
@@ -73,6 +84,15 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
       // turnos" es redundante, gana el de todos.
       { code: 'cargar_dieta', label: 'Cargar comandas — todos los turnos (Nutrición)' },
       ...MEAL_SLOTS.map(({ slot, label }) => ({ code: mealSlotPermission(slot), label: `Cargar comandas — solo ${label}` })),
+    ],
+  },
+  {
+    // Cirugía — acciones de ENFERMERÍA, se operan desde la tarjeta de la cama (mapa de camas).
+    module: 'Mapa de Camas', label: 'Cirugía — Enfermería (mapa de camas)',
+    perms: [
+      { code: 'cirugia_listo',    label: 'Marcar "listo para cirugía"' },
+      { code: 'cirugia_entregar', label: 'Registrar "se lo llevó el camillero"' },
+      { code: 'cirugia_recibir',  label: 'Confirmar recepción del paciente' },
     ],
   },
   {
@@ -101,6 +121,9 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
       { code: 'notif_diet_change',         label: 'Cambio de dieta' },
       { code: 'notif_fasting_change',      label: 'Cambio de ayuno' },
       { code: 'notif_habitacion_limpia',   label: 'Habitación limpia (azafata la marcó desde el mapa)' },
+      { code: 'notif_cirugia_consolidar',  label: 'Cirugía: consolidación pendiente (cambio de cama / UCI → Admisión)' },
+      { code: 'notif_cirugia_lista',       label: 'Cirugía: paciente listo para quirófano' },
+      { code: 'notif_cirugia_camillero',   label: 'Cirugía: camillero en camino (retiro / entrega → azafata del piso)' },
     ],
   },
 ];

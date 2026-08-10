@@ -495,18 +495,43 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
   // lleva el suyo (`role: 'destino'`). BedsView/CirugiasView leen `bed.cirugia.estado` para
   // pintar la pill Cx por color.
   //
-  // Limbo del cambio de cama: cuando el paciente vuelve de cirugía a OTRA cama, esa cama_destino
-  // se RESERVA —igual que el destino de un traslado en tránsito (ver el switch de arriba: dest →
-  // ASSIGNED)— para que no se ofrezca como Disponible antes de que Enfermería confirme la
-  // recepción (RECIBIDA) y Admisión consolide el cambio en PROGAL. La cama_origen NO se toca: el
-  // paciente sigue "Ocupando" en PROGAL hasta la consolidación, solo se le adjunta la pill.
+  // Cambio de cama al volver de cirugía = la APP es la fuente de verdad hasta que Admisión
+  // consolide, IGUAL que un traslado en tránsito / esperando consolidación (ver el switch de
+  // arriba). En EN_DEVOLUCION / PENDIENTE_CONSOLIDACION con cama distinta: se MUEVE el paciente +
+  // enrich a la cama DESTINO y se LIBERA la origen, aunque Gamma la siga reportando Ocupada. Al
+  // consolidar, la operatoria cierra y el mapa vuelve a confiar en PROGAL. Sin cambio de cama (o
+  // antes de la devolución) es solo la pill Cx: nadie se mueve, el paciente sigue en su cama.
   if (cirugias && cirugias.size) {
+    // 1) Pill Cx sobre cada cama con overlay (origen y/o destino).
     for (const bed of result) {
       const info = cirugias.get(bed.label);
-      if (!info) continue;
-      bed.cirugia = info;
-      if (info.role === 'destino' && bed.status === BedStatus.AVAILABLE && !ticketTouched.has(bed.label)) {
-        bed.status = BedStatus.ASSIGNED; // reservada para el paciente que vuelve de cirugía
+      if (info) bed.cirugia = info;
+    }
+    // 2) Move del cambio de cama (hay una entrada 'destino' por operatoria en limbo).
+    for (const [label, info] of cirugias) {
+      if (info.role !== 'destino') continue;          // 'destino' solo existe con cambio de cama en la vuelta
+      if (ticketTouched.has(label)) continue;         // si un traslado ya usa esa cama, manda el traslado
+      const dest = result.find(b => b.label === label);
+      if (!dest) continue;
+      // No pisar un ocupante REAL distinto en la cama destino (PROGAL ya la reasignó a otro).
+      if (dest.status === BedStatus.OCCUPIED && dest.patientCode && info.pacienteCodigo &&
+          String(dest.patientCode).trim() !== String(info.pacienteCodigo).trim()) continue;
+      const origin = result.find(b => b.label === info.camaOrigen);
+      // El origen se vacía SOLO si Gamma sigue mostrando a NUESTRO paciente ahí (sino ya lo liberó
+      // o reasignó → lo respetamos y no lo pisamos, igual que progalStillHasTicketPatientOnOrigin).
+      const originIsOurs = !!origin && origin.status === BedStatus.OCCUPIED &&
+        (!info.pacienteCodigo || !origin.patientCode ||
+         String(origin.patientCode).trim() === String(info.pacienteCodigo).trim());
+      if (origin && originIsOurs) copyPatientToBed(origin, dest);
+      dest.patientName = dest.patientName || info.pacienteNombre || '';
+      dest.patientCode = dest.patientCode || info.pacienteCodigo || '';
+      // EN_DEVOLUCION = llegando (Asignada); PENDIENTE_CONSOLIDACION = ya recibido (Ocupada).
+      dest.status = info.estado === 'PENDIENTE_CONSOLIDACION' ? BedStatus.OCCUPIED : BedStatus.ASSIGNED;
+      dest.cirugia = info;
+      if (origin && originIsOurs) {
+        clearPatientFromBed(origin);
+        origin.status = BedStatus.PREPARATION;
+        origin.cirugia = undefined;                   // el overlay se fue con el paciente a la cama nueva
       }
     }
   }
@@ -1437,6 +1462,7 @@ export const useHospitalState = () => {
 
   // Wrappers finos por transición (quién marca cada una en el orden feliz).
   const cirugiaVanABuscar   = useCallback((id: string) => transicionarCirugia(id, 'VAN_A_BUSCAR'), [transicionarCirugia]);        // Cirugía
+  const cirugiaEnTraslado   = useCallback((id: string) => transicionarCirugia(id, 'EN_TRASLADO'), [transicionarCirugia]);        // Enfermería (entrega al camillero)
   const cirugiaEnCirugia    = useCallback((id: string) => transicionarCirugia(id, 'EN_CIRUGIA'), [transicionarCirugia]);          // Cirugía
   const cirugiaEnDevolucion = useCallback((id: string, camaDestino?: string) => transicionarCirugia(id, 'EN_DEVOLUCION', { camaDestino }), [transicionarCirugia]); // Cirugía
   const cirugiaRecibida     = useCallback((id: string) => transicionarCirugia(id, 'RECIBIDA'), [transicionarCirugia]);            // Enfermería destino
@@ -3221,7 +3247,7 @@ export const useHospitalState = () => {
       markBedClean, undoBedClean,
       saveMealLoad, clearMealLoad, saveCompanionLoad, clearCompanionLoad, setMealStatus,
       fetchCirugias, marcarListoParaCirugia, transicionarCirugia,
-      cirugiaVanABuscar, cirugiaEnCirugia, cirugiaEnDevolucion, cirugiaRecibida, cancelarCirugia, consolidarCirugia,
+      cirugiaVanABuscar, cirugiaEnTraslado, cirugiaEnCirugia, cirugiaEnDevolucion, cirugiaRecibida, cancelarCirugia, consolidarCirugia,
       setOperativaSubview,
       handleUpdateUserAreas, refreshSessionRole, syncSessionRole, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleOpenNotifications, handleDismissToast,
       handleStartTransport,

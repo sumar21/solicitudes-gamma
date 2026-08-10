@@ -4,7 +4,7 @@ import { can, canLoadMealSlot, canLoadAnyMealSlot } from '../lib/permissions';
 import { hasLiveFasting, fastingOccurrences, formatFastingDateTime, fastingTimesForToday } from '../lib/fasting';
 import { Input } from '../components/ui/input';
 import { cn, dietRequiresCustomComanda, suggestedRoomSex, formatBedName } from '../lib/utils';
-import { BedDouble, User as UserIcon, Info, Search, X, Plus, ChevronDown, ChevronRight, Check, AlertTriangle, AlertCircle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan, History, Lock, Activity } from 'lucide-react';
+import { BedDouble, User as UserIcon, Info, Search, X, Plus, ChevronDown, ChevronRight, Check, AlertTriangle, AlertCircle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan, History, Lock, Activity, ArrowRight } from 'lucide-react';
 import { Dialog, DialogContent } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
@@ -66,6 +66,7 @@ interface BedsViewProps {
   // "Recibida" (recepción confirmada) cuando el paciente vuelve. La pill Cx por color la pinta
   // mergeBeds (bed.cirugia). El gating fino por permiso cirugia_* llega en F5/go-live.
   onMarcarListo?: (bed: Bed) => Promise<{ ok: boolean; id?: string; error?: string }>;
+  onCirugiaEnTraslado?: (id: string) => Promise<{ ok: boolean; error?: string }>;
   onCirugiaRecibida?: (id: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
@@ -698,9 +699,10 @@ const CompanionEditor: React.FC<{
 const CirugiaBedBlock: React.FC<{
   bed: Bed;
   onMarcarListo?: (bed: Bed) => Promise<{ ok: boolean; id?: string; error?: string }>;
+  onCirugiaEnTraslado?: (id: string) => Promise<{ ok: boolean; error?: string }>;
   onCirugiaRecibida?: (id: string) => Promise<{ ok: boolean; error?: string }>;
   onDone: () => void;
-}> = ({ bed, onMarcarListo, onCirugiaRecibida, onDone }) => {
+}> = ({ bed, onMarcarListo, onCirugiaEnTraslado, onCirugiaRecibida, onDone }) => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cx = bed.cirugia;
@@ -713,23 +715,54 @@ const CirugiaBedBlock: React.FC<{
 
   // Cama con operatoria viva → pill + (Recibida si está volviendo).
   if (cx) {
+    // ¿Hay cambio de cama al volver? Entonces hay DOS overlays: la cama vieja (role 'origin', el
+    // paciente ya no vuelve acá) y la cama nueva (role 'destino', donde LLEGA el paciente).
+    const esCambio = !!cx.camaDestino && cx.camaDestino !== cx.camaOrigen;
+    const soyDestino = cx.role === 'destino';            // esta cama es la de LLEGADA
+    const soyOrigenConCambio = cx.role === 'origin' && esCambio; // esta cama es la VIEJA
+    // La recepción la confirma la enfermera de la cama donde LLEGA el paciente: cama destino si
+    // cambió, o la propia si volvió a la misma. En la cama origen de un cambio NO va el botón.
+    const puedoRecibir = cx.estado === 'EN_DEVOLUCION' && (soyDestino || !esCambio);
     return (
       <div className="rounded-2xl p-3.5 border border-slate-200 bg-slate-50/70 flex flex-col gap-2.5">
         <div className="flex items-center gap-2">
           <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-tight', CIRUGIA_PILL_CLASS[cx.estado])}>
             <Activity className="w-3 h-3" strokeWidth={3} /> Cx · {CIRUGIA_ESTADO_LABEL[cx.estado]}
           </span>
-          {cx.role === 'destino' && (
+          {soyDestino && (
             <span className="text-[10px] font-bold text-violet-700">Cama destino</span>
           )}
         </div>
-        {cx.camaDestino && cx.camaDestino !== cx.camaOrigen && (
+        {/* Cama DESTINO: llega un paciente de otra cama → mostrar quién y de dónde. */}
+        {soyDestino && (
           <p className="text-[11px] font-medium text-slate-600">
-            Devolución con cambio de cama: {formatBedName(cx.camaOrigen)} → <strong>{formatBedName(cx.camaDestino)}</strong>
+            Llega de cirugía: <strong>{cx.pacienteNombre ?? 'paciente'}</strong> (viene de {formatBedName(cx.camaOrigen)})
+            {cx.estado === 'PENDIENTE_CONSOLIDACION' && ' — recibido; pendiente que Admisión consolide en PROGAL.'}
+          </p>
+        )}
+        {/* Cama ORIGEN de un cambio: el paciente NO vuelve acá, se fue a la destino. */}
+        {soyOrigenConCambio && (
+          <p className="text-[11px] font-medium text-slate-600">
+            El paciente volvió de cirugía a <strong>{formatBedName(cx.camaDestino!)}</strong>
+            {cx.estado === 'PENDIENTE_CONSOLIDACION'
+              ? ' — pendiente que Admisión consolide el cambio en PROGAL.'
+              : ' — confirmá la recepción en esa cama.'}
           </p>
         )}
         {error && <p className="text-[10px] font-bold text-red-600">{error}</p>}
-        {cx.estado === 'EN_DEVOLUCION' && onCirugiaRecibida && (
+        {cx.estado === 'VAN_A_BUSCAR' && onCirugiaEnTraslado && (
+          <button disabled={busy}
+            onClick={async () => {
+              setBusy(true); setError(null);
+              const r = await onCirugiaEnTraslado(cx.id);
+              setBusy(false);
+              if (r.ok) onDone(); else setError(r.error ?? 'No se pudo confirmar.');
+            }}
+            className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-yellow-500 hover:bg-yellow-600 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm disabled:opacity-50">
+            <ArrowRight className="w-4 h-4" /> {busy ? 'Registrando…' : 'Se lo llevó el camillero'}
+          </button>
+        )}
+        {puedoRecibir && onCirugiaRecibida && (
           <button disabled={busy}
             onClick={async () => {
               setBusy(true); setError(null);
@@ -738,7 +771,7 @@ const CirugiaBedBlock: React.FC<{
               if (r.ok) onDone(); else setError(r.error ?? 'No se pudo confirmar.');
             }}
             className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm disabled:opacity-50">
-            <CheckCircle2 className="w-4 h-4" /> {busy ? 'Confirmando…' : 'Recibida (recepción confirmada)'}
+            <CheckCircle2 className="w-4 h-4" /> {busy ? 'Confirmando…' : soyDestino ? 'Recibí al paciente' : 'Recibida (recepción confirmada)'}
           </button>
         )}
       </div>
@@ -772,7 +805,7 @@ const CirugiaBedBlock: React.FC<{
   );
 };
 
-export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onFetchPatientTickets, onRefresh, onMarkClean, onUndoClean, onSaveMeal, onClearMeal, onSaveCompanion, onClearCompanion, onMarcarListo, onCirugiaRecibida }) => {
+export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onFetchPatientTickets, onRefresh, onMarkClean, onUndoClean, onSaveMeal, onClearMeal, onSaveCompanion, onClearCompanion, onMarcarListo, onCirugiaEnTraslado, onCirugiaRecibida }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
   // Turnos abiertos en el modal de la cama. Vive en el PADRE y no en cada box: si viviera adentro,
   // se perdería al cerrar/reabrir. Se resetea al cambiar de cama (el default se recalcula abajo).
@@ -988,6 +1021,11 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     return s;
   }, [beds]);
 
+  // Label canónico del tipo Quirúrgica (ADMISSION_TYPE_LABELS['Q'] del enrich). Se usa para la
+  // "vista amplia": el filtro Quirúrgica agrupa el tipo Q de PROGAL + las cirugías marcadas por
+  // enfermería (clínico→quirúrgico), sin falsear el dato de la cama.
+  const QUIRURGICA_LABEL = 'Quirúrgica';
+
   // Cantidad de filtros activos (chips) — feedback en el botón "Filtros" de mobile.
   const activeFilterCount =
     statusFilters.size +
@@ -1005,7 +1043,13 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   // Tipos de dieta presentes en las camas cargadas, ordenados alfabéticamente (locale es).
   const uniqueDietTypes = useMemo(() => [...new Set(beds.map(dietTypeOf).filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b, 'es')), [beds]);
   // Tipos de internación presentes (admissionType: Quirúrgica/Trasplante/Hemodinamia/Quemados/Oncológica/Clínica), para el filtro.
-  const uniqueAdmissionTypes = useMemo(() => [...new Set(beds.map((b: Bed) => b.admissionType).filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b, 'es')), [beds]);
+  const uniqueAdmissionTypes = useMemo(() => {
+    const s = new Set(beds.map((b: Bed) => b.admissionType).filter(Boolean) as string[]);
+    // Vista amplia: ofrecé "Quirúrgica" aunque ningún paciente venga tipado Q del enrich, con tal
+    // de que haya al menos una cirugía viva (todos clínicos marcados por enfermería, p.ej.).
+    if (cirugiaBeds.size > 0) s.add(QUIRURGICA_LABEL);
+    return [...s].sort((a, b) => a.localeCompare(b, 'es'));
+  }, [beds, cirugiaBeds]);
 
   const toggleArea = (area: string) => {
     setAreaFilters((prev: Set<string>) => {
@@ -1096,7 +1140,13 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       result = result.filter(bed => { const dt = dietTypeOf(bed); return !!dt && dietTypeFilters.has(dt); });
     }
     if (admissionTypeFilters.size > 0) {
-      result = result.filter(bed => !!bed.admissionType && admissionTypeFilters.has(bed.admissionType));
+      // Vista amplia: si "Quirúrgica" está seleccionado, además de las camas tipadas Q por PROGAL
+      // entran las que tengan una cirugía activa (clínicos que enfermería marcó como quirúrgicos).
+      const incluyeCx = admissionTypeFilters.has(QUIRURGICA_LABEL);
+      result = result.filter(bed =>
+        (!!bed.admissionType && admissionTypeFilters.has(bed.admissionType))
+        || (incluyeCx && cirugiaBeds.has(bed.label))
+      );
     }
 
     return result;
@@ -2601,6 +2651,15 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                           → {bedTicketMap.get(bed.label)!.patientName}
                         </span>
                       )}
+                      {/* Cama reservada por una devolución de cirugía (no por un ticket): quién llega. */}
+                      {bed.status !== BedStatus.OCCUPIED && !bedTicketMap.get(bed.label) && bed.cirugia?.role === 'destino' && bed.cirugia.pacienteNombre && (
+                        <span
+                          className="text-[7px] md:text-[8px] font-bold italic truncate w-full text-center leading-none text-violet-600"
+                          title={`Llega de cirugía: ${bed.cirugia.pacienteNombre} (viene de ${formatBedName(bed.cirugia.camaOrigen)})`}
+                        >
+                          → {bed.cirugia.pacienteNombre}
+                        </span>
+                      )}
                     </div>
                   </button>
                 );
@@ -2710,10 +2769,11 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
 
                   {/* Cirugía (feature Cx): alta "Listo para cirugía" (Enfermería, cama ocupada) o
                       pill + "Recibida" cuando el paciente vuelve. Ver CirugiaBedBlock. */}
-                  {(onMarcarListo || onCirugiaRecibida) && (
+                  {(onMarcarListo || onCirugiaEnTraslado || onCirugiaRecibida) && (
                     <CirugiaBedBlock
                       bed={selectedBed}
                       onMarcarListo={onMarcarListo}
+                      onCirugiaEnTraslado={onCirugiaEnTraslado}
                       onCirugiaRecibida={onCirugiaRecibida}
                       onDone={() => setSelectedBed(null)}
                     />

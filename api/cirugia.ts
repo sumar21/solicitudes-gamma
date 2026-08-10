@@ -21,15 +21,20 @@ import { getSupabaseAdmin } from './supabase-admin.js';
 const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 
 // Estados que ocupan el candado "una viva por cama" (índice parcial cirugia_viva_uidx).
-const VIVOS = ['LISTO_PARA_CIRUGIA', 'VAN_A_BUSCAR', 'EN_CIRUGIA', 'EN_DEVOLUCION'];
+const VIVOS = ['LISTO_PARA_CIRUGIA', 'VAN_A_BUSCAR', 'EN_TRASLADO', 'EN_CIRUGIA', 'EN_DEVOLUCION'];
 // Lo que se muestra en overlay + cola: las vivas + las que esperan que Admisión consolide en PROGAL.
 const EN_COLA = [...VIVOS, 'PENDIENTE_CONSOLIDACION'];
 
-// Máquina de estados: estado actual → acciones permitidas (== estado destino). CANCELADO desde
-// cualquier estado vivo; los terminales no tienen salida. Cualquier otra transición → 409.
+// Máquina de estados ESTRICTA: estado actual → acciones permitidas (== estado destino). Cada paso
+// existe y se registra (ver cirugia_eventos) para medir tiempos. CANCELADO desde cualquier estado
+// vivo; los terminales no tienen salida. Cualquier otra transición → 409.
+//   LISTO_PARA_CIRUGIA (Enfermería) → VAN_A_BUSCAR (Cirugía despacha camillero)
+//     → EN_TRASLADO (Enfermería: "se lo llevó el camillero" — entrega de custodia)
+//     → EN_CIRUGIA (Cirugía) → EN_DEVOLUCION (Cirugía elige destino) → RECIBIDA (Enfermería destino)
 const TRANSICIONES: Record<string, string[]> = {
   LISTO_PARA_CIRUGIA:      ['VAN_A_BUSCAR', 'CANCELADO'],
-  VAN_A_BUSCAR:            ['EN_CIRUGIA', 'CANCELADO'],
+  VAN_A_BUSCAR:            ['EN_TRASLADO', 'CANCELADO'],
+  EN_TRASLADO:             ['EN_CIRUGIA', 'CANCELADO'],
   EN_CIRUGIA:              ['EN_DEVOLUCION', 'CANCELADO'],
   EN_DEVOLUCION:           ['RECIBIDA', 'CANCELADO'],
   // RECIBIDA con cambio de cama NO cierra: el server la deja en PENDIENTE_CONSOLIDACION (ver el PATCH).
@@ -58,6 +63,30 @@ function rowToCirugia(r: any) {
     createdAt:          String(r.created_at ?? ''),
     updatedAt:          String(r.updated_at ?? ''),
   };
+}
+
+/**
+ * Registra una transición en el detalle (public.cirugia_eventos) — append-only. `tipo` = la acción/
+ * estado alcanzado; `meta` lleva el contexto (camaOrigen, camaDestino, motivo, estadoResultante).
+ * Best-effort a propósito: la fuente de verdad es el estado en cirugia_traslados. Si el log falla, se
+ * registra el error pero NO se rompe la transición (no bloqueamos el flujo clínico por un insert de
+ * auditoría). Puede dejar un hueco en las métricas de tiempo — es el trade-off aceptado.
+ */
+async function logEvento(supa: any, cirugiaId: string, tipo: string, body: any, meta?: Record<string, unknown>) {
+  try {
+    const { error } = await supa.from('cirugia_eventos').insert({
+      cirugia_id: String(cirugiaId),
+      entorno:    ENTORNO,
+      tipo:       String(tipo),
+      usuario:    body?.userName != null && body.userName !== '' ? String(body.userName) : null,
+      usuario_id: body?.userId != null && body.userId !== '' ? String(body.userId) : null,
+      meta:       meta ?? null,
+      version:    String(body?.version ?? ''),
+    });
+    if (error) console.error('[cirugia] logEvento failed:', error.message, tipo, cirugiaId);
+  } catch (e: any) {
+    console.error('[cirugia] logEvento error:', e?.message ?? e, tipo, cirugiaId);
+  }
 }
 
 async function handler(req: any, res: any) {
@@ -157,6 +186,11 @@ async function handler(req: any, res: any) {
         return res.status(500).json({ error: 'Failed to create cirugia' });
       }
 
+      // Detalle: primer evento del circuito (solo en alta genuina — los 200 idempotentes de arriba
+      // son reintentos y NO deben duplicar el evento LISTO).
+      await logEvento(supa, String(created.id), 'LISTO_PARA_CIRUGIA', req.body, {
+        camaOrigen: String(camaOrigen), tipo: tipo != null ? String(tipo) : null,
+      });
       console.log(`[cirugia] LISTO_PARA_CIRUGIA en "${camaOrigen}" por ${userName ?? userId}`);
       return res.status(200).json({ ok: true, id: String(created.id) });
     } catch (err: any) {
@@ -171,7 +205,7 @@ async function handler(req: any, res: any) {
     if (!String(id ?? '').trim()) return res.status(400).json({ error: 'id is required' });
 
     const act = String(action ?? '');
-    const ACCIONES = ['VAN_A_BUSCAR', 'EN_CIRUGIA', 'EN_DEVOLUCION', 'RECIBIDA', 'CONSOLIDADO', 'CANCELADO'];
+    const ACCIONES = ['VAN_A_BUSCAR', 'EN_TRASLADO', 'EN_CIRUGIA', 'EN_DEVOLUCION', 'RECIBIDA', 'CONSOLIDADO', 'CANCELADO'];
     if (!ACCIONES.includes(act)) return res.status(400).json({ error: `action must be one of: ${ACCIONES.join(', ')}` });
     if (act === 'CANCELADO' && !String(motivoCancelacion ?? '').trim()) {
       return res.status(400).json({ error: 'motivoCancelacion is required for CANCELADO' });
@@ -222,6 +256,13 @@ async function handler(req: any, res: any) {
 
       const { error } = await supa.from('cirugia_traslados').update(fields).eq('id', String(id)).eq('entorno', ENTORNO);
       if (error) { console.error('[cirugia] PATCH failed:', error.message, act); return res.status(500).json({ error: 'Failed to update cirugia' }); }
+
+      // Detalle: un evento por transición. `tipo` = la acción (el click), `estadoResultante` = el
+      // estado real que quedó (RECIBIDA con cambio de cama termina en PENDIENTE_CONSOLIDACION).
+      const meta: Record<string, unknown> = { camaOrigen: String(cur.cama_origen), estadoResultante: fields.estado };
+      if (fields.cama_destino) meta.camaDestino = fields.cama_destino;
+      if (fields.motivo_cancelacion) meta.motivo = fields.motivo_cancelacion;
+      await logEvento(supa, String(id), act, req.body, meta);
 
       console.log(`[cirugia] ${cur.estado} → ${act} (id=${id}) por ${userName ?? userId}`);
       return res.status(200).json({ ok: true });
