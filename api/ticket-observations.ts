@@ -52,7 +52,7 @@ async function handler(req: any, res: any) {
     // ── POST ─────────────────────────────────────────────────────────────────
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-    const { ticketId, status, texto, usuario, usuarioId } = req.body ?? {};
+    const { ticketId, status, texto, usuario, usuarioId, operador } = req.body ?? {};
     const cleanText = String(texto ?? '').trim();
     if (!ticketId || !cleanText) return res.status(400).json({ error: 'ticketId y texto requeridos' });
 
@@ -64,6 +64,7 @@ async function handler(req: any, res: any) {
       texto:         cleanText.slice(0, MAX_TEXT),
       usuario:       usuario != null && usuario !== '' ? String(usuario) : null,
       usuario_id:    Number.isFinite(idNum) && usuarioId != null && usuarioId !== '' ? idNum : null,
+      operador:      operador != null && operador !== '' ? String(operador) : null,
       version:       String(req.body?.version ?? ''),
     }).select('id').single();
     if (error) throw new Error(`Supabase POST failed: ${error.message}`);

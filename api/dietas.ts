@@ -190,7 +190,7 @@ async function handler(req: any, res: any) {
   //   silencio el acompañante de otro. Un INSERT deja dos filas visibles y borrables).
   if (req.method === 'POST') {
     const { bedLabel, bedCode, roomCode, area, patientName, patientCode,
-            comida, tipo, detalle, observaciones, userId, userName,
+            comida, tipo, detalle, observaciones, userId, userName, operador,
             comensal, spItemId: reqItemId, eventOrigin, eventNumber } = req.body ?? {};
     if (!bedLabel) return res.status(400).json({ error: 'bedLabel is required' });
     const comidaVal = COMIDAS.includes(String(comida)) ? String(comida) : '';
@@ -353,6 +353,7 @@ async function handler(req: any, res: any) {
         comida: comidaVal, tipo: tipoVal, detalle: det, observaciones: obs,
         status: ST_PENDIENTE, // nace pendiente de entrega
         nutricionista_nombre: String(userName ?? ''), nutricionista_id: nutriId,
+        operador: operador != null ? String(operador) : null,
         fecha_carga: nowIso,
         comensal: comensalVal, orden_comensal: ordenVal,
         version: String(req.body?.version ?? ''),

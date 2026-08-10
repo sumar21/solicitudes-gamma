@@ -81,7 +81,7 @@ async function handler(req: any, res: any) {
 
   // ── POST — marcar limpia (upsert por cama + entorno) ──────────────────────
   if (req.method === 'POST') {
-    const { bedLabel, bedCode, roomCode, area, userId, userName, closed, reason } = req.body ?? {};
+    const { bedLabel, bedCode, roomCode, area, userId, userName, operador, closed, reason } = req.body ?? {};
     if (!bedLabel) return res.status(400).json({ error: 'bedLabel is required' });
     const nowIso = new Date().toISOString();
     const naceCerrada = closed === true;
@@ -116,6 +116,7 @@ async function handler(req: any, res: any) {
           habitacion: String(roomCode ?? ''), area: String(area ?? ''),
           status: 'Inactivo', motivo_cierre: motivoCierre,
           azafata_id: String(userId ?? ''), azafata_nombre: String(userName ?? ''),
+          operador: operador != null ? String(operador) : null,
           fecha_limpieza: nowIso, fecha_cierre: nowIso,
           version: String(req.body?.version ?? ''),
         }).select('id').single();
@@ -124,7 +125,7 @@ async function handler(req: any, res: any) {
       }
 
       // Upsert de la ACTIVA: si ya hay una para esta cama+entorno → refrescar; si no → crear.
-      const refresh = { azafata_id: String(userId ?? ''), azafata_nombre: String(userName ?? ''), fecha_limpieza: nowIso, version: String(req.body?.version ?? '') };
+      const refresh = { azafata_id: String(userId ?? ''), azafata_nombre: String(userName ?? ''), operador: operador != null ? String(operador) : null, fecha_limpieza: nowIso, version: String(req.body?.version ?? '') };
       const { data: existing } = await supa.from('limpiezas').select('id')
         .eq('entorno', ENTORNO).eq('cama_label', String(bedLabel)).eq('status', 'Activo').limit(1);
       if (existing?.length) {

@@ -678,6 +678,9 @@ export const useHospitalState = () => {
     setOperadorState(null);
     localStorage.removeItem(OPERADOR_KEY);
   }, []);
+  // Responsable de la operación para la columna `operador`: el operador de sesión (cuenta
+  // compartida) o, si el rol no requiere identificación, el nombre de la cuenta. Se manda en cada write.
+  const getOperador = useCallback(() => operadorRef.current || currentUserRef.current?.name || '', []);
 
   // Solapa activa dentro de Operativa. Vive ACÁ y no en RequestsView porque es destino de
   // navegación: al tocar el toast de un ticket, App.tsx hace setCurrentView('REQUESTS'), y si el
@@ -1035,7 +1038,7 @@ export const useHospitalState = () => {
         method: 'POST',
         body: JSON.stringify({
           bedLabel: bed.label, bedCode: bed.bedCode ?? '', roomCode: bed.roomCode ?? '',
-          area: bed.area ?? '', userId: u?.id ?? '', userName: u?.name ?? '',
+          area: bed.area ?? '', userId: u?.id ?? '', userName: u?.name ?? '', operador: getOperador(),
           version: APP_VERSION,
         }),
       });
@@ -1106,7 +1109,7 @@ export const useHospitalState = () => {
         body: JSON.stringify({
           bedLabel: bed.label, bedCode: bed.bedCode ?? '', roomCode: bed.roomCode ?? '', area: bed.area ?? '',
           patientCode: bed.patientCode ?? '', patientName: bed.patientName ?? '',
-          userId: u?.id ?? '', userName: u?.name ?? '', version: APP_VERSION,
+          userId: u?.id ?? '', userName: u?.name ?? '', operador: getOperador(), version: APP_VERSION,
         }),
       });
       if (r.ok) {
@@ -1136,7 +1139,7 @@ export const useHospitalState = () => {
     try {
       await authFetch('/api/limpiezas-rutina', {
         method: 'PATCH',
-        body: JSON.stringify({ id: info?.id || undefined, bedLabel: bed.label, action: 'FINALIZAR', userId: u?.id ?? '', userName: u?.name ?? '', version: APP_VERSION }),
+        body: JSON.stringify({ id: info?.id || undefined, bedLabel: bed.label, action: 'FINALIZAR', userId: u?.id ?? '', userName: u?.name ?? '', operador: getOperador(), version: APP_VERSION }),
       });
     } catch { /* best-effort; el próximo poll/realtime reconcilia */ }
   }, [authFetch, currentUser, routineCleanings]);
@@ -1158,7 +1161,7 @@ export const useHospitalState = () => {
         bedCode: dest?.bedCode ?? ticket.destinationBedCode ?? '',
         roomCode: dest?.roomCode ?? '',
         area: dest?.area ?? '',
-        userId: currentUser?.id ?? '', userName: currentUser?.name ?? '',
+        userId: currentUser?.id ?? '', userName: currentUser?.name ?? '', operador: getOperador(),
       }),
     }).catch(() => { /* best-effort */ });
   }, [authFetch, currentUser, rawBeds]);
@@ -1236,7 +1239,7 @@ export const useHospitalState = () => {
           bedLabel: bed.label, bedCode: bed.bedCode ?? '', roomCode: bed.roomCode ?? '', area: bed.area ?? '',
           patientName: bed.patientName ?? '', patientCode: bed.patientCode ?? '',
           comida: spFromMealSlot(comida), tipo, detalle, observaciones,
-          userId: u?.id ?? '', userName: u?.name ?? '',
+          userId: u?.id ?? '', userName: u?.name ?? '', operador: getOperador(),
           // Evento del paciente: el backstop "sin dieta" resuelve la fila de 12.EnrichCamas
           // por EventKey (eventOrigin-eventNumber), IGUAL que la UI (api/beds.ts). Sin esto
           // el server elegía "la más reciente por UpdatedAt" y podía rechazar (409) una carga
@@ -1345,7 +1348,7 @@ export const useHospitalState = () => {
           patientName: bed.patientName ?? '', patientCode: bed.patientCode ?? '',
           comida: spFromMealSlot(comida), comensal: 'ACOMPANANTE', spItemId: data.spItemId, version: APP_VERSION,
           tipo: data.tipo, detalle: data.detalle, observaciones: data.observaciones,
-          userId: u?.id ?? '', userName: u?.name ?? '',
+          userId: u?.id ?? '', userName: u?.name ?? '', operador: getOperador(),
         }),
       });
       if (!r.ok) {
@@ -1485,7 +1488,7 @@ export const useHospitalState = () => {
         method: 'POST',
         body: JSON.stringify({
           idUnivoco, pacienteCodigo, pacienteNombre, camaOrigen, area, tipo,
-          userId: u?.id ?? '', userName: u?.name ?? '', version: APP_VERSION,
+          userId: u?.id ?? '', userName: u?.name ?? '', operador: getOperador(), version: APP_VERSION,
         }),
       });
       if (!r.ok) {
@@ -1549,7 +1552,7 @@ export const useHospitalState = () => {
           id, action,
           camaDestino:       extra?.camaDestino,
           motivoCancelacion: extra?.motivoCancelacion,
-          userId: u?.id ?? '', userName: u?.name ?? '', version: APP_VERSION,
+          userId: u?.id ?? '', userName: u?.name ?? '', operador: getOperador(), version: APP_VERSION,
         }),
       });
       if (!r.ok) {
@@ -2048,7 +2051,7 @@ export const useHospitalState = () => {
       const destinationAreaName = ticket.destination ? rawBeds.find((b: Bed) => b.label === ticket.destination)?.area : undefined;
       const r = await authFetch('/api/tickets', {
         method: 'POST',
-        body: JSON.stringify({ ...ticket, originAreaName, destinationAreaName, version: APP_VERSION }),
+        body: JSON.stringify({ ...ticket, originAreaName, destinationAreaName, operador: getOperador(), version: APP_VERSION }),
       });
       if (r.status === 409) {
         const data = await r.json().catch(() => ({} as any));
@@ -2079,7 +2082,7 @@ export const useHospitalState = () => {
       } : {};
       const r = await authFetch('/api/tickets', {
         method: 'PATCH',
-        body:   JSON.stringify({ spItemId, ...context, ...updates, version: APP_VERSION }),
+        body:   JSON.stringify({ spItemId, ...context, ...updates, operador: getOperador(), version: APP_VERSION }),
       });
       if (r.status === 409) {
         const data = await r.json().catch(() => ({} as any));
@@ -2136,6 +2139,7 @@ export const useHospitalState = () => {
           version: APP_VERSION,
           usuario: currentUser?.name ?? '',
           usuarioId: currentUser?.id ?? '',
+          operador: getOperador(),
         }),
       });
     } catch { /* non-blocking */ }
@@ -2154,6 +2158,7 @@ export const useHospitalState = () => {
           version: APP_VERSION,
           usuario: currentUser?.name ?? '',
           usuarioId: currentUser?.id ?? '',
+          operador: getOperador(),
         }),
       });
       return r.ok;

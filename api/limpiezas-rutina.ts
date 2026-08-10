@@ -104,7 +104,7 @@ async function handler(req: any, res: any) {
 
   // ── POST — INICIAR (nace INICIADA; idempotente por cama) ──────────────────
   if (req.method === 'POST') {
-    const { bedLabel, bedCode, roomCode, area, patientCode, patientName, userId, userName } = req.body ?? {};
+    const { bedLabel, bedCode, roomCode, area, patientCode, patientName, userId, userName, operador } = req.body ?? {};
     if (!String(bedLabel ?? '').trim()) return res.status(400).json({ error: 'bedLabel is required' });
 
     try {
@@ -119,6 +119,7 @@ async function handler(req: any, res: any) {
         estado: 'INICIADA',
         iniciada_por_id: userId != null ? String(userId) : null,
         iniciada_por: userName != null ? String(userName) : null,
+        operador: operador != null ? String(operador) : null,
         version: String(req.body?.version ?? ''),
       }).select('*').single();
 

@@ -80,6 +80,7 @@ async function logEvento(supa: any, cirugiaId: string, tipo: string, body: any, 
       tipo:       String(tipo),
       usuario:    body?.userName != null && body.userName !== '' ? String(body.userName) : null,
       usuario_id: body?.userId != null && body.userId !== '' ? String(body.userId) : null,
+      operador:   body?.operador != null && body.operador !== '' ? String(body.operador) : null,
       meta:       meta ?? null,
       version:    String(body?.version ?? ''),
     });
@@ -166,6 +167,7 @@ async function handler(req: any, res: any) {
         estado: 'LISTO_PARA_CIRUGIA',
         created_by_id: userId != null ? String(userId) : null,
         last_actor_id: userId != null ? String(userId) : null,
+        operador: req.body?.operador != null && req.body.operador !== '' ? String(req.body.operador) : null,
         version: String(req.body?.version ?? ''),
       }).select('id').single();
 

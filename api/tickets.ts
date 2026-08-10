@@ -160,6 +160,8 @@ async function handler(req: any, res: any) {
       const row = ticketToRow(req.body ?? {});
       row.entorno = ENTORNO;
       row.version = String(req.body?.version ?? ''); // versión del build del cliente que creó el ticket
+      // Responsable (operador de sesión / cuenta compartida) que creó el traslado.
+      (row as any).operador = req.body?.operador != null && req.body.operador !== '' ? String(req.body.operador) : null;
       // Nombres de área reales (para que el webhook filtre por piso). No están en Ticket.
       if (originAreaName !== undefined) row.cama_origen_area = originAreaName ? String(originAreaName) : null;
       if (destinationAreaName !== undefined) row.cama_destino_area = destinationAreaName ? String(destinationAreaName) : null;
