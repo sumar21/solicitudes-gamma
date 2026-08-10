@@ -15,7 +15,7 @@ interface RoleManagementViewProps {
   // Refresca la sesión en caliente si el admin edita su propio rol (no-op si es otro rol).
   onSessionRoleUpdate?: (role: {
     name: string; modules: RoleModule[]; permissions: Permission[];
-    filterByFloors: boolean; bypassLocationCheck: boolean;
+    filterByFloors: boolean; bypassLocationCheck: boolean; requiresIdentification: boolean;
   }) => void;
 }
 
@@ -26,6 +26,7 @@ interface SPRole {
   permissions: Permission[];
   filterByFloors: boolean;
   bypassLocationCheck: boolean;
+  requiresIdentification: boolean;
   status: string;
 }
 
@@ -135,9 +136,10 @@ interface FormState {
   selectedPermissions: Set<Permission>;
   filterByFloors: boolean;
   bypassLocationCheck: boolean;
+  requiresIdentification: boolean;
 }
 
-const emptyForm: FormState = { name: '', selectedModules: new Set(), selectedPermissions: new Set(), filterByFloors: false, bypassLocationCheck: false };
+const emptyForm: FormState = { name: '', selectedModules: new Set(), selectedPermissions: new Set(), filterByFloors: false, bypassLocationCheck: false, requiresIdentification: false };
 
 export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentUser, onSessionRoleUpdate }) => {
   const [roles, setRoles] = useState<SPRole[]>([]);
@@ -213,6 +215,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
       selectedPermissions: new Set(perms),
       filterByFloors: !!role.filterByFloors,
       bypassLocationCheck: !!role.bypassLocationCheck,
+      requiresIdentification: !!role.requiresIdentification,
     });
     setOriginalPermissions(perms);
     setExpandedGroups(new Set());
@@ -271,6 +274,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
         permissions: permsArr,
         filterByFloors: form.filterByFloors,
         bypassLocationCheck: form.bypassLocationCheck,
+        requiresIdentification: form.requiresIdentification,
       };
       if (editingRole) {
         const r = await authFetch('/api/roles', {
@@ -288,6 +292,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
             permissions: permsArr,
             filterByFloors: form.filterByFloors,
             bypassLocationCheck: form.bypassLocationCheck,
+            requiresIdentification: form.requiresIdentification,
           });
         } else {
           showToast('error', 'Error al actualizar rol');
@@ -655,6 +660,34 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                        key={String(opt.val)}
                        type="button"
                        onClick={() => setForm(prev => ({ ...prev, bypassLocationCheck: opt.val }))}
+                       className={cn(
+                         "p-3 rounded-xl border text-left transition-all",
+                         selected ? "bg-emerald-50 border-emerald-300" : "bg-white border-slate-200 hover:border-slate-300"
+                       )}
+                     >
+                       <div className={cn("text-sm font-black mb-0.5", selected ? "text-emerald-700" : "text-slate-700")}>{opt.label}</div>
+                       <div className="text-[9px] text-slate-500 leading-tight">{opt.sub}</div>
+                     </button>
+                   );
+                 })}
+              </div>
+            </div>
+
+            {/* Toggle Requiere identificación. Cuenta COMPARTIDA (ej. "Azafata Piso 5"): al entrar,
+                la persona real se identifica con su nombre y queda como responsable (operador) de
+                las transacciones; puede hacer "cambio de turno" sin desloguear. */}
+            <div className="grid gap-2">
+              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Requiere identificación del operador (cuenta compartida)</Label>
+              <div className="grid grid-cols-2 gap-2">
+                {[{ val: true, label: 'Sí', sub: 'Pide el nombre al entrar; queda como responsable' },
+                  { val: false, label: 'No', sub: 'Las operaciones van a nombre de la cuenta' }
+                 ].map(opt => {
+                   const selected = form.requiresIdentification === opt.val;
+                   return (
+                     <button
+                       key={String(opt.val)}
+                       type="button"
+                       onClick={() => setForm(prev => ({ ...prev, requiresIdentification: opt.val }))}
                        className={cn(
                          "p-3 rounded-xl border text-left transition-all",
                          selected ? "bg-emerald-50 border-emerald-300" : "bg-white border-slate-200 hover:border-slate-300"

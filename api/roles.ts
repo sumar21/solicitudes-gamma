@@ -25,6 +25,7 @@ interface RoleRow {
   permissions: string[];
   filter_by_floors: boolean;
   bypass_location_check: boolean;
+  requires_identification: boolean;
   status: string;
 }
 
@@ -37,6 +38,7 @@ function toApiRole(r: RoleRow) {
     permissions: Array.isArray(r.permissions) ? r.permissions : [],
     filterByFloors: Boolean(r.filter_by_floors),
     bypassLocationCheck: Boolean(r.bypass_location_check),
+    requiresIdentification: Boolean(r.requires_identification),
     status: String(r.status ?? ''),
   };
 }
@@ -66,7 +68,7 @@ async function handler(req: any, res: any) {
     try {
       const { data, error } = await supa
         .from('roles')
-        .select('id, name, modules, permissions, filter_by_floors, bypass_location_check, status')
+        .select('id, name, modules, permissions, filter_by_floors, bypass_location_check, requires_identification, status')
         .eq('status', 'Activo')
         .order('name');
       if (error) {
@@ -84,7 +86,7 @@ async function handler(req: any, res: any) {
 
   // ── POST ────────────────────────────────────────────────────────────────
   if (req.method === 'POST') {
-    const { name, access, permissions, filterByFloors, bypassLocationCheck } = req.body ?? {};
+    const { name, access, permissions, filterByFloors, bypassLocationCheck, requiresIdentification } = req.body ?? {};
     if (!name) return res.status(400).json({ error: 'name is required' });
 
     try {
@@ -96,6 +98,7 @@ async function handler(req: any, res: any) {
           permissions: Array.isArray(permissions) ? permissions.map(String) : [],
           filter_by_floors: !!filterByFloors,
           bypass_location_check: !!bypassLocationCheck,
+          requires_identification: !!requiresIdentification,
           status: 'Activo',
         })
         .select('id')
@@ -117,7 +120,7 @@ async function handler(req: any, res: any) {
 
   // ── PATCH ───────────────────────────────────────────────────────────────
   if (req.method === 'PATCH') {
-    const { spItemId, name, access, permissions, filterByFloors, bypassLocationCheck } = req.body ?? {};
+    const { spItemId, name, access, permissions, filterByFloors, bypassLocationCheck, requiresIdentification } = req.body ?? {};
     if (!spItemId) return res.status(400).json({ error: 'spItemId required' });
 
     const fields: Record<string, unknown> = {};
@@ -132,6 +135,7 @@ async function handler(req: any, res: any) {
     }
     if (filterByFloors !== undefined) fields.filter_by_floors = !!filterByFloors;
     if (bypassLocationCheck !== undefined) fields.bypass_location_check = !!bypassLocationCheck;
+    if (requiresIdentification !== undefined) fields.requires_identification = !!requiresIdentification;
 
     try {
       const { error } = await supa.from('roles').update(fields).eq('id', spItemId);

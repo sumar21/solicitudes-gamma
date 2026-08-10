@@ -149,6 +149,8 @@ export default async function handler(req: any, res: any) {
       filterByFloors: roleCfg?.filterByFloors ?? false,
       // Si el rol lo permite, el front saltea la validación de ubicación (IP/GPS).
       bypassLocationCheck: roleCfg?.bypassLocationCheck ?? false,
+      // Cuenta compartida: el front pide el nombre del operador al loguearse (identificación).
+      requiresIdentification: roleCfg?.requiresIdentification ?? false,
       // NombreRol_RT crudo, usado para reverse-lookup desde push-utils.
       roleName:       roleCfg?.name ?? perfilU,
     };

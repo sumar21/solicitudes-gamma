@@ -589,6 +589,7 @@ function timestampOfTicketEvent(t: Ticket): string {
 const WARNING_MINUTES     = 15;
 const TOKEN_KEY           = 'mediflow_token';
 const USER_KEY            = 'mediflow_user';
+const OPERADOR_KEY        = 'mediflow_operador'; // nombre del operador de sesión (cuentas compartidas)
 const GEO_KEY             = 'mediflow_geo';
 const GEO_CACHE_TTL       = 30 * 60_000; // 30 min — reuso de la última posición sin re-pedir permiso
 
@@ -659,6 +660,24 @@ export const useHospitalState = () => {
   // meter currentUser en las deps del efecto (evita reiniciar el interval en cada render).
   const currentUserRef = useRef(currentUser);
   currentUserRef.current = currentUser;
+
+  // Operador de sesión (cuentas compartidas): el nombre de la persona real, texto libre. Persiste
+  // en localStorage hasta el "cambio de turno". Todas las transacciones se registran a su nombre
+  // (Fase 2). `needsIdentification` bloquea la app hasta que se ingrese, si el rol lo exige.
+  const [operador, setOperadorState] = useState<string | null>(() => localStorage.getItem(OPERADOR_KEY));
+  const operadorRef = useRef(operador);
+  operadorRef.current = operador;
+  const setOperador = useCallback((name: string) => {
+    const n = String(name ?? '').trim();
+    if (!n) return;
+    setOperadorState(n);
+    localStorage.setItem(OPERADOR_KEY, n);
+  }, []);
+  // Cambio de turno: limpia el operador → la app vuelve a pedir el nombre (sin desloguear).
+  const cambioTurno = useCallback(() => {
+    setOperadorState(null);
+    localStorage.removeItem(OPERADOR_KEY);
+  }, []);
 
   // Solapa activa dentro de Operativa. Vive ACÁ y no en RequestsView porque es destino de
   // navegación: al tocar el toast de un ticket, App.tsx hace setCurrentView('REQUESTS'), y si el
@@ -1796,12 +1815,14 @@ export const useHospitalState = () => {
         JSON.stringify(prev.modules ?? []) === JSON.stringify(role.modules ?? []) &&
         JSON.stringify(prev.permissions ?? []) === JSON.stringify(role.permissions ?? []) &&
         (prev.filterByFloors ?? false) === !!role.filterByFloors &&
-        (prev.bypassLocationCheck ?? false) === !!role.bypassLocationCheck;
+        (prev.bypassLocationCheck ?? false) === !!role.bypassLocationCheck &&
+        (prev.requiresIdentification ?? false) === !!role.requiresIdentification;
       if (same) return false; // sin cambios → no re-render
       const updated = {
         ...prev,
         modules: role.modules, permissions: role.permissions,
         filterByFloors: !!role.filterByFloors, bypassLocationCheck: !!role.bypassLocationCheck,
+        requiresIdentification: !!role.requiresIdentification,
       };
       setCurrentUser(updated);
       localStorage.setItem(USER_KEY, JSON.stringify(updated));
@@ -2341,8 +2362,10 @@ export const useHospitalState = () => {
 
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
+    localStorage.removeItem(OPERADOR_KEY);
     setToken(null);
     setCurrentUser(null);
+    setOperadorState(null);
     setExpirySoon(false);
     setMinutesLeft(0);
   }, []);
@@ -2968,7 +2991,7 @@ export const useHospitalState = () => {
   // habilitado no aparece en el sidebar. No-op si el rol editado no es el del usuario actual.
   const refreshSessionRole = (role: {
     name: string; modules: RoleModule[]; permissions: Permission[];
-    filterByFloors: boolean; bypassLocationCheck: boolean;
+    filterByFloors: boolean; bypassLocationCheck: boolean; requiresIdentification: boolean;
   }) => {
     if (!currentUser) return;
     if ((currentUser.roleName ?? '').trim().toLowerCase() !== role.name.trim().toLowerCase()) return;
@@ -2976,6 +2999,7 @@ export const useHospitalState = () => {
       ...currentUser,
       modules: role.modules, permissions: role.permissions,
       filterByFloors: role.filterByFloors, bypassLocationCheck: role.bypassLocationCheck,
+      requiresIdentification: role.requiresIdentification,
     };
     setCurrentUser(updatedUser);
     localStorage.setItem(USER_KEY, JSON.stringify(updatedUser));
@@ -3326,7 +3350,7 @@ export const useHospitalState = () => {
 
   return {
     state: {
-      currentUser, currentView, activeRole, sortConfig, requestsSearchTerm,
+      currentUser, operador, currentView, activeRole, sortConfig, requestsSearchTerm,
       operativaSubview,
       notifications, filteredNotifications, bellNotifications, toasts, tickets,
       filteredTickets: filteredTickets.sorted,
@@ -3343,6 +3367,7 @@ export const useHospitalState = () => {
       setCurrentUser, setCurrentView, setActiveRole, setSortConfig, setRequestsSearchTerm,
       setLoginEmail, setLoginPass,
       handleLogin, handleLogout, enableNotifications,
+      setOperador, cambioTurno,
       handleCreateTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
       fetchBeds, enrichBed, fetchPatientTickets, refreshAll, fetchAllTickets,
       markBedClean, undoBedClean,

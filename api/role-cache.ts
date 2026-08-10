@@ -25,6 +25,9 @@ export interface RoleConfig {
   // Si está activo, los usuarios de este rol pueden entrar sin validación de
   // ubicación (IP/GPS). filter_by_floors / bypass_location_check son boolean nativos en Supabase.
   bypassLocationCheck: boolean;
+  // Cuenta compartida: al loguearse la persona real se identifica (nombre) y ese nombre queda
+  // como "operador" de las transacciones hasta el "cambio de turno".
+  requiresIdentification: boolean;
 }
 
 const TTL_MS = 5 * 60 * 1000;
@@ -41,7 +44,7 @@ async function fetchRolesFromDB(): Promise<RoleConfig[] | null> {
     const supa = getSupabaseAdmin(); // lanza si faltan las envs → lo atrapa el catch → null
     const { data, error } = await supa
       .from('roles')
-      .select('id, name, modules, permissions, filter_by_floors, bypass_location_check')
+      .select('id, name, modules, permissions, filter_by_floors, bypass_location_check, requires_identification')
       .eq('status', 'Activo')
       .limit(200);
     if (error) {
@@ -58,6 +61,7 @@ async function fetchRolesFromDB(): Promise<RoleConfig[] | null> {
       permissions: Array.isArray(r.permissions) ? r.permissions.map(String) : [],
       filterByFloors: Boolean(r.filter_by_floors),
       bypassLocationCheck: Boolean(r.bypass_location_check),
+      requiresIdentification: Boolean(r.requires_identification),
     }));
   } catch (err: any) {
     // getSupabaseAdmin lanzó (envs faltantes) o el cliente rechazó: FALLO, no "sin roles".

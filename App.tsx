@@ -59,6 +59,48 @@ const SprayCanIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+// Gate de identificación para CUENTAS COMPARTIDAS: cuando el rol lo exige y no hay operador de
+// sesión, se bloquea la app con "¿Quién sos?" (mismo look que el login). El nombre (texto libre)
+// queda como responsable de las transacciones hasta el "cambio de turno".
+const IdentificationGate: React.FC<{
+  accountName: string;
+  onConfirm: (name: string) => void;
+  onLogout: () => void;
+}> = ({ accountName, onConfirm, onLogout }) => {
+  const [name, setName] = useState('');
+  const submit = (e: React.FormEvent) => { e.preventDefault(); const n = name.trim(); if (n) onConfirm(n); };
+  return (
+    <div className="h-screen w-full flex flex-col items-center bg-slate-50 overflow-auto">
+      <div className="w-full flex flex-col items-center pt-12 pb-28 md:pt-16 md:pb-32 px-4" style={{ background: 'linear-gradient(180deg, #022C22 0%, #034334 60%, #04604b 100%)' }}>
+        <GammaLogo size={64} className="text-white mb-5" />
+        <h1 className="text-3xl md:text-4xl font-black text-white tracking-tight">¿Quién sos?</h1>
+        <p className="text-emerald-300/80 text-sm font-medium mt-1">Identificate para registrar tus operaciones</p>
+      </div>
+      <Card className="w-full max-w-md -mt-20 mx-4 p-6 md:p-10 shadow-xl rounded-3xl border-none bg-white relative z-10">
+        <div className="flex flex-col items-center mb-6">
+          <div className="w-14 h-14 rounded-full bg-emerald-50 border-2 border-emerald-100 flex items-center justify-center -mt-12 md:-mt-14 mb-4 shadow-sm">
+            <User className="w-6 h-6 text-emerald-700" />
+          </div>
+          <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Cuenta compartida</p>
+          <h2 className="text-lg font-bold text-slate-900 tracking-tight">{accountName}</h2>
+        </div>
+        <form onSubmit={submit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest ml-1">Tu nombre</Label>
+            <Input autoFocus type="text" placeholder="Nombre y apellido" value={name} onChange={e => setName(e.target.value)}
+              className="h-12 rounded-xl border-emerald-200 focus:border-emerald-500 focus:ring-emerald-500/20" />
+            <p className="text-[11px] text-slate-400 ml-1">Todas tus operaciones van a quedar registradas a tu nombre hasta el cambio de turno.</p>
+          </div>
+          <Button type="submit" disabled={!name.trim()} className="w-full h-12 rounded-xl text-white font-bold disabled:opacity-40" style={{ backgroundColor: '#022C22' }}>
+            Continuar
+          </Button>
+        </form>
+        <button type="button" onClick={onLogout} className="w-full mt-4 text-xs font-bold text-slate-400 hover:text-slate-600">Cerrar sesión</button>
+      </Card>
+    </div>
+  );
+};
+
 export default function App() {
   const { state, actions } = useHospitalState();
 
@@ -361,6 +403,12 @@ export default function App() {
     );
   }
 
+  // Cuenta compartida: si el rol requiere identificación y aún no hay operador de sesión, se
+  // bloquea con el gate "¿Quién sos?". El "cambio de turno" limpia el operador → reaparece.
+  if (state.currentUser?.requiresIdentification && !state.operador) {
+    return <IdentificationGate accountName={state.currentUser.name} onConfirm={actions.setOperador} onLogout={actions.handleLogout} />;
+  }
+
   return (
     <div className="h-screen h-[100dvh] w-full flex flex-col md:flex-row bg-slate-50 overflow-hidden font-sans text-slate-900">
       {/* Toast notifications */}
@@ -447,6 +495,11 @@ export default function App() {
           <Button variant="ghost" disabled={syncingRoles} className="w-full justify-start gap-3 text-white/70 hover:bg-white/10 hover:text-white" onClick={handleSyncRoles}>
             <RefreshCw className={cn("w-4 h-4", syncingRoles && "animate-spin")} /> Actualizar accesos
           </Button>
+          {state.currentUser?.requiresIdentification && (
+            <Button variant="ghost" className="w-full justify-start gap-3 text-emerald-300 hover:bg-emerald-950/20 hover:text-emerald-200" onClick={actions.cambioTurno} title="Cambiar el nombre del operador de esta sesión">
+              <User className="w-4 h-4" /> Cambio de turno{state.operador ? ` · ${state.operador}` : ''}
+            </Button>
+          )}
           <Button variant="ghost" className="w-full justify-start gap-3 text-red-400 hover:text-red-300 hover:bg-red-950/20" onClick={actions.handleLogout}><LogOut className="w-4 h-4" /> Salir</Button>
           <div className="px-3 pt-1 text-[9px] font-mono text-white/25 tracking-wider select-all" title="Versión del cliente">{APP_VERSION}</div>
         </div>
@@ -561,6 +614,9 @@ export default function App() {
               <Button variant="ghost" disabled={syncingRoles} className="w-full justify-start gap-3 text-white/70 hover:bg-white/10 hover:text-white" onClick={handleSyncRoles}>
                 <RefreshCw className={cn("w-4 h-4", syncingRoles && "animate-spin")} /> Actualizar accesos
               </Button>
+              {state.currentUser?.requiresIdentification && (
+                <Button variant="ghost" className="w-full justify-start gap-3 text-emerald-300 hover:bg-emerald-950/20 hover:text-emerald-200" onClick={() => { actions.cambioTurno(); setIsMobileMenuOpen(false); }}><User className="w-4 h-4" /> Cambio de turno{state.operador ? ` · ${state.operador}` : ''}</Button>
+              )}
               <Button variant="ghost" className="w-full justify-start gap-3 text-red-400 hover:text-red-300 hover:bg-red-950/20" onClick={() => { actions.handleLogout(); setIsMobileMenuOpen(false); }}><LogOut className="w-4 h-4" /> Salir</Button>
               <div className="px-3 pt-1 text-[9px] font-mono text-white/25 tracking-wider select-all" title="Versión del cliente">{APP_VERSION}</div>
             </div>
@@ -612,7 +668,9 @@ export default function App() {
               )}
               <div className="hidden sm:flex flex-col items-end">
                 <span className="text-xs font-bold text-slate-900 leading-none">{state.currentUser.name}</span>
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1">Sede {state.currentUser.sede}</span>
+                {state.currentUser?.requiresIdentification && state.operador
+                  ? <span className="text-[9px] font-bold text-emerald-600 uppercase tracking-widest mt-1">Op: {state.operador}</span>
+                  : <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1">Sede {state.currentUser.sede}</span>}
               </div>
             </div>
           </div>

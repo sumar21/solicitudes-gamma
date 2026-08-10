@@ -35,6 +35,7 @@ async function handler(req: any, res: any) {
       permissions: cfg.permissions,
       filterByFloors: cfg.filterByFloors,
       bypassLocationCheck: cfg.bypassLocationCheck,
+      requiresIdentification: cfg.requiresIdentification,
     },
   });
 }

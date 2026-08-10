@@ -432,6 +432,10 @@ export interface User {
   // Si el rol lo permite, se saltea la validación de ubicación (IP/GPS) en login y
   // en la revalidación periódica. BypassUbicacion_RT en 99.ABMRoles_Traslados.
   bypassLocationCheck?: boolean;
+  // Cuenta COMPARTIDA: al loguearse la persona real se identifica con su nombre (texto libre),
+  // que queda vigente en la sesión como "operador" y se registra en las transacciones. Puede
+  // hacer "cambio de turno" sin desloguear. Flag del rol (requires_identification).
+  requiresIdentification?: boolean;
   // Nombre original del rol en SP (NombreRol_RT). Usado para enlazar la suscripción
   // push con la config del rol en el server (push-utils.getRoleByName).
   roleName?: string;
