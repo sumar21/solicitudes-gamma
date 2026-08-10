@@ -21,6 +21,10 @@
     {
       "path": "/api/cron-cleanup-notifs",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron-trigger-testing",
+      "schedule": "5,20,35,50 * * * *"
     }
   ],
   "functions": {
