@@ -1381,12 +1381,15 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     const rowH = 6;
     const tableWidth = colWidths.reduce((s, w) => s + w, 0);
 
-    // X start positions for each column
-    const colX: number[] = [];
+    // X start positions. Orden VISUAL: "Evento" (índice lógico 11) se dibuja justo DESPUÉS de
+    // "Cama" (índice 1), sin renumerar el resto del código de dibujo — colX[i] queda en la
+    // posición visual de la columna i, así el header y las celdas caen solos donde corresponde.
+    const visualOrder = [0, 1, 11, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14];
+    const colX: number[] = new Array(colWidths.length);
     let cx = margin;
-    for (const w of colWidths) {
-      colX.push(cx);
-      cx += w;
+    for (const li of visualOrder) {
+      colX[li] = cx;
+      cx += colWidths[li];
     }
 
     let curY = 26;
@@ -1660,9 +1663,12 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     const colHeaders = ['Paciente', 'Hab.', 'Cama', 'Sector', 'Estado', 'DNI', 'Edad', 'Sexo', 'Tipo', 'Ingreso', 'Días', 'Cirugía', 'Evento', 'Profesional', 'Financiador', 'Diagnóstico'];
     const rowH = 6;
     const tableWidth = colWidths.reduce((s, w) => s + w, 0);
-    const colX: number[] = [];
+    // Orden VISUAL: "Evento" (índice lógico 12) se dibuja justo DESPUÉS de "Cama" (índice 2), sin
+    // renumerar el código de dibujo — colX[i] queda en la posición visual de la columna i.
+    const visualOrder = [0, 1, 2, 12, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15];
+    const colX: number[] = new Array(colWidths.length);
     let cx = margin;
-    for (const w of colWidths) { colX.push(cx); cx += w; }
+    for (const li of visualOrder) { colX[li] = cx; cx += colWidths[li]; }
 
     let curY = 26;
 
