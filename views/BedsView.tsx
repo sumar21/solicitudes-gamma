@@ -2644,6 +2644,19 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                         <span>Cx</span>
                       </div>
                     )}
+                    {/* Limpieza de RUTINA en curso: badge celeste (spray). Esquina inf. izq.; si hay
+                        multi-aislamiento (que también va ahí) se corre a la derecha para no pisarse. */}
+                    {bed.routineCleaningActive && (
+                      <div
+                        className={cn(
+                          'absolute bottom-0.5 w-3 h-3 md:w-3.5 md:h-3.5 rounded-full bg-sky-500 ring-1 ring-white shadow-sm flex items-center justify-center z-10',
+                          isMultiIso ? 'left-5' : 'left-0.5',
+                        )}
+                        title={`Limpieza de rutina en curso${bed.routineCleaningBy ? ` · ${bed.routineCleaningBy}` : ''}`}
+                      >
+                        <SprayCan className="w-2 h-2 md:w-2.5 md:h-2.5 text-white" strokeWidth={2.5} />
+                      </div>
+                    )}
                     {((canViewComanda && hasAnyMealLoad(bed.meals)) || hasLiveFasting(bed.fasting) || suggestedSex) && (
                       <div className="absolute bottom-0.5 right-0.5 flex items-center gap-0.5">
                         {/* Sexo SUGERIDO para una cama libre, derivado de quién ocupa el resto de
