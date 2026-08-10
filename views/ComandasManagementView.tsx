@@ -457,14 +457,16 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
   const buildExportTable = () => {
     const showDate = tab === 'historico';
     const showEntrega = showDate || vistaHoy === 'entregadas';
-    const head: string[] = ['Paciente', 'Ubicación', 'Turno', 'Comensal', 'Tipo', 'Comanda', 'Registró', ...(showDate ? ['Fecha y hora'] : []), ...(showEntrega ? ['Entrega'] : [])];
+    const head: string[] = ['Paciente', 'Ubicación', 'Turno', 'Comensal', 'Tipo', 'Comanda', 'Observaciones', 'Registró', ...(showDate ? ['Fecha y hora'] : []), ...(showEntrega ? ['Entrega'] : [])];
+    // El reporte SIEMPRE sale en orden de despacho (piso → habitación → turno), aunque el histórico
+    // en pantalla vaya por paciente: se pidió que el papel/Excel vaya por piso y habitación.
     // Ubicación en una sola columna (la cama ya dice el piso); "Entrega" = hora en que se marcó
     // entregada ('—' si quedó pendiente; anuladas muestran la hora de anulación con el estado).
-    const body: string[][] = filtered.map(r => [
+    const body: string[][] = [...filtered].sort(comandaDispatchCompare).map(r => [
       r.patientName,
       formatBedName(r.bedLabel) + (sectorEsRedundante(r.area, r.bedLabel) ? '' : ` · ${areaLabel(r.area)}`),
       r.comida, r.comensal, comandaTipoPill(r.tipo).label,
-      r.detalle || '—', r.by || '—',
+      r.detalle || '—', r.observaciones || '—', r.by || '—',
       ...(showDate ? [fmtWhen(r.at)] : []),
       ...(showEntrega ? [
         r.status === COMANDA_STATUS.ANULADA
@@ -495,9 +497,10 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
     doc.text(`${filtered.length} comanda(s)${filtrando ? ` · filtro: "${searchFilter.trim()}"` : ''} · generado ${new Date().toLocaleString('es-AR')}`, 14, 21);
     doc.setTextColor(0);
 
-    // Datos derivados por fila (los usan el cuerpo de la tabla y los hooks de dibujo). El orden es
-    // el de `filtered`, que ya viene en orden de despacho (piso → cama → turno → comensal).
-    const rows = filtered.map(r => {
+    // Datos derivados por fila (los usan el cuerpo de la tabla y los hooks de dibujo). Se ordena
+    // SIEMPRE por despacho (piso → habitación → turno), aunque el histórico en pantalla vaya por
+    // paciente — el reporte se pide por piso y habitación.
+    const rows = [...filtered].sort(comandaDispatchCompare).map(r => {
       const esAcomp = r.comensal !== 'Paciente';
       const verSector = !sectorEsRedundante(r.area, r.bedLabel);
       const bedLine = formatBedName(r.bedLabel) + (verSector ? ` · ${areaLabel(r.area)}` : '');
@@ -583,7 +586,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
     const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
     // Anchos de columna aproximados para que se lea sin tener que estirar a mano.
     // Sigue el orden de `head`; "Comanda" (texto largo) más ancho.
-    const widths = [22, 26, 10, 12, 16, 40, 18, 18, 16];
+    const widths = [22, 26, 10, 12, 16, 40, 30, 18, 18, 16];
     ws['!cols'] = head.map((_, i) => ({ wch: widths[i] ?? 16 }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Comandas');
