@@ -5,7 +5,7 @@ import {
   Notification, NotificationType, ViewMode, SortConfig, Bed, BedStatus,
   RoleModule, Permission, MealLoad, MealSlot, MealSlotLoad, COMANDA_STATUS, ComandaStatus, OperativaSubview,
   MEAL_SLOTS, spFromMealSlot, mealSlotFromSp,
-  CirugiaTraslado, CirugiaEstado, BedCirugiaOverlay,
+  CirugiaTraslado, CirugiaEstado, BedCirugiaOverlay, CirugiaMarcaInfo,
 } from '../types';
 import { MOCK_TICKETS } from '../lib/constants';
 import { can, hasModule, canReceiveNotif } from '../lib/permissions';
@@ -897,6 +897,9 @@ export const useHospitalState = () => {
   const cirugiasWritingRef                         = React.useRef(0);
   // Limpiezas de RUTINA ABIERTAS (overlay sobre camas ocupadas), key = label de cama.
   const [routineCleanings, setRoutineCleanings]    = useState<Map<string, RoutineCleaningInfo>>(new Map());
+  // Marcas "va a cirugía" ACTIVAS (flag de Admisión), key = patientCode → SIGUE al paciente.
+  const [cirugiaMarcas, setCirugiaMarcas]          = useState<Map<string, CirugiaMarcaInfo>>(new Map());
+  const cirugiaMarcasWritingRef                    = React.useRef(0);
 
   // Snapshot del enrich por patientCode — se actualiza en cada fetchBeds con los beds
   // cuyo enriched===true. Permite que la pill de ayuno/dieta/diagnóstico "siga" al
@@ -940,8 +943,24 @@ export const useHospitalState = () => {
         bed.routineCleaningAt = rc.at;
       }
     }
+    // Overlay de MARCA "va a cirugía" de Admisión (cirugia_marcas ACTIVA), keyed por PACIENTE →
+    // SIGUE al paciente arrastrando cambios de cama no consolidados (corre DESPUÉS del move/enrich).
+    // Gate patientCode && patientName = anti pill-fantasma sobre cama recién liberada con código
+    // residual de Gamma. Si ya hay operatoria Cx viva sobre la cama, el flag es redundante (skip).
+    if (cirugiaMarcas.size) {
+      for (const bed of withEnrich) {
+        if (!bed.patientCode || !bed.patientName) continue;
+        if (bed.cirugia) continue;
+        const mk = cirugiaMarcas.get(bed.patientCode);
+        if (!mk) continue;
+        bed.goingToSurgery = true;
+        bed.goingToSurgeryMarkId = mk.id;
+        bed.goingToSurgeryBy = mk.by;
+        bed.goingToSurgeryAt = mk.at;
+      }
+    }
     return withEnrich;
-  }, [rawBeds, tickets, cleanings, meals, cirugiaByBed, routineCleanings]);
+  }, [rawBeds, tickets, cleanings, meals, cirugiaByBed, routineCleanings, cirugiaMarcas]);
 
   // Derive isolatedBeds (bed labels) directly from the enrich. Los aislamientos vienen
   // de PROGAL en `bed.isolations` y "siguen" al paciente como el resto del enrich
@@ -1143,6 +1162,80 @@ export const useHospitalState = () => {
       });
     } catch { /* best-effort; el próximo poll/realtime reconcilia */ }
   }, [authFetch, currentUser, routineCleanings]);
+
+  // ── MARCA "va a cirugía" (Admisión, pacientes NO quirúrgicos) ─────────────
+  // Flag keyed por PACIENTE que habilita el circuito Cx en camas no-Q y sigue al paciente.
+  const fetchCirugiaMarcas = useCallback(async () => {
+    try {
+      const r = await authFetch('/api/cirugia-marcas');
+      if (!r.ok) return; // mantiene el estado actual ante fallo transitorio
+      const data = await r.json();
+      const map = new Map<string, CirugiaMarcaInfo>();
+      for (const x of (data.marcas ?? []) as any[]) {
+        if (!x.patientCode) continue;
+        map.set(String(x.patientCode), {
+          id: String(x.spItemId ?? ''), patientCode: String(x.patientCode ?? ''),
+          patientName: String(x.patientName ?? ''), bedLabel: String(x.bedLabel ?? ''),
+          area: String(x.area ?? ''), by: String(x.markedBy ?? ''), at: String(x.markedAt ?? ''),
+        });
+      }
+      setCirugiaMarcas(map);
+    } catch { /* keep current */ }
+  }, [authFetch]);
+
+  // Admisión prende el flag sobre un paciente NO quirúrgico (optimista + POST idempotente).
+  const marcarVaCirugia = useCallback(async (bed: Bed): Promise<{ ok: boolean; error?: string }> => {
+    const code = bed?.patientCode ?? '';
+    if (!code) return { ok: false, error: 'El paciente no tiene código Gamma: el flag sigue al paciente por código, no se puede marcar.' };
+    const u = currentUser;
+    const at = new Date().toISOString();
+    cirugiaMarcasWritingRef.current += 1;
+    setCirugiaMarcas(prev => {
+      const n = new Map(prev);
+      n.set(code, { id: prev.get(code)?.id ?? 'temp', patientCode: code, patientName: bed.patientName ?? bed.mealsPatientName ?? '', bedLabel: bed.label, area: bed.area ?? '', by: u?.name ?? '', at });
+      return n;
+    });
+    try {
+      const r = await authFetch('/api/cirugia-marcas', {
+        method: 'POST',
+        body: JSON.stringify({
+          pacienteCodigo: code, pacienteNombre: bed.patientName ?? bed.mealsPatientName ?? '',
+          camaLabel: bed.label, area: bed.area ?? '',
+          userId: u?.id ?? '', userName: u?.name ?? '', operador: getOperador(), version: APP_VERSION,
+        }),
+      });
+      if (!r.ok) { setCirugiaMarcas(prev => { const n = new Map(prev); n.delete(code); return n; }); return { ok: false, error: 'No se pudo marcar. Reintentá.' }; }
+      await fetchCirugiaMarcas();
+      return { ok: true };
+    } catch {
+      setCirugiaMarcas(prev => { const n = new Map(prev); n.delete(code); return n; }); // rollback
+      return { ok: false, error: 'Error de red al marcar.' };
+    } finally {
+      setTimeout(() => { cirugiaMarcasWritingRef.current = Math.max(0, cirugiaMarcasWritingRef.current - 1); }, 1000);
+    }
+  }, [authFetch, currentUser, fetchCirugiaMarcas]);
+
+  // Admisión desmarca el flag antes de operar (optimista + PATCH ANULAR).
+  const desmarcarVaCirugia = useCallback(async (patientCode: string): Promise<{ ok: boolean; error?: string }> => {
+    const code = patientCode ?? '';
+    if (!code) return { ok: false, error: 'Sin código de paciente.' };
+    const u = currentUser;
+    cirugiaMarcasWritingRef.current += 1;
+    setCirugiaMarcas(prev => { const n = new Map(prev); n.delete(code); return n; }); // optimista
+    try {
+      const r = await authFetch('/api/cirugia-marcas', {
+        method: 'PATCH',
+        body: JSON.stringify({ pacienteCodigo: code, action: 'ANULAR', userId: u?.id ?? '', userName: u?.name ?? '', operador: getOperador(), version: APP_VERSION }),
+      });
+      if (!r.ok) { await fetchCirugiaMarcas(); return { ok: false, error: 'No se pudo desmarcar.' }; }
+      return { ok: true };
+    } catch {
+      await fetchCirugiaMarcas(); // reconcilia
+      return { ok: false, error: 'Error de red al desmarcar.' };
+    } finally {
+      setTimeout(() => { cirugiaMarcasWritingRef.current = Math.max(0, cirugiaMarcasWritingRef.current - 1); }, 1000);
+    }
+  }, [authFetch, currentUser, fetchCirugiaMarcas]);
 
   // "Habitación Lista" deja constancia en el HISTORIAL de limpiezas: preparar la cama
   // destino para el ingreso también es trabajo de la azafata, aunque no pase por la marca
@@ -1525,6 +1618,7 @@ export const useHospitalState = () => {
   ): Promise<{ ok: boolean; error?: string }> => {
     if (!id) return { ok: false };
     const u = currentUser;
+    const curCirugia = cirugias.get(id); // para el auto-cierre del flag "va a cirugía" en RECIBIDA
     cirugiasWritingRef.current += 1;
     setCirugias(prev => {
       const cur = prev.get(id);
@@ -1560,6 +1654,20 @@ export const useHospitalState = () => {
         await fetchCirugias(); // reconciliar (revierte el optimista contra la base)
         return { ok: false, error: err?.error ?? err?.message ?? `No se pudo actualizar (HTTP ${r.status}).` };
       }
+      // Auto-cierre del flag "va a cirugía": al llegar a RECIBIDA (el paciente volvió) cerramos la
+      // marca del paciente si existía. Idempotente y keyed por paciente (cierra aunque haya vuelto a
+      // otra cama). Fire-and-forget: no bloquea la transición clínica.
+      if (action === 'RECIBIDA') {
+        const code = curCirugia?.pacienteCodigo ?? '';
+        if (code) {
+          cirugiaMarcasWritingRef.current += 1;
+          setCirugiaMarcas(prev => { const n = new Map(prev); n.delete(code); return n; });
+          authFetch('/api/cirugia-marcas', {
+            method: 'PATCH',
+            body: JSON.stringify({ pacienteCodigo: code, action: 'CERRAR', motivo: 'cirugia_recibida', userId: u?.id ?? '', userName: u?.name ?? '', operador: getOperador(), version: APP_VERSION }),
+          }).catch(() => {}).finally(() => { setTimeout(() => { cirugiaMarcasWritingRef.current = Math.max(0, cirugiaMarcasWritingRef.current - 1); }, 1000); });
+        }
+      }
       return { ok: true };
     } catch (e: any) {
       await fetchCirugias();
@@ -1567,7 +1675,7 @@ export const useHospitalState = () => {
     } finally {
       setTimeout(() => { cirugiasWritingRef.current = Math.max(0, cirugiasWritingRef.current - 1); }, 1000);
     }
-  }, [authFetch, currentUser, fetchCirugias]);
+  }, [authFetch, currentUser, fetchCirugias, cirugias]);
 
   // Wrappers finos por transición (quién marca cada una en el orden feliz).
   const cirugiaVanABuscar   = useCallback((id: string) => transicionarCirugia(id, 'VAN_A_BUSCAR'), [transicionarCirugia]);        // Cirugía
@@ -1711,6 +1819,7 @@ export const useHospitalState = () => {
     fetchMeals();
     fetchCirugias();
     fetchRoutineCleanings();
+    fetchCirugiaMarcas();
     const bedPoll = setInterval(fetchBeds, POLL_BEDS_MS);
 
     // Realtime traslados: un cambio → refetch debounced. Reseteamos el ETag antes del refetch
@@ -1783,6 +1892,21 @@ export const useHospitalState = () => {
       // catch-up al (re)conectar por el mismo camino guardado (re-agenda si hay optimista en vuelo).
       .subscribe(status => { if (String(status) === 'SUBSCRIBED') triggerCirugiaRefetch(); });
 
+    // Realtime marcas "va a cirugía": un cambio en cirugia_marcas → refetch debounced. Mismo patrón
+    // con guard de cirugiaMarcasWritingRef para no pisar el optimista (fetchCirugiaMarcas reemplaza).
+    let marcasDebounce: ReturnType<typeof setTimeout> | null = null;
+    const triggerMarcasRefetch = () => {
+      if (marcasDebounce) clearTimeout(marcasDebounce);
+      marcasDebounce = setTimeout(() => {
+        if (cirugiaMarcasWritingRef.current > 0) { triggerMarcasRefetch(); return; }
+        fetchCirugiaMarcas();
+      }, 300);
+    };
+    const cirugiaMarcasChannel = supabase
+      .channel('cirugia-marcas-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cirugia_marcas' }, triggerMarcasRefetch)
+      .subscribe(status => { if (String(status) === 'SUBSCRIBED') triggerMarcasRefetch(); });
+
     return () => {
       clearInterval(bedPoll);
       if (ticketDebounce) clearTimeout(ticketDebounce);
@@ -1790,13 +1914,15 @@ export const useHospitalState = () => {
       if (mealsDebounce) clearTimeout(mealsDebounce);
       if (cirugiaDebounce) clearTimeout(cirugiaDebounce);
       if (routineDebounce) clearTimeout(routineDebounce);
+      if (marcasDebounce) clearTimeout(marcasDebounce);
       supabase.removeChannel(ticketsChannel);
       supabase.removeChannel(limpiezasChannel);
       supabase.removeChannel(comandasChannel);
       supabase.removeChannel(cirugiaChannel);
       supabase.removeChannel(routineChannel);
+      supabase.removeChannel(cirugiaMarcasChannel);
     };
-  }, [token, fetchBeds, fetchTickets, fetchCleanings, fetchMeals, fetchCirugias, fetchRoutineCleanings]);
+  }, [token, fetchBeds, fetchTickets, fetchCleanings, fetchMeals, fetchCirugias, fetchRoutineCleanings, fetchCirugiaMarcas]);
 
   // ── Resync de rol en caliente (para TODOS los usuarios) ──────────────────────
   // Los módulos/permisos sólo se hidratan en el login. Sin esto, cuando un admin edita
@@ -3017,7 +3143,7 @@ export const useHospitalState = () => {
     ticketsEtagRef.current = null;
     // El histórico solo se re-pide si ya estaba cargado (o sea, si el usuario está parado en
     // Monitor/Historial). Para el resto de las vistas es un request caro que nadie va a mirar.
-    const jobs: Promise<unknown>[] = [fetchBeds(true), fetchTickets(), fetchCleanings(), fetchMeals(), fetchCirugias(), fetchRoutineCleanings()];
+    const jobs: Promise<unknown>[] = [fetchBeds(true), fetchTickets(), fetchCleanings(), fetchMeals(), fetchCirugias(), fetchRoutineCleanings(), fetchCirugiaMarcas()];
     if (allTicketsLoadedRef.current) { allTicketsFetchedAtRef.current = 0; jobs.push(fetchAllTickets()); }
     await Promise.all(jobs);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3380,6 +3506,7 @@ export const useHospitalState = () => {
       saveMealLoad, clearMealLoad, saveCompanionLoad, clearCompanionLoad, setMealStatus,
       fetchCirugias, marcarListoParaCirugia, transicionarCirugia,
       cirugiaVanABuscar, cirugiaEnTraslado, cirugiaEnCirugia, cirugiaEnDevolucion, cirugiaRecibida, cancelarCirugia, consolidarCirugia,
+      marcarVaCirugia, desmarcarVaCirugia, fetchCirugiaMarcas,
       setOperativaSubview,
       handleUpdateUserAreas, refreshSessionRole, syncSessionRole, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleOpenNotifications, handleDismissToast,
       handleStartTransport,

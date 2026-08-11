@@ -139,6 +139,15 @@ export interface Bed {
   // (limbo, `role==='destino'`). BedsView/CirugiasView leen `cirugia.estado` para pintar la
   // pill Cx por color. Lo setea mergeBeds a partir del Map de cirugías vivas. Ver mergeBeds.
   cirugia?: BedCirugiaOverlay;
+  // Marca "va a cirugía" de Admisión sobre un paciente NO quirúrgico (overlay de
+  // public.cirugia_marcas ACTIVA, keyed por PACIENTE). Lo setea el useMemo `beds` AL FINAL
+  // (post-move, gate patientCode && patientName) para que SIGA al paciente arrastrando cambios
+  // de cama no consolidados en PROGAL. NO cambia el estado de la cama ni el Tipo. Habilita el
+  // botón "Listo para cirugía" en camas no-Q; se apaga al llegar la cirugía a RECIBIDA.
+  goingToSurgery?: boolean;
+  goingToSurgeryMarkId?: string;
+  goingToSurgeryBy?: string;
+  goingToSurgeryAt?: string;
 }
 
 // Una carga de menú de Nutrición sobre una comida de la cama (fila de 15.CargasDieta).
@@ -393,6 +402,7 @@ export const PERMISSIONS = [
   'cirugia_devolver',   // "en devolución" (elige destino)
   'cirugia_recibir',    // "recibí al paciente" (recepción)
   'cirugia_cancelar',   // cancelar la operatoria (transversal)
+  'cirugia_marcar',     // Admisión: marcar "va a cirugía" un paciente NO quirúrgico (flag, desde el mapa)
   'abm_usuarios','abm_roles',
   // Notificaciones granulares por tipo (antes había un solo `recibe_push`).
   // Cada permiso gobierna que el usuario reciba push + in-app de ese tipo.
@@ -574,4 +584,36 @@ export interface BedCirugiaOverlay {
   pacienteCodigo?: string;
   area?: string;
   role: 'origin' | 'destino';
+}
+
+// Marca "va a cirugía" (public.cirugia_marcas) — flag que Admisión prende sobre un PACIENTE NO
+// quirúrgico para habilitar el circuito Cx en su cama. Keyed por paciente_codigo (sigue al
+// paciente, no a la cama). NO es una operatoria (no entra en la cola de Cirugías). Shape del
+// endpoint /api/cirugia-marcas.
+export interface CirugiaMarca {
+  spItemId: string;
+  entorno: string;
+  patientCode: string;
+  patientName: string;
+  bedLabel: string;              // snapshot al marcar (display; NO es la clave)
+  area: string;
+  estado: 'ACTIVA' | 'CERRADA' | 'ANULADA';
+  markedBy: string;
+  markedById?: string;
+  closedBy?: string;
+  operador?: string;             // operador identificado (cuentas compartidas), si aplica
+  motivoCierre?: string;         // 'cirugia_recibida' | 'admision_desmarco'
+  markedAt: string;              // ISO
+  closedAt?: string;             // ISO — CERRADA / ANULADA
+}
+
+// Lean para el Map<patientCode, CirugiaMarcaInfo> del estado (overlay del mapa).
+export interface CirugiaMarcaInfo {
+  id: string;
+  patientCode: string;
+  patientName: string;
+  bedLabel: string;
+  area: string;
+  by: string;                    // marcada_por (quién prendió el flag)
+  at: string;                    // ISO — fecha_marca
 }

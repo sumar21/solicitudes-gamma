@@ -72,6 +72,11 @@ interface BedsViewProps {
   // permiso `limpieza_rutina` (App.tsx los gatea) → undefined = sin permiso = botón escondido.
   onStartRoutineCleaning?: (bed: Bed) => Promise<void>;
   onFinishRoutineCleaning?: (bed: Bed) => Promise<void>;
+  // Marca "va a cirugía" (Admisión, permiso cirugia_marcar): prende/apaga el flag sobre un paciente
+  // NO quirúrgico desde la solapa Internación. Habilita el botón "Listo para cirugía" en camas no-Q.
+  // undefined = sin permiso = toggle escondido.
+  onMarcarVaCirugia?: (bed: Bed) => Promise<{ ok: boolean; error?: string }>;
+  onDesmarcarVaCirugia?: (patientCode: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
 // Mapa de clave de color (la define api/isolations-summary.ts) → clases Tailwind.
@@ -695,11 +700,11 @@ const CompanionEditor: React.FC<{
 };
 
 // ── Bloque de Cirugía en el detalle de la cama (Enfermería) ──────────────────
-// · Cama OCUPADA sin cirugía viva → botón "Listo para cirugía" (alta). Si el paciente es
-//   quirúrgico (admissionTypeCode==='Q') se muestra un aviso con la fecha probable.
+// · Cama OCUPADA sin cirugía viva → botón "Listo para cirugía" (alta), SOLO si el paciente es
+//   quirúrgico (admissionTypeCode==='Q', aviso con fecha probable) o fue marcado por Admisión
+//   (flag bed.goingToSurgery, para pacientes NO quirúrgicos — ver cirugia_marcas).
 // · Cama con cirugía viva → pill Cx por color; si está EN_DEVOLUCION, botón "Recibida"
 //   (recepción confirmada, la marca enfermería del piso destino).
-// NO gateado por permiso cirugia_* (aún no existen; F5/go-live) — así el Admin testea todo.
 const CirugiaBedBlock: React.FC<{
   bed: Bed;
   onMarcarListo?: (bed: Bed) => Promise<{ ok: boolean; id?: string; error?: string }>;
@@ -711,6 +716,7 @@ const CirugiaBedBlock: React.FC<{
   const [error, setError] = useState<string | null>(null);
   const cx = bed.cirugia;
   const esQuirurgico = (bed.admissionTypeCode ?? '').toUpperCase() === 'Q';
+  const flagActivo = !!bed.goingToSurgery; // marca "va a cirugía" de Admisión (paciente no-Q)
   const fmtFecha = (iso?: string) => {
     if (!iso) return '';
     const d = new Date(iso);
@@ -782,8 +788,10 @@ const CirugiaBedBlock: React.FC<{
     );
   }
 
-  // Cama ocupada sin cirugía → alta (Enfermería marca "listo").
-  if (bed.status !== BedStatus.OCCUPIED || !onMarcarListo) return null;
+  // Cama ocupada sin cirugía → alta (Enfermería marca "listo"). Endurecimiento: sólo aparece para
+  // pacientes quirúrgicos (PROGAL, admissionTypeCode==='Q') o marcados por Admisión (flag "va a
+  // cirugía"). Antes aparecía para CUALQUIER cama ocupada.
+  if (bed.status !== BedStatus.OCCUPIED || !onMarcarListo || !(esQuirurgico || flagActivo)) return null;
   return (
     <div className="rounded-2xl p-3.5 border border-amber-200 bg-amber-50/50 flex flex-col gap-2.5">
       {esQuirurgico && (
@@ -791,6 +799,14 @@ const CirugiaBedBlock: React.FC<{
           <Activity className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" strokeWidth={2.5} />
           <p className="text-[11px] font-medium text-amber-800">
             Paciente quirúrgico (PROGAL){bed.expectedSurgeryDate ? ` · cirugía probable: ${fmtFecha(bed.expectedSurgeryDate)}` : ''}.
+          </p>
+        </div>
+      )}
+      {!esQuirurgico && flagActivo && (
+        <div className="flex items-start gap-2">
+          <Activity className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" strokeWidth={2.5} />
+          <p className="text-[11px] font-medium text-amber-800">
+            Marcado para cirugía por Admisión{bed.goingToSurgeryBy ? ` (${bed.goingToSurgeryBy})` : ''}.
           </p>
         </div>
       )}
@@ -805,6 +821,54 @@ const CirugiaBedBlock: React.FC<{
         className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm disabled:opacity-50">
         <Activity className="w-4 h-4" /> {busy ? 'Marcando…' : 'Listo para cirugía'}
       </button>
+    </div>
+  );
+};
+
+// Toggle "Va a cirugía" (Admisión) en la solapa Internación del detalle de cama. Prende/apaga el
+// flag public.cirugia_marcas sobre un paciente NO quirúrgico para habilitar el circuito Cx. El flag
+// sigue al paciente (keyed por código). No aplica si ya hay operatoria Cx viva o el paciente no
+// tiene código Gamma. Estado local busy/error (como CirugiaBedBlock).
+const VaCirugiaToggle: React.FC<{
+  bed: Bed;
+  onMarcar: (bed: Bed) => Promise<{ ok: boolean; error?: string }>;
+  onDesmarcar: (patientCode: string) => Promise<{ ok: boolean; error?: string }>;
+}> = ({ bed, onMarcar, onDesmarcar }) => {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const checked = !!bed.goingToSurgery;
+  const cxViva = !!bed.cirugia;                                    // operatoria Cx ya iniciada → el flag ya no aplica
+  const esQuirurgico = (bed.admissionTypeCode ?? '').toUpperCase() === 'Q';
+  const sinCodigo = !bed.patientCode;
+  const disabled = busy || cxViva || sinCodigo;
+  const toggle = async () => {
+    if (disabled) return;
+    setBusy(true); setError(null);
+    const r = checked ? await onDesmarcar(bed.patientCode!) : await onMarcar(bed);
+    setBusy(false);
+    if (!r.ok) setError(r.error ?? 'No se pudo actualizar.');
+  };
+  return (
+    <div className="rounded-xl p-3 border border-violet-100 bg-violet-50/50">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[8px] font-bold uppercase text-violet-500 mb-0.5">Va a cirugía</p>
+          <p className="text-[11px] font-medium text-violet-900">
+            {esQuirurgico ? 'Paciente quirúrgico (PROGAL) — ya habilitado'
+              : checked ? `Marcado${bed.goingToSurgeryBy ? ` por ${bed.goingToSurgeryBy}` : ''}`
+              : 'Habilitar cirugía para este paciente'}
+          </p>
+        </div>
+        <button type="button" role="switch" aria-checked={checked} disabled={disabled} onClick={toggle}
+          title={cxViva ? 'Cirugía en curso' : sinCodigo ? 'Paciente sin código Gamma' : checked ? 'Desmarcar' : 'Marcar va a cirugía'}
+          className={cn('relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-40',
+            checked ? 'bg-violet-600' : 'bg-slate-300')}>
+          <span className={cn('inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform', checked ? 'translate-x-5' : 'translate-x-0.5')} />
+        </button>
+      </div>
+      {cxViva && <p className="text-[10px] text-violet-500 mt-1">Cirugía en curso: el flag ya no aplica.</p>}
+      {sinCodigo && <p className="text-[10px] text-amber-600 mt-1">El paciente no tiene código Gamma: no se puede marcar.</p>}
+      {error && <p className="text-[10px] font-bold text-red-600 mt-1">{error}</p>}
     </div>
   );
 };
@@ -857,7 +921,7 @@ const RoutineCleaningBlock: React.FC<{
   ) : null;
 };
 
-export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onFetchPatientTickets, onRefresh, onMarkClean, onUndoClean, onSaveMeal, onClearMeal, onSaveCompanion, onClearCompanion, onMarcarListo, onCirugiaEnTraslado, onCirugiaRecibida, onStartRoutineCleaning, onFinishRoutineCleaning }) => {
+export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onFetchPatientTickets, onRefresh, onMarkClean, onUndoClean, onSaveMeal, onClearMeal, onSaveCompanion, onClearCompanion, onMarcarListo, onCirugiaEnTraslado, onCirugiaRecibida, onStartRoutineCleaning, onFinishRoutineCleaning, onMarcarVaCirugia, onDesmarcarVaCirugia }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
   // Turnos abiertos en el modal de la cama. Vive en el PADRE y no en cada box: si viviera adentro,
   // se perdería al cerrar/reabrir. Se resetea al cambiar de cama (el default se recalcula abajo).
@@ -2644,6 +2708,17 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                         <span>Cx</span>
                       </div>
                     )}
+                    {/* Pre-Cx: marca "va a cirugía" de Admisión (flag) sobre un paciente SIN operatoria
+                        viva. Estilo tenue/dashed para diferenciarlo de la pill Cx (cirugía en curso). */}
+                    {bed.goingToSurgery && !bed.cirugia && (
+                      <div
+                        className="absolute top-0.5 left-1/2 -translate-x-1/2 flex items-center gap-0.5 px-1 h-3 md:h-3.5 rounded-full ring-1 ring-white shadow-sm text-[7px] md:text-[8px] font-black uppercase z-10 bg-violet-100 text-violet-700 border border-dashed border-violet-400"
+                        title={`Marcado para cirugía por Admisión${bed.goingToSurgeryBy ? ` · ${bed.goingToSurgeryBy}` : ''}`}
+                      >
+                        <Activity className="w-2 h-2 md:w-2.5 md:h-2.5" strokeWidth={3} />
+                        <span>Pre-Cx</span>
+                      </div>
+                    )}
                     {/* Limpieza de RUTINA en curso: badge celeste (spray). Esquina inf. izq.; si hay
                         multi-aislamiento (que también va ahí) se corre a la derecha para no pisarse. */}
                     {bed.routineCleaningActive && (
@@ -3093,6 +3168,11 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                                 <p className="text-[8px] font-bold uppercase text-blue-500 mb-1">Fecha Probable de Cirugía</p>
                                 <p className="text-sm font-bold text-blue-900">{fmtDateOnly(displayBed.expectedSurgeryDate)}</p>
                               </div>
+                            )}
+                            {/* Marca "va a cirugía" (Admisión): habilita el circuito Cx para un paciente
+                                NO quirúrgico. Solo si el rol tiene el permiso (App gatea onMarcarVaCirugia). */}
+                            {onMarcarVaCirugia && onDesmarcarVaCirugia && displayBed && (
+                              <VaCirugiaToggle bed={displayBed} onMarcar={onMarcarVaCirugia} onDesmarcar={onDesmarcarVaCirugia} />
                             )}
                             {!enrichLoading && !hasInternacionData && (
                               <p className="text-xs text-slate-400 italic text-center py-2">Sin datos de internación disponibles</p>
