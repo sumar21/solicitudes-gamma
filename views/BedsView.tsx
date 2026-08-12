@@ -1114,6 +1114,10 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   const [dietTypeFilters, setDietTypeFilters] = useState<Set<string>>(new Set());
   const [dietTypeSearch, setDietTypeSearch]   = useState('');
   const [admissionTypeFilters, setAdmissionTypeFilters] = useState<Set<string>>(new Set());
+  // Filtro por FECHA DE INTERNACIÓN (bed.admissionDate del enrich). Rango [desde, hasta] en
+  // YYYY-MM-DD; cualquiera de los dos puede quedar vacío (bound abierto).
+  const [admissionFrom, setAdmissionFrom] = useState('');
+  const [admissionTo, setAdmissionTo] = useState('');
 
   // Camas con dieta cargada (al menos un tag: tipo de dieta o condición marcada "Sí").
   // Análogo a `isolatedBeds` pero derivado del enrich que ya traen las camas (cron).
@@ -1152,7 +1156,8 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     financierFilters.size +
     physicianFilters.size +
     dietTypeFilters.size +
-    admissionTypeFilters.size;
+    admissionTypeFilters.size +
+    (admissionFrom || admissionTo ? 1 : 0);
 
   const uniqueFinanciers = useMemo(() => [...new Set(beds.filter((b: Bed) => b.institution).map((b: Bed) => b.institution!))].sort(), [beds]);
   const uniquePhysicians = useMemo(() => [...new Set(beds.filter((b: Bed) => b.prescribingPhysician).map((b: Bed) => b.prescribingPhysician!))].sort(), [beds]);
@@ -1264,9 +1269,18 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
         || (incluyeCx && cirugiaBeds.has(bed.label))
       );
     }
+    // Fecha de internación (rango sobre bed.admissionDate). Camas sin fecha quedan fuera cuando el
+    // filtro está activo (no hay ingreso que ubicar en el rango).
+    if (admissionFrom || admissionTo) {
+      result = result.filter(bed => {
+        const d = (bed.admissionDate || '').slice(0, 10);
+        if (!d) return false;
+        return (!admissionFrom || d >= admissionFrom) && (!admissionTo || d <= admissionTo);
+      });
+    }
 
     return result;
-  }, [beds, currentUser, searchFilter, areaFilters, statusFilters, allowedAreas, areaFiltersVisibles, bedTicketMap, showIsolatedOnly, isolatedBeds, showDietOnly, dietBeds, showFastingOnly, fastingBeds, showCirugiaOnly, cirugiaBeds, financierFilters, physicianFilters, dietTypeFilters, admissionTypeFilters]);
+  }, [beds, currentUser, searchFilter, areaFilters, statusFilters, allowedAreas, areaFiltersVisibles, bedTicketMap, showIsolatedOnly, isolatedBeds, showDietOnly, dietBeds, showFastingOnly, fastingBeds, showCirugiaOnly, cirugiaBeds, financierFilters, physicianFilters, dietTypeFilters, admissionTypeFilters, admissionFrom, admissionTo]);
 
   // Conteo de camas para el badge del header: excluimos HRA ("Sala de Espera"),
   // que son sillones de pre-internación y no camas reales. El grid y los PDFs
@@ -2558,6 +2572,42 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
               </PopoverContent>
             </Popover>
           )}
+
+          {/* Filtro por FECHA DE INTERNACIÓN (bed.admissionDate del enrich) — rango desde/hasta. */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <button className={cn(
+                "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
+                (admissionFrom || admissionTo) ? "bg-slate-900 text-white border-slate-900 shadow-sm" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+              )}>
+                <Clock className="w-2.5 h-2.5" />
+                Fecha internación {(admissionFrom || admissionTo) ? '(1)' : ''}
+                <ChevronDown className="w-2.5 h-2.5" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-60 p-2">
+              <div className="flex items-center justify-between px-1 pb-2 border-b border-slate-100 mb-2">
+                <span className="text-[9px] font-bold uppercase text-slate-400">Fecha de internación</span>
+                {(admissionFrom || admissionTo) && (
+                  <button onClick={() => { setAdmissionFrom(''); setAdmissionTo(''); }} className="text-[9px] font-bold text-red-500">Limpiar</button>
+                )}
+              </div>
+              <div className="flex flex-col gap-2">
+                <label className="flex flex-col gap-1">
+                  <span className="text-[9px] font-bold uppercase text-slate-400">Desde</span>
+                  <input type="date" value={admissionFrom} max={admissionTo || undefined}
+                    onChange={(e: any) => setAdmissionFrom(e.target.value)}
+                    className="w-full px-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-400" />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-[9px] font-bold uppercase text-slate-400">Hasta</span>
+                  <input type="date" value={admissionTo} min={admissionFrom || undefined}
+                    onChange={(e: any) => setAdmissionTo(e.target.value)}
+                    className="w-full px-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-400" />
+                </label>
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
       </div>
 
