@@ -496,8 +496,9 @@ export default function App() {
             <RefreshCw className={cn("w-4 h-4", syncingRoles && "animate-spin")} /> Actualizar accesos
           </Button>
           {state.currentUser?.requiresIdentification && (
-            <Button variant="ghost" className="w-full justify-start gap-3 text-emerald-300 hover:bg-emerald-950/20 hover:text-emerald-200" onClick={actions.cambioTurno} title="Cambiar el nombre del operador de esta sesión">
-              <User className="w-4 h-4" /> Cambio de turno{state.operador ? ` · ${state.operador}` : ''}
+            <Button variant="ghost" className="w-full justify-start gap-3 text-emerald-300 hover:bg-emerald-950/20 hover:text-emerald-200" onClick={actions.cambioTurno} title={state.operador ? `Operador: ${state.operador} — tocá para cambiar de turno` : 'Cambiar el nombre del operador de esta sesión'}>
+              <User className="w-4 h-4 shrink-0" />
+              <span className="min-w-0 flex-1 text-left truncate">Cambio de turno{state.operador ? ` · ${state.operador}` : ''}</span>
             </Button>
           )}
           <Button variant="ghost" className="w-full justify-start gap-3 text-red-400 hover:text-red-300 hover:bg-red-950/20" onClick={actions.handleLogout}><LogOut className="w-4 h-4" /> Salir</Button>
@@ -615,7 +616,7 @@ export default function App() {
                 <RefreshCw className={cn("w-4 h-4", syncingRoles && "animate-spin")} /> Actualizar accesos
               </Button>
               {state.currentUser?.requiresIdentification && (
-                <Button variant="ghost" className="w-full justify-start gap-3 text-emerald-300 hover:bg-emerald-950/20 hover:text-emerald-200" onClick={() => { actions.cambioTurno(); setIsMobileMenuOpen(false); }}><User className="w-4 h-4" /> Cambio de turno{state.operador ? ` · ${state.operador}` : ''}</Button>
+                <Button variant="ghost" className="w-full justify-start gap-3 text-emerald-300 hover:bg-emerald-950/20 hover:text-emerald-200" onClick={() => { actions.cambioTurno(); setIsMobileMenuOpen(false); }} title={state.operador ? `Operador: ${state.operador}` : undefined}><User className="w-4 h-4 shrink-0" /><span className="min-w-0 flex-1 text-left truncate">Cambio de turno{state.operador ? ` · ${state.operador}` : ''}</span></Button>
               )}
               <Button variant="ghost" className="w-full justify-start gap-3 text-red-400 hover:text-red-300 hover:bg-red-950/20" onClick={() => { actions.handleLogout(); setIsMobileMenuOpen(false); }}><LogOut className="w-4 h-4" /> Salir</Button>
               <div className="px-3 pt-1 text-[9px] font-mono text-white/25 tracking-wider select-all" title="Versión del cliente">{APP_VERSION}</div>
