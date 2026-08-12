@@ -3,9 +3,10 @@ import { Bed, BedStatus, Ticket, TicketStatus, User, Area, IsolationEntry, MealS
 import { can, canLoadMealSlot, canLoadAnyMealSlot } from '../lib/permissions';
 import { hasLiveFasting, fastingOccurrences, formatFastingDateTime, fastingTimesForToday } from '../lib/fasting';
 import { Input } from '../components/ui/input';
-import { cn, dietRequiresCustomComanda, suggestedRoomSex, formatBedName } from '../lib/utils';
-import { BedDouble, User as UserIcon, Info, Search, X, Plus, ChevronDown, ChevronRight, Check, AlertTriangle, AlertCircle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan, History, Lock, Activity, ArrowRight } from 'lucide-react';
-import { Dialog, DialogContent } from '../components/ui/dialog';
+import { cn, dietRequiresCustomComanda, suggestedRoomSex, formatBedName, formatDateReadable } from '../lib/utils';
+import { BedDouble, User as UserIcon, Info, Search, X, Plus, ChevronDown, ChevronRight, Check, AlertTriangle, AlertCircle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan, History, Lock, Activity, ArrowRight, Calendar as CalendarIcon } from 'lucide-react';
+import { Calendar } from '../components/ui/calendar';
+import { Dialog, DialogContent, DialogTitle } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { PatientJourney } from '../components/PatientJourney';
@@ -919,6 +920,80 @@ const RoutineCleaningBlock: React.FC<{
       </button>
     </div>
   ) : null;
+};
+
+// Filtro de rango de FECHA DE INTERNACIÓN con el date-picker propio (no el input nativo, que
+// pinta el calendario del navegador y rompe el diseño). Desktop → Popover con los dos calendarios;
+// Mobile → Dialog (más grande y usable con el dedo). Ambos comparten el mismo estado.
+const AdmissionDateFilter: React.FC<{
+  from: string; to: string;
+  setFrom: (s: string) => void; setTo: (s: string) => void;
+}> = ({ from, to, setFrom, setTo }) => {
+  const [openDesk, setOpenDesk] = useState(false);
+  const [openMob, setOpenMob]   = useState(false);
+  const active = !!(from || to);
+  const clear = () => { setFrom(''); setTo(''); };
+  const chipClass = cn(
+    'flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border',
+    active ? 'bg-slate-900 text-white border-slate-900 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50',
+  );
+  const label = active
+    ? `${from ? formatDateReadable(from) : '…'} – ${to ? formatDateReadable(to) : '…'}`
+    : 'Fecha internación';
+  const chipInner = (<><CalendarIcon className="w-2.5 h-2.5" />{label}<ChevronDown className="w-2.5 h-2.5" /></>);
+  const dosCalendarios = (
+    <div className="flex flex-col sm:flex-row gap-4">
+      <div>
+        <p className="text-[9px] font-bold uppercase text-slate-400 mb-1.5 px-1">Desde</p>
+        <Calendar selected={from} onSelect={setFrom} />
+      </div>
+      <div>
+        <p className="text-[9px] font-bold uppercase text-slate-400 mb-1.5 px-1">Hasta</p>
+        <Calendar selected={to} onSelect={setTo} />
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      {/* Desktop → Popover */}
+      <div className="hidden md:block">
+        <Popover open={openDesk} onOpenChange={setOpenDesk}>
+          <PopoverTrigger asChild><button type="button" className={chipClass}>{chipInner}</button></PopoverTrigger>
+          <PopoverContent align="start" className="w-auto p-3">
+            <div className="flex items-center justify-between px-1 pb-2 mb-2 border-b border-slate-100">
+              <span className="text-[9px] font-bold uppercase text-slate-400">Fecha de internación</span>
+              {active && <button onClick={clear} className="text-[9px] font-bold text-red-500">Limpiar</button>}
+            </div>
+            {dosCalendarios}
+          </PopoverContent>
+        </Popover>
+      </div>
+      {/* Mobile → Dialog */}
+      <div className="md:hidden">
+        <button type="button" onClick={() => setOpenMob(true)} className={chipClass}>{chipInner}</button>
+        <Dialog open={openMob} onOpenChange={setOpenMob}>
+          <DialogContent className="max-w-[94vw] rounded-2xl p-4">
+            <DialogTitle className="text-sm font-bold text-slate-800">Fecha de internación</DialogTitle>
+            <div className="flex flex-col items-center gap-4 py-1">
+              <div className="w-full">
+                <p className="text-[10px] font-bold uppercase text-slate-400 mb-1.5">Desde</p>
+                <Calendar selected={from} onSelect={setFrom} />
+              </div>
+              <div className="w-full">
+                <p className="text-[10px] font-bold uppercase text-slate-400 mb-1.5">Hasta</p>
+                <Calendar selected={to} onSelect={setTo} />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              {active && <Button variant="outline" onClick={clear} className="rounded-xl h-10">Limpiar</Button>}
+              <Button onClick={() => setOpenMob(false)} className="rounded-xl h-10">Listo</Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </>
+  );
 };
 
 export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onFetchPatientTickets, onRefresh, onMarkClean, onUndoClean, onSaveMeal, onClearMeal, onSaveCompanion, onClearCompanion, onMarcarListo, onCirugiaEnTraslado, onCirugiaRecibida, onStartRoutineCleaning, onFinishRoutineCleaning, onMarcarVaCirugia, onDesmarcarVaCirugia }) => {
@@ -2573,41 +2648,8 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
             </Popover>
           )}
 
-          {/* Filtro por FECHA DE INTERNACIÓN (bed.admissionDate del enrich) — rango desde/hasta. */}
-          <Popover>
-            <PopoverTrigger asChild>
-              <button className={cn(
-                "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
-                (admissionFrom || admissionTo) ? "bg-slate-900 text-white border-slate-900 shadow-sm" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
-              )}>
-                <Clock className="w-2.5 h-2.5" />
-                Fecha internación {(admissionFrom || admissionTo) ? '(1)' : ''}
-                <ChevronDown className="w-2.5 h-2.5" />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-60 p-2">
-              <div className="flex items-center justify-between px-1 pb-2 border-b border-slate-100 mb-2">
-                <span className="text-[9px] font-bold uppercase text-slate-400">Fecha de internación</span>
-                {(admissionFrom || admissionTo) && (
-                  <button onClick={() => { setAdmissionFrom(''); setAdmissionTo(''); }} className="text-[9px] font-bold text-red-500">Limpiar</button>
-                )}
-              </div>
-              <div className="flex flex-col gap-2">
-                <label className="flex flex-col gap-1">
-                  <span className="text-[9px] font-bold uppercase text-slate-400">Desde</span>
-                  <input type="date" value={admissionFrom} max={admissionTo || undefined}
-                    onChange={(e: any) => setAdmissionFrom(e.target.value)}
-                    className="w-full px-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-400" />
-                </label>
-                <label className="flex flex-col gap-1">
-                  <span className="text-[9px] font-bold uppercase text-slate-400">Hasta</span>
-                  <input type="date" value={admissionTo} min={admissionFrom || undefined}
-                    onChange={(e: any) => setAdmissionTo(e.target.value)}
-                    className="w-full px-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-400" />
-                </label>
-              </div>
-            </PopoverContent>
-          </Popover>
+          {/* Filtro por FECHA DE INTERNACIÓN (bed.admissionDate) — date-picker propio; Dialog en mobile. */}
+          <AdmissionDateFilter from={admissionFrom} to={admissionTo} setFrom={setAdmissionFrom} setTo={setAdmissionTo} />
         </div>
       </div>
 
