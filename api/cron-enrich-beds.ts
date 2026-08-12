@@ -17,6 +17,7 @@ import { buildEnrich, type EnrichResult } from './enrich-core.js';
 import type { FastingSummary } from './ayunos.js';
 import { sendPushToSubscribers } from './push-utils.js';
 import { formatRoomForCatering } from './room-formatter.js';
+import { getSupabaseAdmin } from './supabase-admin.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = '443c4ff0-bc98-43ef-a49c-7fd91cc63734'; // 12.EnrichCamas
@@ -424,6 +425,24 @@ export default async function handler(req: any, res: any) {
               cateringBody:  body,
             });
             dietNotified++;
+
+            // Historial de cambios de dieta (Supabase public.dieta_cambios): append-only, guarda el
+            // "de X → a Y". Independiente de push/suscriptores → historial completo. Best-effort: un
+            // fallo acá NO corta el cron (el push ya salió; el próximo cambio real se registra igual).
+            try {
+              await getSupabaseAdmin().from('dieta_cambios').insert({
+                entorno:         ENTORNO,
+                paciente_codigo: b.patientCode,
+                paciente_nombre: b.patientName || null,
+                area:            b.areaName || null,
+                habitacion:      b.roomName || null,
+                event_key:       eventKey || null,
+                tags_prev:       (existing?.oldDietTags ?? []).join('; ') || null,
+                tags_new:        newDietTags.join('; ') || null,
+              });
+            } catch (e: any) {
+              console.error(`[cron-enrich] dieta_cambios insert falló ${eventKey}:`, e?.message ?? e);
+            }
           }
         } catch (err: any) {
           stats.errors++;

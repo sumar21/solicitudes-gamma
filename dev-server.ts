@@ -106,6 +106,7 @@ const routes: Record<string, () => Promise<any>> = {
   '/api/dietas':             () => import('./api/dietas'),
   '/api/cirugia':            () => import('./api/cirugia'),
   '/api/cirugia-marcas':     () => import('./api/cirugia-marcas'),
+  '/api/dieta-cambios':      () => import('./api/dieta-cambios'),
   '/api/carga-menu':         () => import('./api/carga-menu'),
   '/api/push-subscribe':     () => import('./api/push-subscribe'),
   '/api/notifications':      () => import('./api/notifications'),

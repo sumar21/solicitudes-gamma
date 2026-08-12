@@ -274,6 +274,138 @@ interface Props {
   onSetMealStatus?: (spItemId: string, action: 'entregar' | 'pendiente' | 'anular', motivo?: string) => Promise<{ ok: boolean }>;
 }
 
+// ── Apartado "Cambios de dieta" ─────────────────────────────────────────────
+// Historial (append-only) de cada cambio de dieta que detecta el cron (de X → a Y). Fuente:
+// /api/dieta-cambios (Supabase public.dieta_cambios). Independiente de la campanita/push.
+interface DietaCambio {
+  spItemId: string; patientCode: string; patientName: string; area: string;
+  roomCode: string; eventKey: string; tagsPrev: string; tagsNew: string; changedAt: string;
+}
+
+const TagList: React.FC<{ tags: string[]; tone: 'prev' | 'new' }> = ({ tags, tone }) => {
+  if (!tags.length) return <span className={cn('text-[11px] italic', tone === 'prev' ? 'text-slate-400' : 'text-slate-500')}>sin dieta especial</span>;
+  return (
+    <span className="flex flex-wrap gap-1">
+      {tags.map((t, i) => (
+        <span key={i} className={cn('inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border',
+          tone === 'prev' ? 'bg-slate-50 text-slate-400 border-slate-200 line-through' : 'bg-emerald-50 text-emerald-700 border-emerald-200')}>
+          {t}
+        </span>
+      ))}
+    </span>
+  );
+};
+
+const CambiosDietaPanel: React.FC = () => {
+  const todayStr   = new Date().toISOString().slice(0, 10);
+  const weekAgoStr = new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10);
+  const [from, setFrom] = useState(weekAgoStr);
+  const [to, setTo]     = useState(todayStr);
+  const [rows, setRows] = useState<DietaCambio[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState('');
+  const [openFrom, setOpenFrom] = useState(false);
+  const [openTo, setOpenTo]     = useState(false);
+
+  const fetchCambios = useCallback(async () => {
+    setLoading(true);
+    try {
+      const token = localStorage.getItem('mediflow_token');
+      const r = await fetch(`/api/dieta-cambios?from=${from}&to=${to}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (r.ok) { const d = await r.json(); setRows((d.cambios ?? []) as DietaCambio[]); }
+    } catch { /* mantiene lo previo */ }
+    finally { setLoading(false); }
+  }, [from, to]);
+
+  useEffect(() => { fetchCambios(); }, [fetchCambios]);
+
+  const filtered = useMemo(() => {
+    const terms = normalizeText(search).split(' ').filter(Boolean);
+    if (!terms.length) return rows;
+    return rows.filter(c => {
+      const hay = normalizeText([c.patientName, c.area, c.roomCode, formatBedName(c.roomCode), c.tagsPrev, c.tagsNew].join(' '));
+      return terms.every(t => hay.includes(t));
+    });
+  }, [rows, search]);
+
+  const tagChips = (s: string) => (s || '').split(';').map(t => t.trim()).filter(Boolean);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center bg-white border border-slate-200 rounded-xl overflow-hidden h-9">
+          <Popover open={openFrom} onOpenChange={setOpenFrom}>
+            <PopoverTrigger asChild><DateRangeTrigger label="Desde" value={from} className="h-full text-xs" /></PopoverTrigger>
+            <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
+              <Calendar selected={from} onSelect={(date) => { setFrom(date); setOpenFrom(false); }} />
+            </PopoverContent>
+          </Popover>
+          <div className="w-px h-5 bg-slate-100 shrink-0" />
+          <Popover open={openTo} onOpenChange={setOpenTo}>
+            <PopoverTrigger asChild><DateRangeTrigger label="Hasta" value={to} className="h-full text-xs" /></PopoverTrigger>
+            <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
+              <Calendar selected={to} onSelect={(date) => { setTo(date); setOpenTo(false); }} />
+            </PopoverContent>
+          </Popover>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => fetchCambios()} disabled={loading}
+          className="h-9 px-3 rounded-lg gap-2 text-xs font-bold text-slate-600">
+          <RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} /> Actualizar
+        </Button>
+        <div className="relative flex-1 min-w-[180px] max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
+          <Input placeholder="Paciente, sector, dieta..." value={search}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)}
+            className="pl-9 pr-8 h-9 text-xs rounded-xl border-slate-200" />
+          {search && <button onClick={() => setSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>}
+        </div>
+        <p className="text-xs text-slate-500 font-medium ml-auto self-center">{filtered.length} {filtered.length === 1 ? 'cambio' : 'cambios'}</p>
+      </div>
+
+      {loading ? (
+        <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400 text-sm">Cargando…</div>
+      ) : filtered.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400">
+          <Utensils className="w-10 h-10 mx-auto mb-3 text-slate-300" />
+          <p className="font-bold text-sm text-slate-500">Sin cambios de dieta en el período</p>
+          <p className="text-xs">Cada vez que Progal cambia la dieta de un paciente internado, queda registrado acá.</p>
+        </div>
+      ) : (
+        <Card className="overflow-hidden border-slate-200">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-400 border-b border-slate-100">
+                  <th className="px-4 py-3 text-left font-bold">Fecha y hora</th>
+                  <th className="px-4 py-3 text-left font-bold">Paciente</th>
+                  <th className="px-4 py-3 text-left font-bold">Ubicación</th>
+                  <th className="px-4 py-3 text-left font-bold">Cambio de dieta</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {filtered.map(c => (
+                  <tr key={c.spItemId} className="hover:bg-slate-50/50">
+                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap"><span className="flex items-center gap-1"><Clock className="w-3 h-3 text-slate-400" />{fmtWhen(c.changedAt)}</span></td>
+                    <td className="px-4 py-3 font-semibold text-slate-800">{c.patientName || '—'}</td>
+                    <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{[c.area, c.roomCode && formatBedName(c.roomCode)].filter(Boolean).join(' · ') || '—'}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <TagList tags={tagChips(c.tagsPrev)} tone="prev" />
+                        <span className="text-slate-400 font-bold">→</span>
+                        <TagList tags={tagChips(c.tagsNew)} tone="new" />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+};
+
 export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onRefresh, onSetMealStatus }) => {
   const areaOk = useCallback((area: string) =>
     !currentUser?.filterByFloors
@@ -320,7 +452,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
   const { pendientes, entregadas } = useMemo(() => splitComandasPorEntrega(rows), [rows]);
 
   // ── Histórico (por fecha de carga) ──────────────────────────────────────────
-  const [tab, setTab] = useState<'activas' | 'historico'>('activas');
+  const [tab, setTab] = useState<'activas' | 'historico' | 'cambios'>('activas');
   // Día ART (mismo criterio que el server filtra FechaCarga), evita off-by-one de UTC de noche.
   const artDayStr = (ms: number) => new Date(ms).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' });
   const todayStr   = artDayStr(Date.now());
@@ -343,7 +475,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
   // Refs: `doAction` se declara antes que `fetchHistory`/`tab` y no queremos recrearlo en cada
   // cambio de tab (recrearlo remontaría los botones de todas las filas).
   const fetchHistoryRef = React.useRef<null | (() => void)>(null);
-  const tabRef = React.useRef<'activas' | 'historico'>('activas');
+  const tabRef = React.useRef<'activas' | 'historico' | 'cambios'>('activas');
 
   // Ejecuta la acción contra el server (con motivo opcional para el anular).
   const runAction = useCallback(async (spItemId: string, action: 'entregar' | 'pendiente' | 'anular', motivo?: string) => {
@@ -609,16 +741,19 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
     <div className="p-4 md:p-8 max-w-full w-full space-y-4 md:space-y-5 pb-24 md:pb-8">
       {/* Tabs */}
       <div className="flex items-center gap-1 border-b border-slate-200 mb-4">
-        {(['activas', 'historico'] as const).map(t => (
+        {(['activas', 'historico', 'cambios'] as const).map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={cn(
               "px-4 py-2 text-xs font-bold uppercase tracking-wide border-b-2 -mb-px transition-colors",
               tab === t ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400 hover:text-slate-600"
             )}>
-            {t === 'activas' ? 'De hoy' : 'Histórico'}
+            {t === 'activas' ? 'De hoy' : t === 'historico' ? 'Histórico' : 'Cambios de dieta'}
           </button>
         ))}
       </div>
+
+      {tab === 'cambios' && <CambiosDietaPanel />}
+      {tab !== 'cambios' && (<>
 
       {/* Barra de acciones / filtros */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
@@ -851,6 +986,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
           </Card>
         </>
       )}
+      </>)}
 
       {/* Modal de motivo de anulación — obligatorio, queda en el histórico para auditoría. */}
       <Dialog open={!!anularTarget} onOpenChange={(v) => { if (!v) setAnularTarget(null); }}>
