@@ -169,16 +169,21 @@ async function handler(req: any, res: any) {
   // ── GET — comandas de HOY (ART) + pendientes de días previos ──────────────
   if (req.method === 'GET') {
     try {
-      const { data, error } = await supa.from('comandas').select('*')
-        .eq('entorno', ENTORNO).in('status', VIVAS).limit(2000);
-      if (error) { console.error('[dietas] GET failed:', error.message); return res.status(200).json({ meals: [] }); }
-      // Qué se muestra en "De hoy": lo cargado HOY (ART) **+ todo lo que siga PENDIENTE** de días
-      // anteriores. Lo segundo no es un detalle: si una bandeja quedó sin entregar y el GET la
-      // esconde al día siguiente, nadie la puede cerrar nunca. Las ENTREGADAS de días anteriores
-      // sí se ocultan (ya se resolvieron, son histórico).
+      // El filtro por DÍA va en la QUERY, no en JS. Antes se traía `status IN VIVAS` (que incluye
+      // TODAS las entregadas históricas — miles acumuladas) y se filtraba el día en JS: el cap de
+      // filas de Supabase (max-rows) truncaba el resultado y las entregadas de HOY quedaban afuera
+      // del corte → desaparecían de "De hoy". Filtrando en la query el resultado es chico y no se
+      // trunca nunca. Qué se muestra: lo de HOY (ART) + TODA pendiente de días previos (si el GET la
+      // escondiera al otro día, nadie podría cerrarla). Las entregadas viejas se ocultan.
       const todayArt = todayArtDay();
-      const visibles = (data ?? []).filter((r: any) => String(r.dia) === todayArt || r.status === ST_PENDIENTE);
-      return res.status(200).json({ meals: visibles.map(rowToMealHoy) });
+      const { data, error } = await supa.from('comandas').select('*')
+        .eq('entorno', ENTORNO)
+        .in('status', VIVAS)                                     // excluye anuladas (Inactivo)
+        .or(`dia.eq.${todayArt},status.eq.${ST_PENDIENTE}`)      // (de hoy) OR (pendiente de cualquier día)
+        .order('fecha_carga', { ascending: false })
+        .limit(5000);
+      if (error) { console.error('[dietas] GET failed:', error.message); return res.status(200).json({ meals: [] }); }
+      return res.status(200).json({ meals: (data ?? []).map(rowToMealHoy) });
     } catch (err: any) {
       console.error('[dietas] GET error:', err);
       return res.status(200).json({ meals: [] });
