@@ -462,11 +462,16 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
       for (const direct of candidatos) {
         if (direct.patientCode && claimedAt.get(direct.patientCode) === bed.label) continue; // reclamó ACÁ → ya salió por la rama de arriba
         if (direct.patientCode && claimedAt.has(direct.patientCode)) {
+          // El paciente se movió a OTRA cama pero SIGUE en el mapa: acá quedan solo sus bandejas
+          // ya ENTREGADAS (se sirvieron en este label); las pendientes se las llevó a la cama nueva.
           const only = filtrarBandejas(direct, bandejaEntregada);
           if (only) kept.push(only);
-        } else {
+        } else if (!direct.patientCode) {
+          // Carga huérfana SIN código de paciente (fila vieja): se conserva (comportamiento previo).
           kept.push(direct);
         }
+        // else: paciente CON código que ya NO figura en el mapa (ALTA/egreso) → se DESCARTA. Antes su
+        // bandeja quedaba colgada del label y el tenedor seguía figurando en la cama ya vacía.
       }
       return mergeMealParts(kept, bed.patientCode ?? (kept[0]?.patientCode ?? ''), bed.label);
     };
