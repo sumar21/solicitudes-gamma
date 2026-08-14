@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
-import { Bed, User, Area, MealSlot, MealLoad, MEAL_SLOTS, mealSlotFromSp, mealSlotLabel, COMANDA_STATUS, ComandaStatus } from '../types';
+import { Bed, User, Area, MealSlot, MEAL_SLOTS, mealSlotFromSp, mealSlotLabel, COMANDA_STATUS, ComandaStatus } from '../types';
 import { cn, formatBedName, formatDateReadable, normalizeText } from '../lib/utils';
 import { can } from '../lib/permissions';
 import { comandaTipoPill } from './BedsView';
@@ -213,8 +213,8 @@ const DateRangeTrigger = React.forwardRef<
 ));
 DateRangeTrigger.displayName = 'DateRangeTrigger';
 
-// Una comanda cargada (activa o histórica). En "Activas" sale de bed.meals; en "Histórico"
-// del endpoint /api/dietas?history=1.
+// Una comanda cargada (activa o histórica). Ambas tabs salen del endpoint /api/dietas
+// ("De hoy" del GET de vivas; "Histórico" de /api/dietas?history=1) — no del overlay del mapa.
 type ComandaRow = {
   key: string; patientName: string; bedLabel: string; area: string;
   // `slot` es la identidad del turno; `comida` es solo su texto para mostrar/exportar.
@@ -267,6 +267,26 @@ export const splitComandasPorEntrega = (rows: ComandaRow[]): { pendientes: Coman
   return { pendientes, entregadas };
 };
 
+// Mapea una fila cruda del endpoint de comandas (/api/dietas, "De hoy" o histórico) a ComandaRow.
+// El crudo puede traer un `comida` fuera del catálogo (fila vieja) → slot null y se muestra tal cual.
+export const mapComandaRow = (m: any): ComandaRow => {
+  const slot = mealSlotFromSp(m.comida);
+  return {
+    key: String(m.spItemId),
+    patientName: String(m.patientName || '—'),
+    bedLabel: String(m.bedLabel ?? ''), area: String(m.area ?? ''),
+    slot, comida: slot ? mealSlotLabel(slot) : String(m.comida ?? ''),
+    comensal: String(m.comensal ?? '') === 'ACOMPANANTE' ? `Acompañante ${m.orden ?? ''}`.trim() : 'Paciente',
+    spItemId: String(m.spItemId ?? ''),
+    status: (String(m.status ?? '') || COMANDA_STATUS.PENDIENTE) as ComandaStatus,
+    tipo: String(m.tipo ?? ''),
+    detalle: String(m.detalle ?? ''), observaciones: String(m.observaciones ?? ''),
+    by: String(m.by ?? ''), at: String(m.at ?? ''),
+    closedAt: String(m.closedAt ?? ''),
+    motivoAnulacion: String(m.motivoAnulacion ?? ''),
+  };
+};
+
 interface Props {
   beds: Bed[];
   currentUser: User | null;
@@ -280,40 +300,17 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
     || !currentUser?.assignedAreas?.length
     || currentUser.assignedAreas.includes(area as Area), [currentUser]);
 
-  // ── Activas (hoy) — una fila por residente + comida (bed.meals del mapa). ─────
-  const rows = useMemo<ComandaRow[]>(() => {
-    const out: ComandaRow[] = [];
-    for (const b of beds) {
-      if (!b.meals || !areaOk(b.area)) continue;
-      // Recorre el catálogo (types.ts) → un turno nuevo aparece acá sin tocar esta línea.
-      for (const { slot, label } of MEAL_SLOTS) {
-        const s = b.meals[slot];
-        if (!s) continue;
-        // Una fila por BANDEJA (titular + cada acompañante): es lo que cocina necesita contar.
-        const comensales: { m: MealLoad; etiqueta: string; key: string }[] = [
-          ...(s.titular ? [{ m: s.titular, etiqueta: 'Paciente', key: `${b.label}-${slot}-t` }] : []),
-          // Etiqueta por `orden` REAL (ordinal inmutable del server), no por índice del array.
-          // Tras partir un slot mixto (entregada queda / pendiente viaja) el array puede quedar
-          // con un solo elemento, y el índice `i+1` renombraría "Acompañante 2" como "1". El
-          // `orden` es estable; fallback a i+1 solo para filas viejas sin ordinal.
-          ...s.acompanantes.map((a, i) => ({ m: a, etiqueta: `Acompañante ${a.orden || i + 1}`, key: `${b.label}-${slot}-a${a.spItemId || i}` })),
-        ];
-        for (const { m, etiqueta, key } of comensales) {
-          out.push({
-            key,
-            patientName: b.patientName || b.mealsPatientName || '—',
-            bedLabel: b.label, area: b.area,
-            slot, comida: label, comensal: etiqueta,
-            tipo: m.tipo, detalle: m.detalle ?? '', observaciones: m.observaciones ?? '',
-            by: m.by ?? '', at: m.at ?? '',
-            spItemId: m.spItemId, status: m.status ?? COMANDA_STATUS.PENDIENTE,
-            closedAt: m.closedAt ?? '',
-          });
-        }
-      }
-    }
-    return out.sort(comandaDispatchCompare);
-  }, [beds, areaOk]);
+  // ── "De hoy" (activas) — filas del endpoint de comandas, NO del overlay del mapa ────────────
+  // SERVER-BACKED: las filas salen de /api/dietas (status vivo + dia=hoy o pendiente), NO de
+  // beds.meals. Así una comanda ENTREGADA sigue apareciendo aunque el paciente ya no esté en la cama
+  // (alta/rotación): el overlay la dropeaba porque mergeBeds la ata al ocupante VIVO de Gamma
+  // (reporte piso 8, ago 2026 — media planta rotó tras el desayuno). fetchToday se define abajo
+  // (necesita authFetch); fetchTodayRef permite refrescar tras una acción; todaySeqRef = última gana.
+  const [todayRows, setTodayRows] = useState<ComandaRow[]>([]);
+  const [loadingToday, setLoadingToday] = useState(true);
+  const fetchTodayRef = React.useRef<null | (() => void)>(null);
+  const todaySeqRef = React.useRef(0);
+  const rows = todayRows;
 
   // Contadores de la botonera: se calculan SOBRE rows (pre-búsqueda) — dicen cuántas
   // existen, no cuántas matchean el buscador.
@@ -353,9 +350,9 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
       const r = await onSetMealStatus(spItemId, action, motivo);
       // Si falla NO se revierte mudo: el usuario ve por qué no pasó nada.
       if (!r.ok) setActionError('No se pudo actualizar la comanda. Reintentá.');
-      // En "De hoy" el refresco lo hace el hook (fetchMeals). En "Histórico" hay que re-pedir:
-      // esa tab tiene su propio fetch y su propio estado.
+      // Ambas tabs son server-backed y tienen su propio fetch/estado → refrescar la que está activa.
       else if (tabRef.current === 'historico') fetchHistoryRef.current?.();
+      else fetchTodayRef.current?.();
     } finally { setBusyId(null); }
   }, [onSetMealStatus]);
 
@@ -389,27 +386,9 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
         const data = await r.json();
         const rows: ComandaRow[] = (data.meals ?? [])
           .filter((m: any) => areaOk(String(m.area ?? '')))
-          .map((m: any) => {
-            // El histórico trae el crudo de SP (`Comida_D`). Se resuelve contra el catálogo;
-            // si no matchea (fila vieja), `slot` queda null y se muestra el crudo tal cual.
-            const slot = mealSlotFromSp(m.comida);
-            return {
-              key: String(m.spItemId),
-              patientName: String(m.patientName || '—'),
-              bedLabel: String(m.bedLabel ?? ''), area: String(m.area ?? ''),
-              slot, comida: slot ? mealSlotLabel(slot) : String(m.comida ?? ''),
-              comensal: String(m.comensal ?? '') === 'ACOMPANANTE' ? `Acompañante ${m.orden ?? ''}`.trim() : 'Paciente',
-              spItemId: String(m.spItemId ?? ''),
-              status: (String(m.status ?? '') || COMANDA_STATUS.PENDIENTE) as ComandaStatus,
-              tipo: String(m.tipo ?? ''),
-              detalle: String(m.detalle ?? ''), observaciones: String(m.observaciones ?? ''),
-              by: String(m.by ?? ''), at: String(m.at ?? ''),
-              closedAt: String(m.closedAt ?? ''),
-              motivoAnulacion: String(m.motivoAnulacion ?? ''),
-            };
-          })
-          // Mismo criterio que "De hoy": por paciente, y adentro por fecha desc — así las
-          // bandejas de una misma cama quedan juntas en vez de salteadas entre otras camas.
+          .map(mapComandaRow)
+          // Por paciente, y adentro por fecha desc — así las bandejas de una misma cama quedan
+          // juntas en vez de salteadas entre otras camas.
           .sort((a: ComandaRow, b: ComandaRow) =>
             a.patientName.localeCompare(b.patientName, 'es') ||
             String(b.at).localeCompare(String(a.at)) ||
@@ -422,6 +401,33 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
 
   useEffect(() => { if (tab === 'historico') fetchHistory(); }, [tab, fetchHistory]);
   useEffect(() => { fetchHistoryRef.current = fetchHistory; tabRef.current = tab; }, [fetchHistory, tab]);
+
+  // "De hoy" server-backed: pega al GET de comandas vivas (dia=hoy + pendientes de días previos) y
+  // arma las filas igual que el histórico, ordenadas por despacho (cama). NO depende del mapa vivo.
+  const fetchToday = useCallback(async () => {
+    // "Última request gana": con el refresco piggyback (cada cambio de beds) + el refetch de una
+    // acción puede haber varios fetch en vuelo; si uno viejo resuelve tarde, pisaría con datos
+    // stale (una entregada reapareciendo pendiente). El seq descarta cualquier respuesta que no
+    // sea la del último disparo.
+    const seq = ++todaySeqRef.current;
+    try {
+      const r = await authFetch('/api/dietas');
+      if (r.ok) {
+        const data = await r.json();
+        const rows: ComandaRow[] = (data.meals ?? [])
+          .filter((m: any) => areaOk(String(m.area ?? '')))
+          .map(mapComandaRow)
+          .sort(comandaDispatchCompare);
+        if (seq === todaySeqRef.current) setTodayRows(rows);
+      }
+    } catch { /* mantiene lo previo */ }
+    finally { if (seq === todaySeqRef.current) setLoadingToday(false); }
+  }, [authFetch, areaOk]);
+
+  // Carga inicial + refresco: al montar, al cambiar de usuario, y en cada actualización de `beds`
+  // (piggyback del realtime/poll de comandas del hook) → se mantiene fresco sin canal propio.
+  useEffect(() => { fetchToday(); }, [fetchToday, beds]);
+  useEffect(() => { fetchTodayRef.current = fetchToday; }, [fetchToday]);
 
   const data = tab === 'activas' ? (vistaHoy === 'entregadas' ? entregadas : pendientes) : history;
 
@@ -678,8 +684,8 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
             </Button>
           </>
         )}
-        {tab === 'activas' && onRefresh && (
-          <Button variant="outline" size="sm" onClick={() => onRefresh()}
+        {tab === 'activas' && (
+          <Button variant="outline" size="sm" onClick={() => { fetchToday(); onRefresh?.(); }}
             className="h-9 px-3 rounded-lg gap-2 text-xs font-bold text-slate-600">
             <RefreshCw className="w-4 h-4" /> Actualizar
           </Button>
@@ -713,7 +719,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
         </div>
       )}
 
-      {loadingHist && tab === 'historico' ? (
+      {((loadingHist && tab === 'historico') || (loadingToday && tab === 'activas' && todayRows.length === 0)) ? (
         <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400 text-sm">Cargando…</div>
       ) : filtered.length === 0 ? (
         <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400">
