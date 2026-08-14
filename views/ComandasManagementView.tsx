@@ -845,6 +845,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
         <p className="text-xs text-slate-500 font-medium ml-auto self-center">
           {filtered.length} {filtered.length === 1 ? 'comanda' : 'comandas'}
           {filtrando && filtered.length !== data.length && <span className="text-slate-400"> de {data.length}</span>}
+          {tab === 'activas' && <span className="text-slate-300"> · fetch {todayRows.length} (E{entregadas.length}/P{pendientes.length})</span>}
         </p>
       </div>
 
