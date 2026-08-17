@@ -140,6 +140,11 @@ async function handler(req: any, res: any) {
         const graceCutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
         q = q.or(`status.not.in.(${TicketStatus.COMPLETED},${TicketStatus.REJECTED}),completed_at.gte.${graceCutoff}`);
       }
+      // El histórico completo (all=1) acumula traslados para siempre. SIN order, el cap de filas de
+      // Supabase (~1000) devolvía un subconjunto ARBITRARIO (mismo bug que comandas) → el Historial,
+      // filtrado por fechas recientes, no traía nada. Ordenar por más reciente garantiza que lo
+      // actual entre en el corte; el límite alto documenta la intención (el cap real lo pone el server).
+      if (fetchAll) q = q.order('created_at', { ascending: false }).limit(20000);
       const { data, error } = await q;
       if (error) throw new Error(`Supabase GET failed: ${error.message}`);
 
