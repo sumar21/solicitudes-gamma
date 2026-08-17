@@ -130,6 +130,12 @@ async function handler(req: any, res: any) {
     if (req.method === 'GET') {
       const fetchAll = req.query?.all === '1';
       const patientCode = typeof req.query?.patientCode === 'string' ? req.query.patientCode.trim() : '';
+      // Rango de fechas ART (opcional): el cliente (Historial/Monitor) manda from/to y el filtro va
+      // SERVER-SIDE por created_at. Antes se traía TODO y se filtraba en el front (parche de la época
+      // SharePoint); con la tabla acumulada chocaba con el cap de filas de Supabase → no traía nada.
+      const isDay = (s: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(s ?? ''));
+      const from = isDay(req.query?.from) ? String(req.query.from) : '';
+      const to   = isDay(req.query?.to)   ? String(req.query.to)   : '';
 
       let q = supa.from('traslados').select('*').eq('entorno', ENTORNO);
       if (patientCode) {
@@ -141,11 +147,13 @@ async function handler(req: any, res: any) {
         const graceCutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
         q = q.or(`status.not.in.(${TicketStatus.COMPLETED},${TicketStatus.REJECTED}),completed_at.gte.${graceCutoff}`);
       }
-      // El histórico completo (all=1) acumula traslados para siempre. SIN order, el cap de filas de
-      // Supabase (~1000) devolvía un subconjunto ARBITRARIO (mismo bug que comandas) → el Historial,
-      // filtrado por fechas recientes, no traía nada. Ordenar por más reciente garantiza que lo
-      // actual entre en el corte; el límite alto documenta la intención (el cap real lo pone el server).
-      if (fetchAll) q = q.order('created_at', { ascending: false }).limit(20000);
+      if (fetchAll) {
+        // Con rango: el resultado queda acotado por las fechas → NUNCA se trunca (la forma correcta).
+        // Sin rango (compat): "recientes ordenados" para no traer todo el histórico acumulado.
+        if (from) q = q.gte('created_at', `${from}T00:00:00-03:00`);
+        if (to)   q = q.lte('created_at', `${to}T23:59:59-03:00`);
+        q = q.order('created_at', { ascending: false }).limit(20000);
+      }
       const { data, error } = await q;
       if (error) throw new Error(`Supabase GET failed: ${error.message}`);
 
