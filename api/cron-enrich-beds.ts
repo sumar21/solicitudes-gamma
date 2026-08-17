@@ -23,6 +23,16 @@ const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = '443c4ff0-bc98-43ef-a49c-7fd91cc63734'; // 12.EnrichCamas
 const CRON_SECRET = process.env.CRON_SECRET ?? '';
 const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
+
+// Entornos donde el push de dieta/ayuno lo dispara el WEBHOOK de Supabase (Fase 1: dieta_cambios/
+// ayuno_cambios → notify-change). Para el resto, el push sigue saliendo de ACÁ (push-utils/Vercel)
+// como fallback, así mergear este archivo a main NO deja a PRODUCTIVO sin notis mientras su webhook
+// siga gateado. El insert al historial se hace SIEMPRE (independiente del push). DEBE coincidir con el
+// WHEN del trigger notify_change_* (migración webhook_notify_change): al habilitar un entorno, agregarlo
+// ACÁ y sacar el WHEN del trigger, juntos → nunca hay doble push (webhook y push-utils son excluyentes
+// por entorno) ni ventana sin push.
+const WEBHOOK_PUSH_ENTORNOS = ['TESTING'];
+const PUSH_VIA_WEBHOOK = WEBHOOK_PUSH_ENTORNOS.includes(ENTORNO);
 const GAMMA_BASE = process.env.GAMMA_VM_URL ?? 'http://35.224.5.114/proxy/index.php';
 
 // Concurrencia contra Gamma. La VM es SINGLE-NODE (docs/arquitectura.md §41): 8 workers en
@@ -247,9 +257,9 @@ export default async function handler(req: any, res: any) {
             patientCode: code, eventOrigin: origen, eventNumber: numero,
             areaName: String(sector.nombre ?? '').trim(),
             patientName: String(bed.paciente ?? '').trim(),
-            // Habitación legible para el cuerpo del push a Catering. NO entra al hash
-            // de detección de cambios (ver pushBody/dietPushBody) para que un cambio
-            // de cama del paciente no dispare una re-notificación de dieta/ayuno.
+            // Habitación legible: se guarda en dieta_cambios/ayuno_cambios y la Edge Function
+            // arma la ubicación del body. NO entra al hash de detección de cambios (fastingDetalle /
+            // dietPushBody) para que un cambio de cama del paciente no dispare una re-notificación.
             roomName: String(room.nombre ?? '').trim(),
           });
         }
@@ -343,26 +353,24 @@ export default async function handler(req: any, res: any) {
           const newFasting = payload.fasting;
           const hasFasting = !!(newFasting && newFasting.indications.length > 0);
 
-          // Decidir QUÉ notificar (sin enviar todavía): el push se manda recién
-          // después de un upsert exitoso, para no re-notificar si SP falla.
-          let pushBody: string | null = null;
+          // Decidir QUÉ registrar (sin persistir todavía): el insert a ayuno_cambios se hace recién
+          // tras un upsert exitoso, para no re-notificar si SP falla. `fastingDetalle` es la frase de
+          // cambio SIN el prefijo del paciente (la Edge Function arma el body). null = sin cambio.
+          let fastingDetalle: string | null = null;
           if (existing) {
             const oldHash = hashFastingSummary(existing.oldFasting);
             const newHash = hashFastingSummary(newFasting);
             if (oldHash !== newHash) {
               const horas = formatFastingHours(newFasting);
-              let detalle: string;
-              if (oldHash === 'none')      detalle = horas ? `Nuevo ayuno programado: ${horas}` : 'Nuevo ayuno programado';
-              else if (newHash === 'none') detalle = 'Ayuno cancelado';
-              else                          detalle = horas ? `Ayuno modificado: ${horas}` : 'Ayuno modificado';
+              if (oldHash === 'none')      fastingDetalle = horas ? `Nuevo ayuno programado: ${horas}` : 'Nuevo ayuno programado';
+              else if (newHash === 'none') fastingDetalle = 'Ayuno cancelado';
+              else                          fastingDetalle = horas ? `Ayuno modificado: ${horas}` : 'Ayuno modificado';
               console.log(`[cron-enrich] FASTING CHANGE ${eventKey} patient=${b.patientName} old=${oldHash} new=${newHash}${silent ? ' [silent]' : ''}`);
-              pushBody = `${b.patientName || 'Paciente'}: ${detalle}`;
             }
           } else if (hasFasting && isRecentAdmission(payload.admissionDate)) {
             const horas = formatFastingHours(newFasting);
-            const detalle = horas ? `Nuevo ayuno programado: ${horas}` : 'Nuevo ayuno programado';
+            fastingDetalle = horas ? `Nuevo ayuno programado: ${horas}` : 'Nuevo ayuno programado';
             console.log(`[cron-enrich] FASTING NEW-PATIENT ${eventKey} patient=${b.patientName} admission=${payload.admissionDate}${silent ? ' [silent]' : ''}`);
-            pushBody = `${b.patientName || 'Paciente'}: ${detalle}`;
           }
 
           // ── Detección de cambio de DIETA (push notif_diet_change) ──
@@ -397,38 +405,47 @@ export default async function handler(req: any, res: any) {
           }
           stats.upserted++;
 
-          // La habitación se agrega en TODOS los avisos de dieta/ayuno (no solo Catering):
-          // ayuda a ubicar al paciente sin abrir la app. roomLabel ej. "Habitación 413 (Piso 4)".
+          // Ubicación legible ("Habitación 413 (Piso 4)") para el body del push FALLBACK (push-utils).
+          // La Edge Function la reconstruye por su cuenta desde area + habitacion de la fila.
           const roomLabel = formatRoomForCatering(b.roomName, b.areaName);
 
-          if (pushBody && !silent) {
-            const body = roomLabel ? `${pushBody} — ${roomLabel}` : pushBody;
-            await sendPushToSubscribers({
-              title: 'Ayuno actualizado',
-              body,
-              type:  'FASTING_CHANGE',
-              originAreaName: b.areaName, destinationAreaName: b.areaName, sede: 'HPR',
-              cateringTitle: 'Ayuno actualizado',
-              cateringBody:  body,
-            });
+          // ── AYUNO ──────────────────────────────────────────────────────────────
+          // El insert a ayuno_cambios (historial append-only + fuente del webhook) se hace SIEMPRE.
+          // El push: por webhook (Supabase) en entornos migrados; si no, fallback por push-utils
+          // (Vercel). Excluyentes por entorno → nunca doble push. Best-effort: un fallo del insert
+          // NO corta el cron; el próximo cambio real se re-detecta y registra.
+          if (fastingDetalle && !silent) {
+            try {
+              await getSupabaseAdmin().from('ayuno_cambios').insert({
+                entorno:         ENTORNO,
+                paciente_codigo: b.patientCode,
+                paciente_nombre: b.patientName || null,
+                area:            b.areaName || null,
+                habitacion:      b.roomName || null,
+                event_key:       eventKey || null,
+                resumen_prev:    formatFastingHours(existing?.oldFasting) || 'sin ayuno',
+                resumen_new:     formatFastingHours(newFasting) || 'sin ayuno',
+                detalle:         fastingDetalle,
+              });
+            } catch (e: any) {
+              console.error(`[cron-enrich] ayuno_cambios insert falló ${eventKey}:`, e?.message ?? e);
+            }
+            if (!PUSH_VIA_WEBHOOK) {
+              const base = `${b.patientName || 'Paciente'}: ${fastingDetalle}`;
+              const body = roomLabel ? `${base} — ${roomLabel}` : base;
+              await sendPushToSubscribers({
+                title: 'Ayuno actualizado', body, type: 'FASTING_CHANGE',
+                originAreaName: b.areaName, destinationAreaName: b.areaName, sede: 'HPR',
+                cateringTitle: 'Ayuno actualizado', cateringBody: body,
+              });
+            }
             fastingNotified++;
           }
 
+          // ── DIETA ──────────────────────────────────────────────────────────────
+          // Igual que ayuno: insert a dieta_cambios SIEMPRE (historial "de X → a Y" + fuente webhook),
+          // push por webhook o fallback push-utils según entorno.
           if (dietPushBody && !silent) {
-            const body = roomLabel ? `${dietPushBody} — ${roomLabel}` : dietPushBody;
-            await sendPushToSubscribers({
-              title: 'Dieta actualizada',
-              body,
-              type:  'DIET_CHANGE',
-              originAreaName: b.areaName, destinationAreaName: b.areaName, sede: 'HPR',
-              cateringTitle: 'Dieta actualizada',
-              cateringBody:  body,
-            });
-            dietNotified++;
-
-            // Historial de cambios de dieta (Supabase public.dieta_cambios): append-only, guarda el
-            // "de X → a Y". Independiente de push/suscriptores → historial completo. Best-effort: un
-            // fallo acá NO corta el cron (el push ya salió; el próximo cambio real se registra igual).
             try {
               await getSupabaseAdmin().from('dieta_cambios').insert({
                 entorno:         ENTORNO,
@@ -443,6 +460,15 @@ export default async function handler(req: any, res: any) {
             } catch (e: any) {
               console.error(`[cron-enrich] dieta_cambios insert falló ${eventKey}:`, e?.message ?? e);
             }
+            if (!PUSH_VIA_WEBHOOK) {
+              const body = roomLabel ? `${dietPushBody} — ${roomLabel}` : dietPushBody;
+              await sendPushToSubscribers({
+                title: 'Dieta actualizada', body, type: 'DIET_CHANGE',
+                originAreaName: b.areaName, destinationAreaName: b.areaName, sede: 'HPR',
+                cateringTitle: 'Dieta actualizada', cateringBody: body,
+              });
+            }
+            dietNotified++;
           }
         } catch (err: any) {
           stats.errors++;
