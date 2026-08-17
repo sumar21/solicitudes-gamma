@@ -86,16 +86,42 @@ export const CirugiasView: React.FC<Props> = ({
     }
   };
 
+  // Recorte por sector para roles filterByFloors (mismo criterio que Traslados/Limpiezas, así una
+  // azafata/enfermería de piso ve solo lo suyo). La cirugía "pertenece" al piso de la cama ACTUAL
+  // relevante: el DESTINO de la devolución si ya se definió y difiere del origen, sino el ORIGEN.
+  // Hand-off exclusivo → una cirugía de 405-1 la ve piso 4; cuando la devolución se fija a piso 5,
+  // deja de verla piso 4 y pasa a verla piso 5. (Distinto de scopeTickets, que muestra a origen Y
+  // destino a la vez; acá el destino MANDA cuando difiere, por pedido de negocio.)
+  // Admin (todas las áreas) o beds sin cargar → no filtra, igual que scopeTickets.
+  const scoped = useMemo(() => {
+    if (!currentUser?.filterByFloors || !currentUser.assignedAreas?.length) return cirugias;
+    const areas = currentUser.assignedAreas;
+    const allAreas = new Set(Object.values(Area) as string[]);
+    const hasAll = areas.length >= allAreas.size - 1; // 9 de 10 = efectivamente todas
+    if (hasAll || beds.length === 0) return cirugias;
+    const areaByLabel = new Map<string, string>();
+    for (const b of beds) if (b.area) areaByLabel.set(b.label, b.area);
+    const ownerArea = (c: CirugiaTraslado): string | undefined => {
+      const destChanged = !!c.camaDestino && c.camaDestino !== c.camaOrigen;
+      const bedLabel = destChanged ? c.camaDestino! : c.camaOrigen;
+      return areaByLabel.get(bedLabel) ?? c.area; // fallback al área guardada en la fila (origen)
+    };
+    return cirugias.filter(c => {
+      const a = ownerArea(c);
+      return a ? areas.includes(a as Area) : true; // área irresoluble → no la ocultamos
+    });
+  }, [cirugias, currentUser, beds]);
+
   const filtered = useMemo(() => {
-    if (!search.trim()) return cirugias;
+    if (!search.trim()) return scoped;
     const q = search.toLowerCase();
-    return cirugias.filter(c =>
+    return scoped.filter(c =>
       (c.pacienteNombre ?? '').toLowerCase().includes(q) ||
       (c.camaOrigen ?? '').toLowerCase().includes(q) ||
       (c.camaDestino ?? '').toLowerCase().includes(q) ||
       (c.pacienteCodigo ?? '').toLowerCase().includes(q),
     );
-  }, [cirugias, search]);
+  }, [scoped, search]);
 
   // Lista ÚNICA ordenada por el flujo (más recientes primero dentro de cada estado). La columna
   // Estado distingue en qué paso está cada una — ya no hacen falta secciones separadas.
