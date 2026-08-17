@@ -108,9 +108,10 @@ export default function App() {
   //
   // Sale de `historyTickets` y no de `tickets`: el poll de 15s dejó de traer el histórico,
   // así que `tickets` ya casi no tiene Consolidados (solo los de la ventana de gracia de
-  // 30 min del server). Con `historyTickets` el número es el de siempre en cuanto el
-  // histórico esté cargado; hasta entonces promedia solo los cierres recientes, o muestra
-  // '--' si no hubo ninguno.
+  // 30 min del server). `historyTickets` ahora es el RANGO cargado por Monitor/Historial (por
+  // defecto "hoy"), así que este promedio refleja los cierres de ese rango; si el usuario no
+  // pasó por esas vistas (p.ej. una azafata en Operativa), promedia solo los cierres recientes
+  // del merge vivo, o muestra '--' si no hubo ninguno.
   const avgWaitTime = React.useMemo(() => {
     const completed = state.historyTickets.filter(t => t.status === TicketStatus.COMPLETED && t.createdAt && t.completedAt);
     if (completed.length === 0) return '--';
@@ -755,7 +756,7 @@ export default function App() {
           {/* `historyTickets` y no `filteredTickets`: el Monitor calcula KPIs por rango de
               fechas sobre traslados Consolidados, que el poll de 15s ya no trae (ver
               fetchAllTickets). Además así no lo afecta el buscador de Operativa. */}
-          {canViewMonitor && state.currentView === 'HOME' && <DashboardView tickets={state.historyTickets} onRefresh={() => actions.fetchAllTickets(true)} refreshing={state.allTicketsLoading} />}
+          {canViewMonitor && state.currentView === 'HOME' && <DashboardView tickets={state.historyTickets} onRefresh={() => actions.fetchAllTickets(true)} refreshing={state.allTicketsLoading} onRangeChange={actions.setHistoryRange} />}
           {/* Operativa — dos solapas: Traslados y Limpiezas.
               Limpiezas dejó de ser una entrada del sidebar y vive acá. La barra de solapas va
               como HERMANA de las vistas (no las envuelve), así cada una conserva su propio
@@ -824,7 +825,7 @@ export default function App() {
             </>
           )}
           {/* Historial — gateado por Acceso_RT */}
-          {canViewHistorial && state.currentView === 'HISTORY' && <HistoryView tickets={state.historyTickets} onRefresh={() => actions.fetchAllTickets(true)} refreshing={state.allTicketsLoading} />}
+          {canViewHistorial && state.currentView === 'HISTORY' && <HistoryView tickets={state.historyTickets} onRefresh={() => actions.fetchAllTickets(true)} refreshing={state.allTicketsLoading} onRangeChange={actions.setHistoryRange} onFetchPatientTickets={actions.fetchPatientTickets} />}
           {/* Usuarios — gateado por permiso abm_usuarios */}
           {canSeeUsers && state.currentView === 'USERS' && <UserManagementView currentUser={state.currentUser} />}
           {/* Roles — gateado por permiso abm_roles */}

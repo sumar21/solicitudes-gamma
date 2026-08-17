@@ -1,5 +1,5 @@
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Ticket, TicketStatus, WorkflowType } from '../types';
 import { Activity, ArrowRightLeft, Clock, CheckCircle2, Calendar as CalendarIcon } from '../components/Icons';
 import { RefreshCw } from 'lucide-react';
@@ -18,6 +18,8 @@ interface DashboardViewProps {
   /** Recarga el histórico. El Monitor ya NO se pollea: se carga al entrar y con este botón. */
   onRefresh?: () => void | Promise<void>;
   refreshing?: boolean;
+  /** Pide al hook cargar el histórico de un rango [from,to] (ART) SERVER-SIDE. */
+  onRangeChange?: (from: string, to: string) => void;
 }
 
 // ── Helpers de fecha (YYYY-MM-DD locales = hora del dispositivo = ART en uso real) ──
@@ -75,12 +77,24 @@ function computeStats(subset: Ticket[]) {
   return { activeCount: active.length, completedCount: completed.length, avgWait };
 }
 
-export const DashboardView: React.FC<DashboardViewProps> = ({ tickets, onRefresh, refreshing }) => {
+export const DashboardView: React.FC<DashboardViewProps> = ({ tickets, onRefresh, refreshing, onRangeChange }) => {
   const today = isoToday();
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [openStart, setOpenStart] = useState(false);
   const [openEnd, setOpenEnd] = useState(false);
+
+  // Cada vez que cambia el período, pide al hook cargar el histórico SERVER-SIDE. Se pide el rango
+  // EXTENDIDO [prevStart .. end] porque las tendencias comparan contra el período anterior de igual
+  // duración (ver `computeStats`/`prevSet`); si solo trajéramos [start..end] las flechas quedarían
+  // sin base. Las worklists ("ahora") no dependen del rango: salen del merge live del prop.
+  useEffect(() => {
+    if (!onRangeChange) return;
+    const len = daysInclusive(startDate, endDate);
+    const prevEnd = shiftDays(startDate, -1);
+    const prevStart = shiftDays(prevEnd, -(len - 1));
+    onRangeChange(prevStart, endDate);
+  }, [startDate, endDate, onRangeChange]);
 
   // Presets → setean el rango. El activo se deriva comparando contra el rango actual.
   const presets = [

@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { Ticket, TicketStatus } from '../types';
 import {
@@ -27,6 +27,10 @@ interface HistoryViewProps {
   /** Recarga el histórico. Ya no se pollea: carga al entrar y con este botón. */
   onRefresh?: () => void | Promise<void>;
   refreshing?: boolean;
+  /** Pide al hook cargar el histórico de un rango [from,to] (ART) SERVER-SIDE. */
+  onRangeChange?: (from: string, to: string) => void;
+  /** Trae la historia COMPLETA de un paciente por código (para la Trayectoria). */
+  onFetchPatientTickets?: (patientCode?: string) => Promise<Ticket[]>;
 }
 
 const DateRangeTrigger = React.forwardRef<
@@ -53,13 +57,20 @@ const DateRangeTrigger = React.forwardRef<
 ));
 DateRangeTrigger.displayName = "DateRangeTrigger";
 
-export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, refreshing }) => {
+export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, refreshing, onRangeChange, onFetchPatientTickets }) => {
   const todayISO = (() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   })();
   const [startDate, setStartDate] = useState(todayISO);
   const [endDate, setEndDate] = useState(todayISO);
+
+  // Cambiar Desde/Hasta pide al hook cargar ESE rango SERVER-SIDE (antes se traía todo el histórico
+  // y se filtraba en el front → con la tabla acumulada chocaba con el cap de filas y no traía nada).
+  useEffect(() => {
+    onRangeChange?.(startDate, endDate);
+  }, [startDate, endDate, onRangeChange]);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'cancelled'>('all');
   const [selectedTicketForAudit, setSelectedTicketForAudit] = useState<Ticket | null>(null);
@@ -107,10 +118,24 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
     [patientGroups],
   );
 
-  const journeyTickets = useMemo(
-    () => journeyPatientKey ? (patientGroups.find(g => g.key === journeyPatientKey)?.tickets ?? []) : [],
-    [journeyPatientKey, patientGroups],
-  );
+  // Trayectoria: al elegir un paciente traemos su historia COMPLETA por código (patientCode),
+  // independiente del rango cargado en la lista. Sin código (tickets manuales/legacy) caemos a lo
+  // que hay en memoria del grupo. Así la trayectoria no queda recortada por Desde/Hasta.
+  const [journeyTickets, setJourneyTickets] = useState<Ticket[]>([]);
+  useEffect(() => {
+    if (!journeyPatientKey) { setJourneyTickets([]); return; }
+    const group = patientGroups.find(g => g.key === journeyPatientKey);
+    if (!group) { setJourneyTickets([]); return; }
+    if (group.code && onFetchPatientTickets) {
+      let cancelled = false;
+      setJourneyTickets(group.tickets); // muestra lo que hay mientras llega la historia completa
+      onFetchPatientTickets(group.code)
+        .then(ts => { if (!cancelled && ts.length) setJourneyTickets(ts); })
+        .catch(() => { /* deja el fallback en memoria */ });
+      return () => { cancelled = true; };
+    }
+    setJourneyTickets(group.tickets);
+  }, [journeyPatientKey, patientGroups, onFetchPatientTickets]);
 
   const filteredHistory = useMemo(() => {
     return tickets
@@ -121,12 +146,15 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
         return true;
       })
       .filter(t => {
+        // Búsqueda por paciente/ID DENTRO del rango cargado. Antes, con TODO el histórico en
+        // memoria, la búsqueda salteaba el filtro de fecha; ahora el set ya viene acotado por el
+        // server, así que la búsqueda es sobre esas fechas (para ver un paciente viejo se amplía el
+        // rango, o se usa la Trayectoria que trae su historia completa por código).
         const matchesSearch = searchTerm
           ? t.patientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
             t.id.toLowerCase().includes(searchTerm.toLowerCase())
           : true;
-        // When searching by patient/ID, skip date filter to show full journey
-        if (searchTerm && matchesSearch) return true;
+        if (!matchesSearch) return false;
         const ticketDate = (t.date || '').slice(0, 10);
         const matchesStart = startDate ? ticketDate >= startDate : true;
         const matchesEnd = endDate ? ticketDate <= endDate : true;

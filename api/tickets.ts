@@ -137,24 +137,48 @@ async function handler(req: any, res: any) {
       const from = isDay(req.query?.from) ? String(req.query.from) : '';
       const to   = isDay(req.query?.to)   ? String(req.query.to)   : '';
 
-      let q = supa.from('traslados').select('*').eq('entorno', ENTORNO);
-      if (patientCode) {
-        q = q.eq('codigo_paciente', patientCode);
-      } else if (!fetchAll) {
-        // Vista viva: activos + cerrados en la ventana de gracia de 30min. La ventana existe para
-        // que el detector de cambios del cliente vea la transición a Consolidado/Cancelado antes de
-        // que el ticket se caiga del payload (misma razón que en la versión SP).
-        const graceCutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-        q = q.or(`status.not.in.(${TicketStatus.COMPLETED},${TicketStatus.REJECTED}),completed_at.gte.${graceCutoff}`);
-      }
+      let data: Record<string, any>[] | null = null;
+      let error: { message: string } | null = null;
+
       if (fetchAll) {
-        // Con rango: el resultado queda acotado por las fechas → NUNCA se trunca (la forma correcta).
-        // Sin rango (compat): "recientes ordenados" para no traer todo el histórico acumulado.
-        if (from) q = q.gte('created_at', `${from}T00:00:00-03:00`);
-        if (to)   q = q.lte('created_at', `${to}T23:59:59-03:00`);
-        q = q.order('created_at', { ascending: false }).limit(20000);
+        // Histórico por RANGO (Monitor/Historial). Se pagina server-side: PostgREST corta cada
+        // request en db-max-rows (histórico ~1000 en el proyecto), así que una sola query se
+        // truncaba en silencio y el filtro por fecha del front no encontraba nada. Acá pedimos
+        // páginas con .range() avanzando por la cantidad REALMENTE recibida y cortamos SOLO en la
+        // página vacía → el rango completo llega siempre, sin importar el cap del proyecto.
+        // Orden estable (created_at, id_univoco) para que la paginación no salte ni duplique filas.
+        const PAGE = 1000;
+        const HARD_CAP = 100_000; // backstop anti-loop (nunca debería alcanzarse con un rango real)
+        const acc: Record<string, any>[] = [];
+        while (acc.length < HARD_CAP) {
+          let pageQ = supa.from('traslados').select('*').eq('entorno', ENTORNO);
+          if (from) pageQ = pageQ.gte('created_at', `${from}T00:00:00-03:00`);
+          if (to)   pageQ = pageQ.lte('created_at', `${to}T23:59:59-03:00`);
+          pageQ = pageQ
+            .order('created_at', { ascending: false })
+            .order('id_univoco', { ascending: false })
+            .range(acc.length, acc.length + PAGE - 1);
+          const res = await pageQ;
+          if (res.error) { error = res.error; break; }
+          const rows = res.data ?? [];
+          acc.push(...rows);
+          if (rows.length === 0) break; // no hay más filas en el rango
+        }
+        data = acc;
+      } else {
+        let q = supa.from('traslados').select('*').eq('entorno', ENTORNO);
+        if (patientCode) {
+          q = q.eq('codigo_paciente', patientCode);
+        } else {
+          // Vista viva: activos + cerrados en la ventana de gracia de 30min. La ventana existe para
+          // que el detector de cambios del cliente vea la transición a Consolidado/Cancelado antes de
+          // que el ticket se caiga del payload (misma razón que en la versión SP).
+          const graceCutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+          q = q.or(`status.not.in.(${TicketStatus.COMPLETED},${TicketStatus.REJECTED}),completed_at.gte.${graceCutoff}`);
+        }
+        const res = await q;
+        data = res.data; error = res.error;
       }
-      const { data, error } = await q;
       if (error) throw new Error(`Supabase GET failed: ${error.message}`);
 
       const tickets = (data ?? []).map(rowToTicket);

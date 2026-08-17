@@ -888,6 +888,22 @@ export const useHospitalState = () => {
   const [allTicketsLoading, setAllTicketsLoading]  = useState(false);
   const allTicketsFetchedAtRef = React.useRef(0);    // anti-rebote al alternar de vista
   const allTicketsLoadedRef    = React.useRef(false); // ¿alguna vez se cargó? (para refreshAll)
+  // Rango de fechas ACTIVO del histórico (ART, día local del dispositivo = ART en uso real).
+  // Monitor e Historial lo manejan: al entrar arranca en "hoy" y cambiar las fechas dispara un
+  // re-fetch SERVER-SIDE acotado (antes se traía TODO y se filtraba en el front → chocaba con el
+  // cap de filas de Supabase y no traía nada). El fetch por rango vive acá (no en las vistas) para
+  // conservar scopeTickets (recorte por rol) y el merge live-sobre-histórico.
+  const isoTodayLocal = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  const [historyRange, setHistoryRangeState] = useState<{ from: string; to: string }>(() => {
+    const d = isoTodayLocal();
+    return { from: d, to: d };
+  });
+  const historyRangeRef = React.useRef(historyRange); // espejo síncrono para fetchAllTickets/refresh
+  const lastRangeKeyRef = React.useRef('');           // último rango efectivamente pedido (anti-rebote)
+  const historySeqRef   = React.useRef(0);            // guarda anti-carrera: gana la respuesta más nueva
   // Limpiezas activas (overlay de 14.Limpiezas), key = label de cama. Se pollea como las
   // camas. closedCleaningsRef evita disparar el auto-cierre más de una vez por registro.
   const [cleanings, setCleanings]                  = useState<Map<string, CleaningInfo>>(new Map());
@@ -1761,30 +1777,46 @@ export const useHospitalState = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authFetch]);
 
-  // Histórico completo, BAJO DEMANDA. Lo llaman Monitor e Historial al montarse y el botón
-  // "Actualizar" de esas vistas. Deliberadamente NO entra al setInterval: es el request caro
-  // (1.143 filas / ~2,9s de instancia) y no tiene sentido pagarlo cada 15s para KPIs que se
-  // miran de a ratos.
+  // Histórico por RANGO, BAJO DEMANDA. Lo llaman Monitor e Historial al montarse, al cambiar las
+  // fechas y el botón "Actualizar". Deliberadamente NO entra al setInterval: se mira de a ratos.
+  // El endpoint filtra created_at SERVER-SIDE y pagina, así que el payload queda acotado al rango
+  // (ya no trae el histórico entero de la época SharePoint).
   const fetchAllTickets = useCallback(async (force = false) => {
-    // Anti-rebote: alternar Monitor ↔ Historial no dispara un request de 2,9s por click.
-    // El botón "Actualizar" pasa force=true porque ahí el usuario PIDIÓ datos frescos.
-    if (!force && Date.now() - allTicketsFetchedAtRef.current < 30_000) return;
+    const { from, to } = historyRangeRef.current;
+    const key = `${from}|${to}`;
+    // Anti-rebote POR RANGO: alternar Monitor ↔ Historial con el MISMO rango no re-dispara;
+    // cambiar las fechas SÍ (key distinta). El botón "Actualizar" pasa force=true.
+    if (!force && key === lastRangeKeyRef.current && Date.now() - allTicketsFetchedAtRef.current < 30_000) return;
+    lastRangeKeyRef.current = key;
     allTicketsFetchedAtRef.current = Date.now();
+    const seq = ++historySeqRef.current;
     setAllTicketsLoading(true);
     try {
-      const r = await authFetch('/api/tickets?all=1');
+      const qs = new URLSearchParams({ all: '1' });
+      if (from) qs.set('from', from);
+      if (to)   qs.set('to', to);
+      const r = await authFetch(`/api/tickets?${qs.toString()}`);
       if (r.status === 401) { handleLogout(); return; }
       if (!r.ok) { allTicketsFetchedAtRef.current = 0; return; } // reintentar en la próxima
       const data: { tickets: Ticket[] } = await r.json();
+      if (seq !== historySeqRef.current) return; // llegó una respuesta más nueva → descartar esta
       if (Array.isArray(data.tickets)) {
         const seen = new Set<string>();
         setAllTickets(data.tickets.filter(t => seen.has(t.id) ? false : (seen.add(t.id), true)));
         allTicketsLoadedRef.current = true;
       }
     } catch { allTicketsFetchedAtRef.current = 0; /* deja lo previo, reintenta después */ }
-    finally { setAllTicketsLoading(false); }
+    finally { if (seq === historySeqRef.current) setAllTicketsLoading(false); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authFetch]);
+
+  // Cambia el rango del histórico (lo llaman Monitor e Historial desde sus selectores de fecha).
+  // Actualiza el espejo síncrono + el estado; el effect de abajo re-dispara el fetch acotado.
+  const setHistoryRange = useCallback((from: string, to: string) => {
+    if (historyRangeRef.current.from === from && historyRangeRef.current.to === to) return;
+    historyRangeRef.current = { from, to };
+    setHistoryRangeState({ from, to });
+  }, []);
 
   // Vista "todo": histórico + lo que el poll trae vivo, con el poll ganando por id.
   //
@@ -1802,12 +1834,13 @@ export const useHospitalState = () => {
     return [...m.values()];
   }, [allTickets, tickets]);
 
-  // Carga del histórico al ENTRAR a Monitor (HOME) o Historial. Sin intervalo: se trae una
-  // vez por entrada (con el anti-rebote de 30s) y se refresca con el botón Actualizar.
+  // Carga del histórico al ENTRAR a Monitor (HOME) o Historial, y cada vez que cambia el RANGO
+  // (el usuario mueve Desde/Hasta). Sin intervalo: se trae por entrada/cambio de rango (con el
+  // anti-rebote por rango) y se refresca con el botón Actualizar.
   useEffect(() => {
     if (!token) return;
     if (currentView === 'HOME' || currentView === 'HISTORY') fetchAllTickets();
-  }, [token, currentView, fetchAllTickets]);
+  }, [token, currentView, historyRange, fetchAllTickets]);
 
   // ── Polling + Realtime ──────────────────────────────────────────────────────────
   // Tickets, limpiezas y comandas: se reemplazó el poll por suscripciones Realtime
@@ -2486,6 +2519,9 @@ export const useHospitalState = () => {
     // si no se limpia, el próximo login lo ve por un instante antes del primer fetch.
     allTicketsFetchedAtRef.current = 0;
     allTicketsLoadedRef.current    = false;
+    lastRangeKeyRef.current        = '';
+    historySeqRef.current++;                 // invalida cualquier fetch en vuelo del user anterior
+    { const d = isoTodayLocal(); historyRangeRef.current = { from: d, to: d }; setHistoryRangeState({ from: d, to: d }); }
 
     // Reset state in-memory para que el próximo login no arranque mostrando
     // dropdown/banner con datos del user anterior por un instante.
@@ -3149,7 +3185,7 @@ export const useHospitalState = () => {
     // El histórico solo se re-pide si ya estaba cargado (o sea, si el usuario está parado en
     // Monitor/Historial). Para el resto de las vistas es un request caro que nadie va a mirar.
     const jobs: Promise<unknown>[] = [fetchBeds(true), fetchTickets(), fetchCleanings(), fetchMeals(), fetchCirugias(), fetchRoutineCleanings(), fetchCirugiaMarcas()];
-    if (allTicketsLoadedRef.current) { allTicketsFetchedAtRef.current = 0; jobs.push(fetchAllTickets()); }
+    if (allTicketsLoadedRef.current) { jobs.push(fetchAllTickets(true)); } // fuerza el rango activo
     await Promise.all(jobs);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchBeds, fetchTickets, fetchCleanings, fetchMeals, fetchAllTickets]);
@@ -3492,6 +3528,7 @@ export const useHospitalState = () => {
       filteredTickets: filteredTickets.sorted,
       historyTickets: filteredTickets.baseFiltered,
       allTicketsLoading,
+      historyRange,
       loginEmail, loginPass, loginError, loginLoading, bedsLoading, bedsError, ticketActionLoading, beds,
       tokenExpirySoon, tokenMinutesLeft,
       isolatedBeds,
@@ -3505,7 +3542,7 @@ export const useHospitalState = () => {
       handleLogin, handleLogout, enableNotifications,
       setOperador, cambioTurno,
       handleCreateTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
-      fetchBeds, enrichBed, fetchPatientTickets, refreshAll, fetchAllTickets,
+      fetchBeds, enrichBed, fetchPatientTickets, refreshAll, fetchAllTickets, setHistoryRange,
       markBedClean, undoBedClean,
       startRoutineCleaning, finishRoutineCleaning, fetchRoutineCleanings,
       saveMealLoad, clearMealLoad, saveCompanionLoad, clearCompanionLoad, setMealStatus,
