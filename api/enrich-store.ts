@@ -60,7 +60,12 @@ export async function readEnrichSupabase(entorno: string): Promise<Map<string, E
     for (const r of data ?? []) {
       const key = String((r as any).event_key ?? '').trim();
       if (!key) continue;
-      map.set(key, { eventKey: key, payload: (r as any).payload as EnrichResult, updatedAt: String((r as any).updated_at ?? '') });
+      const payload = (r as any).payload;
+      // Defensa: un payload malformado (null/no-objeto) que reventara applyEnrichToBed haría que el
+      // try externo se coma TODO el enrich (todas las camas sin overlay). Se saltea la fila, como el
+      // path SP (que envuelve el JSON.parse por fila).
+      if (!payload || typeof payload !== 'object') continue;
+      map.set(key, { eventKey: key, payload: payload as EnrichResult, updatedAt: String((r as any).updated_at ?? '') });
     }
   } catch (e: any) {
     console.error('[enrich-store] read ex:', e?.message ?? e);
@@ -74,20 +79,25 @@ export async function readEnrichSupabase(entorno: string): Promise<Map<string, E
 export async function readEnrichPayloadSupabase(
   entorno: string, eventKey: string, patientCode: string,
 ): Promise<EnrichResult | null> {
+  const asPayload = (p: unknown): EnrichResult | null => (p && typeof p === 'object' ? p as EnrichResult : null);
   try {
     const supa = getSupabaseAdmin();
     const ek = String(eventKey ?? '').trim();
     if (ek && ek !== '-') {
+      // Con eventKey real: SOLO ese evento. Si no está en Supabase → null, para que el caller caiga a
+      // SP (que matchea por eventKey). NO caer a patient_code: podría traer un evento VIEJO del mismo
+      // paciente (sin dieta) y tapar el actual → falso 409 'sin_dieta' (justo el bug que evitamos).
       const { data } = await supa.from('enrich_camas').select('payload')
         .eq('entorno', entorno).eq('event_key', ek).eq('status', 'Activo').limit(1);
-      if (data && data[0]) return (data[0] as any).payload as EnrichResult;
+      return data && data[0] ? asPayload((data[0] as any).payload) : null;
     }
+    // Sin eventKey: recién ahí fallback por patient_code (fila activa más reciente).
     const pc = String(patientCode ?? '').trim();
     if (pc) {
       const { data } = await supa.from('enrich_camas').select('payload')
         .eq('entorno', entorno).eq('patient_code', pc).eq('status', 'Activo')
         .order('updated_at', { ascending: false }).limit(1);
-      if (data && data[0]) return (data[0] as any).payload as EnrichResult;
+      if (data && data[0]) return asPayload((data[0] as any).payload);
     }
     return null;
   } catch (e: any) {
