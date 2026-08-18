@@ -244,8 +244,13 @@ async function handler(req: any, res: any) {
           // Elegir la MISMA fila que la UI: por EventKey (eventOrigin-eventNumber) cuando el
           // cliente lo mandó; si no, la más reciente por UpdatedAt (retrocompat).
           const eventKey = `${String(eventOrigin ?? '').trim()}-${String(eventNumber ?? '').trim()}`;
+          // Entre filas del MISMO eventKey (pueden existir duplicados), quedarse con la MÁS NUEVA —
+          // no el primer .find(): un duplicado viejo sin dieta tapaba la fila buena y devolvía un
+          // falso 409 'sin_dieta' a un paciente que SÍ tenía dieta.
           const byEvent = String(eventOrigin ?? '').trim() !== ''
-            ? enrichRows.find(r => String(r?.fields?.EventKey_EC ?? '').trim() === eventKey)
+            ? enrichRows
+                .filter(r => String(r?.fields?.EventKey_EC ?? '').trim() === eventKey)
+                .sort((a, b) => String(b?.fields?.UpdatedAt_EC ?? '').localeCompare(String(a?.fields?.UpdatedAt_EC ?? '')))[0]
             : undefined;
           const latest = byEvent ?? enrichRows.sort((a, b) =>
             String(b?.fields?.UpdatedAt_EC ?? '').localeCompare(String(a?.fields?.UpdatedAt_EC ?? '')))[0];
