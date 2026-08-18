@@ -1,13 +1,11 @@
 import React, { useMemo, useState } from 'react';
-import { Bed, BedStatus, CirugiaEstado, CirugiaTraslado, User, Area } from '../types';
+import { Bed, CirugiaEstado, CirugiaTraslado, User, Area } from '../types';
 import { can } from '../lib/permissions';
 import { cn, formatBedName, formatDateTime } from '../lib/utils';
 import { CIRUGIA_ESTADO_LABEL, CIRUGIA_ESTADO_SHORT, CIRUGIA_PILL_CLASS } from '../lib/constants';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
-import { SearchableSelect } from '../components/ui/searchable-select';
-import { Label } from '../components/ui/label';
 import {
   Activity, ArrowRight, BedDouble, CheckCircle2, Clock, RefreshCw, Search, X, XCircle, AlertTriangle,
 } from 'lucide-react';
@@ -30,10 +28,10 @@ interface Props {
   onVanABuscar: (id: string) => Promise<TxResult>;
   onEnTraslado: (id: string) => Promise<TxResult>;
   onEnCirugia: (id: string) => Promise<TxResult>;
-  onEnDevolucion: (id: string, camaDestino?: string) => Promise<TxResult>;
+  onEnDevolucion: (id: string) => Promise<TxResult>;
   onRecibida: (id: string) => Promise<TxResult>;
+  onTolerancia?: (id: string) => Promise<TxResult>;
   onCancelar: (id: string, motivo: string) => Promise<TxResult>;
-  onConsolidar: (id: string) => Promise<TxResult>;
   onRefresh?: () => void | Promise<void>;
 }
 
@@ -46,33 +44,17 @@ const Pill: React.FC<{ estado: CirugiaEstado; short?: boolean }> = ({ estado, sh
 // Orden del flujo para ordenar la lista ÚNICA (la columna Estado reemplaza a las secciones
 // separadas, para dar concordancia con Traslados/Limpiezas/Comandas).
 const ORDEN_ESTADO: Record<string, number> = {
-  LISTO_PARA_CIRUGIA: 0, VAN_A_BUSCAR: 1, EN_TRASLADO: 2, EN_CIRUGIA: 3, EN_DEVOLUCION: 4, PENDIENTE_CONSOLIDACION: 5,
+  LISTO_PARA_CIRUGIA: 0, VAN_A_BUSCAR: 1, EN_TRASLADO: 2, EN_CIRUGIA: 3, EN_DEVOLUCION: 4, RECIBIDA: 5,
 };
 
 export const CirugiasView: React.FC<Props> = ({
-  cirugias, beds, currentUser, onVanABuscar, onEnTraslado, onEnCirugia, onEnDevolucion, onRecibida, onCancelar, onConsolidar, onRefresh,
+  cirugias, beds, currentUser, onVanABuscar, onEnTraslado, onEnCirugia, onEnDevolucion, onRecibida, onTolerancia, onCancelar, onRefresh,
 }) => {
   const [search, setSearch] = useState('');
   const [pending, setPending] = useState<Set<string>>(new Set());
-  // Panel inline "En devolución": id de la cirugía cuyo selector de destino está abierto.
-  const [devolviendo, setDevolviendo] = useState<{ id: string; camaDestino: string } | null>(null);
   // Panel inline "Cancelar": id + motivo tipeado.
   const [cancelando, setCancelando] = useState<{ id: string; motivo: string } | null>(null);
   const [rowError, setRowError] = useState<Record<string, string>>({});
-
-  // Camas disponibles para elegir destino al devolver (misma lógica que un traslado): SOLO las
-  // libres (no se puede mandar al paciente a una cama ocupada) — la "misma cama" de origen se
-  // ofrece aparte en el modal. Orden: por área y después por N° de cama, con orden NUMÉRICO
-  // (`numeric:true`), sino "415" quedaba antes que "5" y las áreas se mezclaban.
-  const availableBeds = useMemo(
-    () => beds
-      .filter(b => b.status === BedStatus.AVAILABLE)
-      .sort((a, b) =>
-        areaLabel(a.area).localeCompare(areaLabel(b.area), 'es', { numeric: true, sensitivity: 'base' }) ||
-        formatBedName(a.label).localeCompare(formatBedName(b.label), 'es', { numeric: true, sensitivity: 'base' }),
-      ),
-    [beds],
-  );
 
   const withPending = async (id: string, fn: () => Promise<TxResult>) => {
     setPending(p => new Set(p).add(id));
@@ -132,7 +114,6 @@ export const CirugiasView: React.FC<Props> = ({
     ),
     [filtered],
   );
-  const canConsolidar = can(currentUser, 'consolidar');
 
   const isPending = (id: string) => pending.has(id);
 
@@ -166,8 +147,10 @@ export const CirugiasView: React.FC<Props> = ({
           </Button>
         ) : null;
       case 'EN_CIRUGIA':
+        // "En devolución": el paciente vuelve. YA NO se elige destino — Admisión lo mueve en PROGAL
+        // y el cron detecta la cama. Acción directa (sin modal).
         return can(currentUser, 'cirugia_devolver') ? (
-          <Button size="sm" disabled={p} onClick={() => setDevolviendo({ id: c.id, camaDestino: c.camaOrigen })}
+          <Button size="sm" disabled={p} onClick={() => withPending(c.id, () => onEnDevolucion(c.id))}
             className="h-8 text-[10px] uppercase font-bold tracking-tight bg-violet-600 hover:bg-violet-700 text-white">
             <BedDouble className="w-3.5 h-3.5 mr-1.5" /> En devolución
           </Button>
@@ -181,15 +164,12 @@ export const CirugiasView: React.FC<Props> = ({
             <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> Recibida
           </Button>
         ) : null;
-      case 'PENDIENTE_CONSOLIDACION':
-        // Admisión: tras cambiar la cama en PROGAL a mano, consolida y cierra la fila → la app
-        // suelta el override (limbo de mergeBeds) y confía en Gamma. Reusa el permiso `consolidar`.
-        return canConsolidar ? (
-          <Button size="sm" variant="outline" disabled={p}
-            onClick={() => withPending(c.id, () => onConsolidar(c.id))}
-            title="Cambiá la cama en PROGAL y después consolidá acá"
-            className="h-8 text-[10px] uppercase font-bold tracking-tight border-amber-400 text-amber-800 hover:bg-amber-100">
-            Consolidar PROGAL
+      case 'RECIBIDA':
+        // Evaluación de tolerancia: la hace quien recibió; CIERRA el ticket. Nuevo permiso.
+        return can(currentUser, 'cirugia_tolerancia') && onTolerancia ? (
+          <Button size="sm" disabled={p} onClick={() => withPending(c.id, () => onTolerancia(c.id))}
+            className="h-8 text-[10px] uppercase font-bold tracking-tight bg-green-600 hover:bg-green-700 text-white">
+            <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> Evaluación de tolerancia
           </Button>
         ) : null;
       default:
@@ -242,7 +222,7 @@ export const CirugiasView: React.FC<Props> = ({
           {/* Acciones (pinneadas a la derecha en desktop) */}
           <div className="flex items-center gap-1.5 flex-wrap md:justify-end md:shrink-0">
             {renderCirugiaActions(c)}
-            {c.estado !== 'PENDIENTE_CONSOLIDACION' && can(currentUser, 'cirugia_cancelar') && (
+            {c.estado !== 'RECIBIDA' && can(currentUser, 'cirugia_cancelar') && (
               <Button size="sm" variant="outline" disabled={p}
                 onClick={() => setCancelando({ id: c.id, motivo: '' })}
                 className="h-8 text-[10px] uppercase font-bold tracking-tight border-red-200 text-red-600 hover:bg-red-50">
@@ -298,7 +278,7 @@ export const CirugiasView: React.FC<Props> = ({
           {rowError[c.id] && <p className="text-[10px] font-bold text-red-600 mb-1">{rowError[c.id]}</p>}
           <div className="flex items-center gap-1.5 flex-wrap">
             {renderCirugiaActions(c)}
-            {c.estado !== 'PENDIENTE_CONSOLIDACION' && can(currentUser, 'cirugia_cancelar') && (
+            {c.estado !== 'RECIBIDA' && can(currentUser, 'cirugia_cancelar') && (
               <Button size="sm" variant="outline" disabled={p}
                 onClick={() => setCancelando({ id: c.id, motivo: '' })}
                 className="h-8 text-[10px] uppercase font-bold tracking-tight border-red-200 text-red-600 hover:bg-red-50">
@@ -311,9 +291,7 @@ export const CirugiasView: React.FC<Props> = ({
     );
   };
 
-  // Cirugía seleccionada por cada modal (lookup por id): así el modal es UNA instancia a nivel
-  // vista, no un panel embebido por card (más prolijo y consistente con el resto de la app).
-  const devCx = devolviendo ? cirugias.find(c => c.id === devolviendo.id) ?? null : null;
+  // Cirugía seleccionada por el modal de cancelación (lookup por id): una instancia a nivel vista.
   const cancelCx = cancelando ? cirugias.find(c => c.id === cancelando.id) ?? null : null;
 
   return (
@@ -376,47 +354,6 @@ export const CirugiasView: React.FC<Props> = ({
         </>
       )}
 
-      {/* Modal: destino de la devolución — mismo patrón que AssignBedModal (Dialog + SearchableSelect). */}
-      <Dialog open={!!devolviendo} onOpenChange={o => { if (!o) setDevolviendo(null); }}>
-        <DialogContent className="sm:max-w-[440px] rounded-3xl">
-          <DialogHeader><DialogTitle className="text-xl">Destino de la devolución</DialogTitle></DialogHeader>
-          {devCx && (
-            <div className="grid gap-4 py-2">
-              <p className="text-sm text-slate-500">
-                <span className="font-bold text-slate-700 uppercase">{devCx.pacienteNombre || 'El paciente'}</span> vuelve de cirugía. ¿A qué cama?
-              </p>
-              <div className="grid gap-2">
-                <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Cama de destino</Label>
-                <SearchableSelect
-                  value={devolviendo?.camaDestino}
-                  onValueChange={v => setDevolviendo(d => (d ? { ...d, camaDestino: v } : d))}
-                  options={[
-                    { value: devCx.camaOrigen, label: `Misma cama (${formatBedName(devCx.camaOrigen)})` },
-                    ...availableBeds.map(b => ({ value: b.label, label: `${formatBedName(b.label)} — ${areaLabel(b.area)}` })),
-                  ]}
-                  placeholder="Seleccionar cama"
-                  searchPlaceholder="Buscar cama…"
-                />
-              </div>
-              {rowError[devCx.id] && <p className="text-[11px] font-bold text-red-600">{rowError[devCx.id]}</p>}
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDevolviendo(null)} className="rounded-xl h-11">Cancelar</Button>
-            <Button
-              disabled={!devCx || isPending(devCx.id)}
-              onClick={async () => {
-                if (!devCx || !devolviendo) return;
-                const dest = devolviendo.camaDestino === devCx.camaOrigen ? undefined : devolviendo.camaDestino;
-                const r = await withPending(devCx.id, () => onEnDevolucion(devCx.id, dest));
-                if (r.ok) setDevolviendo(null);
-              }}
-              className="bg-violet-600 hover:bg-violet-700 text-white rounded-xl h-11 px-6">
-              Confirmar devolución
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Modal: cancelar con motivo obligatorio. */}
       <Dialog open={!!cancelando} onOpenChange={o => { if (!o) setCancelando(null); }}>

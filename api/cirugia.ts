@@ -22,26 +22,26 @@ const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 
 // Estados que ocupan el candado "una viva por cama" (índice parcial cirugia_viva_uidx).
 const VIVOS = ['LISTO_PARA_CIRUGIA', 'VAN_A_BUSCAR', 'EN_TRASLADO', 'EN_CIRUGIA', 'EN_DEVOLUCION'];
-// Lo que se muestra en overlay + cola: las vivas + las que esperan que Admisión consolide en PROGAL.
-const EN_COLA = [...VIVOS, 'PENDIENTE_CONSOLIDACION'];
+// Lo que se muestra en overlay + cola: las vivas + la recibida esperando la evaluación de tolerancia.
+const EN_COLA = [...VIVOS, 'RECIBIDA'];
 
 // Máquina de estados ESTRICTA: estado actual → acciones permitidas (== estado destino). Cada paso
 // existe y se registra (ver cirugia_eventos) para medir tiempos. CANCELADO desde cualquier estado
 // vivo; los terminales no tienen salida. Cualquier otra transición → 409.
 //   LISTO_PARA_CIRUGIA (Enfermería) → VAN_A_BUSCAR (Cirugía despacha camillero)
-//     → EN_TRASLADO (Enfermería: "se lo llevó el camillero" — entrega de custodia)
-//     → EN_CIRUGIA (Cirugía) → EN_DEVOLUCION (Cirugía elige destino) → RECIBIDA (Enfermería destino)
+//     → EN_TRASLADO (Enfermería: "se lo llevó el camillero") → EN_CIRUGIA (Cirugía)
+//     → EN_DEVOLUCION (el paciente vuelve; YA NO se elige destino) → RECIBIDA (Enfermería destino)
+//     → TOLERANCIA_EVALUADA (quien recibió evaluó la tolerancia — CIERRA el ticket)
+// El destino lo detecta el cron desde PROGAL (no se elige ni se consolida en la app).
 const TRANSICIONES: Record<string, string[]> = {
-  LISTO_PARA_CIRUGIA:      ['VAN_A_BUSCAR', 'CANCELADO'],
-  VAN_A_BUSCAR:            ['EN_TRASLADO', 'CANCELADO'],
-  EN_TRASLADO:             ['EN_CIRUGIA', 'CANCELADO'],
-  EN_CIRUGIA:              ['EN_DEVOLUCION', 'CANCELADO'],
-  EN_DEVOLUCION:           ['RECIBIDA', 'CANCELADO'],
-  // RECIBIDA con cambio de cama NO cierra: el server la deja en PENDIENTE_CONSOLIDACION (ver el PATCH).
-  PENDIENTE_CONSOLIDACION: ['CONSOLIDADO', 'CANCELADO'],
-  RECIBIDA:                [],
-  CONSOLIDADO:             [],
-  CANCELADO:               [],
+  LISTO_PARA_CIRUGIA:  ['VAN_A_BUSCAR', 'CANCELADO'],
+  VAN_A_BUSCAR:        ['EN_TRASLADO', 'CANCELADO'],
+  EN_TRASLADO:         ['EN_CIRUGIA', 'CANCELADO'],
+  EN_CIRUGIA:          ['EN_DEVOLUCION', 'CANCELADO'],
+  EN_DEVOLUCION:       ['RECIBIDA', 'CANCELADO'],
+  RECIBIDA:            ['TOLERANCIA_EVALUADA', 'CANCELADO'],
+  TOLERANCIA_EVALUADA: [],
+  CANCELADO:           [],
 };
 
 /** Fila Supabase (snake_case) → CirugiaTraslado (camelCase, shape lean sin columnas server-only). */
@@ -112,7 +112,7 @@ async function handler(req: any, res: any) {
       const from = isDate(req.query?.from) ? String(req.query.from) : '';
       const to   = isDate(req.query?.to)   ? String(req.query.to)   : '';
       let q = supa.from('cirugia_traslados').select('*')
-        .eq('entorno', ENTORNO).in('estado', ['RECIBIDA', 'CONSOLIDADO', 'CANCELADO']).limit(2000);
+        .eq('entorno', ENTORNO).in('estado', ['TOLERANCIA_EVALUADA', 'CANCELADO']).limit(2000);
       if (from) q = q.gte('fecha_cierre', `${from}T00:00:00Z`);
       if (to)   q = q.lte('fecha_cierre', `${to}T23:59:59Z`);
       const { data, error } = await q;
@@ -204,11 +204,11 @@ async function handler(req: any, res: any) {
 
   // ── PATCH — transición de estado (máquina de estados guardada) ────────────
   if (req.method === 'PATCH') {
-    const { id, action, camaDestino, motivoCancelacion, userId, userName } = req.body ?? {};
+    const { id, action, motivoCancelacion, userId, userName } = req.body ?? {};
     if (!String(id ?? '').trim()) return res.status(400).json({ error: 'id is required' });
 
     const act = String(action ?? '');
-    const ACCIONES = ['VAN_A_BUSCAR', 'EN_TRASLADO', 'EN_CIRUGIA', 'EN_DEVOLUCION', 'RECIBIDA', 'CONSOLIDADO', 'CANCELADO'];
+    const ACCIONES = ['VAN_A_BUSCAR', 'EN_TRASLADO', 'EN_CIRUGIA', 'EN_DEVOLUCION', 'RECIBIDA', 'TOLERANCIA_EVALUADA', 'CANCELADO'];
     if (!ACCIONES.includes(act)) return res.status(400).json({ error: `action must be one of: ${ACCIONES.join(', ')}` });
     if (act === 'CANCELADO' && !String(motivoCancelacion ?? '').trim()) {
       return res.status(400).json({ error: 'motivoCancelacion is required for CANCELADO' });
@@ -232,23 +232,11 @@ async function handler(req: any, res: any) {
         last_actor_id: userId != null ? String(userId) : null,
         version: String(req.body?.version ?? ''),
       };
-      if (act === 'EN_DEVOLUCION') {
-        // Destino: la cama elegida por Cirugía; si se omite (o == origen) → misma cama, sin cambio.
-        fields.cama_destino = String(camaDestino ?? '').trim() !== '' ? String(camaDestino) : String(cur.cama_origen);
-      }
-      if (act === 'RECIBIDA') {
-        // Enfermería recibió al paciente. Si volvió a OTRA cama, NO cerramos: queda en
-        // PENDIENTE_CONSOLIDACION (sostiene el limbo hasta que Admisión cambie la cama en PROGAL y
-        // consolide). Si volvió a la MISMA cama, es terminal: cierra y libera.
-        const dest = cur.cama_destino != null ? String(cur.cama_destino) : String(cur.cama_origen);
-        if (dest !== String(cur.cama_origen)) {
-          fields.estado = 'PENDIENTE_CONSOLIDACION';
-        } else {
-          fields.fecha_cierre = nowIso;
-        }
-      }
-      if (act === 'CONSOLIDADO') {
-        // Admisión ya cambió la cama en PROGAL → cerramos: la app suelta el override y confía en Gamma.
+      // EN_DEVOLUCION ya NO elige destino: el paciente vuelve y el cron detecta a qué cama lo movió
+      // Admisión en PROGAL (graba cama_destino ahí). RECIBIDA es intermedio (no cierra). El cierre
+      // lo hace TOLERANCIA_EVALUADA.
+      if (act === 'TOLERANCIA_EVALUADA') {
+        // Quien recibió confirmó la evaluación de tolerancia → terminal: cierra el ticket.
         fields.fecha_cierre = nowIso;
       }
       if (act === 'CANCELADO') {
@@ -261,7 +249,7 @@ async function handler(req: any, res: any) {
       if (error) { console.error('[cirugia] PATCH failed:', error.message, act); return res.status(500).json({ error: 'Failed to update cirugia' }); }
 
       // Detalle: un evento por transición. `tipo` = la acción (el click), `estadoResultante` = el
-      // estado real que quedó (RECIBIDA con cambio de cama termina en PENDIENTE_CONSOLIDACION).
+      // estado que quedó (== la acción; TOLERANCIA_EVALUADA cierra el ticket).
       const meta: Record<string, unknown> = { camaOrigen: String(cur.cama_origen), estadoResultante: fields.estado };
       if (fields.cama_destino) meta.camaDestino = fields.cama_destino;
       if (fields.motivo_cancelacion) meta.motivo = fields.motivo_cancelacion;

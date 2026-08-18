@@ -399,8 +399,9 @@ export const PERMISSIONS = [
   'cirugia_buscar',     // "van a buscar" (quirófano despacha al camillero)
   'cirugia_entregar',   // "se lo llevó el camillero" (entrega de custodia)
   'cirugia_operar',     // "en cirugía"
-  'cirugia_devolver',   // "en devolución" (elige destino)
+  'cirugia_devolver',   // "en devolución" (el paciente vuelve; el destino lo detecta el cron)
   'cirugia_recibir',    // "recibí al paciente" (recepción)
+  'cirugia_tolerancia', // "evalué la tolerancia" (cierra el ticket; por defecto lo hace quien recibió)
   'cirugia_cancelar',   // cancelar la operatoria (transversal)
   'cirugia_marcar',     // Admisión: marcar "va a cirugía" un paciente NO quirúrgico (flag, desde el mapa)
   'abm_usuarios','abm_roles',
@@ -528,24 +529,25 @@ export interface Ticket {
 //
 // Orden de transiciones ESTRICTO (quién marca cada una) — cada paso se registra en cirugia_eventos
 // para medir tiempos (camillero, quirófano, devolución):
-//   LISTO_PARA_CIRUGIA  (Enfermería, o auto por admissionTypeCode==='Q')
-//     → VAN_A_BUSCAR     (Cirugía — despacha al camillero, que NO usa app)
+//   LISTO_PARA_CIRUGIA  (Enfermería, o auto por admissionTypeCode==='Q')       🔔
+//     → VAN_A_BUSCAR     (Cirugía — despacha al camillero, que NO usa app)     🔔
 //     → EN_TRASLADO      (Enfermería — "se lo llevó el camillero": entrega de custodia)
 //     → EN_CIRUGIA       (Cirugía — comenzó la cirugía)
-//     → EN_DEVOLUCION    (Cirugía — elige destino: misma cama u otra de las Disponibles)
-//     → RECIBIDA         (Enfermería del piso destino — cierra el circuito; la cama muere)
-//   CANCELADO            (terminal; libera la cama — política D3 pendiente en el plan)
-// Estados VIVOS = todos menos los terminales (RECIBIDA / CANCELADO). El índice único parcial
-// garantiza UNA operatoria viva por (entorno, cama_origen).
+//     → EN_DEVOLUCION    (Cirugía — el paciente vuelve; YA NO se elige destino) 🔔
+//     → RECIBIDA         (Enfermería del piso destino — recepción; ya NO cierra)
+//     → TOLERANCIA_EVALUADA (Enfermería que recibió — evaluó tolerancia; CIERRA el ticket) 🔔
+//   CANCELADO            (terminal; libera la cama)
+// El destino ya no se elige: Admisión mueve al paciente en PROGAL y el cron detecta el cambio de cama
+// (graba cama_destino + notifica). Se eliminaron PENDIENTE_CONSOLIDACION y CONSOLIDADO (no hay
+// consolidación en la app). Estados VIVOS = todos menos los terminales (TOLERANCIA_EVALUADA / CANCELADO).
 export type CirugiaEstado =
   | 'LISTO_PARA_CIRUGIA'
   | 'VAN_A_BUSCAR'
   | 'EN_TRASLADO'
   | 'EN_CIRUGIA'
   | 'EN_DEVOLUCION'
-  | 'PENDIENTE_CONSOLIDACION'
   | 'RECIBIDA'
-  | 'CONSOLIDADO'
+  | 'TOLERANCIA_EVALUADA'
   | 'CANCELADO';
 
 // Calca las columnas de public.cirugia_traslados (camelCase). Lean, SIN campo `tipo`: el

@@ -69,6 +69,7 @@ interface BedsViewProps {
   onMarcarListo?: (bed: Bed) => Promise<{ ok: boolean; id?: string; error?: string }>;
   onCirugiaEnTraslado?: (id: string) => Promise<{ ok: boolean; error?: string }>;
   onCirugiaRecibida?: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  onCirugiaTolerancia?: (id: string) => Promise<{ ok: boolean; error?: string }>;
   // Limpieza de rutina (camas ocupadas): iniciar / finalizar. Se pasan solo si el rol tiene el
   // permiso `limpieza_rutina` (App.tsx los gatea) → undefined = sin permiso = botón escondido.
   onStartRoutineCleaning?: (bed: Bed) => Promise<void>;
@@ -711,8 +712,9 @@ const CirugiaBedBlock: React.FC<{
   onMarcarListo?: (bed: Bed) => Promise<{ ok: boolean; id?: string; error?: string }>;
   onCirugiaEnTraslado?: (id: string) => Promise<{ ok: boolean; error?: string }>;
   onCirugiaRecibida?: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  onCirugiaTolerancia?: (id: string) => Promise<{ ok: boolean; error?: string }>;
   onDone: () => void;
-}> = ({ bed, onMarcarListo, onCirugiaEnTraslado, onCirugiaRecibida, onDone }) => {
+}> = ({ bed, onMarcarListo, onCirugiaEnTraslado, onCirugiaRecibida, onCirugiaTolerancia, onDone }) => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cx = bed.cirugia;
@@ -734,6 +736,8 @@ const CirugiaBedBlock: React.FC<{
     // La recepción la confirma la enfermera de la cama donde LLEGA el paciente: cama destino si
     // cambió, o la propia si volvió a la misma. En la cama origen de un cambio NO va el botón.
     const puedoRecibir = cx.estado === 'EN_DEVOLUCION' && (soyDestino || !esCambio);
+    // Evaluación de tolerancia: la hace quien recibió (misma cama de recepción), tras RECIBIDA. Cierra.
+    const puedoTolerancia = cx.estado === 'RECIBIDA' && (soyDestino || !esCambio);
     return (
       <div className="rounded-2xl p-3.5 border border-slate-200 bg-slate-50/70 flex flex-col gap-2.5">
         <div className="flex items-center gap-2">
@@ -748,15 +752,15 @@ const CirugiaBedBlock: React.FC<{
         {soyDestino && (
           <p className="text-[11px] font-medium text-slate-600">
             Llega de cirugía: <strong>{cx.pacienteNombre ?? 'paciente'}</strong> (viene de {formatBedName(cx.camaOrigen)})
-            {cx.estado === 'PENDIENTE_CONSOLIDACION' && ' — recibido; pendiente que Admisión consolide en PROGAL.'}
+            {cx.estado === 'RECIBIDA' && ' — recibido; falta evaluar la tolerancia.'}
           </p>
         )}
         {/* Cama ORIGEN de un cambio: el paciente NO vuelve acá, se fue a la destino. */}
         {soyOrigenConCambio && (
           <p className="text-[11px] font-medium text-slate-600">
             El paciente volvió de cirugía a <strong>{formatBedName(cx.camaDestino!)}</strong>
-            {cx.estado === 'PENDIENTE_CONSOLIDACION'
-              ? ' — pendiente que Admisión consolide el cambio en PROGAL.'
+            {cx.estado === 'RECIBIDA'
+              ? ' — recibido; falta evaluar la tolerancia.'
               : ' — confirmá la recepción en esa cama.'}
           </p>
         )}
@@ -783,6 +787,18 @@ const CirugiaBedBlock: React.FC<{
             }}
             className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm disabled:opacity-50">
             <CheckCircle2 className="w-4 h-4" /> {busy ? 'Confirmando…' : soyDestino ? 'Recibí al paciente' : 'Recibida (recepción confirmada)'}
+          </button>
+        )}
+        {puedoTolerancia && onCirugiaTolerancia && (
+          <button disabled={busy}
+            onClick={async () => {
+              setBusy(true); setError(null);
+              const r = await onCirugiaTolerancia(cx.id);
+              setBusy(false);
+              if (r.ok) onDone(); else setError(r.error ?? 'No se pudo confirmar.');
+            }}
+            className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm disabled:opacity-50">
+            <CheckCircle2 className="w-4 h-4" /> {busy ? 'Confirmando…' : 'Evaluación de tolerancia'}
           </button>
         )}
       </div>
@@ -996,7 +1012,7 @@ const AdmissionDateFilter: React.FC<{
   );
 };
 
-export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onFetchPatientTickets, onRefresh, onMarkClean, onUndoClean, onSaveMeal, onClearMeal, onSaveCompanion, onClearCompanion, onMarcarListo, onCirugiaEnTraslado, onCirugiaRecibida, onStartRoutineCleaning, onFinishRoutineCleaning, onMarcarVaCirugia, onDesmarcarVaCirugia }) => {
+export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onFetchPatientTickets, onRefresh, onMarkClean, onUndoClean, onSaveMeal, onClearMeal, onSaveCompanion, onClearCompanion, onMarcarListo, onCirugiaEnTraslado, onCirugiaRecibida, onCirugiaTolerancia, onStartRoutineCleaning, onFinishRoutineCleaning, onMarcarVaCirugia, onDesmarcarVaCirugia }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
   // Turnos abiertos en el modal de la cama. Vive en el PADRE y no en cada box: si viviera adentro,
   // se perdería al cerrar/reabrir. Se resetea al cambiar de cama (el default se recalcula abajo).
@@ -3013,6 +3029,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                       onMarcarListo={onMarcarListo}
                       onCirugiaEnTraslado={onCirugiaEnTraslado}
                       onCirugiaRecibida={onCirugiaRecibida}
+                      onCirugiaTolerancia={onCirugiaTolerancia}
                       onDone={() => setSelectedBed(null)}
                     />
                   )}

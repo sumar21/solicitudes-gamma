@@ -503,12 +503,12 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
   // lleva el suyo (`role: 'destino'`). BedsView/CirugiasView leen `bed.cirugia.estado` para
   // pintar la pill Cx por color.
   //
-  // Cambio de cama al volver de cirugía = la APP es la fuente de verdad hasta que Admisión
-  // consolide, IGUAL que un traslado en tránsito / esperando consolidación (ver el switch de
-  // arriba). En EN_DEVOLUCION / PENDIENTE_CONSOLIDACION con cama distinta: se MUEVE el paciente +
-  // enrich a la cama DESTINO y se LIBERA la origen, aunque Gamma la siga reportando Ocupada. Al
-  // consolidar, la operatoria cierra y el mapa vuelve a confiar en PROGAL. Sin cambio de cama (o
-  // antes de la devolución) es solo la pill Cx: nadie se mueve, el paciente sigue en su cama.
+  // Cambio de cama al volver de cirugía = la APP sostiene el destino hasta que la operatoria cierra.
+  // El destino ya NO se elige: lo detecta el cron desde PROGAL (graba cama_destino). En EN_DEVOLUCION
+  // / RECIBIDA con cama distinta: se MUEVE el paciente + enrich a la cama DESTINO y se LIBERA la
+  // origen, aunque Gamma la siga reportando Ocupada. Al cerrar (TOLERANCIA_EVALUADA) la operatoria
+  // sale de la cola y el mapa vuelve a confiar en PROGAL. Sin cambio de cama (o antes de la
+  // devolución) es solo la pill Cx: nadie se mueve, el paciente sigue en su cama.
   if (cirugias && cirugias.size) {
     // 1) Pill Cx sobre cada cama con overlay (origen y/o destino).
     for (const bed of result) {
@@ -533,8 +533,8 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
       if (origin && originIsOurs) copyPatientToBed(origin, dest);
       dest.patientName = dest.patientName || info.pacienteNombre || '';
       dest.patientCode = dest.patientCode || info.pacienteCodigo || '';
-      // EN_DEVOLUCION = llegando (Asignada); PENDIENTE_CONSOLIDACION = ya recibido (Ocupada).
-      dest.status = info.estado === 'PENDIENTE_CONSOLIDACION' ? BedStatus.OCCUPIED : BedStatus.ASSIGNED;
+      // EN_DEVOLUCION = llegando (Asignada); RECIBIDA = ya recibido en la cama detectada (Ocupada).
+      dest.status = info.estado === 'RECIBIDA' ? BedStatus.OCCUPIED : BedStatus.ASSIGNED;
       dest.cirugia = info;
       if (origin && originIsOurs) {
         clearPatientFromBed(origin);
@@ -929,19 +929,19 @@ export const useHospitalState = () => {
   const patientEnrichMapRef = useRef<Map<string, PatientEnrichSnapshot>>(new Map());
 
   // Overlay de cirugía POR CAMA (igual que `cleanings`: Map<label, …> que consume mergeBeds).
-  // De cada operatoria VIVA: cama_origen → overlay (role 'origin'); en EN_DEVOLUCION con cambio
-  // de cama, además cama_destino → overlay (role 'destino', para el limbo). Las terminales
-  // (RECIBIDA/CANCELADO) no entran (fetchCirugias solo trae vivas, pero el guard es defensivo).
+  // De cada operatoria NO terminal: cama_origen → overlay (role 'origin'); si el cron ya detectó un
+  // destino distinto (cama_destino), además cama_destino → overlay (role 'destino'). Las terminales
+  // (TOLERANCIA_EVALUADA/CANCELADO) no entran (fetchCirugias solo trae vivas + RECIBIDA en cola).
   const cirugiaByBed = useMemo(() => {
     const m = new Map<string, BedCirugiaOverlay>();
     for (const c of cirugias.values()) {
-      if (c.estado === 'RECIBIDA' || c.estado === 'CANCELADO' || c.estado === 'CONSOLIDADO') continue; // no-terminales (PENDIENTE_CONSOLIDACION sostiene el limbo)
+      if (c.estado === 'TOLERANCIA_EVALUADA' || c.estado === 'CANCELADO') continue;
       const base: BedCirugiaOverlay = {
         id: c.id, estado: c.estado, camaOrigen: c.camaOrigen, camaDestino: c.camaDestino,
         pacienteNombre: c.pacienteNombre, pacienteCodigo: c.pacienteCodigo, area: c.area, role: 'origin',
       };
       m.set(c.camaOrigen, base);
-      if ((c.estado === 'EN_DEVOLUCION' || c.estado === 'PENDIENTE_CONSOLIDACION') && c.camaDestino && c.camaDestino !== c.camaOrigen) {
+      if ((c.estado === 'EN_DEVOLUCION' || c.estado === 'RECIBIDA') && c.camaDestino && c.camaDestino !== c.camaOrigen) {
         m.set(c.camaDestino, { ...base, role: 'destino' });
       }
     }
@@ -1587,8 +1587,10 @@ export const useHospitalState = () => {
     cirugiasWritingRef.current += 1;
     setCirugias(prev => {
       // No pisar si ya hay una operatoria viva para esa cama (idempotencia del lado cliente).
+      // Terminales (no bloquean un alta nueva): TOLERANCIA_EVALUADA y CANCELADO. RECIBIDA ya NO es
+      // terminal (espera la tolerancia) → una cama con una RECIBIDA sigue teniendo operatoria activa.
       for (const c of prev.values()) {
-        if (c.camaOrigen === camaOrigen && !['RECIBIDA', 'CONSOLIDADO', 'CANCELADO', 'PENDIENTE_CONSOLIDACION'].includes(c.estado)) return prev;
+        if (c.camaOrigen === camaOrigen && !['TOLERANCIA_EVALUADA', 'CANCELADO'].includes(c.estado)) return prev;
       }
       const n = new Map(prev);
       n.set(tempId, {
@@ -1634,8 +1636,8 @@ export const useHospitalState = () => {
   // las vivas (dropea cola + overlay). Reconcilia (fetchCirugias, reemplazo total) ante !ok.
   const transicionarCirugia = useCallback(async (
     id: string,
-    action: Exclude<CirugiaEstado, 'LISTO_PARA_CIRUGIA' | 'PENDIENTE_CONSOLIDACION'>,
-    extra?: { camaDestino?: string; motivoCancelacion?: string },
+    action: Exclude<CirugiaEstado, 'LISTO_PARA_CIRUGIA'>,
+    extra?: { motivoCancelacion?: string },
   ): Promise<{ ok: boolean; error?: string }> => {
     if (!id) return { ok: false };
     const u = currentUser;
@@ -1645,18 +1647,14 @@ export const useHospitalState = () => {
       const cur = prev.get(id);
       if (!cur) return prev;
       const n = new Map(prev);
-      // RECIBIDA con cambio de cama NO cierra: pasa a PENDIENTE_CONSOLIDACION (queda para Admisión).
-      const bedChanged   = !!cur.camaDestino && cur.camaDestino !== cur.camaOrigen;
-      const goesTerminal = action === 'CANCELADO' || action === 'CONSOLIDADO' || (action === 'RECIBIDA' && !bedChanged);
+      // Terminales (salen de la cola): TOLERANCIA_EVALUADA (cierra por tolerancia) y CANCELADO.
+      // RECIBIDA ya NO cierra: queda en la cola esperando la evaluación de tolerancia. El destino ya
+      // no se elige acá (lo detecta el cron desde PROGAL).
+      const goesTerminal = action === 'CANCELADO' || action === 'TOLERANCIA_EVALUADA';
       if (goesTerminal) {
         n.delete(id); // sale de la cola
       } else {
-        const nextEstado: CirugiaEstado = action === 'RECIBIDA' ? 'PENDIENTE_CONSOLIDACION' : action;
-        n.set(id, {
-          ...cur,
-          estado: nextEstado,
-          camaDestino: action === 'EN_DEVOLUCION' ? (extra?.camaDestino || cur.camaOrigen) : cur.camaDestino,
-        });
+        n.set(id, { ...cur, estado: action });
       }
       return n;
     });
@@ -1665,7 +1663,6 @@ export const useHospitalState = () => {
         method: 'PATCH',
         body: JSON.stringify({
           id, action,
-          camaDestino:       extra?.camaDestino,
           motivoCancelacion: extra?.motivoCancelacion,
           userId: u?.id ?? '', userName: u?.name ?? '', operador: getOperador(), version: APP_VERSION,
         }),
@@ -1702,10 +1699,10 @@ export const useHospitalState = () => {
   const cirugiaVanABuscar   = useCallback((id: string) => transicionarCirugia(id, 'VAN_A_BUSCAR'), [transicionarCirugia]);        // Cirugía
   const cirugiaEnTraslado   = useCallback((id: string) => transicionarCirugia(id, 'EN_TRASLADO'), [transicionarCirugia]);        // Enfermería (entrega al camillero)
   const cirugiaEnCirugia    = useCallback((id: string) => transicionarCirugia(id, 'EN_CIRUGIA'), [transicionarCirugia]);          // Cirugía
-  const cirugiaEnDevolucion = useCallback((id: string, camaDestino?: string) => transicionarCirugia(id, 'EN_DEVOLUCION', { camaDestino }), [transicionarCirugia]); // Cirugía
+  const cirugiaEnDevolucion = useCallback((id: string) => transicionarCirugia(id, 'EN_DEVOLUCION'), [transicionarCirugia]);       // Cirugía (el paciente vuelve; sin elegir destino)
   const cirugiaRecibida     = useCallback((id: string) => transicionarCirugia(id, 'RECIBIDA'), [transicionarCirugia]);            // Enfermería destino
+  const cirugiaTolerancia   = useCallback((id: string) => transicionarCirugia(id, 'TOLERANCIA_EVALUADA'), [transicionarCirugia]); // Quien recibió — evalúa tolerancia y CIERRA
   const cancelarCirugia     = useCallback((id: string, motivoCancelacion: string) => transicionarCirugia(id, 'CANCELADO', { motivoCancelacion }), [transicionarCirugia]);
-  const consolidarCirugia   = useCallback((id: string) => transicionarCirugia(id, 'CONSOLIDADO'), [transicionarCirugia]);   // Admisión — cierra el cambio de cama tras actualizar PROGAL
 
   // ── On-demand bed enrichment (single bed) ─────────────────────────────────
   const enrichBed = useCallback(async (bed: Bed): Promise<Bed> => {
@@ -3547,7 +3544,7 @@ export const useHospitalState = () => {
       startRoutineCleaning, finishRoutineCleaning, fetchRoutineCleanings,
       saveMealLoad, clearMealLoad, saveCompanionLoad, clearCompanionLoad, setMealStatus,
       fetchCirugias, marcarListoParaCirugia, transicionarCirugia,
-      cirugiaVanABuscar, cirugiaEnTraslado, cirugiaEnCirugia, cirugiaEnDevolucion, cirugiaRecibida, cancelarCirugia, consolidarCirugia,
+      cirugiaVanABuscar, cirugiaEnTraslado, cirugiaEnCirugia, cirugiaEnDevolucion, cirugiaRecibida, cirugiaTolerancia, cancelarCirugia,
       marcarVaCirugia, desmarcarVaCirugia, fetchCirugiaMarcas,
       setOperativaSubview,
       handleUpdateUserAreas, refreshSessionRole, syncSessionRole, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleOpenNotifications, handleDismissToast,

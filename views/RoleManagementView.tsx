@@ -96,6 +96,7 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
       { code: 'cirugia_listo',    label: 'Marcar "listo para cirugía"' },
       { code: 'cirugia_entregar', label: 'Registrar "se lo llevó el camillero"' },
       { code: 'cirugia_recibir',  label: 'Confirmar recepción del paciente' },
+      { code: 'cirugia_tolerancia', label: 'Confirmar evaluación de tolerancia (cierra el ticket)' },
     ],
   },
   {
