@@ -18,6 +18,7 @@ import type { FastingSummary } from './ayunos.js';
 import { sendPushToSubscribers } from './push-utils.js';
 import { formatRoomForCatering } from './room-formatter.js';
 import { getSupabaseAdmin } from './supabase-admin.js';
+import { enrichWritesToSupabase, upsertEnrichSupabase, deactivateFreedEnrichSupabase } from './enrich-store.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const LIST_ID = '443c4ff0-bc98-43ef-a49c-7fd91cc63734'; // 12.EnrichCamas
@@ -33,6 +34,10 @@ const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 // por entorno) ni ventana sin push.
 const WEBHOOK_PUSH_ENTORNOS = ['TESTING'];
 const PUSH_VIA_WEBHOOK = WEBHOOK_PUSH_ENTORNOS.includes(ENTORNO);
+
+// Fase 2: además de SP, escribir el enrich a Supabase (enrich_camas) en estos entornos (dual-write).
+// La LECTURA sigue en SP hasta el read-flip (ver enrich-store.ENRICH_READ_SUPABASE). Gate en TESTING.
+const WRITE_ENRICH_SUPABASE = enrichWritesToSupabase(ENTORNO);
 const GAMMA_BASE = process.env.GAMMA_VM_URL ?? 'http://35.224.5.114/proxy/index.php';
 
 // Concurrencia contra Gamma. La VM es SINGLE-NODE (docs/arquitectura.md §41): 8 workers en
@@ -299,6 +304,7 @@ export default async function handler(req: any, res: any) {
     const queue = [...beds];
     let fastingNotified = 0;
     let dietNotified = 0;
+    let supaUpserted = 0; // Fase 2: filas escritas al enrich de Supabase (dual-write)
     // Circuit breaker: N timeouts CONSECUTIVOS de evento → cortar la corrida.
     // Tuneable por env sin redeploy (mismo criterio que CRON_BUDGET_MS / GAMMA_FETCH_TIMEOUT_MS).
     // 0 lo desactiva.
@@ -428,6 +434,13 @@ export default async function handler(req: any, res: any) {
           }
           stats.upserted++;
 
+          // Fase 2 — dual-write a Supabase (enrich_camas). SP sigue siendo la fuente de verdad (la
+          // lectura no cambió); esto puebla la tabla para validar y, más adelante, hacer el read-flip.
+          // Best-effort: un fallo NO corta el cron. El UNIQUE(entorno,event_key) lo hace inmune a dupes.
+          if (WRITE_ENRICH_SUPABASE) {
+            if (await upsertEnrichSupabase(ENTORNO, eventKey, b.patientCode, payload)) supaUpserted++;
+          }
+
           // Ubicación legible ("Habitación 413 (Piso 4)") para el body del push FALLBACK (push-utils).
           // La Edge Function la reconstruye por su cuenta desde area + habitacion de la fila.
           const roomLabel = formatRoomForCatering(b.roomName, b.areaName);
@@ -548,6 +561,14 @@ export default async function handler(req: any, res: any) {
         }
       }
     }
+
+    // 5c) Cleanup en Supabase (Fase 2 dual-write): eventos no vistos este ciclo → Inactivo, para
+    // que enrich_camas quede consistente y listo para el read-flip. Mismo guard de budget/breaker.
+    if (WRITE_ENRICH_SUPABASE && Date.now() < deadline && !breakerTripped) {
+      const freed = await deactivateFreedEnrichSupabase(ENTORNO, seenKeys);
+      if (freed > 0) console.log(`[cron-enrich] enrich_camas: ${freed} evento(s) liberado(s) → Inactivo`);
+    }
+    (stats as any).supaUpserted = supaUpserted;
 
     return res.status(200).json({ ok: true, entorno: ENTORNO, stats });
   } catch (err: any) {
