@@ -113,20 +113,43 @@ function isRecentAdmission(admissionDate: string | undefined): boolean {
   return (Date.now() - ts) <= 24 * 60 * 60 * 1000;
 }
 
-async function fetchEnrichRows(): Promise<Map<string, EnrichRow>> {
+// Lee el baseline activo de 12.EnrichCamas. Devuelve el Map (una fila POR EventKey, la MÁS NUEVA) y
+// `staleDupes` = spItemIds de filas duplicadas viejas (mismo EventKey) para inactivar en el cleanup.
+//
+// Devuelve null si el fetch FALLA: en ese caso el handler ABORTA la corrida. Antes devolvía un map
+// vacío y la corrida seguía → como cada eventKey parecía "nuevo", se POSTeaba una fila por cama →
+// DUPLICACIÓN MASIVA. Mejor saltear un ciclo que duplicar todo.
+async function fetchEnrichRows(): Promise<{ map: Map<string, EnrichRow>; staleDupes: string[] } | null> {
   const map = new Map<string, EnrichRow>();
-  if (!SITE_ID || !LIST_ID) return map;
+  const staleDupes: string[] = [];
+  if (!SITE_ID || !LIST_ID) return { map, staleDupes };
   const filter = encodeURIComponent(`fields/Status_EC eq 'Activo' and fields/Entorno_EC eq '${ENTORNO}'`);
-  const r = await graphFetch(
-    `/sites/${SITE_ID}/lists/${LIST_ID}/items?$expand=fields&$filter=${filter}&$top=500`,
-    { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
-  );
-  if (!r.ok) return map;
-  const data = (await r.json()) as { value: any[] };
-  for (const item of data.value ?? []) {
+
+  // Paginado: si el histórico activo supera $top, seguir @odata.nextLink. Sin esto, las filas más
+  // allá del tope no entran al baseline → se re-POSTean como nuevas = duplicados.
+  let path: string | null =
+    `/sites/${SITE_ID}/lists/${LIST_ID}/items?$expand=fields&$filter=${filter}&$top=500`;
+  const items: any[] = [];
+  while (path) {
+    const r = await graphFetchRetry(path, { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } });
+    if (!r.ok) return null; // abortar la corrida (no seguir con baseline parcial/vacío)
+    const data = (await r.json()) as { value: any[]; '@odata.nextLink'?: string };
+    items.push(...(data.value ?? []));
+    const next = data['@odata.nextLink'];
+    path = next ? String(next).replace('https://graph.microsoft.com/v1.0', '') : null;
+  }
+
+  for (const item of items) {
     const f = item.fields as Record<string, unknown>;
     const key = String(f.EventKey_EC ?? '').trim();
     if (!key) continue;
+    const updatedAt = String(f.UpdatedAt_EC ?? '');
+    const prev = map.get(key);
+    if (prev) {
+      // DUPLICADO del mismo eventKey: quedarnos con la MÁS NUEVA y marcar la vieja para inactivar.
+      if (updatedAt > prev.updatedAt) staleDupes.push(prev.spItemId); // la nueva reemplaza → cae la prev
+      else { staleDupes.push(String(item.id)); continue; }            // la prev es más nueva → cae esta
+    }
     // Parsear Payload_EC para extraer el baseline viejo (fasting + dieta) y comparar.
     let oldFasting: FastingSummary | undefined;
     let oldDietTags: string[] | undefined;
@@ -138,15 +161,9 @@ async function fetchEnrichRows(): Promise<Map<string, EnrichRow>> {
         oldDietTags = parsed.dietTags;
       }
     } catch { /* fila corrupta — sin baseline */ }
-    map.set(key, {
-      spItemId:  String(item.id),
-      eventKey:  key,
-      updatedAt: String(f.UpdatedAt_EC ?? ''),
-      oldFasting,
-      oldDietTags,
-    });
+    map.set(key, { spItemId: String(item.id), eventKey: key, updatedAt, oldFasting, oldDietTags });
   }
-  return map;
+  return { map, staleDupes };
 }
 
 async function upsertEnrich(args: {
@@ -224,8 +241,14 @@ export default async function handler(req: any, res: any) {
   const deadline = runStart + Number(process.env.CRON_BUDGET_MS ?? 240_000);
 
   try {
-    // 1) Filas existentes en SP.
-    const rows = await fetchEnrichRows();
+    // 1) Filas existentes en SP (baseline). Si el fetch falla, ABORTAR: seguir con baseline vacío
+    // POSTearía una fila por cama = duplicación masiva. `staleDupes` = duplicados viejos a inactivar.
+    const enrich = await fetchEnrichRows();
+    if (!enrich) {
+      console.warn('[cron-enrich] fetchEnrichRows falló — corrida abortada (evita duplicación masiva)');
+      return res.status(502).json({ error: '12.EnrichCamas read failed', stats });
+    }
+    const rows = enrich.map;
 
     // 2) Camas ocupadas desde Gamma.
     const tokenOcc = await getToken('obtenermapacamasocupadas');
@@ -500,7 +523,17 @@ export default async function handler(req: any, res: any) {
       `pospuestas=${queue.length} breaker=${breakerTripped} workers=${WORKERS} pace=${PACE_MS}ms dur=${durS}s`,
     );
 
-    // 5) Cleanup: filas no vistas en este ciclo + viejas → Inactivo.
+    // 5a) Duplicados del MISMO eventKey (una fila vieja además de la buena): inactivar SIEMPRE.
+    // Es seguro independiente de budget/breaker — no es "no visto", es una copia redundante de una
+    // fila que SÍ conservamos (la más nueva). Auto-sana el bug histórico de acumulación de dupes.
+    for (const dupeId of enrich.staleDupes) {
+      try { await markInactive(dupeId); stats.deactivated++; } catch { /* no-op */ }
+    }
+    if (enrich.staleDupes.length > 0) {
+      console.log(`[cron-enrich] dedupe: ${enrich.staleDupes.length} fila(s) duplicada(s) marcadas Inactivo`);
+    }
+
+    // 5b) Cleanup: filas no vistas en este ciclo + viejas → Inactivo.
     // Sólo si no agotamos el presupuesto: con la corrida cortada habría filas no
     // vistas que no son stale de verdad. El cleanup se retoma el próximo ciclo.
     // Tampoco si cortó el breaker: quedaron camas sin ver que NO son stale de verdad

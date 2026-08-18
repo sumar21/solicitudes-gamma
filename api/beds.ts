@@ -163,8 +163,13 @@ async function enrichBedsFromCache(beds: any[], occEventKeys: Set<string>): Prom
       const key = String(f.EventKey_EC ?? '').trim();
       const raw = String(f.Payload_EC ?? '');
       if (!key || !raw) continue;
+      const updatedAt = String(f.UpdatedAt_EC ?? '');
+      // Si hay filas duplicadas del mismo eventKey, quedarse con la MÁS NUEVA (defensa: un duplicado
+      // viejo sin dieta no debe tapar la fila buena → era la causa del falso "sin dieta").
+      const prev = map.get(key);
+      if (prev && prev.updatedAt >= updatedAt) continue;
       try {
-        map.set(key, { e: JSON.parse(raw) as EnrichResult, updatedAt: String(f.UpdatedAt_EC ?? '') });
+        map.set(key, { e: JSON.parse(raw) as EnrichResult, updatedAt });
       } catch { /* fila corrupta: skip */ }
     }
 
