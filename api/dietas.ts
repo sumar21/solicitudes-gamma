@@ -24,6 +24,7 @@ import { requireAuth } from './jwt.js';
 import { getRoleByName } from './role-cache.js';
 import { getUserAreasById } from './user-cache.js';
 import { getSupabaseAdmin } from './supabase-admin.js';
+import { enrichReadsFromSupabase, readEnrichPayloadSupabase } from './enrich-store.js';
 import { MEAL_SLOTS_SP, mealSlotFromSp, mealSlotLabel, permitsMealSlotLoad, dietTypeFromDiets } from '../types.js';
 
 // EnrichCamas queda en SharePoint (lectura híbrida del backstop 'sin_dieta').
@@ -227,45 +228,52 @@ async function handler(req: any, res: any) {
     const nutriIdNum = Number(userId);
     const nutriId = String(userId ?? '').trim() !== '' && Number.isFinite(nutriIdNum) ? nutriIdNum : null;
 
-    // ── Bloqueo "sin dieta" (backstop híbrido: LEE 12.EnrichCamas en SharePoint) ──
-    // La comanda del TITULAR exige dieta cargada en PROGAL (Payload_EC, precomputado por
-    // cron-enrich-beds cada 15 min). Una query extra POR GUARDADO DE TITULAR (los acompañantes no
-    // la pagan). Fail-open deliberado en TODO lo dudoso: castiga el dato CONFIRMADO "sin dieta",
-    // nunca su ausencia. 🔀 Este bloque queda en SharePoint (EnrichCamas no migró).
-    if (comensalVal === 'TITULAR' && String(patientCode ?? '').trim() !== '' && SITE_ID && ENRICH_LIST_ID) {
+    // ── Bloqueo "sin dieta" (backstop: LEE el enrich precomputado por cron-enrich-beds) ──
+    // La comanda del TITULAR exige dieta cargada en PROGAL. Fail-open deliberado en TODO lo dudoso:
+    // castiga el dato CONFIRMADO "sin dieta", nunca su ausencia. 🔀 Fuente HÍBRIDA durante la Fase 2:
+    // Supabase (enrich_camas) en los entornos migrados, con fallback a SharePoint (12.EnrichCamas)
+    // para lo que aún no esté en la tabla; SharePoint puro en el resto.
+    if (comensalVal === 'TITULAR' && String(patientCode ?? '').trim() !== '') {
       try {
-        const efilter = encodeURIComponent(
-          `fields/PatientCode_EC eq '${esc(patientCode)}' and fields/Status_EC eq 'Activo' and fields/Entorno_EC eq '${ENTORNO}'`,
-        );
-        const er = await graphFetch(
-          `/sites/${SITE_ID}/lists/${ENRICH_LIST_ID}/items?$expand=fields&$filter=${efilter}&$top=5`,
-          { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
-        );
-        if (er.ok) {
-          const enrichRows = ((await er.json()) as { value: any[] }).value ?? [];
-          // Elegir la MISMA fila que la UI: por EventKey (eventOrigin-eventNumber) cuando el
-          // cliente lo mandó; si no, la más reciente por UpdatedAt (retrocompat).
-          const eventKey = `${String(eventOrigin ?? '').trim()}-${String(eventNumber ?? '').trim()}`;
-          // Entre filas del MISMO eventKey (pueden existir duplicados), quedarse con la MÁS NUEVA —
-          // no el primer .find(): un duplicado viejo sin dieta tapaba la fila buena y devolvía un
-          // falso 409 'sin_dieta' a un paciente que SÍ tenía dieta.
-          const byEvent = String(eventOrigin ?? '').trim() !== ''
-            ? enrichRows
-                .filter(r => String(r?.fields?.EventKey_EC ?? '').trim() === eventKey)
-                .sort((a, b) => String(b?.fields?.UpdatedAt_EC ?? '').localeCompare(String(a?.fields?.UpdatedAt_EC ?? '')))[0]
-            : undefined;
-          const latest = byEvent ?? enrichRows.sort((a, b) =>
-            String(b?.fields?.UpdatedAt_EC ?? '').localeCompare(String(a?.fields?.UpdatedAt_EC ?? '')))[0];
-          if (latest) {
-            const payload = JSON.parse(String(latest.fields?.Payload_EC ?? 'null')) as
-              { diets?: { descripcion: string; respuesta: string }[] } | null;
-            if (payload && dietTypeFromDiets(payload.diets) === undefined) {
-              return res.status(409).json({
-                error: 'sin_dieta',
-                message: 'El paciente no tiene dieta cargada en PROGAL. No se puede cargar su comanda hasta que la dieta esté cargada.',
-              });
+        const eventKey = `${String(eventOrigin ?? '').trim()}-${String(eventNumber ?? '').trim()}`;
+        let payload: { diets?: { descripcion: string; respuesta: string }[] } | null = null;
+
+        // Fase 2: enrich desde Supabase para los entornos migrados.
+        if (enrichReadsFromSupabase(ENTORNO)) {
+          payload = (await readEnrichPayloadSupabase(ENTORNO, eventKey, String(patientCode))) as typeof payload;
+        }
+
+        // SharePoint: no migrado, o Supabase no tenía la fila (transición) → fallback a SP.
+        if (payload === null && SITE_ID && ENRICH_LIST_ID) {
+          const efilter = encodeURIComponent(
+            `fields/PatientCode_EC eq '${esc(patientCode)}' and fields/Status_EC eq 'Activo' and fields/Entorno_EC eq '${ENTORNO}'`,
+          );
+          const er = await graphFetch(
+            `/sites/${SITE_ID}/lists/${ENRICH_LIST_ID}/items?$expand=fields&$filter=${efilter}&$top=5`,
+            { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
+          );
+          if (er.ok) {
+            const enrichRows = ((await er.json()) as { value: any[] }).value ?? [];
+            // Entre filas del MISMO eventKey (pueden existir duplicados en SP), quedarse con la MÁS
+            // NUEVA — no el primer .find(): un dup viejo sin dieta tapaba la fila buena → falso 409.
+            const byEvent = String(eventOrigin ?? '').trim() !== ''
+              ? enrichRows
+                  .filter(r => String(r?.fields?.EventKey_EC ?? '').trim() === eventKey)
+                  .sort((a, b) => String(b?.fields?.UpdatedAt_EC ?? '').localeCompare(String(a?.fields?.UpdatedAt_EC ?? '')))[0]
+              : undefined;
+            const latest = byEvent ?? enrichRows.sort((a, b) =>
+              String(b?.fields?.UpdatedAt_EC ?? '').localeCompare(String(a?.fields?.UpdatedAt_EC ?? '')))[0];
+            if (latest) {
+              payload = JSON.parse(String(latest.fields?.Payload_EC ?? 'null')) as typeof payload;
             }
           }
+        }
+
+        if (payload && dietTypeFromDiets(payload.diets) === undefined) {
+          return res.status(409).json({
+            error: 'sin_dieta',
+            message: 'El paciente no tiene dieta cargada en PROGAL. No se puede cargar su comanda hasta que la dieta esté cargada.',
+          });
         }
       } catch { /* fail-open: sin señal confiable no se bloquea */ }
     }

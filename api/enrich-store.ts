@@ -17,7 +17,7 @@ import { getSupabaseAdmin } from './supabase-admin.js';
 import type { EnrichResult } from './enrich-core.js';
 
 export const ENRICH_WRITE_SUPABASE: string[] = ['TESTING'];
-export const ENRICH_READ_SUPABASE:  string[] = [];
+export const ENRICH_READ_SUPABASE:  string[] = ['TESTING'];
 
 export const enrichWritesToSupabase = (entorno: string): boolean => ENRICH_WRITE_SUPABASE.includes(entorno);
 export const enrichReadsFromSupabase = (entorno: string): boolean => ENRICH_READ_SUPABASE.includes(entorno);
@@ -66,6 +66,34 @@ export async function readEnrichSupabase(entorno: string): Promise<Map<string, E
     console.error('[enrich-store] read ex:', e?.message ?? e);
   }
   return map;
+}
+
+// Lee el payload del enrich de UN paciente (para el backstop 'sin_dieta' de /api/dietas). Busca por
+// event_key (origen-numero) y, si no está, por patient_code (más reciente activo). null = no hay fila
+// en Supabase → el caller cae a SharePoint (transición) o hace fail-open.
+export async function readEnrichPayloadSupabase(
+  entorno: string, eventKey: string, patientCode: string,
+): Promise<EnrichResult | null> {
+  try {
+    const supa = getSupabaseAdmin();
+    const ek = String(eventKey ?? '').trim();
+    if (ek && ek !== '-') {
+      const { data } = await supa.from('enrich_camas').select('payload')
+        .eq('entorno', entorno).eq('event_key', ek).eq('status', 'Activo').limit(1);
+      if (data && data[0]) return (data[0] as any).payload as EnrichResult;
+    }
+    const pc = String(patientCode ?? '').trim();
+    if (pc) {
+      const { data } = await supa.from('enrich_camas').select('payload')
+        .eq('entorno', entorno).eq('patient_code', pc).eq('status', 'Activo')
+        .order('updated_at', { ascending: false }).limit(1);
+      if (data && data[0]) return (data[0] as any).payload as EnrichResult;
+    }
+    return null;
+  } catch (e: any) {
+    console.error('[enrich-store] readPayload ex:', e?.message ?? e);
+    return null;
+  }
 }
 
 // Cleanup: marca Inactivo los eventos que ya NO están ocupados (no vistos en el ciclo). Con la tabla

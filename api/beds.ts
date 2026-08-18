@@ -19,6 +19,7 @@ import {
 } from './gamma-client.js';
 import { graphFetch } from './graph.js';
 import type { EnrichResult } from './enrich-core.js';
+import { enrichReadsFromSupabase, readEnrichSupabase } from './enrich-store.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const ENRICH_LIST_ID = '443c4ff0-bc98-43ef-a49c-7fd91cc63734'; // 12.EnrichCamas
@@ -136,8 +137,35 @@ function applyEnrichToBed(bed: any, e: EnrichResult): void {
 // refleja un ayuno/dieta nuevo mientras la cama no cambie de estado.
 // Si la lista no está configurada o el read falla → mapa sin enrich (nunca reintroduce
 // las N llamadas a Gamma) y firma vacía.
+// Rellena `map` (eventKey → enrich) desde SharePoint 12.EnrichCamas. Si `onlyMissing`, NO pisa las
+// entradas que ya estén (p.ej. las que puso Supabase en el modo Fase 2 → SP solo tapa huecos).
+async function fillEnrichMapFromSP(
+  map: Map<string, { e: EnrichResult; updatedAt: string }>, onlyMissing: boolean,
+): Promise<void> {
+  if (!SITE_ID || !ENRICH_LIST_ID) return;
+  const filter = encodeURIComponent(`fields/Status_EC eq 'Activo' and fields/Entorno_EC eq '${ENTORNO}'`);
+  const r = await graphFetch(
+    `/sites/${SITE_ID}/lists/${ENRICH_LIST_ID}/items?$expand=fields&$filter=${filter}&$top=500`,
+    { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
+  );
+  if (!r.ok) { console.warn(`[api/beds] enrich read HTTP ${r.status}`); return; }
+  const data = (await r.json()) as { value: any[] };
+  for (const item of data.value ?? []) {
+    const f = item.fields as Record<string, unknown>;
+    const key = String(f.EventKey_EC ?? '').trim();
+    const raw = String(f.Payload_EC ?? '');
+    if (!key || !raw) continue;
+    if (onlyMissing && map.has(key)) continue;
+    const updatedAt = String(f.UpdatedAt_EC ?? '');
+    // Duplicados del mismo eventKey en SP → quedarse con la MÁS NUEVA (un dup viejo sin dieta no
+    // debe tapar la fila buena → era la causa del falso "sin dieta").
+    const prev = map.get(key);
+    if (prev && prev.updatedAt >= updatedAt) continue;
+    try { map.set(key, { e: JSON.parse(raw) as EnrichResult, updatedAt }); } catch { /* corrupta: skip */ }
+  }
+}
+
 async function enrichBedsFromCache(beds: any[], occEventKeys: Set<string>): Promise<string> {
-  if (!SITE_ID || !ENRICH_LIST_ID) return '';
   // Solo aplicamos enrich si el eventKey está en obtenermapacamasocupadas (fuente live).
   // Una cama puede tener status='Ocupada' y eventOrigin/Number residual del array general
   // tras moverse el paciente — esos casos NO reciben enrich (evita pill fantasma).
@@ -149,28 +177,18 @@ async function enrichBedsFromCache(beds: any[], occEventKeys: Set<string>): Prom
   if (occupied.length === 0) return '';
 
   try {
-    const filter = encodeURIComponent(`fields/Status_EC eq 'Activo' and fields/Entorno_EC eq '${ENTORNO}'`);
-    const r = await graphFetch(
-      `/sites/${SITE_ID}/lists/${ENRICH_LIST_ID}/items?$expand=fields&$filter=${filter}&$top=500`,
-      { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
-    );
-    if (!r.ok) { console.warn(`[api/beds] enrich read HTTP ${r.status}`); return ''; }
-    const data = (await r.json()) as { value: any[] };
-
     const map = new Map<string, { e: EnrichResult; updatedAt: string }>();
-    for (const item of data.value ?? []) {
-      const f = item.fields as Record<string, unknown>;
-      const key = String(f.EventKey_EC ?? '').trim();
-      const raw = String(f.Payload_EC ?? '');
-      if (!key || !raw) continue;
-      const updatedAt = String(f.UpdatedAt_EC ?? '');
-      // Si hay filas duplicadas del mismo eventKey, quedarse con la MÁS NUEVA (defensa: un duplicado
-      // viejo sin dieta no debe tapar la fila buena → era la causa del falso "sin dieta").
-      const prev = map.get(key);
-      if (prev && prev.updatedAt >= updatedAt) continue;
-      try {
-        map.set(key, { e: JSON.parse(raw) as EnrichResult, updatedAt });
-      } catch { /* fila corrupta: skip */ }
+
+    if (enrichReadsFromSupabase(ENTORNO)) {
+      // Fase 2: enrich desde Supabase (enrich_camas). Fallback por-cama a SP para los eventKeys que
+      // todavía no estén en la tabla (transición: el cron la termina de poblar) → nadie ve el mapa
+      // sin enrich mientras se migra.
+      const supa = await readEnrichSupabase(ENTORNO);
+      for (const [key, row] of supa) map.set(key, { e: row.payload, updatedAt: row.updatedAt });
+      const missing = occupied.some(b => !map.has(`${b.eventOrigin}-${b.eventNumber}`));
+      if (missing) await fillEnrichMapFromSP(map, true);
+    } else {
+      await fillEnrichMapFromSP(map, false);
     }
 
     const sigs: string[] = [];
