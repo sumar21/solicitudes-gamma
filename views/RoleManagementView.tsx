@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { User, Permission, RoleModule, MEAL_SLOTS, mealSlotPermission } from '../types';
-import { Settings, Plus, Search, X, AlertCircle, CheckCircle2, Pencil, Trash2, Check, ChevronUp, ChevronDown } from '../components/Icons';
+import { Settings, Plus, Search, X, AlertCircle, CheckCircle2, Pencil, Trash2, Check } from '../components/Icons';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Input } from '../components/ui/input';
@@ -156,16 +156,6 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
   // (lo que borra sus permisos del Set) y luego lo reactiva, restauramos los permisos
   // que tenía al abrir — evita pérdida accidental por toggle rápido.
   const [originalPermissions, setOriginalPermissions] = useState<Set<Permission>>(new Set());
-  // Qué grupos de permisos están desplegados en el modal (key = group.label).
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
-
-  const toggleGroupExpanded = (label: string) => {
-    setExpandedGroups(prev => {
-      const next = new Set(prev);
-      next.has(label) ? next.delete(label) : next.add(label);
-      return next;
-    });
-  };
 
   const authFetch = useCallback((url: string, options?: RequestInit) => {
     const token = localStorage.getItem('mediflow_token');
@@ -204,7 +194,6 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
     setEditingRole(null);
     setForm(emptyForm);
     setOriginalPermissions(new Set());
-    setExpandedGroups(new Set());
     setIsModalOpen(true);
   };
 
@@ -220,7 +209,6 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
       requiresIdentification: !!role.requiresIdentification,
     });
     setOriginalPermissions(perms);
-    setExpandedGroups(new Set());
     setIsModalOpen(true);
   };
 
@@ -502,7 +490,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
 
       {/* Create/Edit Modal */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-        <DialogContent className="sm:max-w-[680px] rounded-3xl max-h-[95vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-[960px] rounded-3xl max-h-[95vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-xl">{editingRole ? 'Editar Rol' : 'Nuevo Rol'}</DialogTitle>
           </DialogHeader>
@@ -554,65 +542,54 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
               </div>
             </div>
 
-            {/* Permisos de acciones agrupados por módulo, colapsables. Cada grupo solo
-                aparece si su módulo de acceso está habilitado (excepto "Notificaciones",
-                que es cross-module). El header muestra "N/total" para feedback rápido. */}
+            {/* Permisos de acciones agrupados por módulo. Grupos SIEMPRE expandidos en multi-columna
+                (sin acordeón): tildar una casilla no reacomoda nada → se acabó el "salto" del modal.
+                Cada grupo aparece solo si su módulo de acceso está habilitado (excepto "Notificaciones",
+                cross-module). El header muestra "N/total" para feedback rápido. */}
             <div className="grid gap-2">
               <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Permisos de Acciones</Label>
-              <div className="columns-2 gap-2 [&>div]:mb-2 [&>div]:break-inside-avoid">
+              <div className="columns-1 sm:columns-2 lg:columns-3 gap-2 [&>div]:mb-2 [&>div]:break-inside-avoid">
                 {PERMISSION_GROUPS.map(group => {
                   const moduleEnabled = group.module === '__cross__' || form.selectedModules.has(group.module);
                   if (!moduleEnabled) return null;
-                  const isOpen = expandedGroups.has(group.label);
                   const activeCount = group.perms.filter(p => form.selectedPermissions.has(p.code)).length;
                   return (
                     <div key={group.label} className="border border-slate-100 rounded-xl bg-slate-50/40 overflow-hidden">
-                      <button
-                        type="button"
-                        onClick={() => toggleGroupExpanded(group.label)}
-                        className="w-full flex items-center justify-between gap-3 px-3 py-2.5 hover:bg-slate-100/60 transition-colors"
-                      >
+                      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-100">
                         <span className="text-[10px] font-black uppercase tracking-widest text-slate-600">{group.label}</span>
-                        <span className="flex items-center gap-2">
-                          <span className={cn(
-                            "text-[10px] font-bold px-2 py-0.5 rounded-full",
-                            activeCount > 0 ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"
-                          )}>
-                            {activeCount}/{group.perms.length}
-                          </span>
-                          {isOpen
-                            ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
-                            : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
+                        <span className={cn(
+                          "text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0",
+                          activeCount > 0 ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"
+                        )}>
+                          {activeCount}/{group.perms.length}
                         </span>
-                      </button>
-                      {isOpen && (
-                        <div className="px-3 pb-3 space-y-1">
-                          {group.perms.map(p => {
-                            const selected = form.selectedPermissions.has(p.code);
-                            return (
-                              <label
-                                key={p.code}
-                                className={cn(
-                                  "flex items-center gap-3 px-2.5 py-2 rounded-lg cursor-pointer transition-all",
-                                  selected ? "bg-emerald-50" : "hover:bg-white"
-                                )}
-                              >
-                                <div className={cn(
-                                  "w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors",
-                                  selected ? "bg-emerald-600 border-emerald-600" : "border-slate-300 bg-white"
-                                )}>
-                                  {selected && <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />}
-                                </div>
-                                <span className={cn(
-                                  "text-xs",
-                                  selected ? "text-emerald-700 font-bold" : "text-slate-700"
-                                )}>{p.label}</span>
-                                <input type="checkbox" className="sr-only" checked={selected} onChange={() => togglePermission(p.code)} />
-                              </label>
-                            );
-                          })}
-                        </div>
-                      )}
+                      </div>
+                      <div className="px-2 pb-2 pt-1 space-y-0.5">
+                        {group.perms.map(p => {
+                          const selected = form.selectedPermissions.has(p.code);
+                          return (
+                            <label
+                              key={p.code}
+                              className={cn(
+                                "flex items-center gap-2.5 px-2 py-1.5 rounded-lg cursor-pointer transition-all",
+                                selected ? "bg-emerald-50" : "hover:bg-white"
+                              )}
+                            >
+                              <div className={cn(
+                                "w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors",
+                                selected ? "bg-emerald-600 border-emerald-600" : "border-slate-300 bg-white"
+                              )}>
+                                {selected && <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />}
+                              </div>
+                              <span className={cn(
+                                "text-xs leading-tight",
+                                selected ? "text-emerald-700 font-bold" : "text-slate-700"
+                              )}>{p.label}</span>
+                              <input type="checkbox" className="sr-only" checked={selected} onChange={() => togglePermission(p.code)} />
+                            </label>
+                          );
+                        })}
+                      </div>
                     </div>
                   );
                 })}

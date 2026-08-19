@@ -3279,9 +3279,13 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                               </div>
                             )}
                             {/* Marca "va a cirugía" (Admisión): habilita el circuito Cx para un paciente
-                                NO quirúrgico. Solo si el rol tiene el permiso (App gatea onMarcarVaCirugia). */}
+                                NO quirúrgico. Solo si el rol tiene el permiso (App gatea onMarcarVaCirugia).
+                                Usa el bed VIVO (no displayBed, que es snapshot del click): así el toggle
+                                refleja al toque el update optimista de la marca — antes no se movía. */}
                             {onMarcarVaCirugia && onDesmarcarVaCirugia && displayBed && (
-                              <VaCirugiaToggle bed={displayBed} onMarcar={onMarcarVaCirugia} onDesmarcar={onDesmarcarVaCirugia} />
+                              <VaCirugiaToggle
+                                bed={beds.find(b => b.id === selectedBed.id) ?? displayBed}
+                                onMarcar={onMarcarVaCirugia} onDesmarcar={onDesmarcarVaCirugia} />
                             )}
                             {!enrichLoading && !hasInternacionData && (
                               <p className="text-xs text-slate-400 italic text-center py-2">Sin datos de internación disponibles</p>

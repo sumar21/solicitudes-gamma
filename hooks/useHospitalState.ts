@@ -1975,18 +1975,26 @@ export const useHospitalState = () => {
       if (!role) return false;
       const prev = currentUserRef.current;
       if (!prev) return false;
+      // NO bajar requiresIdentification a mitad de sesión si YA hay un operador identificado: el
+      // cache de rol es per-lambda y puede devolver un valor viejo distinto al del login → un blip
+      // apagaría el flag y haría desaparecer el operador + "Cambio de turno" del navbar (reaparecían
+      // recién al recargar). Si el operador está seteado, la cuenta claramente usa identificación;
+      // un apagado genuino se toma en el próximo login.
+      const nextRequiresId = (operadorRef.current && (prev.requiresIdentification ?? false))
+        ? true
+        : !!role.requiresIdentification;
       const same =
         JSON.stringify(prev.modules ?? []) === JSON.stringify(role.modules ?? []) &&
         JSON.stringify(prev.permissions ?? []) === JSON.stringify(role.permissions ?? []) &&
         (prev.filterByFloors ?? false) === !!role.filterByFloors &&
         (prev.bypassLocationCheck ?? false) === !!role.bypassLocationCheck &&
-        (prev.requiresIdentification ?? false) === !!role.requiresIdentification;
+        (prev.requiresIdentification ?? false) === nextRequiresId;
       if (same) return false; // sin cambios → no re-render
       const updated = {
         ...prev,
         modules: role.modules, permissions: role.permissions,
         filterByFloors: !!role.filterByFloors, bypassLocationCheck: !!role.bypassLocationCheck,
-        requiresIdentification: !!role.requiresIdentification,
+        requiresIdentification: nextRequiresId,
       };
       setCurrentUser(updated);
       localStorage.setItem(USER_KEY, JSON.stringify(updated));
