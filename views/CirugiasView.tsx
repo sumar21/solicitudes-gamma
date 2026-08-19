@@ -62,11 +62,12 @@ const pasoLabel = (tipo: string): string => (CIRUGIA_ESTADO_LABEL as Record<stri
 
 // Columnas de HORA por paso en la grilla Activas: cada una muestra cuándo se alcanzó ese estado
 // (de c.pasos, poblado por el backend). El label es el pedido por negocio, no el técnico.
+// TOLERANCIA_EVALUADA NO va acá: al evaluarse cierra la operatoria y la saca de Activas → esa
+// columna nunca se llenaría. La hora de tolerancia se ve en el detalle del Histórico.
 const STEP_COLS: { key: string; label: string }[] = [
-  { key: 'EN_TRASLADO',         label: 'Retirado' },
-  { key: 'EN_CIRUGIA',          label: 'En cirugía' },
-  { key: 'RECIBIDA',            label: 'Recibido' },
-  { key: 'TOLERANCIA_EVALUADA', label: 'Tolerancia' },
+  { key: 'EN_TRASLADO', label: 'Retirado' },
+  { key: 'EN_CIRUGIA',  label: 'En cirugía' },
+  { key: 'RECIBIDA',    label: 'Recibido' },
 ];
 
 // Fecha+hora compactas de un paso ("18/08" + "12:40") o null si no se hizo aún.
@@ -498,10 +499,10 @@ export const CirugiasView: React.FC<Props> = ({
               {/* Desktop — una sola tabla con columna Estado (concordancia con Traslados/Limpiezas/Comandas) */}
               <Card className="hidden md:block shadow-sm border-slate-200 overflow-hidden bg-white rounded-2xl">
                 <div className="overflow-x-auto">
-                <table className="w-full text-sm table-fixed min-w-[820px]">
+                <table className="w-full text-sm table-fixed min-w-[720px]">
                   <colgroup>
-                    <col className="w-[10%]" /><col className="w-[18%]" /><col className="w-[8%]" />
-                    <col className="w-[10%]" /><col className="w-[11%]" /><col className="w-[10%]" /><col className="w-[10%]" /><col className="w-[23%]" />
+                    <col className="w-[11%]" /><col className="w-[20%]" /><col className="w-[9%]" />
+                    <col className="w-[12%]" /><col className="w-[13%]" /><col className="w-[12%]" /><col className="w-[23%]" />
                   </colgroup>
                   <thead>
                     <tr className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500 font-bold">
@@ -511,7 +512,6 @@ export const CirugiasView: React.FC<Props> = ({
                       <th className="px-4 py-3">Retirado</th>
                       <th className="px-4 py-3">En cirugía</th>
                       <th className="px-4 py-3">Recibido</th>
-                      <th className="px-4 py-3">Tolerancia</th>
                       <th className="px-4 py-3">Acciones</th>
                     </tr>
                   </thead>
