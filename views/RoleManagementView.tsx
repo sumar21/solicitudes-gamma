@@ -128,6 +128,7 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
       { code: 'notif_cirugia_consolidar',  label: 'Cirugía: consolidación pendiente (cambio de cama / UCI → Admisión)' },
       { code: 'notif_cirugia_lista',       label: 'Cirugía: paciente listo para quirófano' },
       { code: 'notif_cirugia_camillero',   label: 'Cirugía: camillero en camino (retiro / entrega → azafata del piso)' },
+      { code: 'notif_cirugia_cama_progal', label: 'Cirugía: cambio de cama detectado en PROGAL (fuera de la app)' },
     ],
   },
 ];
@@ -536,7 +537,8 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
           modal de detalle de cama): General + una solapa por módulo habilitado + Notificaciones.
           El panel usa el ancho completo y crece según la solapa; header y barra quedan fijos arriba. */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-        <DialogContent className="sm:max-w-[900px] rounded-3xl p-0 overflow-hidden gap-0 flex flex-col max-h-[90vh]">
+        <DialogContent noPadding className="sm:max-w-[900px] rounded-3xl">
+         <div className="flex flex-col max-h-[85vh] min-w-0">
           <DialogHeader className="px-6 pt-6 pb-4 text-left shrink-0">
             <DialogTitle className="text-xl">{editingRole ? 'Editar Rol' : 'Nuevo Rol'}</DialogTitle>
             {form.name.trim() && (
@@ -544,9 +546,13 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
             )}
           </DialogHeader>
 
-          {/* Barra de solapas — segmented control, scrolleable en X (mobile) */}
-          <div className="px-6 shrink-0">
-            <div className="flex gap-1 bg-slate-100 rounded-xl p-1 overflow-x-auto">
+          {/* Barra de solapas — segmented control, scrolleable en X cuando hay muchos módulos.
+              El overflow-x-auto va en un contenedor EXTERNO transparente para que el scrollbar quede
+              en una franja DEBAJO del pill gris (fuera de él), sin tapar el texto de los tabs.
+              min-w-0: sin esto la fila (whitespace-nowrap) estira el modal en vez de scrollear. */}
+          <div className="px-6 shrink-0 min-w-0">
+            <div className="overflow-x-auto tabs-x-scroll">
+            <div className="inline-flex gap-1 bg-slate-100 rounded-xl p-1 min-w-full">
               {modalTabs.map(tab => {
                 const active = activeTab === tab.key;
                 return (
@@ -573,10 +579,11 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                 );
               })}
             </div>
+            </div>
           </div>
 
           {/* Panel de la solapa activa — ancho completo, scrollea solo si excede el alto */}
-          <div className="flex-1 overflow-y-auto px-6 py-5 min-h-[300px]">
+          <div className="flex-1 overflow-y-auto px-6 py-5 min-h-0">
               {/* ── General: nombre + módulos de acceso + comportamiento ── */}
               {activeTab === '__general__' && (
                 <div className="space-y-5">
@@ -713,7 +720,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
               )}
           </div>
 
-          <DialogFooter className="px-6 py-4 border-t border-slate-100 gap-2">
+          <DialogFooter className="px-6 py-4 border-t border-slate-100 gap-2 shrink-0">
             <Button variant="outline" onClick={() => setIsModalOpen(false)} className="rounded-xl h-10">Cancelar</Button>
             <Button
               onClick={handleSave}
@@ -723,6 +730,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
               {saving ? 'Guardando...' : editingRole ? 'Guardar Cambios' : 'Crear Rol'}
             </Button>
           </DialogFooter>
+         </div>
         </DialogContent>
       </Dialog>
 

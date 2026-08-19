@@ -24,3 +24,24 @@
   scrollbar-width: thin;
   scrollbar-color: #cbd5e1 transparent;
 }
+
+/* Botonera de solapas (modal de Roles): cuando hay muchos módulos la fila desborda y scrollea.
+   El overflow-x-auto vive en un contenedor externo transparente, así el scrollbar cae en una
+   franja DEBAJO del pill gris (fuera de él, sin tapar el texto) y queda visible cuando corresponde.
+   El padding-top separa el scrollbar del pill; se anula el margin-block del track global (pensado
+   para scrollbars verticales) que acá lo descentraba. */
+.tabs-x-scroll {
+  padding-bottom: 0.5rem;
+}
+.tabs-x-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+.tabs-x-scroll::-webkit-scrollbar-track {
+  background: transparent;
+  margin-block: 0;
+  margin-inline: 0;
+}
+.tabs-x-scroll::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}

@@ -38,9 +38,15 @@ interface Props {
   onRefresh?: () => void | Promise<void>;
 }
 
-const Pill: React.FC<{ estado: CirugiaEstado; short?: boolean }> = ({ estado, short }) => (
+// En el HISTÓRICO toda fila es terminal (TOLERANCIA_EVALUADA / CANCELADO). Ahí "Tolerancia" se lee
+// como "sigue en tolerancia" → mostramos el resultado del ticket: Cerrada / Cancelada.
+const HIST_ESTADO_LABEL: Partial<Record<CirugiaEstado, string>> = {
+  TOLERANCIA_EVALUADA: 'Cerrada',
+  CANCELADO:           'Cancelada',
+};
+const Pill: React.FC<{ estado: CirugiaEstado; short?: boolean; hist?: boolean }> = ({ estado, short, hist }) => (
   <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-tight whitespace-nowrap', CIRUGIA_PILL_CLASS[estado])}>
-    <Activity className="w-3 h-3 shrink-0" strokeWidth={3} /> Cx · {(short ? CIRUGIA_ESTADO_SHORT : CIRUGIA_ESTADO_LABEL)[estado]}
+    <Activity className="w-3 h-3 shrink-0" strokeWidth={3} /> Cx · {(hist && HIST_ESTADO_LABEL[estado]) || (short ? CIRUGIA_ESTADO_SHORT : CIRUGIA_ESTADO_LABEL)[estado]}
   </span>
 );
 
@@ -585,7 +591,7 @@ export const CirugiasView: React.FC<Props> = ({
                   <div key={c.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <p className="font-black text-sm text-slate-800 leading-tight uppercase">{c.pacienteNombre || 'Paciente'}</p>
-                      <Pill estado={c.estado as CirugiaEstado} short />
+                      <Pill estado={c.estado as CirugiaEstado} short hist />
                     </div>
                     <p className="text-[11px] text-slate-500 font-medium flex items-center gap-1.5">
                       <BedDouble className="w-3.5 h-3.5 text-slate-400 shrink-0" />
@@ -624,7 +630,7 @@ export const CirugiasView: React.FC<Props> = ({
                     <tbody className="divide-y divide-slate-100">
                       {visibleHistory.map(c => (
                         <tr key={c.id} className="hover:bg-slate-50/60">
-                          <td className="px-4 py-3"><Pill estado={c.estado as CirugiaEstado} short /></td>
+                          <td className="px-4 py-3"><Pill estado={c.estado as CirugiaEstado} short hist /></td>
                           <td className="px-4 py-3 font-bold text-slate-800 uppercase">{c.pacienteNombre || '—'}</td>
                           <td className="px-4 py-3 text-slate-600">
                             <span className="inline-flex items-center gap-1">
@@ -702,7 +708,7 @@ export const CirugiasView: React.FC<Props> = ({
               <div className="rounded-2xl border border-slate-100 bg-slate-50/60 p-3.5 space-y-2">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <span className="font-black text-slate-800 uppercase text-sm leading-tight">{detalleCx.pacienteNombre || 'Paciente'}</span>
-                  <Pill estado={detalleCx.estado as CirugiaEstado} short />
+                  <Pill estado={detalleCx.estado as CirugiaEstado} short hist />
                 </div>
                 <div className="flex items-center gap-1.5 text-[12px] font-bold text-slate-600 flex-wrap">
                   <BedDouble className="w-3.5 h-3.5 text-slate-400" />

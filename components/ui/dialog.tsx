@@ -98,7 +98,10 @@ const DialogContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTML
             <span className="sr-only">Close</span>
           </button>
           {/* Scrollable content */}
-          <div className={cn("overflow-y-auto flex-1 grid gap-4 rounded-[inherit] max-h-[inherit]", noPadding ? "p-0" : "p-6")}>
+          {/* grid-cols-1 = minmax(0,1fr): la columna queda acotada al ancho del modal (no crece a
+              max-content). Sin esto, un hijo ancho sin-wrap (p.ej. una botonera de tabs) estira el
+              modal en vez de dejar que su propio overflow-x-auto scrollee. */}
+          <div className={cn("overflow-y-auto flex-1 grid grid-cols-1 gap-4 rounded-[inherit] max-h-[inherit]", noPadding ? "p-0" : "p-6")}>
             {children}
           </div>
         </div>
