@@ -2,7 +2,8 @@
 /**
  * Supabase Edge Function: notify-change
  *
- * Disparada por Database Webhooks sobre public.dieta_cambios y public.ayuno_cambios (INSERT).
+ * Disparada por Database Webhooks sobre public.dieta_cambios, public.ayuno_cambios y
+ * public.cirugia_cambios (INSERT).
  * Reproduce el envío de Web Push que antes hacía api/push-utils.ts desde Vercel para DIET_CHANGE /
  * FASTING_CHANGE, pero UNA sola vez por fila insertada → mata los duplicados ("TIN TIN TIN") del
  * guard en memoria por-lambda. Mismo patrón que notify-push (traslados); acá el "evento" es la fila
@@ -44,8 +45,9 @@ const PUSH_SEDE = 'HPR';
 // Config por tabla de origen del webhook. type = valor persistido en notificaciones.type y clave del
 // permiso requerido (NOTIF_TYPE_TO_PERMISSION); title = encabezado de la notif.
 const TABLE_CONFIG: Record<string, { type: string; permission: string; title: string }> = {
-  dieta_cambios: { type: 'DIET_CHANGE',    permission: 'notif_diet_change',    title: 'Dieta actualizada' },
-  ayuno_cambios: { type: 'FASTING_CHANGE', permission: 'notif_fasting_change', title: 'Ayuno actualizado' },
+  dieta_cambios:   { type: 'DIET_CHANGE',    permission: 'notif_diet_change',         title: 'Dieta actualizada' },
+  ayuno_cambios:   { type: 'FASTING_CHANGE', permission: 'notif_fasting_change',       title: 'Ayuno actualizado' },
+  cirugia_cambios: { type: 'CIRUGIA_MOVE',   permission: 'notif_cirugia_cama_progal',  title: 'Cambio de cama en PROGAL' },
 };
 
 // DJB2 — para el tag del SW (colapsa el mismo evento lógico en una burbuja).
@@ -123,12 +125,13 @@ Deno.serve(async (req: Request) => {
   const roomLabel = formatRoom(record.habitacion, record.area);
   let core: string;
   let title = cfg.title;
+  let appendRoom = true; // dieta/ayuno agregan " — ubicación"; cirugía ya trae las camas en el core.
   if (cfg.type === 'DIET_CHANGE') {
     const tags = String(record.tags_new ?? '').trim();
     // tags_new se guarda como join '; '; el body histórico usaba ', '. Normalizamos a ', '.
     const tagsLabel = tags ? tags.split(';').map((t: string) => t.trim()).filter(Boolean).join(', ') : 'sin dieta especial';
     core = `${paciente}: ${tagsLabel}`;
-  } else {
+  } else if (cfg.type === 'FASTING_CHANGE') {
     const detalle = String(record.detalle ?? '').trim() || 'Ayuno actualizado';
     // Cancelación: el enrich (cron-enrich-beds) escribe detalle 'Ayuno cancelado' como literal fijo.
     // Título propio (más claro que "actualizado") y no repetimos el texto en el body (ya lo dice el título).
@@ -138,8 +141,14 @@ Deno.serve(async (req: Request) => {
     } else {
       core = `${paciente}: ${detalle}`;
     }
+  } else {
+    // CIRUGIA_MOVE: PROGAL movió de cama a un paciente en cirugía (detectado por el enrich).
+    const prev = String(record.cama_prev ?? '').trim();
+    const next = String(record.cama_new ?? '').trim();
+    core = prev && next ? `${paciente}: ${prev} → ${next}` : paciente;
+    appendRoom = false; // las camas ya están en el core; no repetir la ubicación.
   }
-  const body = roomLabel ? `${core} — ${roomLabel}` : core;
+  const body = (appendRoom && roomLabel) ? `${core} — ${roomLabel}` : core;
   const areaName = record.area ? String(record.area) : undefined;
 
   // ── Roles activos (join case-insensitive por nombre) ───────────────────────

@@ -50,6 +50,10 @@ export interface EnrichResult {
   dietTags?: string[];
   fasting?: FastingSummary;
   isolations?: IsolationEntry[];  // Aislamientos prescriptos (PROGAL). Ver isolations-summary.ts.
+  // Cama (roomName de Gamma) al momento del snapshot. Baseline para detectar que PROGAL movió a un
+  // paciente de cama fuera de la app (dispara notif de cirugía). El cron lo setea desde el mapa de
+  // camas (no viene de buildEnrich). undefined en snapshots previos a esta feature → bootstrap.
+  cama?: string;
 }
 
 /** Bloque "paciente" (DNI/edad/sexo/financiador) — datos que no cambian en la internación. */

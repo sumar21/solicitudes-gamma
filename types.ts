@@ -421,6 +421,9 @@ export const PERMISSIONS = [
   'notif_cirugia_consolidar',
   'notif_cirugia_lista',
   'notif_cirugia_camillero',
+  // Detección PROGAL→app: el enrich (cron) descubre que un paciente EN CIRUGÍA cambió de cama en
+  // PROGAL fuera de la app → aviso al equipo de cirugía (camillero + enfermería de la grilla).
+  'notif_cirugia_cama_progal',
 ] as const;
 export type Permission = typeof PERMISSIONS[number];
 

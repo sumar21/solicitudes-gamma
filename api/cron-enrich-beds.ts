@@ -59,6 +59,11 @@ const WORKERS = Number(process.env.CRON_WORKERS ?? 4);
 const PACE_MS = Number(process.env.CRON_PACE_MS ?? 1000);
 const STALE_MS = 60 * 60 * 1000; // filas no vistas + sin update hace >1h → Inactivo
 
+// Estados de cirugía "en cola" (no terminales): un paciente en cualquiera de estos tiene una
+// operatoria abierta → si PROGAL le cambia la cama, notificamos al equipo de cirugía. Debe coincidir
+// con EN_COLA de api/cirugia.ts (VIVOS + RECIBIDA; excluye TOLERANCIA_EVALUADA / CANCELADO).
+const CIRUGIA_EN_COLA = ['LISTO_PARA_CIRUGIA', 'VAN_A_BUSCAR', 'EN_TRASLADO', 'EN_CIRUGIA', 'EN_DEVOLUCION', 'RECIBIDA'];
+
 interface EnrichRow {
   spItemId: string;
   eventKey: string;
@@ -71,6 +76,9 @@ interface EnrichRow {
   // mismo (reemplaza a cron-diet-changes + lista 11.DietaSnapshot). undefined = sin
   // dieta especial (hashea estable, así "dieta especial → sin dieta" también dispara).
   oldDietTags: string[] | undefined;
+  // Cama del Payload_EC anterior — baseline para detectar que PROGAL movió de cama a un paciente en
+  // cirugía fuera de la app. undefined = snapshot previo a la feature → bootstrap silencioso.
+  oldCama: string | undefined;
 }
 
 // Hash estable del estado de ayunos. Mismo criterio que api/ayunos.ts fastingHash
@@ -158,15 +166,17 @@ async function fetchEnrichRows(): Promise<{ map: Map<string, EnrichRow>; staleDu
     // Parsear Payload_EC para extraer el baseline viejo (fasting + dieta) y comparar.
     let oldFasting: FastingSummary | undefined;
     let oldDietTags: string[] | undefined;
+    let oldCama: string | undefined;
     try {
       const raw = String(f.Payload_EC ?? '');
       if (raw) {
         const parsed = JSON.parse(raw) as EnrichResult;
         oldFasting = parsed.fasting;
         oldDietTags = parsed.dietTags;
+        oldCama = parsed.cama;
       }
     } catch { /* fila corrupta — sin baseline */ }
-    map.set(key, { spItemId: String(item.id), eventKey: key, updatedAt, oldFasting, oldDietTags });
+    map.set(key, { spItemId: String(item.id), eventKey: key, updatedAt, oldFasting, oldDietTags, oldCama });
   }
   return { map, staleDupes };
 }
@@ -295,6 +305,28 @@ export default async function handler(req: any, res: any) {
     }
     stats.checked = beds.length;
 
+    // 3b) Cirugías VIVAS por paciente_codigo — para detectar que PROGAL movió de cama a un paciente
+    // con operatoria abierta (fuera de la app). Best-effort: si falla, el resto del cron sigue igual.
+    const cirugiaByPatient = new Map<string, { id: string; camaOrigen: string; camaDestino: string | null }>();
+    try {
+      const { data: cxRows } = await getSupabaseAdmin().from('cirugia_traslados')
+        .select('id, paciente_codigo, cama_origen, cama_destino')
+        .eq('entorno', ENTORNO)
+        .in('estado', CIRUGIA_EN_COLA);
+      for (const r of cxRows ?? []) {
+        const pc = r.paciente_codigo != null ? String(r.paciente_codigo).trim() : '';
+        if (pc && !cirugiaByPatient.has(pc)) {
+          cirugiaByPatient.set(pc, {
+            id: String(r.id),
+            camaOrigen: String(r.cama_origen ?? ''),
+            camaDestino: r.cama_destino != null ? String(r.cama_destino) : null,
+          });
+        }
+      }
+    } catch (e: any) {
+      console.error('[cron-enrich] carga de cirugías activas falló:', e?.message ?? e);
+    }
+
     // 4) Worker pool: build enrich + upsert por cama.
     const [tokenPat, tokenEvt] = await Promise.all([
       getToken('consultarpacientecodigo'),
@@ -370,6 +402,11 @@ export default async function handler(req: any, res: any) {
           }
           consecutiveEventFails = 0;   // respuesta buena → el breaker vuelve a cero
 
+          // La cama actual (roomName de Gamma) se guarda en el snapshot para poder detectar, el ciclo
+          // siguiente, que PROGAL movió al paciente de cama fuera de la app. NO entra a los hashes de
+          // fasting/dieta (esos ignoran la cama a propósito) — es un baseline propio.
+          payload.cama = b.roomName || undefined;
+
           // ── Detección de cambio de fasting (push a Catering / quien tenga notif_fasting_change) ──
           // Dos disparadores:
           //  · Fila existente y el hash de fasting cambió → push (alta/baja/modificación).
@@ -439,6 +476,39 @@ export default async function handler(req: any, res: any) {
           // Best-effort: un fallo NO corta el cron. El UNIQUE(entorno,event_key) lo hace inmune a dupes.
           if (WRITE_ENRICH_SUPABASE) {
             if (await upsertEnrichSupabase(ENTORNO, eventKey, b.patientCode, payload)) supaUpserted++;
+          }
+
+          // ── Detección de cambio de CAMA en PROGAL para pacientes EN CIRUGÍA (dirección PROGAL→app) ──
+          // El snapshot ahora recuerda la cama; si cambió respecto al ciclo anterior y ese paciente tiene
+          // una operatoria abierta, es un movimiento que Admisión hizo en PROGAL sin pasar por la app.
+          // Insertamos en cirugia_cambios (webhook → notify-change → push al equipo de cirugía) y
+          // alimentamos el cartel de la grilla (cama_destino). Bootstrap silencioso: si el snapshot viejo
+          // no tenía cama guardada (oldCama undefined), sólo se aprende ahora, no se notifica.
+          const newCama = b.roomName || '';
+          if (!silent && existing?.oldCama && newCama && existing.oldCama !== newCama) {
+            const cx = cirugiaByPatient.get(b.patientCode);
+            if (cx) {
+              console.log(`[cron-enrich] CIRUGIA CAMA MOVE ${eventKey} patient=${b.patientName} ${existing.oldCama} → ${newCama} (cx=${cx.id})`);
+              try {
+                await getSupabaseAdmin().from('cirugia_cambios').insert({
+                  entorno:         ENTORNO,
+                  cirugia_id:      cx.id,
+                  paciente_codigo: b.patientCode,
+                  paciente_nombre: b.patientName || null,
+                  area:            b.areaName || null,
+                  habitacion:      newCama || null,
+                  cama_prev:       existing.oldCama,
+                  cama_new:        newCama,
+                });
+                // Alimenta el cartel de la grilla (cama_destino ≠ cama_origen) y deja registrada la
+                // cama nueva. La idempotencia real la da el snapshot: el próximo ciclo oldCama == newCama.
+                await getSupabaseAdmin().from('cirugia_traslados')
+                  .update({ cama_destino: newCama })
+                  .eq('id', cx.id).eq('entorno', ENTORNO);
+              } catch (e: any) {
+                console.error(`[cron-enrich] cirugia_cambios insert falló ${eventKey}:`, e?.message ?? e);
+              }
+            }
           }
 
           // Ubicación legible ("Habitación 413 (Piso 4)") para el body del push FALLBACK (push-utils).
