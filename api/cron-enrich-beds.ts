@@ -64,6 +64,13 @@ const STALE_MS = 60 * 60 * 1000; // filas no vistas + sin update hace >1h → In
 // con EN_COLA de api/cirugia.ts (VIVOS + RECIBIDA; excluye TOLERANCIA_EVALUADA / CANCELADO).
 const CIRUGIA_EN_COLA = ['LISTO_PARA_CIRUGIA', 'VAN_A_BUSCAR', 'EN_TRASLADO', 'EN_CIRUGIA', 'EN_DEVOLUCION', 'RECIBIDA'];
 
+// Compacta el label de cama para el body de la noti: "Habitación 417 HPR - Cama 01" → "417 - 01".
+// Réplica de formatBedName (lib/utils); la Edge Function recibe el texto ya compacto en cama_prev/new.
+function formatBedShort(bedName: string): string {
+  const m = bedName.match(/Habitaci[oó]n\s+([A-Za-z0-9]+)(?:\s+HPR)?\s*-\s*Cama\s+([A-Za-z0-9]+)/i);
+  return m ? `${m[1]} - ${m[2]}` : bedName;
+}
+
 interface EnrichRow {
   spItemId: string;
   eventKey: string;
@@ -281,7 +288,7 @@ export default async function handler(req: any, res: any) {
     // área y necesita el nombre legible).
     interface OccBed {
       patientCode: string; eventOrigin: string; eventNumber: number;
-      areaName: string; patientName: string; roomName: string;
+      areaName: string; patientName: string; roomName: string; bedLabel: string;
     }
     const beds: OccBed[] = [];
     for (const sector of occData) {
@@ -299,6 +306,9 @@ export default async function handler(req: any, res: any) {
             // arma la ubicación del body. NO entra al hash de detección de cambios (fastingDetalle /
             // dietPushBody) para que un cambio de cama del paciente no dispare una re-notificación.
             roomName: String(room.nombre ?? '').trim(),
+            // Label bed-level EXACTO, mismo formato que cirugia_traslados.cama_origen
+            // ("Habitación 417 HPR - Cama 01") — para detectar el move a nivel cama (no habitación).
+            bedLabel: `${String(room.nombre ?? '').trim()} - ${String(bed.nombre ?? '').trim() || `Cama 0${bed.codigo}`}`,
           });
         }
       }
@@ -402,10 +412,10 @@ export default async function handler(req: any, res: any) {
           }
           consecutiveEventFails = 0;   // respuesta buena → el breaker vuelve a cero
 
-          // La cama actual (roomName de Gamma) se guarda en el snapshot para poder detectar, el ciclo
-          // siguiente, que PROGAL movió al paciente de cama fuera de la app. NO entra a los hashes de
-          // fasting/dieta (esos ignoran la cama a propósito) — es un baseline propio.
-          payload.cama = b.roomName || undefined;
+          // La cama actual (label bed-level EXACTO) se guarda en el snapshot para poder detectar, el
+          // ciclo siguiente, que PROGAL movió al paciente de cama fuera de la app. NO entra a los hashes
+          // de fasting/dieta (esos ignoran la cama a propósito) — es un baseline propio.
+          payload.cama = b.bedLabel || undefined;
 
           // ── Detección de cambio de fasting (push a Catering / quien tenga notif_fasting_change) ──
           // Dos disparadores:
@@ -484,11 +494,16 @@ export default async function handler(req: any, res: any) {
           // Insertamos en cirugia_cambios (webhook → notify-change → push al equipo de cirugía) y
           // alimentamos el cartel de la grilla (cama_destino). Bootstrap silencioso: si el snapshot viejo
           // no tenía cama guardada (oldCama undefined), sólo se aprende ahora, no se notifica.
-          const newCama = b.roomName || '';
-          if (!silent && existing?.oldCama && newCama && existing.oldCama !== newCama) {
+          const newCama = b.bedLabel || '';
+          // Sólo comparamos si el snapshot viejo ya tenía un label bed-level (contiene ' - '). Si tenía
+          // el formato viejo room-level (sin ' - ') o nada, es bootstrap silencioso (aprende, no notifica)
+          // — evita un falso "move" en el ciclo de migración de room-level → bed-level.
+          if (!silent && existing?.oldCama && existing.oldCama.includes(' - ') && newCama && existing.oldCama !== newCama) {
             const cx = cirugiaByPatient.get(b.patientCode);
             if (cx) {
-              console.log(`[cron-enrich] CIRUGIA CAMA MOVE ${eventKey} patient=${b.patientName} ${existing.oldCama} → ${newCama} (cx=${cx.id})`);
+              const camaPrevShort = formatBedShort(existing.oldCama);
+              const camaNewShort = formatBedShort(newCama);
+              console.log(`[cron-enrich] CIRUGIA CAMA MOVE ${eventKey} patient=${b.patientName} ${camaPrevShort} → ${camaNewShort} (cx=${cx.id})`);
               try {
                 await getSupabaseAdmin().from('cirugia_cambios').insert({
                   entorno:         ENTORNO,
@@ -496,12 +511,13 @@ export default async function handler(req: any, res: any) {
                   paciente_codigo: b.patientCode,
                   paciente_nombre: b.patientName || null,
                   area:            b.areaName || null,
-                  habitacion:      newCama || null,
-                  cama_prev:       existing.oldCama,
-                  cama_new:        newCama,
+                  habitacion:      b.roomName || null,
+                  cama_prev:       camaPrevShort,  // compacto para el body de la noti ("417 - 01")
+                  cama_new:        camaNewShort,
                 });
-                // Alimenta el cartel de la grilla (cama_destino ≠ cama_origen) y deja registrada la
-                // cama nueva. La idempotencia real la da el snapshot: el próximo ciclo oldCama == newCama.
+                // Alimenta el cartel de la grilla (cama_destino ≠ cama_origen) y deja registrada la cama
+                // nueva. Guardamos el label FULL (mismo formato que cama_origen → el grid lo compacta con
+                // formatBedName). La idempotencia real la da el snapshot: próximo ciclo oldCama == newCama.
                 await getSupabaseAdmin().from('cirugia_traslados')
                   .update({ cama_destino: newCama })
                   .eq('id', cx.id).eq('entorno', ENTORNO);
