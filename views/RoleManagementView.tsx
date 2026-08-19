@@ -532,21 +532,21 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
         </Table>
       </Card>
 
-      {/* Create/Edit Modal — layout de solapas: rail (General + módulos habilitados + Notificaciones)
-          a la izquierda, panel de la solapa activa a la derecha. Alto fijo → cambiar de solapa NO
-          reacomoda el modal (se acabaron las alturas dispares apiladas). */}
+      {/* Create/Edit Modal — solapas HORIZONTALES arriba (segmented control, mismo patrón que el
+          modal de detalle de cama): General + una solapa por módulo habilitado + Notificaciones.
+          El panel usa el ancho completo y crece según la solapa; header y barra quedan fijos arriba. */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-        <DialogContent className="sm:max-w-[840px] rounded-3xl p-0 overflow-hidden gap-0">
-          <DialogHeader className="px-6 pt-6 pb-4 border-b border-slate-100 text-left">
+        <DialogContent className="sm:max-w-[900px] rounded-3xl p-0 overflow-hidden gap-0 flex flex-col max-h-[90vh]">
+          <DialogHeader className="px-6 pt-6 pb-4 text-left shrink-0">
             <DialogTitle className="text-xl">{editingRole ? 'Editar Rol' : 'Nuevo Rol'}</DialogTitle>
             {form.name.trim() && (
               <span className="text-xs font-bold text-emerald-600">{form.name.trim()}</span>
             )}
           </DialogHeader>
 
-          <div className="flex flex-col sm:flex-row h-[64vh] max-h-[600px] min-h-[420px]">
-            {/* Rail de solapas */}
-            <nav className="shrink-0 sm:w-52 border-b sm:border-b-0 sm:border-r border-slate-100 bg-slate-50/60 p-2 flex sm:flex-col gap-1 overflow-x-auto sm:overflow-y-auto">
+          {/* Barra de solapas — segmented control, scrolleable en X (mobile) */}
+          <div className="px-6 shrink-0">
+            <div className="flex gap-1 bg-slate-100 rounded-xl p-1 overflow-x-auto">
               {modalTabs.map(tab => {
                 const active = activeTab === tab.key;
                 return (
@@ -555,15 +555,16 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                     type="button"
                     onClick={() => setActiveTab(tab.key)}
                     className={cn(
-                      "flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl text-left transition-all shrink-0 sm:w-full",
-                      active ? "bg-white shadow-sm border border-slate-200" : "border border-transparent hover:bg-white/70"
+                      "shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest whitespace-nowrap transition-all",
+                      active ? "bg-white text-emerald-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
                     )}
                   >
-                    <span className={cn("text-xs font-bold whitespace-nowrap", active ? "text-emerald-700" : "text-slate-600")}>{tab.label}</span>
+                    {tab.label}
                     {tab.badge && (
                       <span className={cn(
-                        "text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0",
-                        tab.badge.startsWith('0/') ? "bg-slate-200 text-slate-500" : "bg-emerald-100 text-emerald-700"
+                        "text-[9px] font-bold px-1.5 py-0.5 rounded-full tracking-normal",
+                        tab.badge.startsWith('0/') ? "bg-slate-200 text-slate-500"
+                          : active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"
                       )}>
                         {tab.badge}
                       </span>
@@ -571,13 +572,14 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                   </button>
                 );
               })}
-            </nav>
+            </div>
+          </div>
 
-            {/* Panel de la solapa activa */}
-            <div className="flex-1 overflow-y-auto p-5 sm:p-6">
+          {/* Panel de la solapa activa — ancho completo, scrollea solo si excede el alto */}
+          <div className="flex-1 overflow-y-auto px-6 py-5 min-h-[300px]">
               {/* ── General: nombre + módulos de acceso + comportamiento ── */}
               {activeTab === '__general__' && (
-                <div className="space-y-5 max-w-2xl">
+                <div className="space-y-5">
                   <div className="grid gap-2">
                     <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Nombre del Rol</Label>
                     <Input
@@ -595,7 +597,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                         {MODULES.every(m => form.selectedModules.has(m.value)) ? 'Deseleccionar todo' : 'Seleccionar todo'}
                       </button>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
                       {MODULES.map(mod => {
                         const selected = form.selectedModules.has(mod.value);
                         return (
@@ -621,13 +623,14 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                       })}
                     </div>
                     <p className="text-[10px] text-slate-400 leading-tight mt-0.5">
-                      Cada módulo habilitado suma su solapa de permisos a la izquierda.
+                      Cada módulo habilitado suma su solapa de permisos arriba.
                     </p>
                   </div>
 
-                  {/* Comportamiento: los 3 toggles del rol */}
+                  {/* Comportamiento: los 3 toggles del rol, en fila en desktop */}
                   <div className="grid gap-3">
                     <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Comportamiento</Label>
+                    <div className="grid gap-3 sm:grid-cols-3">
                     {[
                       { key: 'filterByFloors' as const, title: 'Filtrado por pisos asignados',
                         yes: 'Solo ve traslados/camas de los pisos del usuario', no: 'Ve todo' },
@@ -636,8 +639,8 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                       { key: 'requiresIdentification' as const, title: 'Requiere identificación del operador (cuenta compartida)',
                         yes: 'Pide el nombre al entrar; queda como responsable', no: 'Las operaciones van a nombre de la cuenta' },
                     ].map(t => (
-                      <div key={t.key} className="grid gap-2">
-                        <Label className="text-[10px] font-semibold uppercase text-slate-400 tracking-wide">{t.title}</Label>
+                      <div key={t.key} className="grid gap-2 content-start">
+                        <Label className="text-[10px] font-semibold uppercase text-slate-400 tracking-wide sm:min-h-[2.5rem]">{t.title}</Label>
                         <div className="grid grid-cols-2 gap-2">
                           {[{ val: true, label: 'Sí', sub: t.yes }, { val: false, label: 'No', sub: t.no }].map(opt => {
                             const selected = form[t.key] === opt.val;
@@ -659,13 +662,14 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                         </div>
                       </div>
                     ))}
+                    </div>
                   </div>
                 </div>
               )}
 
               {/* ── Solapa de permisos (módulo o Notificaciones): grupos apilados a lo ancho ── */}
               {activeTab !== '__general__' && (
-                <div className="space-y-3 max-w-2xl">
+                <div className="space-y-3">
                   {groupsForActiveTab.map(group => {
                     const activeCount = group.perms.filter(p => form.selectedPermissions.has(p.code)).length;
                     return (
@@ -707,7 +711,6 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                   })}
                 </div>
               )}
-            </div>
           </div>
 
           <DialogFooter className="px-6 py-4 border-t border-slate-100 gap-2">
