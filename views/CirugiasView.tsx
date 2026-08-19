@@ -22,20 +22,6 @@ const AREA_LABELS: Record<string, string> = {
 };
 const areaLabel = (a?: string) => (a ? AREA_LABELS[a] ?? a : '—');
 
-// "hace X" desde un ISO hasta `now` (ms). Para ver de un vistazo cuánto lleva en el estado actual
-// (updatedAt) y el total desde que arrancó la operatoria (createdAt).
-const timeAgo = (iso: string | undefined, now: number): string => {
-  const t = Date.parse(String(iso ?? ''));
-  if (!Number.isFinite(t)) return '';
-  const min = Math.max(0, Math.floor((now - t) / 60000));
-  if (min < 1) return '<1 min';
-  if (min < 60) return `${min} min`;
-  const h = Math.floor(min / 60), m = min % 60;
-  if (h < 24) return m ? `${h}h ${m}m` : `${h}h`;
-  const d = Math.floor(h / 24);
-  return `${d}d`;
-};
-
 type TxResult = { ok: boolean; error?: string };
 
 interface Props {
@@ -73,6 +59,24 @@ const fmtWhen = (iso?: string) => {
 
 // Label legible de un paso (cirugia_eventos.tipo): reusa las etiquetas de estado, fallback al raw.
 const pasoLabel = (tipo: string): string => (CIRUGIA_ESTADO_LABEL as Record<string, string>)[tipo] ?? tipo;
+
+// Columnas de HORA por paso en la grilla Activas: cada una muestra cuándo se alcanzó ese estado
+// (de c.pasos, poblado por el backend). El label es el pedido por negocio, no el técnico.
+const STEP_COLS: { key: string; label: string }[] = [
+  { key: 'EN_TRASLADO',         label: 'Retirado' },
+  { key: 'EN_CIRUGIA',          label: 'En cirugía' },
+  { key: 'RECIBIDA',            label: 'Recibido' },
+  { key: 'TOLERANCIA_EVALUADA', label: 'Tolerancia' },
+];
+
+// Fecha+hora compactas de un paso ("18/08" + "12:40") o null si no se hizo aún.
+const pasoTime = (iso?: string): { dia: string; hora: string } | null => {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  const p = (n: number) => String(n).padStart(2, '0');
+  return { dia: `${p(d.getDate())}/${p(d.getMonth() + 1)}`, hora: `${p(d.getHours())}:${p(d.getMinutes())}` };
+};
 
 // Duración entre dos ISO (inicio → cierre). "—" si falta o es incoherente.
 const fmtDuracion = (a?: string, b?: string): string => {
@@ -112,9 +116,6 @@ export const CirugiasView: React.FC<Props> = ({
   // Panel inline "Cancelar": id + motivo tipeado.
   const [cancelando, setCancelando] = useState<{ id: string; motivo: string } | null>(null);
   const [rowError, setRowError] = useState<Record<string, string>>({});
-  // Reloj de la vista: refresca los "hace X" cada 30s sin depender de un refetch.
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => { const id = setInterval(() => setNow(Date.now()), 30_000); return () => clearInterval(id); }, []);
 
   // ── Sub-solapa Histórico (cerradas: Tolerancia evaluada / Cancelada, por fecha_cierre) ────────
   // Mismo patrón que el histórico de Limpiezas: rango Desde/Hasta + buscador. El backend ya expone
@@ -343,15 +344,16 @@ export const CirugiasView: React.FC<Props> = ({
               <span className="inline-flex items-center gap-1 text-[10px] text-slate-400 font-medium" title="Ingreso al flujo de cirugía">
                 <Clock className="w-3 h-3" /> {formatDateTime(c.createdAt)}
               </span>
-              <span className="text-slate-300">·</span>
-              <span className="text-[10px] text-violet-700" title="Tiempo en el paso actual">
-                <span className="text-[9px] font-semibold uppercase text-slate-400 mr-0.5">En paso</span>
-                <span className="font-bold">{timeAgo(c.updatedAt || c.createdAt, now)}</span>
-              </span>
-              <span className="text-[10px] text-slate-500" title="Total desde que quedó listo para cirugía">
-                <span className="text-[9px] font-semibold uppercase text-slate-400 mr-0.5">Total</span>
-                <span className="font-bold">{timeAgo(c.createdAt, now)}</span>
-              </span>
+              {STEP_COLS.map(col => {
+                const t = pasoTime(c.pasos?.[col.key]);
+                return (
+                  <span key={col.key} className="inline-flex items-center gap-1 text-[10px]">
+                    <span className="text-slate-300">·</span>
+                    <span className="text-[9px] font-semibold uppercase text-slate-400">{col.label}</span>
+                    {t ? <span className="font-bold text-violet-700 whitespace-nowrap">{t.dia} {t.hora}</span> : <span className="text-slate-300">—</span>}
+                  </span>
+                );
+              })}
             </div>
             {rowError[c.id] && (
               <p className="text-[10px] font-bold text-red-600">{rowError[c.id]}</p>
@@ -382,13 +384,17 @@ export const CirugiasView: React.FC<Props> = ({
       <tr key={c.id} className="align-middle hover:bg-slate-50/60">
         {/* Estado (columna a la izquierda de todo) */}
         <td className="px-4 py-3"><Pill estado={c.estado} short /></td>
-        {/* Paciente + área/ingreso */}
+        {/* Paciente + área/ingreso + tipo */}
         <td className="px-4 py-3">
           <p className="font-black text-slate-800 leading-tight break-words uppercase">{c.pacienteNombre || 'Paciente s/nombre'}</p>
           <p className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1 flex-wrap">
             <span>{areaLabel(c.area)}</span>
             <span className="text-slate-300">·</span>
             <span className="inline-flex items-center gap-1" title="Ingreso al flujo de cirugía"><Clock className="w-3 h-3 text-slate-400" /> {formatDateTime(c.createdAt)}</span>
+            {c.tipo && (<>
+              <span className="text-slate-300">·</span>
+              <span className="text-cyan-800 font-bold" title="Tipo de internación (PROGAL)">{c.tipo}</span>
+            </>)}
           </p>
         </td>
         {/* Cama (origen → destino si cambió) */}
@@ -406,25 +412,17 @@ export const CirugiasView: React.FC<Props> = ({
             </span>
           )}
         </td>
-        {/* Tiempo — desglose: cuánto lleva en el paso actual y total desde que quedó listo */}
-        <td className="px-4 py-3">
-          <div className="flex flex-col gap-0.5 leading-tight">
-            <span className="text-[11px] text-violet-700" title="Tiempo en el paso actual (el de la columna Estado)">
-              <span className="text-[9px] font-semibold uppercase text-slate-400 mr-1">En paso</span>
-              <span className="font-bold">{timeAgo(c.updatedAt || c.createdAt, now)}</span>
-            </span>
-            <span className="text-[11px] text-slate-500" title="Total desde que quedó listo para cirugía">
-              <span className="text-[9px] font-semibold uppercase text-slate-400 mr-1">Total</span>
-              <span className="font-bold">{timeAgo(c.createdAt, now)}</span>
-            </span>
-          </div>
-        </td>
-        {/* Tipo internación */}
-        <td className="px-4 py-3">
-          {c.tipo
-            ? <span className="inline-block text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-cyan-50 text-cyan-800 border border-cyan-200">{c.tipo}</span>
-            : <span className="text-slate-300">—</span>}
-        </td>
+        {/* Hora de cada paso (Retirado / En cirugía / Recibido / Tolerancia) — vacío si no se hizo aún */}
+        {STEP_COLS.map(col => {
+          const t = pasoTime(c.pasos?.[col.key]);
+          return (
+            <td key={col.key} className="px-4 py-3">
+              {t
+                ? <div className="leading-tight"><span className="block text-[9px] text-slate-400 font-medium">{t.dia}</span><span className="text-[11px] font-bold text-slate-700 whitespace-nowrap">{t.hora}</span></div>
+                : <span className="text-slate-300">—</span>}
+            </td>
+          );
+        })}
         {/* Acciones */}
         <td className="px-4 py-3">
           {rowError[c.id] && <p className="text-[10px] font-bold text-red-600 mb-1">{rowError[c.id]}</p>}
@@ -499,18 +497,21 @@ export const CirugiasView: React.FC<Props> = ({
 
               {/* Desktop — una sola tabla con columna Estado (concordancia con Traslados/Limpiezas/Comandas) */}
               <Card className="hidden md:block shadow-sm border-slate-200 overflow-hidden bg-white rounded-2xl">
-                <table className="w-full text-sm table-fixed">
+                <div className="overflow-x-auto">
+                <table className="w-full text-sm table-fixed min-w-[820px]">
                   <colgroup>
-                    <col className="w-[14%]" /><col className="w-[21%]" /><col className="w-[15%]" />
-                    <col className="w-[15%]" /><col className="w-[10%]" /><col className="w-[25%]" />
+                    <col className="w-[10%]" /><col className="w-[18%]" /><col className="w-[8%]" />
+                    <col className="w-[10%]" /><col className="w-[11%]" /><col className="w-[10%]" /><col className="w-[10%]" /><col className="w-[23%]" />
                   </colgroup>
                   <thead>
                     <tr className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500 font-bold">
                       <th className="px-4 py-3">Estado</th>
                       <th className="px-4 py-3">Paciente</th>
                       <th className="px-4 py-3">Cama</th>
-                      <th className="px-4 py-3">Tiempo</th>
-                      <th className="px-4 py-3">Tipo</th>
+                      <th className="px-4 py-3">Retirado</th>
+                      <th className="px-4 py-3">En cirugía</th>
+                      <th className="px-4 py-3">Recibido</th>
+                      <th className="px-4 py-3">Tolerancia</th>
                       <th className="px-4 py-3">Acciones</th>
                     </tr>
                   </thead>
@@ -518,6 +519,7 @@ export const CirugiasView: React.FC<Props> = ({
                     {ordenadas.map(renderTableRow)}
                   </tbody>
                 </table>
+                </div>
               </Card>
             </>
           )}

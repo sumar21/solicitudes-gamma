@@ -571,6 +571,10 @@ export interface CirugiaTraslado {
   fechaCierre?: string;          // ISO — RECIBIDA / CANCELADO
   createdAt: string;             // ISO
   updatedAt: string;             // ISO
+  // Timestamp (ISO) de cuándo se alcanzó cada paso, keyed por estado/acción (cirugia_eventos).
+  // Lo adjunta el GET de vivas para pintar las columnas de HORA por paso en la grilla. Opcional:
+  // las rondas históricas o el overlay no lo traen.
+  pasos?: Record<string, string>;
 }
 
 // Overlay que mergeBeds adjunta a una cama (`Bed.cirugia`) a partir de las cirugías VIVAS.

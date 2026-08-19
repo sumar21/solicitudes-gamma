@@ -166,7 +166,26 @@ async function handler(req: any, res: any) {
       const { data, error } = await supa.from('cirugia_traslados').select('*')
         .eq('entorno', ENTORNO).in('estado', EN_COLA).limit(500);
       if (error) { console.error('[cirugia] GET failed:', error.message); return res.status(200).json({ cirugias: [] }); }
-      return res.status(200).json({ cirugias: (data ?? []).map(rowToCirugia) });
+      const rows = (data ?? []) as any[];
+      // Timestamps por paso (cirugia_eventos) de las vivas → habilita las columnas de HORA de cada
+      // paso en la grilla (Retirado / En cirugía / Recibido / …). 1 query con `in`, primera
+      // ocurrencia de cada tipo = cuándo se hizo ese paso.
+      const pasosById = new Map<string, Record<string, string>>();
+      const ids = rows.map(r => String(r.id)).filter(Boolean);
+      if (ids.length) {
+        const { data: evs } = await supa.from('cirugia_eventos')
+          .select('cirugia_id, tipo, created_at')
+          .eq('entorno', ENTORNO).in('cirugia_id', ids)
+          .order('created_at', { ascending: true }).limit(2000);
+        for (const e of (evs ?? []) as any[]) {
+          const cid = String(e.cirugia_id ?? ''), tipo = String(e.tipo ?? '');
+          if (!cid || !tipo) continue;
+          const rec = pasosById.get(cid) ?? {};
+          if (!(tipo in rec)) rec[tipo] = String(e.created_at ?? '');
+          pasosById.set(cid, rec);
+        }
+      }
+      return res.status(200).json({ cirugias: rows.map(r => ({ ...rowToCirugia(r), pasos: pasosById.get(String(r.id)) ?? {} })) });
     } catch (err: any) {
       console.error('[cirugia] GET error:', err);
       return res.status(200).json({ cirugias: [] });
