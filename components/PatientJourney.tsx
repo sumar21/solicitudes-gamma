@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Ticket, WorkflowType, TicketStatus } from '../types';
+import { Ticket, WorkflowType, TicketStatus, CirugiaTraslado, CirugiaEstado } from '../types';
 import {
   X, MapPin, MoveRight, Activity, Calendar, Hash, User, CheckCircle2, XCircle,
   Clock, ArrowRightLeft, History,
@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
 import { Badge } from './ui/badge';
 import { cn, formatDateTime, formatTime, formatBedName, formatDateReadable } from '../lib/utils';
 import { eventConfigFor, parseModification } from '../lib/ticketEvents';
+import { CIRUGIA_ESTADO_LABEL, CIRUGIA_PILL_CLASS } from '../lib/constants';
 
 interface TicketEvent {
   id: string;
@@ -39,11 +40,91 @@ const isActive = (t: Ticket) => ACTIVE_STATUSES.has(t.status);
 // Fecha de referencia para ordenar/cerrar un episodio.
 const episodeEnd = (t: Ticket) => t.completedAt || t.createdAt;
 
+// Panel "Cirugías" del journey: trae todas las rondas del paciente (GET /api/cirugia?paciente=)
+// y las muestra como historia (estado, camas, tipo, inicio→cierre, duración). Row-level; el detalle
+// por-transición (retiro, inicio de cirugía) vive en cirugia_eventos y sería una versión más profunda.
+const CirugiaJourney: React.FC<{ patientCode?: string; isOpen: boolean }> = ({ patientCode, isOpen }) => {
+  const [cirugias, setCirugias] = useState<CirugiaTraslado[]>([]);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    if (!isOpen || !patientCode) { setCirugias([]); return; }
+    let cancelled = false;
+    setLoading(true);
+    const token = localStorage.getItem('mediflow_token');
+    fetch(`/api/cirugia?paciente=${encodeURIComponent(patientCode)}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then(r => r.ok ? r.json() : { cirugias: [] })
+      .then((d: { cirugias?: CirugiaTraslado[] }) => { if (!cancelled) setCirugias(Array.isArray(d.cirugias) ? d.cirugias : []); })
+      .catch(() => { if (!cancelled) setCirugias([]); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [isOpen, patientCode]);
+
+  const sorted = useMemo(
+    () => [...cirugias].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))),
+    [cirugias],
+  );
+  const dur = (a?: string, b?: string) => {
+    const t1 = Date.parse(String(a ?? '')), t2 = Date.parse(String(b ?? ''));
+    if (!Number.isFinite(t1) || !Number.isFinite(t2)) return '';
+    const min = Math.max(0, Math.round((t2 - t1) / 60000));
+    if (min < 60) return `${min} min`;
+    const h = Math.floor(min / 60), m = min % 60;
+    return m ? `${h}h ${m}m` : `${h}h`;
+  };
+
+  if (loading) return <p className="text-center text-xs text-slate-400 py-10">Cargando cirugías…</p>;
+  if (!patientCode) return <p className="text-center text-xs text-slate-400 py-10">Sin código de paciente para buscar cirugías.</p>;
+  if (sorted.length === 0) return <p className="text-center text-xs text-slate-400 py-10">Este paciente no tiene cirugías registradas.</p>;
+
+  return (
+    <section>
+      <h4 className="text-[10px] uppercase font-bold text-emerald-950 tracking-[0.2em] mb-4 flex items-center gap-2">
+        <Activity className="w-4 h-4 opacity-30" /> Cirugías del paciente
+      </h4>
+      <div className="space-y-3">
+        {sorted.map(c => {
+          const est = c.estado as CirugiaEstado;
+          const cambio = !!c.camaDestino && c.camaDestino !== c.camaOrigen;
+          const cerrada = c.estado === 'TOLERANCIA_EVALUADA' || c.estado === 'CANCELADO';
+          return (
+            <div key={c.id} className="rounded-2xl border border-violet-100 bg-white overflow-hidden">
+              <div className="px-4 py-3 flex items-start justify-between gap-3 border-b border-violet-100 bg-violet-50/40">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap mb-1">
+                    <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9px] font-black uppercase', CIRUGIA_PILL_CLASS[est] ?? '')}>
+                      <Activity className="w-2.5 h-2.5" strokeWidth={3} /> Cx · {CIRUGIA_ESTADO_LABEL[est] ?? c.estado}
+                    </span>
+                    {c.tipo && <Badge variant="outline" className="text-[8px] font-bold uppercase bg-white text-cyan-700 border-cyan-200 px-1.5 py-0">{c.tipo}</Badge>}
+                    <span className="text-[10px] font-bold text-slate-400 tabular-nums">{formatDateTime(c.createdAt)}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs font-black uppercase tracking-tight text-slate-800 min-w-0">
+                    <span className="truncate text-slate-500">{formatBedName(c.camaOrigen)}</span>
+                    {cambio && (<><ArrowRightLeft className="w-3 h-3 text-violet-400 shrink-0" /><span className="truncate text-violet-700">{formatBedName(c.camaDestino!)}</span></>)}
+                  </div>
+                </div>
+              </div>
+              <div className="px-4 py-2.5 flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px] text-slate-500">
+                <span className="flex items-center gap-1"><Clock className="w-3 h-3 text-slate-400" /> Inicio {formatDateTime(c.createdAt)}</span>
+                {cerrada && c.fechaCierre && <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-500" /> Cierre {formatDateTime(c.fechaCierre)}</span>}
+                {cerrada && c.fechaCierre && <span className="font-bold text-violet-700">Duración {dur(c.createdAt, c.fechaCierre)}</span>}
+                {c.motivoCancelacion && <span className="text-red-600 italic">Cancelada: {c.motivoCancelacion}</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+};
+
 export const PatientJourney: React.FC<PatientJourneyProps> = ({
   patientTickets, isOpen, onClose, workflowLabels,
 }) => {
   const [eventsByTicket, setEventsByTicket] = useState<Map<string, TicketEvent[]>>(new Map());
   const [loading, setLoading] = useState(false);
+  // Solapa del journey: traslados (default) o cirugías del paciente.
+  const [journeyTab, setJourneyTab] = useState<'traslados' | 'cirugias'>('traslados');
+  useEffect(() => { if (isOpen) setJourneyTab('traslados'); }, [isOpen]);
 
   // Episodios ordenados cronológicamente (más antiguo primero) — así se lee como historia.
   const episodes = useMemo(
@@ -174,6 +255,18 @@ export const PatientJourney: React.FC<PatientJourneyProps> = ({
           {/* SCROLL: trayectoria + timeline */}
           <div className="flex-1 overflow-y-auto overflow-x-hidden p-5 md:p-6 min-h-0 space-y-6">
 
+            {/* Solapa: Traslados / Cirugías del paciente */}
+            <div className="flex items-center bg-slate-100 rounded-xl p-0.5 w-fit">
+              {([['traslados', 'Traslados'], ['cirugias', 'Cirugías']] as const).map(([key, label]) => (
+                <button key={key} type="button" onClick={() => setJourneyTab(key)}
+                  className={cn('px-4 h-8 text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors',
+                    journeyTab === key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {journeyTab === 'traslados' && (<>
             {/* CAMINO DE CAMAS */}
             <section>
               <h4 className="text-[10px] uppercase font-bold text-emerald-950 tracking-[0.2em] mb-3 flex items-center gap-2">
@@ -215,6 +308,9 @@ export const PatientJourney: React.FC<PatientJourneyProps> = ({
                 ))}
               </div>
             </section>
+            </>)}
+
+            {journeyTab === 'cirugias' && <CirugiaJourney patientCode={summary.code} isOpen={isOpen} />}
           </div>
 
           <div className="bg-slate-50/80 px-4 py-2.5 flex items-center justify-center md:justify-end border-t border-slate-100 shrink-0">
