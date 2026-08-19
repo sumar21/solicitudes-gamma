@@ -1071,6 +1071,17 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   }, [selectedBed?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const displayBed = enrichedBed ?? selectedBed;
+  // Cama VIVA: el registro fresco de `beds` (el poll y las mutaciones optimistas lo actualizan con
+  // el modal ABIERTO), a diferencia de selectedBed/displayBed que son el snapshot del click. La usamos
+  // para el estado que cambia sin cerrar el modal (marca "va a cirugía", cirugía viva, estado).
+  const liveBed = selectedBed ? (beds.find(b => b.id === selectedBed.id) ?? selectedBed) : null;
+  // Cama para los controles de cirugía: campos de enrich (admissionTypeCode, expectedSurgeryDate,
+  // patientCode) con el estado operativo SIEMPRE fresco de `beds`. Sin este merge, togglear "va a
+  // cirugía" movía el switch pero NO refrescaba el botón "Listo para cirugía": había que cerrar y
+  // reabrir el modal (y lo mismo al destildar).
+  const cirugiaBed: Bed | null = displayBed && liveBed
+    ? { ...displayBed, status: liveBed.status, goingToSurgery: liveBed.goingToSurgery, goingToSurgeryBy: liveBed.goingToSurgeryBy, cirugia: liveBed.cirugia }
+    : displayBed;
 
   // Historial de traslados del paciente de la cama abierta, ON-DEMAND: al abrir el modal se
   // fetchean SOLO sus tickets (incl. Consolidados/Cancelados) por código — sin depender de
@@ -3025,7 +3036,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                       pill + "Recibida" cuando el paciente vuelve. Ver CirugiaBedBlock. */}
                   {(onMarcarListo || onCirugiaEnTraslado || onCirugiaRecibida) && (
                     <CirugiaBedBlock
-                      bed={selectedBed}
+                      bed={cirugiaBed ?? selectedBed}
                       onMarcarListo={onMarcarListo}
                       onCirugiaEnTraslado={onCirugiaEnTraslado}
                       onCirugiaRecibida={onCirugiaRecibida}
@@ -3037,7 +3048,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                   {/* Limpieza de rutina (camas ocupadas): Iniciar / Finalizar. Solo si el rol tiene el permiso. */}
                   {(onStartRoutineCleaning || onFinishRoutineCleaning) && (
                     <RoutineCleaningBlock
-                      bed={selectedBed}
+                      bed={liveBed ?? selectedBed}
                       onStart={onStartRoutineCleaning}
                       onFinish={onFinishRoutineCleaning}
                       onDone={() => setSelectedBed(null)}
@@ -3280,11 +3291,12 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                             )}
                             {/* Marca "va a cirugía" (Admisión): habilita el circuito Cx para un paciente
                                 NO quirúrgico. Solo si el rol tiene el permiso (App gatea onMarcarVaCirugia).
-                                Usa el bed VIVO (no displayBed, que es snapshot del click): así el toggle
-                                refleja al toque el update optimista de la marca — antes no se movía. */}
-                            {onMarcarVaCirugia && onDesmarcarVaCirugia && displayBed && (
+                                Usa cirugiaBed (enrich + estado operativo VIVO): el switch refleja al toque
+                                el update optimista de la marca Y el botón "Listo para cirugía" del bloque de
+                                abajo se recalcula sin cerrar/reabrir el modal. */}
+                            {onMarcarVaCirugia && onDesmarcarVaCirugia && (
                               <VaCirugiaToggle
-                                bed={beds.find(b => b.id === selectedBed.id) ?? displayBed}
+                                bed={cirugiaBed ?? selectedBed}
                                 onMarcar={onMarcarVaCirugia} onDesmarcar={onDesmarcarVaCirugia} />
                             )}
                             {!enrichLoading && !hasInternacionData && (

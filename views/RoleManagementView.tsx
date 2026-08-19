@@ -132,6 +132,17 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
   },
 ];
 
+// Módulos que tienen solapa propia de permisos en el modal (en orden). Cada solapa muestra
+// TODOS los PERMISSION_GROUPS de ese módulo, y solo aparece si el módulo está habilitado en el
+// rol. Así se evita ver todos los grupos (de alturas dispares) apilados a la vez. General y
+// Notificaciones son solapas fijas.
+const PERM_TAB_MODULES: { key: string; label: string }[] = [
+  { key: 'Operativa',       label: 'Operativa' },
+  { key: 'Mapa de Camas',   label: 'Mapa de Camas' },
+  { key: 'Gestion Comandas', label: 'Comandas' },
+  { key: 'Configuracion',   label: 'Configuración' },
+];
+
 interface FormState {
   name: string;
   selectedModules: Set<string>;
@@ -156,6 +167,8 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
   // (lo que borra sus permisos del Set) y luego lo reactiva, restauramos los permisos
   // que tenía al abrir — evita pérdida accidental por toggle rápido.
   const [originalPermissions, setOriginalPermissions] = useState<Set<Permission>>(new Set());
+  // Solapa activa del modal: '__general__' | '<módulo>' | '__cross__' (Notificaciones).
+  const [activeTab, setActiveTab] = useState<string>('__general__');
 
   const authFetch = useCallback((url: string, options?: RequestInit) => {
     const token = localStorage.getItem('mediflow_token');
@@ -188,17 +201,26 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
     }
   }, [toast]);
 
+  // Si se desactiva el módulo cuya solapa está abierta, volver a General para no quedar en una
+  // solapa fantasma.
+  useEffect(() => {
+    if (activeTab === '__general__' || activeTab === '__cross__') return;
+    if (!form.selectedModules.has(activeTab)) setActiveTab('__general__');
+  }, [activeTab, form.selectedModules]);
+
   const showToast = (type: 'success' | 'error', message: string) => setToast({ type, message });
 
   const openCreate = () => {
     setEditingRole(null);
     setForm(emptyForm);
     setOriginalPermissions(new Set());
+    setActiveTab('__general__');
     setIsModalOpen(true);
   };
 
   const openEdit = (role: SPRole) => {
     setEditingRole(role);
+    setActiveTab('__general__');
     const perms = new Set<Permission>(role.permissions ?? []);
     setForm({
       name: role.name,
@@ -332,6 +354,28 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
   const filtered = roles.filter(r =>
     r.name.toLowerCase().includes(searchFilter.toLowerCase())
   );
+
+  // Solapas del modal: General (fija) + una por módulo habilitado con permisos + Notificaciones (fija).
+  const permModuleCounts = (mod: string) => {
+    const all = PERMISSION_GROUPS.filter(g => g.module === mod).flatMap(g => g.perms);
+    return { active: all.filter(p => form.selectedPermissions.has(p.code)).length, total: all.length };
+  };
+  const crossGroup = PERMISSION_GROUPS.find(g => g.module === '__cross__')!;
+  const crossActive = crossGroup.perms.filter(p => form.selectedPermissions.has(p.code)).length;
+  const modalTabs: { key: string; label: string; badge: string | null }[] = [
+    { key: '__general__', label: 'General', badge: null },
+    ...PERM_TAB_MODULES.filter(t => form.selectedModules.has(t.key)).map(t => {
+      const { active, total } = permModuleCounts(t.key);
+      return { key: t.key, label: t.label, badge: `${active}/${total}` };
+    }),
+    { key: '__cross__', label: 'Notificaciones', badge: `${crossActive}/${crossGroup.perms.length}` },
+  ];
+  // Grupos de permisos a mostrar en la solapa activa (vacío en General).
+  const groupsForActiveTab = activeTab === '__general__'
+    ? []
+    : activeTab === '__cross__'
+      ? [crossGroup]
+      : PERMISSION_GROUPS.filter(g => g.module === activeTab);
 
   return (
     <div className="p-4 md:p-8 animate-in slide-in-from-right-4 duration-300 max-w-full space-y-4 md:space-y-5 pb-24 md:pb-8">
@@ -488,200 +532,185 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
         </Table>
       </Card>
 
-      {/* Create/Edit Modal */}
+      {/* Create/Edit Modal — layout de solapas: rail (General + módulos habilitados + Notificaciones)
+          a la izquierda, panel de la solapa activa a la derecha. Alto fijo → cambiar de solapa NO
+          reacomoda el modal (se acabaron las alturas dispares apiladas). */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-        <DialogContent className="sm:max-w-[960px] rounded-3xl max-h-[95vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-[840px] rounded-3xl p-0 overflow-hidden gap-0">
+          <DialogHeader className="px-6 pt-6 pb-4 border-b border-slate-100 text-left">
             <DialogTitle className="text-xl">{editingRole ? 'Editar Rol' : 'Nuevo Rol'}</DialogTitle>
+            {form.name.trim() && (
+              <span className="text-xs font-bold text-emerald-600">{form.name.trim()}</span>
+            )}
           </DialogHeader>
-          <div className="grid gap-4 py-2">
-            <div className="grid gap-2">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Nombre del Rol</Label>
-              <Input
-                placeholder="Ej: Enfermería, Catering..."
-                value={form.name}
-                onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
-                className="h-10 rounded-xl"
-              />
-            </div>
 
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between">
-                <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Módulos de Acceso</Label>
-                <button onClick={toggleAll} className="text-[10px] font-bold text-emerald-600 hover:text-emerald-700">
-                  {MODULES.every(m => form.selectedModules.has(m.value)) ? 'Deseleccionar todo' : 'Seleccionar todo'}
-                </button>
-              </div>
-              <div className="grid grid-cols-2 gap-1.5">
-                {MODULES.map(mod => {
-                  const selected = form.selectedModules.has(mod.value);
-                  return (
-                    <label
-                      key={mod.value}
-                      className={cn(
-                        "flex items-center gap-3 p-2.5 rounded-xl border cursor-pointer transition-all",
-                        selected ? "bg-emerald-50 border-emerald-200" : "bg-white border-slate-100 hover:border-slate-200"
-                      )}
-                    >
-                      <div className={cn(
-                        "w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors",
-                        selected ? "bg-emerald-600 border-emerald-600" : "border-slate-300 bg-white"
-                      )}>
-                        {selected && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
-                      </div>
+          <div className="flex flex-col sm:flex-row h-[64vh] max-h-[600px] min-h-[420px]">
+            {/* Rail de solapas */}
+            <nav className="shrink-0 sm:w-52 border-b sm:border-b-0 sm:border-r border-slate-100 bg-slate-50/60 p-2 flex sm:flex-col gap-1 overflow-x-auto sm:overflow-y-auto">
+              {modalTabs.map(tab => {
+                const active = activeTab === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => setActiveTab(tab.key)}
+                    className={cn(
+                      "flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl text-left transition-all shrink-0 sm:w-full",
+                      active ? "bg-white shadow-sm border border-slate-200" : "border border-transparent hover:bg-white/70"
+                    )}
+                  >
+                    <span className={cn("text-xs font-bold whitespace-nowrap", active ? "text-emerald-700" : "text-slate-600")}>{tab.label}</span>
+                    {tab.badge && (
                       <span className={cn(
-                        "text-sm font-medium",
-                        selected ? "text-emerald-700" : "text-slate-700"
+                        "text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0",
+                        tab.badge.startsWith('0/') ? "bg-slate-200 text-slate-500" : "bg-emerald-100 text-emerald-700"
                       )}>
-                        {mod.label}
+                        {tab.badge}
                       </span>
-                      <input type="checkbox" className="sr-only" checked={selected} onChange={() => toggleModule(mod.value)} />
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
+                    )}
+                  </button>
+                );
+              })}
+            </nav>
 
-            {/* Permisos de acciones agrupados por módulo. Grupos SIEMPRE expandidos en multi-columna
-                (sin acordeón): tildar una casilla no reacomoda nada → se acabó el "salto" del modal.
-                Cada grupo aparece solo si su módulo de acceso está habilitado (excepto "Notificaciones",
-                cross-module). El header muestra "N/total" para feedback rápido. */}
-            <div className="grid gap-2">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Permisos de Acciones</Label>
-              <div className="columns-1 sm:columns-2 lg:columns-3 gap-2 [&>div]:mb-2 [&>div]:break-inside-avoid">
-                {PERMISSION_GROUPS.map(group => {
-                  const moduleEnabled = group.module === '__cross__' || form.selectedModules.has(group.module);
-                  if (!moduleEnabled) return null;
-                  const activeCount = group.perms.filter(p => form.selectedPermissions.has(p.code)).length;
-                  return (
-                    <div key={group.label} className="border border-slate-100 rounded-xl bg-slate-50/40 overflow-hidden">
-                      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-100">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-600">{group.label}</span>
-                        <span className={cn(
-                          "text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0",
-                          activeCount > 0 ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"
-                        )}>
-                          {activeCount}/{group.perms.length}
-                        </span>
-                      </div>
-                      <div className="px-2 pb-2 pt-1 space-y-0.5">
-                        {group.perms.map(p => {
-                          const selected = form.selectedPermissions.has(p.code);
-                          return (
-                            <label
-                              key={p.code}
-                              className={cn(
-                                "flex items-center gap-2.5 px-2 py-1.5 rounded-lg cursor-pointer transition-all",
-                                selected ? "bg-emerald-50" : "hover:bg-white"
-                              )}
-                            >
-                              <div className={cn(
-                                "w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors",
-                                selected ? "bg-emerald-600 border-emerald-600" : "border-slate-300 bg-white"
-                              )}>
-                                {selected && <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />}
-                              </div>
-                              <span className={cn(
-                                "text-xs leading-tight",
-                                selected ? "text-emerald-700 font-bold" : "text-slate-700"
-                              )}>{p.label}</span>
-                              <input type="checkbox" className="sr-only" checked={selected} onChange={() => togglePermission(p.code)} />
-                            </label>
-                          );
-                        })}
-                      </div>
+            {/* Panel de la solapa activa */}
+            <div className="flex-1 overflow-y-auto p-5 sm:p-6">
+              {/* ── General: nombre + módulos de acceso + comportamiento ── */}
+              {activeTab === '__general__' && (
+                <div className="space-y-5 max-w-2xl">
+                  <div className="grid gap-2">
+                    <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Nombre del Rol</Label>
+                    <Input
+                      placeholder="Ej: Enfermería, Catering..."
+                      value={form.name}
+                      onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
+                      className="h-10 rounded-xl"
+                    />
+                  </div>
+
+                  <div className="grid gap-2">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Módulos de Acceso</Label>
+                      <button onClick={toggleAll} className="text-[10px] font-bold text-emerald-600 hover:text-emerald-700">
+                        {MODULES.every(m => form.selectedModules.has(m.value)) ? 'Deseleccionar todo' : 'Seleccionar todo'}
+                      </button>
                     </div>
-                  );
-                })}
-              </div>
-            </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                      {MODULES.map(mod => {
+                        const selected = form.selectedModules.has(mod.value);
+                        return (
+                          <label
+                            key={mod.value}
+                            className={cn(
+                              "flex items-center gap-3 p-2.5 rounded-xl border cursor-pointer transition-all",
+                              selected ? "bg-emerald-50 border-emerald-200" : "bg-white border-slate-100 hover:border-slate-200"
+                            )}
+                          >
+                            <div className={cn(
+                              "w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors",
+                              selected ? "bg-emerald-600 border-emerald-600" : "border-slate-300 bg-white"
+                            )}>
+                              {selected && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
+                            </div>
+                            <span className={cn("text-sm font-medium", selected ? "text-emerald-700" : "text-slate-700")}>
+                              {mod.label}
+                            </span>
+                            <input type="checkbox" className="sr-only" checked={selected} onChange={() => toggleModule(mod.value)} />
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <p className="text-[10px] text-slate-400 leading-tight mt-0.5">
+                      Cada módulo habilitado suma su solapa de permisos a la izquierda.
+                    </p>
+                  </div>
 
-            {/* Los dos toggles en 2 columnas para acortar el modal. */}
-            <div className="grid grid-cols-2 gap-4">
-            {/* Toggle FiltraPisos. Si está activo, los usuarios con este rol arrancan
-                filtrados por sus pisos asignados (Azafata, Catering, etc.). */}
-            <div className="grid gap-2">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Filtrado por pisos asignados</Label>
-              <div className="grid grid-cols-2 gap-2">
-                {[{ val: true, label: 'Sí', sub: 'Solo ve traslados/camas de los pisos del usuario' },
-                  { val: false, label: 'No', sub: 'Ve todo' }
-                 ].map(opt => {
-                   const selected = form.filterByFloors === opt.val;
-                   return (
-                     <button
-                       key={String(opt.val)}
-                       type="button"
-                       onClick={() => setForm(prev => ({ ...prev, filterByFloors: opt.val }))}
-                       className={cn(
-                         "p-3 rounded-xl border text-left transition-all",
-                         selected ? "bg-emerald-50 border-emerald-300" : "bg-white border-slate-200 hover:border-slate-300"
-                       )}
-                     >
-                       <div className={cn("text-sm font-black mb-0.5", selected ? "text-emerald-700" : "text-slate-700")}>{opt.label}</div>
-                       <div className="text-[9px] text-slate-500 leading-tight">{opt.sub}</div>
-                     </button>
-                   );
-                 })}
-              </div>
-            </div>
+                  {/* Comportamiento: los 3 toggles del rol */}
+                  <div className="grid gap-3">
+                    <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Comportamiento</Label>
+                    {[
+                      { key: 'filterByFloors' as const, title: 'Filtrado por pisos asignados',
+                        yes: 'Solo ve traslados/camas de los pisos del usuario', no: 'Ve todo' },
+                      { key: 'bypassLocationCheck' as const, title: 'Acceso sin restricción de ubicación (IP/GPS)',
+                        yes: 'Puede entrar desde cualquier red/ubicación', no: 'Debe estar en una red/ubicación autorizada' },
+                      { key: 'requiresIdentification' as const, title: 'Requiere identificación del operador (cuenta compartida)',
+                        yes: 'Pide el nombre al entrar; queda como responsable', no: 'Las operaciones van a nombre de la cuenta' },
+                    ].map(t => (
+                      <div key={t.key} className="grid gap-2">
+                        <Label className="text-[10px] font-semibold uppercase text-slate-400 tracking-wide">{t.title}</Label>
+                        <div className="grid grid-cols-2 gap-2">
+                          {[{ val: true, label: 'Sí', sub: t.yes }, { val: false, label: 'No', sub: t.no }].map(opt => {
+                            const selected = form[t.key] === opt.val;
+                            return (
+                              <button
+                                key={String(opt.val)}
+                                type="button"
+                                onClick={() => setForm(prev => ({ ...prev, [t.key]: opt.val }))}
+                                className={cn(
+                                  "p-3 rounded-xl border text-left transition-all",
+                                  selected ? "bg-emerald-50 border-emerald-300" : "bg-white border-slate-200 hover:border-slate-300"
+                                )}
+                              >
+                                <div className={cn("text-sm font-black mb-0.5", selected ? "text-emerald-700" : "text-slate-700")}>{opt.label}</div>
+                                <div className="text-[9px] text-slate-500 leading-tight">{opt.sub}</div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
-            {/* Toggle BypassUbicacion. Si está activo, los usuarios de este rol entran
-                sin validación de IP/GPS (no hace falta estar en el HPR). */}
-            <div className="grid gap-2">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Acceso sin restricción de ubicación (IP/GPS)</Label>
-              <div className="grid grid-cols-2 gap-2">
-                {[{ val: true, label: 'Sí', sub: 'Puede entrar desde cualquier red/ubicación' },
-                  { val: false, label: 'No', sub: 'Debe estar en una red/ubicación autorizada' }
-                 ].map(opt => {
-                   const selected = form.bypassLocationCheck === opt.val;
-                   return (
-                     <button
-                       key={String(opt.val)}
-                       type="button"
-                       onClick={() => setForm(prev => ({ ...prev, bypassLocationCheck: opt.val }))}
-                       className={cn(
-                         "p-3 rounded-xl border text-left transition-all",
-                         selected ? "bg-emerald-50 border-emerald-300" : "bg-white border-slate-200 hover:border-slate-300"
-                       )}
-                     >
-                       <div className={cn("text-sm font-black mb-0.5", selected ? "text-emerald-700" : "text-slate-700")}>{opt.label}</div>
-                       <div className="text-[9px] text-slate-500 leading-tight">{opt.sub}</div>
-                     </button>
-                   );
-                 })}
-              </div>
-            </div>
-
-            {/* Toggle Requiere identificación. Cuenta COMPARTIDA (ej. "Azafata Piso 5"): al entrar,
-                la persona real se identifica con su nombre y queda como responsable (operador) de
-                las transacciones; puede hacer "cambio de turno" sin desloguear. */}
-            <div className="grid gap-2">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Requiere identificación del operador (cuenta compartida)</Label>
-              <div className="grid grid-cols-2 gap-2">
-                {[{ val: true, label: 'Sí', sub: 'Pide el nombre al entrar; queda como responsable' },
-                  { val: false, label: 'No', sub: 'Las operaciones van a nombre de la cuenta' }
-                 ].map(opt => {
-                   const selected = form.requiresIdentification === opt.val;
-                   return (
-                     <button
-                       key={String(opt.val)}
-                       type="button"
-                       onClick={() => setForm(prev => ({ ...prev, requiresIdentification: opt.val }))}
-                       className={cn(
-                         "p-3 rounded-xl border text-left transition-all",
-                         selected ? "bg-emerald-50 border-emerald-300" : "bg-white border-slate-200 hover:border-slate-300"
-                       )}
-                     >
-                       <div className={cn("text-sm font-black mb-0.5", selected ? "text-emerald-700" : "text-slate-700")}>{opt.label}</div>
-                       <div className="text-[9px] text-slate-500 leading-tight">{opt.sub}</div>
-                     </button>
-                   );
-                 })}
-              </div>
-            </div>
+              {/* ── Solapa de permisos (módulo o Notificaciones): grupos apilados a lo ancho ── */}
+              {activeTab !== '__general__' && (
+                <div className="space-y-3 max-w-2xl">
+                  {groupsForActiveTab.map(group => {
+                    const activeCount = group.perms.filter(p => form.selectedPermissions.has(p.code)).length;
+                    return (
+                      <div key={group.label} className="border border-slate-100 rounded-2xl bg-slate-50/40 overflow-hidden">
+                        <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-slate-100">
+                          <span className="text-[11px] font-black uppercase tracking-widest text-slate-600">{group.label}</span>
+                          <span className={cn(
+                            "text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0",
+                            activeCount > 0 ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"
+                          )}>
+                            {activeCount}/{group.perms.length}
+                          </span>
+                        </div>
+                        <div className="p-2 grid sm:grid-cols-2 gap-1">
+                          {group.perms.map(p => {
+                            const selected = form.selectedPermissions.has(p.code);
+                            return (
+                              <label
+                                key={p.code}
+                                className={cn(
+                                  "flex items-center gap-2.5 px-2 py-1.5 rounded-lg cursor-pointer transition-all",
+                                  selected ? "bg-emerald-50" : "hover:bg-white"
+                                )}
+                              >
+                                <div className={cn(
+                                  "w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors",
+                                  selected ? "bg-emerald-600 border-emerald-600" : "border-slate-300 bg-white"
+                                )}>
+                                  {selected && <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />}
+                                </div>
+                                <span className={cn("text-xs leading-tight", selected ? "text-emerald-700 font-bold" : "text-slate-700")}>{p.label}</span>
+                                <input type="checkbox" className="sr-only" checked={selected} onChange={() => togglePermission(p.code)} />
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
-          <DialogFooter className="gap-2">
+
+          <DialogFooter className="px-6 py-4 border-t border-slate-100 gap-2">
             <Button variant="outline" onClick={() => setIsModalOpen(false)} className="rounded-xl h-10">Cancelar</Button>
             <Button
               onClick={handleSave}
