@@ -1,13 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Bed, CirugiaEstado, CirugiaTraslado, User, Area } from '../types';
 import { can } from '../lib/permissions';
-import { cn, formatBedName, formatDateTime } from '../lib/utils';
+import { cn, formatBedName, formatDateTime, formatDateReadable } from '../lib/utils';
 import { CIRUGIA_ESTADO_LABEL, CIRUGIA_ESTADO_SHORT, CIRUGIA_PILL_CLASS } from '../lib/constants';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
+import { Calendar } from '../components/ui/calendar';
 import {
   Activity, ArrowRight, BedDouble, CheckCircle2, Clock, RefreshCw, Search, X, XCircle, AlertTriangle,
+  Calendar as CalendarIcon,
 } from 'lucide-react';
 
 // Display de área (copiado de BedsView/CleaningManagementView — no está exportado).
@@ -61,6 +64,43 @@ const ORDEN_ESTADO: Record<string, number> = {
   LISTO_PARA_CIRUGIA: 0, VAN_A_BUSCAR: 1, EN_TRASLADO: 2, EN_CIRUGIA: 3, EN_DEVOLUCION: 4, RECIBIDA: 5,
 };
 
+// Fecha+hora absoluta (para el histórico: inicio/cierre de la operatoria).
+const fmtWhen = (iso?: string) => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? String(iso) : d.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
+};
+
+// Duración entre dos ISO (inicio → cierre). "—" si falta o es incoherente.
+const fmtDuracion = (a?: string, b?: string): string => {
+  const t0 = Date.parse(String(a ?? '')), t1 = Date.parse(String(b ?? ''));
+  if (!Number.isFinite(t0) || !Number.isFinite(t1) || t1 < t0) return '—';
+  const min = Math.floor((t1 - t0) / 60000);
+  if (min < 60) return `${min}m`;
+  const h = Math.floor(min / 60), m = min % 60;
+  if (h < 24) return m ? `${h}h ${m}m` : `${h}h`;
+  const d = Math.floor(h / 24), hh = h % 24;
+  return hh ? `${d}d ${hh}h` : `${d}d`;
+};
+
+// Trigger de fecha del histórico (Popover + Calendar), calcado del de Limpiezas para mantener el
+// mismo look de las pills Desde/Hasta.
+const DateRangeTrigger = React.forwardRef<
+  HTMLButtonElement,
+  { label: string; value: string } & React.ButtonHTMLAttributes<HTMLButtonElement>
+>(({ label, value, className, ...props }, ref) => (
+  <button ref={ref} type="button"
+    className={cn("w-full h-full px-4 flex items-center gap-3 text-left hover:bg-slate-50 transition-colors outline-none", className)}
+    {...props}>
+    <CalendarIcon className="w-3.5 h-3.5 text-slate-400" />
+    <div className="flex flex-col justify-center pointer-events-none">
+      <span className="text-[7px] uppercase font-bold text-slate-400 leading-none mb-0.5">{label}</span>
+      <span className="text-xs font-bold leading-none text-slate-900">{value ? formatDateReadable(value) : '---'}</span>
+    </div>
+  </button>
+));
+DateRangeTrigger.displayName = 'DateRangeTrigger';
+
 export const CirugiasView: React.FC<Props> = ({
   cirugias, beds, currentUser, onVanABuscar, onEnTraslado, onEnCirugia, onEnDevolucion, onRecibida, onTolerancia, onCancelar, onRefresh,
 }) => {
@@ -72,6 +112,37 @@ export const CirugiasView: React.FC<Props> = ({
   // Reloj de la vista: refresca los "hace X" cada 30s sin depender de un refetch.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const id = setInterval(() => setNow(Date.now()), 30_000); return () => clearInterval(id); }, []);
+
+  // ── Sub-solapa Histórico (cerradas: Tolerancia evaluada / Cancelada, por fecha_cierre) ────────
+  // Mismo patrón que el histórico de Limpiezas: rango Desde/Hasta + buscador. El backend ya expone
+  // GET /api/cirugia?history=1&from=&to=.
+  const [tab, setTab] = useState<'activas' | 'historico'>('activas');
+  const todayStr   = new Date().toISOString().slice(0, 10);
+  const weekAgoStr = new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10);
+  const [from, setFrom] = useState(weekAgoStr);
+  const [to, setTo]     = useState(todayStr);
+  const [history, setHistory] = useState<CirugiaTraslado[]>([]);
+  const [loadingHist, setLoadingHist] = useState(false);
+  const [openFrom, setOpenFrom] = useState(false);
+  const [openTo, setOpenTo]     = useState(false);
+
+  const fetchHistory = React.useCallback(async () => {
+    setLoadingHist(true);
+    try {
+      const token = localStorage.getItem('mediflow_token');
+      const r = await fetch(`/api/cirugia?history=1&from=${from}&to=${to}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (r.ok) {
+        const data = await r.json();
+        const rows: CirugiaTraslado[] = (data.cirugias ?? [])
+          .sort((a: CirugiaTraslado, b: CirugiaTraslado) => String(b.fechaCierre ?? '').localeCompare(String(a.fechaCierre ?? '')));
+        setHistory(rows);
+      }
+    } catch { /* mantiene lo previo ante fallo transitorio */ }
+    finally { setLoadingHist(false); }
+  }, [from, to]);
+
+  // Auto-carga al entrar al histórico y al cambiar las fechas.
+  useEffect(() => { if (tab === 'historico') fetchHistory(); }, [tab, fetchHistory]);
 
   const withPending = async (id: string, fn: () => Promise<TxResult>) => {
     setPending(p => new Set(p).add(id));
@@ -131,6 +202,29 @@ export const CirugiasView: React.FC<Props> = ({
     ),
     [filtered],
   );
+
+  // Histórico visible: mismo recorte por área que la vista activa (destino manda si difiere del
+  // origen) + el buscador compartido.
+  const visibleHistory = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const filterByFloors = !!currentUser?.filterByFloors && !!currentUser.assignedAreas?.length;
+    const areas = currentUser?.assignedAreas ?? [];
+    const allAreas = new Set(Object.values(Area) as string[]);
+    const scopeOff = !filterByFloors || areas.length >= allAreas.size - 1 || beds.length === 0;
+    const areaByLabel = new Map<string, string>();
+    if (!scopeOff) for (const b of beds) if (b.area) areaByLabel.set(b.label, b.area);
+    const inScope = (c: CirugiaTraslado) => {
+      if (scopeOff) return true;
+      const destChanged = !!c.camaDestino && c.camaDestino !== c.camaOrigen;
+      const a = areaByLabel.get(destChanged ? c.camaDestino! : c.camaOrigen) ?? c.area;
+      return a ? areas.includes(a as Area) : true;
+    };
+    return history.filter(c => inScope(c) && (!q ||
+      (c.pacienteNombre ?? '').toLowerCase().includes(q) ||
+      (c.camaOrigen ?? '').toLowerCase().includes(q) ||
+      (c.camaDestino ?? '').toLowerCase().includes(q) ||
+      (c.pacienteCodigo ?? '').toLowerCase().includes(q)));
+  }, [history, search, currentUser, beds]);
 
   const isPending = (id: string) => pending.has(id);
 
@@ -322,61 +416,196 @@ export const CirugiasView: React.FC<Props> = ({
 
   return (
     <div className="p-4 md:p-8 animate-in slide-in-from-right-4 duration-300 max-w-full space-y-5">
-      {/* Header: buscador + refrescar */}
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1 lg:max-w-xs">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <input
-            placeholder="Paciente o cama…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="w-full pl-10 pr-8 h-10 rounded-xl border border-slate-200 text-xs focus:outline-none focus:border-emerald-400" />
-          {search && (
-            <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-        {onRefresh && (
-          <Button variant="outline" onClick={() => onRefresh()} className="h-10 gap-2 rounded-xl">
-            <RefreshCw className="w-3.5 h-3.5" /> <span className="hidden sm:inline text-xs font-bold">Refrescar</span>
-          </Button>
-        )}
+      {/* Sub-solapas: Activas | Histórico (mismo patrón que el histórico de Limpiezas) */}
+      <div className="flex items-center gap-1 border-b border-slate-200">
+        {(['activas', 'historico'] as const).map(t => (
+          <button key={t} onClick={() => setTab(t)}
+            className={cn(
+              "px-4 py-2 text-xs font-bold uppercase tracking-wide border-b-2 -mb-px transition-colors",
+              tab === t ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-400 hover:text-slate-600"
+            )}>
+            {t === 'activas' ? 'Activas' : 'Histórico'}
+          </button>
+        ))}
       </div>
 
-      {filtered.length === 0 ? (
-        <div className="py-20 text-center opacity-30">
-          <Activity className="w-12 h-12 mx-auto mb-3" />
-          <p className="text-xs font-black uppercase tracking-widest">Sin cirugías activas</p>
-        </div>
-      ) : (
+      {tab === 'activas' ? (
         <>
-          {/* Mobile — tarjetas (una sola lista, ordenada por el flujo) */}
-          <div className="space-y-3 md:hidden">
-            {ordenadas.map(renderRow)}
+          {/* Header: buscador + refrescar */}
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1 lg:max-w-xs">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                placeholder="Paciente o cama…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-full pl-10 pr-8 h-10 rounded-xl border border-slate-200 text-xs focus:outline-none focus:border-emerald-400" />
+              {search && (
+                <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+            {onRefresh && (
+              <Button variant="outline" onClick={() => onRefresh()} className="h-10 gap-2 rounded-xl">
+                <RefreshCw className="w-3.5 h-3.5" /> <span className="hidden sm:inline text-xs font-bold">Refrescar</span>
+              </Button>
+            )}
           </div>
 
-          {/* Desktop — una sola tabla con columna Estado (concordancia con Traslados/Limpiezas/Comandas) */}
-          <Card className="hidden md:block shadow-sm border-slate-200 overflow-hidden bg-white rounded-2xl">
-            <table className="w-full text-sm table-fixed">
-              <colgroup>
-                <col className="w-[17%]" /><col className="w-[22%]" /><col className="w-[21%]" />
-                <col className="w-[11%]" /><col className="w-[29%]" />
-              </colgroup>
-              <thead>
-                <tr className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500 font-bold">
-                  <th className="px-4 py-3">Estado</th>
-                  <th className="px-4 py-3">Paciente</th>
-                  <th className="px-4 py-3">Cama</th>
-                  <th className="px-4 py-3">Tipo</th>
-                  <th className="px-4 py-3">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {ordenadas.map(renderTableRow)}
-              </tbody>
-            </table>
-          </Card>
+          {filtered.length === 0 ? (
+            <div className="py-20 text-center opacity-30">
+              <Activity className="w-12 h-12 mx-auto mb-3" />
+              <p className="text-xs font-black uppercase tracking-widest">Sin cirugías activas</p>
+            </div>
+          ) : (
+            <>
+              {/* Mobile — tarjetas (una sola lista, ordenada por el flujo) */}
+              <div className="space-y-3 md:hidden">
+                {ordenadas.map(renderRow)}
+              </div>
+
+              {/* Desktop — una sola tabla con columna Estado (concordancia con Traslados/Limpiezas/Comandas) */}
+              <Card className="hidden md:block shadow-sm border-slate-200 overflow-hidden bg-white rounded-2xl">
+                <table className="w-full text-sm table-fixed">
+                  <colgroup>
+                    <col className="w-[17%]" /><col className="w-[22%]" /><col className="w-[21%]" />
+                    <col className="w-[11%]" /><col className="w-[29%]" />
+                  </colgroup>
+                  <thead>
+                    <tr className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500 font-bold">
+                      <th className="px-4 py-3">Estado</th>
+                      <th className="px-4 py-3">Paciente</th>
+                      <th className="px-4 py-3">Cama</th>
+                      <th className="px-4 py-3">Tipo</th>
+                      <th className="px-4 py-3">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {ordenadas.map(renderTableRow)}
+                  </tbody>
+                </table>
+              </Card>
+            </>
+          )}
+        </>
+      ) : (
+        <>
+          {/* Histórico: rango de fecha (cierre) + buscador + lista de cerradas */}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative flex-1 min-w-[180px] lg:max-w-xs">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                placeholder="Paciente, cama, código…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-full pl-10 pr-8 h-10 rounded-xl border border-slate-200 text-xs focus:outline-none focus:border-emerald-400" />
+              {search && (
+                <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+            <div className="flex items-center bg-white border border-slate-200 rounded-xl overflow-hidden h-10">
+              <Popover open={openFrom} onOpenChange={setOpenFrom}>
+                <PopoverTrigger asChild>
+                  <DateRangeTrigger label="Desde" value={from} className="h-full text-xs" />
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
+                  <Calendar selected={from} onSelect={(date) => { setFrom(date); setOpenFrom(false); }} />
+                </PopoverContent>
+              </Popover>
+              <div className="w-px h-5 bg-slate-100 shrink-0" />
+              <Popover open={openTo} onOpenChange={setOpenTo}>
+                <PopoverTrigger asChild>
+                  <DateRangeTrigger label="Hasta" value={to} className="h-full text-xs" />
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
+                  <Calendar selected={to} onSelect={(date) => { setTo(date); setOpenTo(false); }} />
+                </PopoverContent>
+              </Popover>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => fetchHistory()} disabled={loadingHist}
+              className="h-10 px-3 rounded-xl gap-2 text-xs font-bold text-slate-600">
+              <RefreshCw className={cn("w-4 h-4", loadingHist && "animate-spin")} /> <span className="hidden sm:inline">Actualizar</span>
+            </Button>
+            <p className="text-xs text-slate-500 font-medium ml-auto self-center">
+              {visibleHistory.length} {visibleHistory.length === 1 ? 'cirugía' : 'cirugías'}
+            </p>
+          </div>
+
+          {loadingHist ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400 text-sm">Cargando…</div>
+          ) : visibleHistory.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400">
+              <Clock className="w-10 h-10 mx-auto mb-3 text-slate-300" />
+              <p className="font-bold text-sm text-slate-500">{search.trim() ? 'Sin resultados para la búsqueda' : 'Sin cirugías cerradas en el rango'}</p>
+              <p className="text-xs">{search.trim() ? 'Probá con otro texto o limpiá el buscador.' : 'Ajustá las fechas para ver el histórico.'}</p>
+            </div>
+          ) : (
+            <>
+              {/* Mobile — tarjetas */}
+              <div className="grid grid-cols-1 gap-3 md:hidden">
+                {visibleHistory.map(c => (
+                  <div key={c.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="font-black text-sm text-slate-800 leading-tight uppercase">{c.pacienteNombre || 'Paciente'}</p>
+                      <Pill estado={c.estado as CirugiaEstado} short />
+                    </div>
+                    <p className="text-[11px] text-slate-500 font-medium flex items-center gap-1.5">
+                      <BedDouble className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      {formatBedName(c.camaOrigen)}
+                      {c.camaDestino && c.camaDestino !== c.camaOrigen && (<><ArrowRight className="w-3 h-3 shrink-0" />{formatBedName(c.camaDestino)}</>)}
+                    </p>
+                    <div className="text-[11px] text-slate-600 space-y-1">
+                      <p className="flex items-center gap-1.5"><Activity className="w-3.5 h-3.5 text-slate-400" />Inicio: {fmtWhen(c.createdAt)}</p>
+                      <p className="flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-slate-400" />Cierre: {fmtWhen(c.fechaCierre)}</p>
+                      <p className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-slate-400" />Duración: {fmtDuracion(c.createdAt, c.fechaCierre)}{c.tipo ? ` · ${c.tipo}` : ''}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Desktop — tabla */}
+              <Card className="hidden md:block shadow-sm border-slate-200 overflow-hidden bg-white rounded-2xl">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500 font-bold">
+                        <th className="px-4 py-3">Estado</th>
+                        <th className="px-4 py-3">Paciente</th>
+                        <th className="px-4 py-3">Cama</th>
+                        <th className="px-4 py-3">Inicio</th>
+                        <th className="px-4 py-3">Cierre</th>
+                        <th className="px-4 py-3">Duración</th>
+                        <th className="px-4 py-3">Tipo</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {visibleHistory.map(c => (
+                        <tr key={c.id} className="hover:bg-slate-50/60">
+                          <td className="px-4 py-3"><Pill estado={c.estado as CirugiaEstado} short /></td>
+                          <td className="px-4 py-3 font-bold text-slate-800 uppercase">{c.pacienteNombre || '—'}</td>
+                          <td className="px-4 py-3 text-slate-600">
+                            <span className="inline-flex items-center gap-1">
+                              {formatBedName(c.camaOrigen)}
+                              {c.camaDestino && c.camaDestino !== c.camaOrigen && (<><ArrowRight className="w-3 h-3 text-slate-400" />{formatBedName(c.camaDestino)}</>)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmtWhen(c.createdAt)}</td>
+                          <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmtWhen(c.fechaCierre)}</td>
+                          <td className="px-4 py-3 text-slate-600 whitespace-nowrap font-medium">{fmtDuracion(c.createdAt, c.fechaCierre)}</td>
+                          <td className="px-4 py-3">
+                            {c.tipo ? <span className="inline-block text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-cyan-50 text-cyan-800 border border-cyan-200">{c.tipo}</span> : <span className="text-slate-300">—</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            </>
+          )}
         </>
       )}
 
