@@ -921,6 +921,11 @@ export const useHospitalState = () => {
   // Marcas "va a cirugía" ACTIVAS (flag de Admisión), key = patientCode → SIGUE al paciente.
   const [cirugiaMarcas, setCirugiaMarcas]          = useState<Map<string, CirugiaMarcaInfo>>(new Map());
   const cirugiaMarcasWritingRef                    = React.useRef(0);
+  // Intents optimistas EN VUELO de la marca "va a cirugía", keyed por PACIENTE. Valor = la marca
+  // (intención MARCAR) o `null` (intención DESMARCAR). Un refetch nunca revierte un intent pendiente:
+  // así el toggle no "rebota" cuando la base todavía no refleja la última acción (read-lag). Cada
+  // intent se suelta en fetchCirugiaMarcas apenas el server coincide con él.
+  const pendingMarcasRef                           = React.useRef<Map<string, CirugiaMarcaInfo | null>>(new Map());
 
   // Snapshot del enrich por patientCode — se actualiza en cada fetchBeds con los beds
   // cuyo enriched===true. Permite que la pill de ayuno/dieta/diagnóstico "siga" al
@@ -1200,6 +1205,19 @@ export const useHospitalState = () => {
           area: String(x.area ?? ''), by: String(x.markedBy ?? ''), at: String(x.markedAt ?? ''),
         });
       }
+      // Aplicar los intents optimistas en vuelo SOBRE la verdad del server: si el usuario acaba de
+      // marcar/desmarcar y la base todavía no lo refleja, mantenemos su acción (no rebota). El intent
+      // se suelta apenas el server coincide.
+      for (const [code, intent] of pendingMarcasRef.current) {
+        const serverHas = map.has(code);
+        if (intent === null) {                          // DESMARCAR pendiente
+          if (serverHas) map.delete(code);              //   server aún no anuló → mantener optimista
+          else pendingMarcasRef.current.delete(code);   //   server al día → soltar intent
+        } else {                                        // MARCAR pendiente
+          if (serverHas) pendingMarcasRef.current.delete(code); // server al día → usar su info
+          else map.set(code, intent);                   //   server aún no insertó → mantener optimista
+        }
+      }
       setCirugiaMarcas(map);
     } catch { /* keep current */ }
   }, [authFetch]);
@@ -1211,11 +1229,9 @@ export const useHospitalState = () => {
     const u = currentUser;
     const at = new Date().toISOString();
     cirugiaMarcasWritingRef.current += 1;
-    setCirugiaMarcas(prev => {
-      const n = new Map(prev);
-      n.set(code, { id: prev.get(code)?.id ?? 'temp', patientCode: code, patientName: bed.patientName ?? bed.mealsPatientName ?? '', bedLabel: bed.label, area: bed.area ?? '', by: u?.name ?? '', at });
-      return n;
-    });
+    const optimista: CirugiaMarcaInfo = { id: cirugiaMarcas.get(code)?.id ?? 'temp', patientCode: code, patientName: bed.patientName ?? bed.mealsPatientName ?? '', bedLabel: bed.label, area: bed.area ?? '', by: u?.name ?? '', at };
+    pendingMarcasRef.current.set(code, optimista); // intent MARCAR
+    setCirugiaMarcas(prev => { const n = new Map(prev); n.set(code, optimista); return n; });
     try {
       const r = await authFetch('/api/cirugia-marcas', {
         method: 'POST',
@@ -1225,10 +1241,11 @@ export const useHospitalState = () => {
           userId: u?.id ?? '', userName: u?.name ?? '', operador: getOperador(), version: APP_VERSION,
         }),
       });
-      if (!r.ok) { setCirugiaMarcas(prev => { const n = new Map(prev); n.delete(code); return n; }); return { ok: false, error: 'No se pudo marcar. Reintentá.' }; }
+      if (!r.ok) { pendingMarcasRef.current.delete(code); setCirugiaMarcas(prev => { const n = new Map(prev); n.delete(code); return n; }); return { ok: false, error: 'No se pudo marcar. Reintentá.' }; }
       await fetchCirugiaMarcas();
       return { ok: true };
     } catch {
+      pendingMarcasRef.current.delete(code);
       setCirugiaMarcas(prev => { const n = new Map(prev); n.delete(code); return n; }); // rollback
       return { ok: false, error: 'Error de red al marcar.' };
     } finally {
@@ -1242,15 +1259,18 @@ export const useHospitalState = () => {
     if (!code) return { ok: false, error: 'Sin código de paciente.' };
     const u = currentUser;
     cirugiaMarcasWritingRef.current += 1;
+    pendingMarcasRef.current.set(code, null); // intent DESMARCAR
     setCirugiaMarcas(prev => { const n = new Map(prev); n.delete(code); return n; }); // optimista
     try {
       const r = await authFetch('/api/cirugia-marcas', {
         method: 'PATCH',
         body: JSON.stringify({ pacienteCodigo: code, action: 'ANULAR', userId: u?.id ?? '', userName: u?.name ?? '', operador: getOperador(), version: APP_VERSION }),
       });
-      if (!r.ok) { await fetchCirugiaMarcas(); return { ok: false, error: 'No se pudo desmarcar.' }; }
+      if (!r.ok) { pendingMarcasRef.current.delete(code); await fetchCirugiaMarcas(); return { ok: false, error: 'No se pudo desmarcar.' }; }
+      await fetchCirugiaMarcas(); // reconcilia y suelta el intent apenas el server ya anuló
       return { ok: true };
     } catch {
+      pendingMarcasRef.current.delete(code);
       await fetchCirugiaMarcas(); // reconcilia
       return { ok: false, error: 'Error de red al desmarcar.' };
     } finally {
@@ -1679,6 +1699,7 @@ export const useHospitalState = () => {
         const code = curCirugia?.pacienteCodigo ?? '';
         if (code) {
           cirugiaMarcasWritingRef.current += 1;
+          pendingMarcasRef.current.set(code, null); // intent DESMARCAR (auto-cierre)
           setCirugiaMarcas(prev => { const n = new Map(prev); n.delete(code); return n; });
           authFetch('/api/cirugia-marcas', {
             method: 'PATCH',
