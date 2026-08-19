@@ -3,8 +3,9 @@
  * FUENTE: Supabase public.cirugia_traslados (overlay "Cx" sobre la cama, NO un ticket de traslados).
  *
  * GET    /api/cirugia                                   → operatorias VIVAS del entorno (overlay Mapa + cola)
- * GET    /api/cirugia?history=1&from=YYYY-MM-DD&to=...  → cerradas (RECIBIDA/CANCELADO) por fecha_cierre
+ * GET    /api/cirugia?history=1&from=YYYY-MM-DD&to=...  → cerradas (TOLERANCIA_EVALUADA/CANCELADO) por fecha_cierre
  * GET    /api/cirugia?paciente=<pacienteCodigo>         → todas las rondas de ese paciente (trayectoria)
+ * GET    /api/cirugia?eventos=<cirugiaId>               → timeline de pasos de esa operatoria (cirugia_eventos)
  * POST   /api/cirugia                                   → alta = LISTO_PARA_CIRUGIA (la marca Enfermería)
  *                                                         idempotente por id_univoco + candado 1-viva-por-cama
  * PATCH  /api/cirugia                                   → transición de estado (máquina guardada server-side)
@@ -121,6 +122,28 @@ async function handler(req: any, res: any) {
     } catch (err: any) {
       console.error('[cirugia] history GET error:', err);
       return res.status(200).json({ cirugias: [] });
+    }
+  }
+
+  // ── GET — timeline de pasos de UNA operatoria (cirugia_eventos, append-only) ──
+  if (req.method === 'GET' && String(req.query?.eventos ?? '') !== '') {
+    try {
+      const { data, error } = await supa.from('cirugia_eventos')
+        .select('tipo, usuario, operador, meta, created_at')
+        .eq('entorno', ENTORNO).eq('cirugia_id', String(req.query.eventos))
+        .order('created_at', { ascending: true }).limit(200);
+      if (error) { console.error('[cirugia] eventos GET failed:', error.message); return res.status(200).json({ eventos: [] }); }
+      const eventos = (data ?? []).map((e: any) => ({
+        tipo:     String(e.tipo ?? ''),
+        usuario:  e.usuario != null ? String(e.usuario) : undefined,
+        operador: e.operador != null ? String(e.operador) : undefined,
+        meta:     e.meta ?? undefined,
+        at:       String(e.created_at ?? ''),
+      }));
+      return res.status(200).json({ eventos });
+    } catch (err: any) {
+      console.error('[cirugia] eventos GET error:', err);
+      return res.status(200).json({ eventos: [] });
     }
   }
 

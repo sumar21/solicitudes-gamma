@@ -10,7 +10,7 @@ import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popove
 import { Calendar } from '../components/ui/calendar';
 import {
   Activity, ArrowRight, BedDouble, CheckCircle2, Clock, RefreshCw, Search, X, XCircle, AlertTriangle,
-  Calendar as CalendarIcon,
+  Calendar as CalendarIcon, Eye, User as UserIcon,
 } from 'lucide-react';
 
 // Display de área (copiado de BedsView/CleaningManagementView — no está exportado).
@@ -28,7 +28,7 @@ const timeAgo = (iso: string | undefined, now: number): string => {
   const t = Date.parse(String(iso ?? ''));
   if (!Number.isFinite(t)) return '';
   const min = Math.max(0, Math.floor((now - t) / 60000));
-  if (min < 1) return 'recién';
+  if (min < 1) return '<1 min';
   if (min < 60) return `${min} min`;
   const h = Math.floor(min / 60), m = min % 60;
   if (h < 24) return m ? `${h}h ${m}m` : `${h}h`;
@@ -70,6 +70,9 @@ const fmtWhen = (iso?: string) => {
   const d = new Date(iso);
   return isNaN(d.getTime()) ? String(iso) : d.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
 };
+
+// Label legible de un paso (cirugia_eventos.tipo): reusa las etiquetas de estado, fallback al raw.
+const pasoLabel = (tipo: string): string => (CIRUGIA_ESTADO_LABEL as Record<string, string>)[tipo] ?? tipo;
 
 // Duración entre dos ISO (inicio → cierre). "—" si falta o es incoherente.
 const fmtDuracion = (a?: string, b?: string): string => {
@@ -143,6 +146,22 @@ export const CirugiasView: React.FC<Props> = ({
 
   // Auto-carga al entrar al histórico y al cambiar las fechas.
   useEffect(() => { if (tab === 'historico') fetchHistory(); }, [tab, fetchHistory]);
+
+  // ── Detalle de una operatoria (timeline de pasos de cirugia_eventos) ─────────
+  type EventoRow = { tipo: string; usuario?: string; operador?: string; meta?: unknown; at: string };
+  const [detalleCx, setDetalleCx] = useState<CirugiaTraslado | null>(null);
+  const [eventos, setEventos] = useState<EventoRow[]>([]);
+  const [loadingEventos, setLoadingEventos] = useState(false);
+
+  const openDetalle = React.useCallback(async (c: CirugiaTraslado) => {
+    setDetalleCx(c); setEventos([]); setLoadingEventos(true);
+    try {
+      const token = localStorage.getItem('mediflow_token');
+      const r = await fetch(`/api/cirugia?eventos=${encodeURIComponent(c.id)}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (r.ok) { const data = await r.json(); setEventos(data.eventos ?? []); }
+    } catch { /* deja la lista vacía */ }
+    finally { setLoadingEventos(false); }
+  }, []);
 
   const withPending = async (id: string, fn: () => Promise<TxResult>) => {
     setPending(p => new Set(p).add(id));
@@ -321,13 +340,17 @@ export const CirugiasView: React.FC<Props> = ({
                 <span className="text-cyan-800 font-bold" title="Tipo de internación (PROGAL)">{c.tipo}</span>
               </>)}
               <span className="text-slate-300">·</span>
-              <span className="inline-flex items-center gap-1 text-[10px] text-slate-400 font-medium">
-                <Clock className="w-3 h-3" /> {formatDateTime(c.updatedAt || c.createdAt)}
+              <span className="inline-flex items-center gap-1 text-[10px] text-slate-400 font-medium" title="Ingreso al flujo de cirugía">
+                <Clock className="w-3 h-3" /> {formatDateTime(c.createdAt)}
               </span>
               <span className="text-slate-300">·</span>
-              <span className="text-[10px] font-bold text-violet-700" title="Tiempo en el estado actual · total desde el inicio">
-                hace {timeAgo(c.updatedAt || c.createdAt, now)}
-                <span className="text-slate-400 font-medium"> · total {timeAgo(c.createdAt, now)}</span>
+              <span className="text-[10px] text-violet-700" title="Tiempo en el paso actual">
+                <span className="text-[9px] font-semibold uppercase text-slate-400 mr-0.5">En paso</span>
+                <span className="font-bold">{timeAgo(c.updatedAt || c.createdAt, now)}</span>
+              </span>
+              <span className="text-[10px] text-slate-500" title="Total desde que quedó listo para cirugía">
+                <span className="text-[9px] font-semibold uppercase text-slate-400 mr-0.5">Total</span>
+                <span className="font-bold">{timeAgo(c.createdAt, now)}</span>
               </span>
             </div>
             {rowError[c.id] && (
@@ -359,17 +382,13 @@ export const CirugiasView: React.FC<Props> = ({
       <tr key={c.id} className="align-middle hover:bg-slate-50/60">
         {/* Estado (columna a la izquierda de todo) */}
         <td className="px-4 py-3"><Pill estado={c.estado} short /></td>
-        {/* Paciente + área/hora */}
+        {/* Paciente + área/ingreso */}
         <td className="px-4 py-3">
           <p className="font-black text-slate-800 leading-tight break-words uppercase">{c.pacienteNombre || 'Paciente s/nombre'}</p>
           <p className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1 flex-wrap">
             <span>{areaLabel(c.area)}</span>
             <span className="text-slate-300">·</span>
-            <Clock className="w-3 h-3 text-slate-400" /> {formatDateTime(c.updatedAt || c.createdAt)}
-            <span className="text-slate-300">·</span>
-            <span className="font-bold text-violet-700" title="Tiempo en el estado actual · total desde el inicio">
-              hace {timeAgo(c.updatedAt || c.createdAt, now)}<span className="text-slate-400 font-medium"> · total {timeAgo(c.createdAt, now)}</span>
-            </span>
+            <span className="inline-flex items-center gap-1" title="Ingreso al flujo de cirugía"><Clock className="w-3 h-3 text-slate-400" /> {formatDateTime(c.createdAt)}</span>
           </p>
         </td>
         {/* Cama (origen → destino si cambió) */}
@@ -386,6 +405,19 @@ export const CirugiasView: React.FC<Props> = ({
               <AlertTriangle className="w-2.5 h-2.5" /> cambió (era {formatBedName(c.camaOrigen)})
             </span>
           )}
+        </td>
+        {/* Tiempo — desglose: cuánto lleva en el paso actual y total desde que quedó listo */}
+        <td className="px-4 py-3">
+          <div className="flex flex-col gap-0.5 leading-tight">
+            <span className="text-[11px] text-violet-700" title="Tiempo en el paso actual (el de la columna Estado)">
+              <span className="text-[9px] font-semibold uppercase text-slate-400 mr-1">En paso</span>
+              <span className="font-bold">{timeAgo(c.updatedAt || c.createdAt, now)}</span>
+            </span>
+            <span className="text-[11px] text-slate-500" title="Total desde que quedó listo para cirugía">
+              <span className="text-[9px] font-semibold uppercase text-slate-400 mr-1">Total</span>
+              <span className="font-bold">{timeAgo(c.createdAt, now)}</span>
+            </span>
+          </div>
         </td>
         {/* Tipo internación */}
         <td className="px-4 py-3">
@@ -469,14 +501,15 @@ export const CirugiasView: React.FC<Props> = ({
               <Card className="hidden md:block shadow-sm border-slate-200 overflow-hidden bg-white rounded-2xl">
                 <table className="w-full text-sm table-fixed">
                   <colgroup>
-                    <col className="w-[17%]" /><col className="w-[22%]" /><col className="w-[21%]" />
-                    <col className="w-[11%]" /><col className="w-[29%]" />
+                    <col className="w-[14%]" /><col className="w-[21%]" /><col className="w-[15%]" />
+                    <col className="w-[15%]" /><col className="w-[10%]" /><col className="w-[25%]" />
                   </colgroup>
                   <thead>
                     <tr className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500 font-bold">
                       <th className="px-4 py-3">Estado</th>
                       <th className="px-4 py-3">Paciente</th>
                       <th className="px-4 py-3">Cama</th>
+                      <th className="px-4 py-3">Tiempo</th>
                       <th className="px-4 py-3">Tipo</th>
                       <th className="px-4 py-3">Acciones</th>
                     </tr>
@@ -562,6 +595,10 @@ export const CirugiasView: React.FC<Props> = ({
                       <p className="flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-slate-400" />Cierre: {fmtWhen(c.fechaCierre)}</p>
                       <p className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-slate-400" />Duración: {fmtDuracion(c.createdAt, c.fechaCierre)}{c.tipo ? ` · ${c.tipo}` : ''}</p>
                     </div>
+                    <Button size="sm" variant="outline" onClick={() => openDetalle(c)}
+                      className="w-full h-9 rounded-lg gap-1.5 text-[11px] font-bold uppercase tracking-tight text-slate-600">
+                      <Eye className="w-3.5 h-3.5" /> Ver detalle
+                    </Button>
                   </div>
                 ))}
               </div>
@@ -579,6 +616,7 @@ export const CirugiasView: React.FC<Props> = ({
                         <th className="px-4 py-3">Cierre</th>
                         <th className="px-4 py-3">Duración</th>
                         <th className="px-4 py-3">Tipo</th>
+                        <th className="px-4 py-3 text-right">Detalle</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -597,6 +635,12 @@ export const CirugiasView: React.FC<Props> = ({
                           <td className="px-4 py-3 text-slate-600 whitespace-nowrap font-medium">{fmtDuracion(c.createdAt, c.fechaCierre)}</td>
                           <td className="px-4 py-3">
                             {c.tipo ? <span className="inline-block text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-cyan-50 text-cyan-800 border border-cyan-200">{c.tipo}</span> : <span className="text-slate-300">—</span>}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <Button size="sm" variant="outline" onClick={() => openDetalle(c)}
+                              className="h-8 px-3 rounded-lg gap-1.5 text-[10px] font-bold uppercase tracking-tight text-slate-600">
+                              <Eye className="w-3.5 h-3.5" /> Detalle
+                            </Button>
                           </td>
                         </tr>
                       ))}
@@ -640,6 +684,76 @@ export const CirugiasView: React.FC<Props> = ({
               className="bg-red-600 hover:bg-red-700 text-white rounded-xl h-11 px-6 disabled:opacity-40">
               Confirmar cancelación
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal: detalle de una operatoria — timeline de pasos con la duración de cada uno. */}
+      <Dialog open={!!detalleCx} onOpenChange={o => { if (!o) { setDetalleCx(null); setEventos([]); } }}>
+        <DialogContent className="sm:max-w-[560px] rounded-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-xl flex items-center gap-2"><Activity className="w-5 h-5 text-violet-600" /> Detalle de cirugía</DialogTitle>
+          </DialogHeader>
+          {detalleCx && (
+            <div className="space-y-4 py-1">
+              {/* Resumen */}
+              <div className="rounded-2xl border border-slate-100 bg-slate-50/60 p-3.5 space-y-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="font-black text-slate-800 uppercase text-sm leading-tight">{detalleCx.pacienteNombre || 'Paciente'}</span>
+                  <Pill estado={detalleCx.estado as CirugiaEstado} short />
+                </div>
+                <div className="flex items-center gap-1.5 text-[12px] font-bold text-slate-600 flex-wrap">
+                  <BedDouble className="w-3.5 h-3.5 text-slate-400" />
+                  {formatBedName(detalleCx.camaOrigen)}
+                  {detalleCx.camaDestino && detalleCx.camaDestino !== detalleCx.camaOrigen && (<><ArrowRight className="w-3 h-3 text-violet-500" />{formatBedName(detalleCx.camaDestino)}</>)}
+                  {detalleCx.tipo && (<><span className="text-slate-300">·</span><span className="text-cyan-800">{detalleCx.tipo}</span></>)}
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-[11px]">
+                  <div><span className="block text-[9px] uppercase font-semibold text-slate-400">Inicio</span><span className="font-bold text-slate-700">{fmtWhen(detalleCx.createdAt)}</span></div>
+                  <div><span className="block text-[9px] uppercase font-semibold text-slate-400">Cierre</span><span className="font-bold text-slate-700">{fmtWhen(detalleCx.fechaCierre)}</span></div>
+                  <div><span className="block text-[9px] uppercase font-semibold text-slate-400">Duración</span><span className="font-bold text-violet-700">{fmtDuracion(detalleCx.createdAt, detalleCx.fechaCierre)}</span></div>
+                </div>
+              </div>
+
+              {/* Timeline de pasos: cada paso con la duración desde el anterior y quién lo hizo. */}
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Pasos</p>
+                {loadingEventos ? (
+                  <p className="text-xs text-slate-400 py-4 text-center">Cargando pasos…</p>
+                ) : eventos.length === 0 ? (
+                  <p className="text-xs text-slate-400 py-4 text-center">Sin pasos registrados para esta operatoria.</p>
+                ) : (
+                  <div className="pl-1">
+                    {eventos.map((e, i) => {
+                      const dur = i > 0 ? fmtDuracion(eventos[i - 1].at, e.at) : null;
+                      const last = i === eventos.length - 1;
+                      const quien = e.operador || e.usuario;
+                      return (
+                        <div key={i} className="flex gap-3">
+                          <div className="flex flex-col items-center">
+                            <div className="w-2.5 h-2.5 rounded-full bg-violet-500 mt-1.5 shrink-0" />
+                            {!last && <div className="w-px flex-1 bg-slate-200 my-0.5" />}
+                          </div>
+                          <div className={cn("min-w-0", last ? "pb-1" : "pb-4")}>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-black uppercase tracking-tight text-slate-700">{pasoLabel(e.tipo)}</span>
+                              {dur && <span className="text-[10px] font-bold text-violet-600" title="Tiempo desde el paso anterior">+{dur}</span>}
+                            </div>
+                            <p className="text-[11px] text-slate-500 flex items-center gap-1.5 mt-0.5 flex-wrap">
+                              <Clock className="w-3 h-3 text-slate-400" />{fmtWhen(e.at)}
+                              {quien && (<><span className="text-slate-300">·</span><UserIcon className="w-3 h-3 text-slate-400" />{quien}</>)}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setDetalleCx(null); setEventos([]); }} className="rounded-xl h-11">Cerrar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
