@@ -122,6 +122,7 @@ Deno.serve(async (req: Request) => {
   const paciente = String(record.paciente_nombre ?? '').trim() || 'Paciente';
   const roomLabel = formatRoom(record.habitacion, record.area);
   let core: string;
+  let title = cfg.title;
   if (cfg.type === 'DIET_CHANGE') {
     const tags = String(record.tags_new ?? '').trim();
     // tags_new se guarda como join '; '; el body histórico usaba ', '. Normalizamos a ', '.
@@ -129,7 +130,14 @@ Deno.serve(async (req: Request) => {
     core = `${paciente}: ${tagsLabel}`;
   } else {
     const detalle = String(record.detalle ?? '').trim() || 'Ayuno actualizado';
-    core = `${paciente}: ${detalle}`;
+    // Cancelación: el enrich (cron-enrich-beds) escribe detalle 'Ayuno cancelado' como literal fijo.
+    // Título propio (más claro que "actualizado") y no repetimos el texto en el body (ya lo dice el título).
+    if (detalle.toLowerCase().includes('cancelad')) {
+      title = 'Ayuno cancelado';
+      core = paciente;
+    } else {
+      core = `${paciente}: ${detalle}`;
+    }
   }
   const body = roomLabel ? `${core} — ${roomLabel}` : core;
   const areaName = record.area ? String(record.area) : undefined;
@@ -164,7 +172,7 @@ Deno.serve(async (req: Request) => {
   // ── Payload (tag por evento lógico → el SW colapsa duplicados) ─────────────
   const tagBase = `${cfg.type}-${simpleHash(paciente + body)}`;
   const ts = Date.now();
-  const pushPayload = JSON.stringify({ title: cfg.title, body, type: cfg.type, tag: tagBase, timestamp: ts });
+  const pushPayload = JSON.stringify({ title, body, type: cfg.type, tag: tagBase, timestamp: ts });
 
   // ── Envío (dedup por endpoint; a TODOS los endpoints del user para multi-device) ──
   const seen = new Set<string>();
@@ -194,7 +202,7 @@ Deno.serve(async (req: Request) => {
     const { error } = await supa.from('notificaciones').insert({
       traslado_id: null,
       user_id: String(sub.user_id),
-      title: cfg.title,
+      title,
       message: body,
       type: cfg.type,
       status: 'Enviada',
