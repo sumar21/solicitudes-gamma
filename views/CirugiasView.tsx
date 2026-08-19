@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Bed, CirugiaEstado, CirugiaTraslado, User, Area } from '../types';
 import { can } from '../lib/permissions';
 import { cn, formatBedName, formatDateTime } from '../lib/utils';
@@ -18,6 +18,20 @@ const AREA_LABELS: Record<string, string> = {
   [Area.HUC]: 'UCO', [Area.HUQ]: 'URP', [Area.HUT]: 'UTI',
 };
 const areaLabel = (a?: string) => (a ? AREA_LABELS[a] ?? a : '—');
+
+// "hace X" desde un ISO hasta `now` (ms). Para ver de un vistazo cuánto lleva en el estado actual
+// (updatedAt) y el total desde que arrancó la operatoria (createdAt).
+const timeAgo = (iso: string | undefined, now: number): string => {
+  const t = Date.parse(String(iso ?? ''));
+  if (!Number.isFinite(t)) return '';
+  const min = Math.max(0, Math.floor((now - t) / 60000));
+  if (min < 1) return 'recién';
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60), m = min % 60;
+  if (h < 24) return m ? `${h}h ${m}m` : `${h}h`;
+  const d = Math.floor(h / 24);
+  return `${d}d`;
+};
 
 type TxResult = { ok: boolean; error?: string };
 
@@ -55,6 +69,9 @@ export const CirugiasView: React.FC<Props> = ({
   // Panel inline "Cancelar": id + motivo tipeado.
   const [cancelando, setCancelando] = useState<{ id: string; motivo: string } | null>(null);
   const [rowError, setRowError] = useState<Record<string, string>>({});
+  // Reloj de la vista: refresca los "hace X" cada 30s sin depender de un refetch.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const id = setInterval(() => setNow(Date.now()), 30_000); return () => clearInterval(id); }, []);
 
   const withPending = async (id: string, fn: () => Promise<TxResult>) => {
     setPending(p => new Set(p).add(id));
@@ -213,6 +230,11 @@ export const CirugiasView: React.FC<Props> = ({
               <span className="inline-flex items-center gap-1 text-[10px] text-slate-400 font-medium">
                 <Clock className="w-3 h-3" /> {formatDateTime(c.updatedAt || c.createdAt)}
               </span>
+              <span className="text-slate-300">·</span>
+              <span className="text-[10px] font-bold text-violet-700" title="Tiempo en el estado actual · total desde el inicio">
+                hace {timeAgo(c.updatedAt || c.createdAt, now)}
+                <span className="text-slate-400 font-medium"> · total {timeAgo(c.createdAt, now)}</span>
+              </span>
             </div>
             {rowError[c.id] && (
               <p className="text-[10px] font-bold text-red-600">{rowError[c.id]}</p>
@@ -250,6 +272,10 @@ export const CirugiasView: React.FC<Props> = ({
             <span>{areaLabel(c.area)}</span>
             <span className="text-slate-300">·</span>
             <Clock className="w-3 h-3 text-slate-400" /> {formatDateTime(c.updatedAt || c.createdAt)}
+            <span className="text-slate-300">·</span>
+            <span className="font-bold text-violet-700" title="Tiempo en el estado actual · total desde el inicio">
+              hace {timeAgo(c.updatedAt || c.createdAt, now)}<span className="text-slate-400 font-medium"> · total {timeAgo(c.createdAt, now)}</span>
+            </span>
           </p>
         </td>
         {/* Cama (origen → destino si cambió) */}
