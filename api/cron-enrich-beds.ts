@@ -289,6 +289,7 @@ export default async function handler(req: any, res: any) {
     interface OccBed {
       patientCode: string; eventOrigin: string; eventNumber: number;
       areaName: string; patientName: string; roomName: string; bedLabel: string;
+      bedNombrePresente: boolean;
     }
     const beds: OccBed[] = [];
     for (const sector of occData) {
@@ -309,6 +310,9 @@ export default async function handler(req: any, res: any) {
             // Label bed-level EXACTO, mismo formato que cirugia_traslados.cama_origen
             // ("Habitación 417 HPR - Cama 01") — para detectar el move a nivel cama (no habitación).
             bedLabel: `${String(room.nombre ?? '').trim()} - ${String(bed.nombre ?? '').trim() || `Cama 0${bed.codigo}`}`,
+            // ¿el nombre de cama vino de Gamma (confiable) o se cayó al fallback "Cama 0<codigo>"? Si es
+            // fallback, el label es inestable entre corridas → no se usa para detectar move ni de baseline.
+            bedNombrePresente: !!String(bed.nombre ?? '').trim(),
           });
         }
       }
@@ -477,10 +481,17 @@ export default async function handler(req: any, res: any) {
           // avanzaba primero y un insert fallido perdía la noti para siempre. La idempotencia (una noti
           // por move real) la da el baseline: cuando avanza, el próximo ciclo ve oldCama == newCama.
           const newCama = b.bedLabel || '';
-          // Sólo comparamos si el snapshot viejo ya tenía un label bed-level (contiene ' - '). Si tenía
-          // el formato viejo room-level (sin ' - ') o nada, es bootstrap silencioso (aprende, no notifica)
-          // — evita un falso "move" en el ciclo de migración de room-level → bed-level.
-          if (!silent && existing?.oldCama && existing.oldCama.includes(' - ') && newCama && existing.oldCama !== newCama) {
+          if (!b.bedNombrePresente) {
+            // La cama vino SIN nombre real de Gamma (label con fallback "Cama 0<codigo>", inestable entre
+            // corridas): no es confiable ni para detectar un move ni como baseline. Mantenemos el baseline
+            // viejo (reliable) y NO comparamos, para no disparar un falso "cambio de cama" cuando Gamma
+            // devuelve el nombre de la cama de forma intermitente. Un move real se detecta el próximo ciclo
+            // confiable (queda diferido, no perdido).
+            payload.cama = existing?.oldCama ?? undefined;
+          } else if (!silent && existing?.oldCama && existing.oldCama.includes(' - ') && newCama && existing.oldCama !== newCama) {
+            // Sólo comparamos si el snapshot viejo ya tenía un label bed-level (contiene ' - '). Si tenía
+            // el formato viejo room-level (sin ' - ') o nada, es bootstrap silencioso (aprende, no notifica)
+            // — evita un falso "move" en el ciclo de migración de room-level → bed-level.
             const cx = cirugiaByPatient.get(b.patientCode);
             if (cx) {
               const camaPrevShort = formatBedShort(existing.oldCama);
