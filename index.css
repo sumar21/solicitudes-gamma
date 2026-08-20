@@ -45,3 +45,11 @@
   background: #cbd5e1;
   border-radius: 9999px;
 }
+
+/* Panel de Ayuda por módulo (ModuleHelp): sheet desde abajo en mobile, modal centrado en desktop
+   (≥640px). Respeta prefers-reduced-motion. */
+@keyframes help-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes help-modal-in { from { transform: scale(0.96); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.help-panel-in { animation: help-sheet-up 0.26s cubic-bezier(0.32, 0.72, 0, 1); }
+@media (min-width: 640px) { .help-panel-in { animation: help-modal-in 0.18s ease-out; } }
+@media (prefers-reduced-motion: reduce) { .help-panel-in { animation: none; } }

@@ -6,6 +6,7 @@ import {
 } from './components/Icons';
 import { Globe, MapPin as MapPinIcon, RefreshCw, Utensils } from 'lucide-react';
 import { GammaLogo } from './components/GammaLogo';
+import { ModuleHelp } from './components/ModuleHelp';
 import { IS_TESTING } from './lib/env';
 import { APP_VERSION } from './lib/version';
 import { Button } from "./components/ui/button";
@@ -521,6 +522,17 @@ export default function App() {
             <h1 className="text-lg md:text-xl font-black text-slate-900 tracking-tight truncate max-w-[100px] xs:max-w-[180px] sm:max-w-none">
               {state.currentView === 'HOME' ? 'Monitor' : state.currentView === 'REQUESTS' ? (operativaTab === 'limpiezas' ? 'Operativa · Limpiezas' : operativaTab === 'cirugias' ? 'Operativa · Cirugías' : 'Operativa') : state.currentView === 'BEDS' ? 'Mapa de Camas' : state.currentView === 'COMANDAS' ? 'Gestión de Comandas' : state.currentView === 'USERS' ? 'Usuarios' : (state.currentView as string) === 'ROLES' ? 'Roles' : 'Historial'}
             </h1>
+            <ModuleHelp
+              moduleKey={
+                state.currentView === 'HOME' ? 'Monitor'
+                : state.currentView === 'REQUESTS' ? 'Operativa'
+                : state.currentView === 'BEDS' ? 'MapaCamas'
+                : state.currentView === 'COMANDAS' ? 'Comandas'
+                : (state.currentView === 'USERS' || (state.currentView as string) === 'ROLES') ? 'Configuracion'
+                : 'Historial'
+              }
+              user={state.currentUser}
+            />
             {IS_TESTING && (
               <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-600 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-white shadow-sm shrink-0">
                 <span className="h-1.5 w-1.5 rounded-full bg-slate-300 animate-pulse" />
