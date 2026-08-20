@@ -533,8 +533,9 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
       if (origin && originIsOurs) copyPatientToBed(origin, dest);
       dest.patientName = dest.patientName || info.pacienteNombre || '';
       dest.patientCode = dest.patientCode || info.pacienteCodigo || '';
-      // EN_DEVOLUCION = llegando (Asignada); RECIBIDA = ya recibido en la cama detectada (Ocupada).
-      dest.status = info.estado === 'RECIBIDA' ? BedStatus.OCCUPIED : BedStatus.ASSIGNED;
+      // EN_DEVOLUCION ("Regreso de cirugía") = el paciente vuelve a esta cama (Asignada/llegando). Al
+      // cerrar con "Iniciar dieta" la operatoria sale del overlay y vuelve a mandar el estado de PROGAL.
+      dest.status = BedStatus.ASSIGNED;
       dest.cirugia = info;
       if (origin && originIsOurs) {
         clearPatientFromBed(origin);
@@ -936,7 +937,7 @@ export const useHospitalState = () => {
   // Overlay de cirugía POR CAMA (igual que `cleanings`: Map<label, …> que consume mergeBeds).
   // De cada operatoria NO terminal: cama_origen → overlay (role 'origin'); si el cron ya detectó un
   // destino distinto (cama_destino), además cama_destino → overlay (role 'destino'). Las terminales
-  // (TOLERANCIA_EVALUADA/CANCELADO) no entran (fetchCirugias solo trae vivas + RECIBIDA en cola).
+  // (TOLERANCIA_EVALUADA/CANCELADO) no entran (fetchCirugias solo trae las vivas).
   const cirugiaByBed = useMemo(() => {
     const m = new Map<string, BedCirugiaOverlay>();
     for (const c of cirugias.values()) {
@@ -946,7 +947,7 @@ export const useHospitalState = () => {
         pacienteNombre: c.pacienteNombre, pacienteCodigo: c.pacienteCodigo, area: c.area, role: 'origin',
       };
       m.set(c.camaOrigen, base);
-      if ((c.estado === 'EN_DEVOLUCION' || c.estado === 'RECIBIDA') && c.camaDestino && c.camaDestino !== c.camaOrigen) {
+      if (c.estado === 'EN_DEVOLUCION' && c.camaDestino && c.camaDestino !== c.camaOrigen) {
         m.set(c.camaDestino, { ...base, role: 'destino' });
       }
     }
@@ -1666,15 +1667,14 @@ export const useHospitalState = () => {
   ): Promise<{ ok: boolean; error?: string }> => {
     if (!id) return { ok: false };
     const u = currentUser;
-    const curCirugia = cirugias.get(id); // para el auto-cierre del flag "va a cirugía" en RECIBIDA
+    const curCirugia = cirugias.get(id); // para el auto-cierre del flag "va a cirugía" al Iniciar dieta
     cirugiasWritingRef.current += 1;
     setCirugias(prev => {
       const cur = prev.get(id);
       if (!cur) return prev;
       const n = new Map(prev);
-      // Terminales (salen de la cola): TOLERANCIA_EVALUADA (cierra por tolerancia) y CANCELADO.
-      // RECIBIDA ya NO cierra: queda en la cola esperando la evaluación de tolerancia. El destino ya
-      // no se elige acá (lo detecta el cron desde PROGAL).
+      // Terminales (salen de la cola): TOLERANCIA_EVALUADA ("Iniciar dieta", cierra) y CANCELADO.
+      // El destino no se elige acá (lo detecta el cron desde PROGAL).
       const goesTerminal = action === 'CANCELADO' || action === 'TOLERANCIA_EVALUADA';
       if (goesTerminal) {
         n.delete(id); // sale de la cola
@@ -1697,10 +1697,10 @@ export const useHospitalState = () => {
         await fetchCirugias(); // reconciliar (revierte el optimista contra la base)
         return { ok: false, error: err?.error ?? err?.message ?? `No se pudo actualizar (HTTP ${r.status}).` };
       }
-      // Auto-cierre del flag "va a cirugía": al llegar a RECIBIDA (el paciente volvió) cerramos la
-      // marca del paciente si existía. Idempotente y keyed por paciente (cierra aunque haya vuelto a
-      // otra cama). Fire-and-forget: no bloquea la transición clínica.
-      if (action === 'RECIBIDA') {
+      // Auto-cierre del flag "va a cirugía": al Iniciar dieta (paso final — el paciente ya volvió y la
+      // enfermera cierra) cerramos la marca del paciente si existía. Idempotente y keyed por paciente
+      // (cierra aunque haya vuelto a otra cama). Fire-and-forget: no bloquea la transición clínica.
+      if (action === 'TOLERANCIA_EVALUADA') {
         const code = curCirugia?.pacienteCodigo ?? '';
         if (code) {
           cirugiaMarcasWritingRef.current += 1;
@@ -1708,7 +1708,7 @@ export const useHospitalState = () => {
           setCirugiaMarcas(prev => { const n = new Map(prev); n.delete(code); return n; });
           authFetch('/api/cirugia-marcas', {
             method: 'PATCH',
-            body: JSON.stringify({ pacienteCodigo: code, action: 'CERRAR', motivo: 'cirugia_recibida', userId: u?.id ?? '', userName: u?.name ?? '', operador: getOperador(), version: APP_VERSION }),
+            body: JSON.stringify({ pacienteCodigo: code, action: 'CERRAR', motivo: 'cirugia_finalizada', userId: u?.id ?? '', userName: u?.name ?? '', operador: getOperador(), version: APP_VERSION }),
           }).catch(() => {}).finally(() => { setTimeout(() => { cirugiaMarcasWritingRef.current = Math.max(0, cirugiaMarcasWritingRef.current - 1); }, 1000); });
         }
       }

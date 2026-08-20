@@ -705,8 +705,8 @@ const CompanionEditor: React.FC<{
 // · Cama OCUPADA sin cirugía viva → botón "Listo para cirugía" (alta), SOLO si el paciente es
 //   quirúrgico (admissionTypeCode==='Q', aviso con fecha probable) o fue marcado por Admisión
 //   (flag bed.goingToSurgery, para pacientes NO quirúrgicos — ver cirugia_marcas).
-// · Cama con cirugía viva → pill Cx por color; si está EN_DEVOLUCION, botón "Recibida"
-//   (recepción confirmada, la marca enfermería del piso destino).
+// · Cama con cirugía viva → pill Cx por color; si está EN_DEVOLUCION ("Regreso de cirugía"), botón
+//   "Iniciar dieta" (paso final: la enfermería del piso destino recibe e inicia la dieta — CIERRA).
 const CirugiaBedBlock: React.FC<{
   bed: Bed;
   onMarcarListo?: (bed: Bed) => Promise<{ ok: boolean; id?: string; error?: string }>;
@@ -726,18 +726,17 @@ const CirugiaBedBlock: React.FC<{
     return isNaN(d.getTime()) ? '' : d.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
   };
 
-  // Cama con operatoria viva → pill + (Recibida si está volviendo).
+  // Cama con operatoria viva → pill + (Iniciar dieta si está de regreso de cirugía).
   if (cx) {
     // ¿Hay cambio de cama al volver? Entonces hay DOS overlays: la cama vieja (role 'origin', el
     // paciente ya no vuelve acá) y la cama nueva (role 'destino', donde LLEGA el paciente).
     const esCambio = !!cx.camaDestino && cx.camaDestino !== cx.camaOrigen;
     const soyDestino = cx.role === 'destino';            // esta cama es la de LLEGADA
     const soyOrigenConCambio = cx.role === 'origin' && esCambio; // esta cama es la VIEJA
-    // La recepción la confirma la enfermera de la cama donde LLEGA el paciente: cama destino si
-    // cambió, o la propia si volvió a la misma. En la cama origen de un cambio NO va el botón.
-    const puedoRecibir = cx.estado === 'EN_DEVOLUCION' && (soyDestino || !esCambio);
-    // Evaluación de tolerancia: la hace quien recibió (misma cama de recepción), tras RECIBIDA. Cierra.
-    const puedoTolerancia = cx.estado === 'RECIBIDA' && (soyDestino || !esCambio);
+    // Iniciar dieta (paso FINAL, ya sin "Recibida" intermedio): la confirma la enfermera de la cama
+    // donde LLEGA el paciente (cama destino si cambió, o la propia si volvió a la misma). En la cama
+    // origen de un cambio NO va el botón. Cierra la operatoria y avisa a Catering.
+    const puedoTolerancia = cx.estado === 'EN_DEVOLUCION' && (soyDestino || !esCambio);
     return (
       <div className="rounded-2xl p-3.5 border border-slate-200 bg-slate-50/70 flex flex-col gap-2.5">
         <div className="flex items-center gap-2">
@@ -752,16 +751,12 @@ const CirugiaBedBlock: React.FC<{
         {soyDestino && (
           <p className="text-[11px] font-medium text-slate-600">
             Llega de cirugía: <strong>{cx.pacienteNombre ?? 'paciente'}</strong> (viene de {formatBedName(cx.camaOrigen)})
-            {cx.estado === 'RECIBIDA' && ' — recibido; falta evaluar la tolerancia.'}
           </p>
         )}
         {/* Cama ORIGEN de un cambio: el paciente NO vuelve acá, se fue a la destino. */}
         {soyOrigenConCambio && (
           <p className="text-[11px] font-medium text-slate-600">
-            El paciente volvió de cirugía a <strong>{formatBedName(cx.camaDestino!)}</strong>
-            {cx.estado === 'RECIBIDA'
-              ? ' — recibido; falta evaluar la tolerancia.'
-              : ' — confirmá la recepción en esa cama.'}
+            El paciente volvió de cirugía a <strong>{formatBedName(cx.camaDestino!)}</strong> — iniciá la dieta en esa cama.
           </p>
         )}
         {error && <p className="text-[10px] font-bold text-red-600">{error}</p>}
@@ -775,18 +770,6 @@ const CirugiaBedBlock: React.FC<{
             }}
             className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-yellow-500 hover:bg-yellow-600 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm disabled:opacity-50">
             <ArrowRight className="w-4 h-4" /> {busy ? 'Registrando…' : 'En traslado a cirugía'}
-          </button>
-        )}
-        {puedoRecibir && onCirugiaRecibida && (
-          <button disabled={busy}
-            onClick={async () => {
-              setBusy(true); setError(null);
-              const r = await onCirugiaRecibida(cx.id);
-              setBusy(false);
-              if (r.ok) onDone(); else setError(r.error ?? 'No se pudo confirmar.');
-            }}
-            className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm disabled:opacity-50">
-            <CheckCircle2 className="w-4 h-4" /> {busy ? 'Confirmando…' : soyDestino ? 'Recibí al paciente' : 'Recibida (recepción confirmada)'}
           </button>
         )}
         {puedoTolerancia && onCirugiaTolerancia && (

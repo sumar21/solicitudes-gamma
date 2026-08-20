@@ -24,24 +24,23 @@ const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 
 // Estados que ocupan el candado "una viva por cama" (índice parcial cirugia_viva_uidx).
 const VIVOS = ['LISTO_PARA_CIRUGIA', 'VAN_A_BUSCAR', 'EN_TRASLADO', 'EN_CIRUGIA', 'EN_DEVOLUCION'];
-// Lo que se muestra en overlay + cola: las vivas + la recibida esperando la evaluación de tolerancia.
-const EN_COLA = [...VIVOS, 'RECIBIDA'];
+// Lo que se muestra en overlay + cola: las vivas (EN_DEVOLUCION incluido, que espera "Iniciar dieta").
+const EN_COLA = [...VIVOS];
 
 // Máquina de estados ESTRICTA: estado actual → acciones permitidas (== estado destino). Cada paso
 // existe y se registra (ver cirugia_eventos) para medir tiempos. CANCELADO desde cualquier estado
 // vivo; los terminales no tienen salida. Cualquier otra transición → 409.
 //   LISTO_PARA_CIRUGIA (Enfermería) → VAN_A_BUSCAR (Cirugía despacha camillero)
-//     → EN_TRASLADO (Enfermería: "se lo llevó el camillero") → EN_CIRUGIA (Cirugía)
-//     → EN_DEVOLUCION (el paciente vuelve; YA NO se elige destino) → RECIBIDA (Enfermería destino)
-//     → TOLERANCIA_EVALUADA (quien recibió evaluó la tolerancia — CIERRA el ticket)
+//     → EN_TRASLADO (Enfermería: "en traslado a cirugía") → EN_CIRUGIA (Cirugía)
+//     → EN_DEVOLUCION ("Regreso de cirugía"; el paciente vuelve, el destino lo detecta el cron)
+//     → TOLERANCIA_EVALUADA ("Iniciar dieta": Enfermería del piso recibe e inicia la dieta — CIERRA)
 // El destino lo detecta el cron desde PROGAL (no se elige ni se consolida en la app).
 const TRANSICIONES: Record<string, string[]> = {
   LISTO_PARA_CIRUGIA:  ['VAN_A_BUSCAR', 'CANCELADO'],
   VAN_A_BUSCAR:        ['EN_TRASLADO', 'CANCELADO'],
   EN_TRASLADO:         ['EN_CIRUGIA', 'CANCELADO'],
   EN_CIRUGIA:          ['EN_DEVOLUCION', 'CANCELADO'],
-  EN_DEVOLUCION:       ['RECIBIDA', 'CANCELADO'],
-  RECIBIDA:            ['TOLERANCIA_EVALUADA', 'CANCELADO'],
+  EN_DEVOLUCION:       ['TOLERANCIA_EVALUADA', 'CANCELADO'],
   TOLERANCIA_EVALUADA: [],
   CANCELADO:           [],
 };
@@ -53,7 +52,6 @@ const ACCION_PERMISO: Record<string, string> = {
   EN_TRASLADO:         'cirugia_entregar',
   EN_CIRUGIA:          'cirugia_operar',
   EN_DEVOLUCION:       'cirugia_devolver',
-  RECIBIDA:            'cirugia_recibir',
   TOLERANCIA_EVALUADA: 'cirugia_tolerancia',
   CANCELADO:           'cirugia_cancelar',
 };
@@ -266,7 +264,7 @@ async function handler(req: any, res: any) {
     if (!String(id ?? '').trim()) return res.status(400).json({ error: 'id is required' });
 
     const act = String(action ?? '');
-    const ACCIONES = ['VAN_A_BUSCAR', 'EN_TRASLADO', 'EN_CIRUGIA', 'EN_DEVOLUCION', 'RECIBIDA', 'TOLERANCIA_EVALUADA', 'CANCELADO'];
+    const ACCIONES = ['VAN_A_BUSCAR', 'EN_TRASLADO', 'EN_CIRUGIA', 'EN_DEVOLUCION', 'TOLERANCIA_EVALUADA', 'CANCELADO'];
     if (!ACCIONES.includes(act)) return res.status(400).json({ error: `action must be one of: ${ACCIONES.join(', ')}` });
     if (act === 'CANCELADO' && !String(motivoCancelacion ?? '').trim()) {
       return res.status(400).json({ error: 'motivoCancelacion is required for CANCELADO' });

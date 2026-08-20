@@ -62,7 +62,7 @@ const STALE_MS = 60 * 60 * 1000; // filas no vistas + sin update hace >1h → In
 // Estados de cirugía "en cola" (no terminales): un paciente en cualquiera de estos tiene una
 // operatoria abierta → si PROGAL le cambia la cama, notificamos al equipo de cirugía. Debe coincidir
 // con EN_COLA de api/cirugia.ts (VIVOS + RECIBIDA; excluye TOLERANCIA_EVALUADA / CANCELADO).
-const CIRUGIA_EN_COLA = ['LISTO_PARA_CIRUGIA', 'VAN_A_BUSCAR', 'EN_TRASLADO', 'EN_CIRUGIA', 'EN_DEVOLUCION', 'RECIBIDA'];
+const CIRUGIA_EN_COLA = ['LISTO_PARA_CIRUGIA', 'VAN_A_BUSCAR', 'EN_TRASLADO', 'EN_CIRUGIA', 'EN_DEVOLUCION'];
 
 // Compacta el label de cama para el body de la noti: "Habitación 417 HPR - Cama 01" → "417 - 01".
 // Réplica de formatBedName (lib/utils); la Edge Function recibe el texto ya compacto en cama_prev/new.

@@ -71,9 +71,9 @@ const pasoLabel = (tipo: string): string => (CIRUGIA_ESTADO_LABEL as Record<stri
 // TOLERANCIA_EVALUADA NO va acá: al evaluarse cierra la operatoria y la saca de Activas → esa
 // columna nunca se llenaría. La hora de tolerancia se ve en el detalle del Histórico.
 const STEP_COLS: { key: string; label: string }[] = [
-  { key: 'EN_TRASLADO', label: 'Retirado' },
-  { key: 'EN_CIRUGIA',  label: 'En cirugía' },
-  { key: 'RECIBIDA',    label: 'Recibido' },
+  { key: 'EN_TRASLADO',   label: 'Retirado' },
+  { key: 'EN_CIRUGIA',    label: 'En cirugía' },
+  { key: 'EN_DEVOLUCION', label: 'Regreso' },
 ];
 
 // Fecha+hora compactas de un paso ("18/08" + "12:40") o null si no se hizo aún.
@@ -293,11 +293,9 @@ export const CirugiasView: React.FC<Props> = ({
             <BedDouble className="w-3.5 h-3.5 mr-1.5" /> Regreso de cirugía
           </Button>
         ) : null;
-      // 'EN_DEVOLUCION' (Regreso de cirugía): la recepción NO se muestra en Operativa. La hace SOLO
-      // Enfermería del piso desde el Mapa de Camas (tarjeta de la cama). Por eso acá no hay botón y
-      // cae al default (null).
-      case 'RECIBIDA':
-        // Iniciar dieta: la hace quien recibió; CIERRA el ticket y avisa a Catering.
+      case 'EN_DEVOLUCION':
+        // Iniciar dieta (paso FINAL, ya sin "Recibida" intermedio): la enfermería del piso recibe e
+        // inicia la dieta; CIERRA la operatoria y avisa a Catering.
         return can(currentUser, 'cirugia_tolerancia') && onTolerancia ? (
           <Button size="sm" disabled={p} onClick={() => withPending(c.id, () => onTolerancia(c.id))}
             className="h-8 text-[10px] uppercase font-bold tracking-tight bg-green-600 hover:bg-green-700 text-white">
