@@ -40,21 +40,42 @@ const isActive = (t: Ticket) => ACTIVE_STATUSES.has(t.status);
 // Fecha de referencia para ordenar/cerrar un episodio.
 const episodeEnd = (t: Ticket) => t.completedAt || t.createdAt;
 
-// Panel "Cirugías" del journey: trae todas las rondas del paciente (GET /api/cirugia?paciente=)
-// y las muestra como historia (estado, camas, tipo, inicio→cierre, duración). Row-level; el detalle
-// por-transición (retiro, inicio de cirugía) vive en cirugia_eventos y sería una versión más profunda.
+// Un paso de la operatoria (cirugia_eventos) — para el timeline auditable dentro del journey.
+interface CxEvento { tipo: string; at: string; usuario?: string; operador?: string; }
+// Label legible de un paso (reusa las etiquetas de estado; fallback al raw).
+const pasoLabel = (tipo: string): string => (CIRUGIA_ESTADO_LABEL as Record<string, string>)[tipo] ?? tipo;
+
+// Panel "Cirugías" del journey: trae todas las rondas del paciente (GET /api/cirugia?paciente=) y,
+// por cada una, sus pasos (GET ?eventos=<id> → cirugia_eventos) para mostrar el timeline auditable
+// completo (retiro, en cirugía, devolución, recepción, tolerancia), no solo el estado actual.
 const CirugiaJourney: React.FC<{ patientCode?: string; isOpen: boolean }> = ({ patientCode, isOpen }) => {
   const [cirugias, setCirugias] = useState<CirugiaTraslado[]>([]);
+  const [eventsByCx, setEventsByCx] = useState<Map<string, CxEvento[]>>(new Map());
   const [loading, setLoading] = useState(false);
   useEffect(() => {
-    if (!isOpen || !patientCode) { setCirugias([]); return; }
+    if (!isOpen || !patientCode) { setCirugias([]); setEventsByCx(new Map()); return; }
     let cancelled = false;
     setLoading(true);
     const token = localStorage.getItem('mediflow_token');
-    fetch(`/api/cirugia?paciente=${encodeURIComponent(patientCode)}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    fetch(`/api/cirugia?paciente=${encodeURIComponent(patientCode)}`, { headers })
       .then(r => r.ok ? r.json() : { cirugias: [] })
-      .then((d: { cirugias?: CirugiaTraslado[] }) => { if (!cancelled) setCirugias(Array.isArray(d.cirugias) ? d.cirugias : []); })
-      .catch(() => { if (!cancelled) setCirugias([]); })
+      .then(async (d: { cirugias?: CirugiaTraslado[] }) => {
+        if (cancelled) return;
+        const list = Array.isArray(d.cirugias) ? d.cirugias : [];
+        setCirugias(list);
+        // Pasos por operatoria, en paralelo → timeline auditable de cada cirugía.
+        const pairs = await Promise.all(list.map(async (c): Promise<[string, CxEvento[]]> => {
+          try {
+            const rr = await fetch(`/api/cirugia?eventos=${encodeURIComponent(c.id)}`, { headers });
+            if (!rr.ok) return [String(c.id), []];
+            const dd = await rr.json();
+            return [String(c.id), Array.isArray(dd.eventos) ? dd.eventos : []];
+          } catch { return [String(c.id), []]; }
+        }));
+        if (!cancelled) setEventsByCx(new Map(pairs));
+      })
+      .catch(() => { if (!cancelled) { setCirugias([]); setEventsByCx(new Map()); } })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [isOpen, patientCode]);
@@ -109,6 +130,40 @@ const CirugiaJourney: React.FC<{ patientCode?: string; isOpen: boolean }> = ({ p
                 {cerrada && c.fechaCierre && <span className="font-bold text-violet-700">Duración {dur(c.createdAt, c.fechaCierre)}</span>}
                 {c.motivoCancelacion && <span className="text-red-600 italic">Cancelada: {c.motivoCancelacion}</span>}
               </div>
+              {(() => {
+                const evs = eventsByCx.get(String(c.id)) ?? [];
+                if (evs.length === 0) return null;
+                return (
+                  <div className="px-4 pb-3 pt-2.5 border-t border-violet-50">
+                    <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-2">Pasos</p>
+                    <div className="pl-0.5">
+                      {evs.map((e, i) => {
+                        const d = i > 0 ? dur(evs[i - 1].at, e.at) : null;
+                        const last = i === evs.length - 1;
+                        const quien = e.operador || e.usuario;
+                        return (
+                          <div key={i} className="flex gap-2.5">
+                            <div className="flex flex-col items-center">
+                              <div className="w-2 h-2 rounded-full bg-violet-500 mt-1.5 shrink-0" />
+                              {!last && <div className="w-px flex-1 bg-violet-100 my-0.5" />}
+                            </div>
+                            <div className={cn('min-w-0', last ? 'pb-0.5' : 'pb-3')}>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-[11px] font-black uppercase tracking-tight text-slate-700">{pasoLabel(e.tipo)}</span>
+                                {d && <span className="text-[9px] font-bold text-violet-600" title="Tiempo desde el paso anterior">+{d}</span>}
+                              </div>
+                              <p className="text-[10px] text-slate-500 flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                <Clock className="w-2.5 h-2.5 text-slate-400" />{formatDateTime(e.at)}
+                                {quien && (<><span className="text-slate-300">·</span><User className="w-2.5 h-2.5 text-slate-400" />{quien}</>)}
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           );
         })}

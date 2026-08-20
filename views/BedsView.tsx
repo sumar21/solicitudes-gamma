@@ -1107,6 +1107,24 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     return () => { cancelled = true; };
   }, [selectedBed?.id, onFetchPatientTickets]);
 
+  // ¿El paciente tiene CIRUGÍAS? Un paciente puede tener cirugía sin ningún traslado → el botón de
+  // trayectoria (que muestra ambas solapas) debe aparecer igual. Se chequea on-demand por código.
+  const [patientHasCirugias, setPatientHasCirugias] = useState(false);
+  const [patientCirugiasLoaded, setPatientCirugiasLoaded] = useState(false);
+  React.useEffect(() => {
+    const code = selectedBed?.patientCode?.trim();
+    if (!code || !selectedBed?.patientName) { setPatientHasCirugias(false); setPatientCirugiasLoaded(false); return; }
+    let cancelled = false;
+    setPatientCirugiasLoaded(false);
+    const token = localStorage.getItem('mediflow_token');
+    fetch(`/api/cirugia?paciente=${encodeURIComponent(code)}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then(r => r.ok ? r.json() : { cirugias: [] })
+      .then((d: { cirugias?: unknown[] }) => { if (!cancelled) setPatientHasCirugias(Array.isArray(d.cirugias) && d.cirugias.length > 0); })
+      .catch(() => { if (!cancelled) setPatientHasCirugias(false); })
+      .finally(() => { if (!cancelled) setPatientCirugiasLoaded(true); });
+    return () => { cancelled = true; };
+  }, [selectedBed?.id]);
+
   // ¿Este usuario puede ver comandas cargadas? (Nutrición carga; Catering/Nutrición ven).
   // Gatea tanto el ícono de la tarjeta como la sección de la pestaña Dieta.
   // Poder cargar ALGÚN turno implica ver toda la sección (espeja la semántica histórica en la
@@ -3146,9 +3164,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                           <div className="flex items-center justify-between gap-2">
                             <p className="text-base font-black text-slate-900 leading-snug min-w-0 truncate">{selectedBed.patientName}</p>
                             {selectedBed.patientName && (
-                              patientTicketsLoading ? (
-                                <span className="shrink-0 text-[10px] font-medium text-slate-400 whitespace-nowrap">Cargando…</span>
-                              ) : patientTickets.length > 0 ? (
+                              (patientTickets.length > 0 || patientHasCirugias) ? (
                                 <button
                                   type="button"
                                   onClick={() => setJourneyOpen(true)}
@@ -3157,8 +3173,10 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                                   <History className="w-3 h-3" />
                                   Historial del paciente
                                 </button>
+                              ) : (patientTicketsLoading || !patientCirugiasLoaded) ? (
+                                <span className="shrink-0 text-[10px] font-medium text-slate-400 whitespace-nowrap">Cargando…</span>
                               ) : patientTicketsLoaded ? (
-                                <span className="shrink-0 text-[10px] font-medium text-slate-400 italic whitespace-nowrap">Sin traslados</span>
+                                <span className="shrink-0 text-[10px] font-medium text-slate-400 italic whitespace-nowrap">Sin historial</span>
                               ) : null
                             )}
                           </div>
