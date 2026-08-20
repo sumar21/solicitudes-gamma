@@ -18,6 +18,7 @@
  */
 import { requireAuth } from './jwt.js';
 import { getSupabaseAdmin } from './supabase-admin.js';
+import { authzCirugia } from './cirugia-authz.js';
 
 const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 
@@ -43,6 +44,18 @@ const TRANSICIONES: Record<string, string[]> = {
   RECIBIDA:            ['TOLERANCIA_EVALUADA', 'CANCELADO'],
   TOLERANCIA_EVALUADA: [],
   CANCELADO:           [],
+};
+
+// Permiso requerido por cada acción del PATCH (el alta POST exige cirugia_listo). El gating client-side
+// esconde los botones, pero un PATCH directo lo saltea → se enforça acá (ver authzCirugia).
+const ACCION_PERMISO: Record<string, string> = {
+  VAN_A_BUSCAR:        'cirugia_buscar',
+  EN_TRASLADO:         'cirugia_entregar',
+  EN_CIRUGIA:          'cirugia_operar',
+  EN_DEVOLUCION:       'cirugia_devolver',
+  RECIBIDA:            'cirugia_recibir',
+  TOLERANCIA_EVALUADA: 'cirugia_tolerancia',
+  CANCELADO:           'cirugia_cancelar',
 };
 
 /** Fila Supabase (snake_case) → CirugiaTraslado (camelCase, shape lean sin columnas server-only). */
@@ -198,6 +211,9 @@ async function handler(req: any, res: any) {
     if (!String(idUnivoco ?? '').trim())  return res.status(400).json({ error: 'idUnivoco is required' });
     if (!String(camaOrigen ?? '').trim()) return res.status(400).json({ error: 'camaOrigen is required' });
 
+    const denyPost = await authzCirugia(req, 'cirugia_listo', area != null ? String(area) : null);
+    if (denyPost) return res.status(denyPost.status).json({ error: denyPost.error });
+
     try {
       const { data: created, error } = await supa.from('cirugia_traslados').insert({
         entorno: ENTORNO,
@@ -257,11 +273,16 @@ async function handler(req: any, res: any) {
     }
 
     try {
-      // Guard: leer el estado ACTUAL antes de escribir (fuente de verdad del 409).
+      // Guard: leer el estado ACTUAL antes de escribir (fuente de verdad del 409). Trae `area` para
+      // la autorización por sector.
       const { data: cur, error: readErr } = await supa.from('cirugia_traslados')
-        .select('estado, cama_origen, cama_destino').eq('id', String(id)).eq('entorno', ENTORNO).maybeSingle();
+        .select('estado, cama_origen, cama_destino, area').eq('id', String(id)).eq('entorno', ENTORNO).maybeSingle();
       if (readErr) { console.error('[cirugia] PATCH read failed:', readErr.message); return res.status(500).json({ error: 'Failed to read cirugia' }); }
       if (!cur) return res.status(404).json({ error: 'Cirugia not found' });
+
+      // Autorización server-side: permiso de la acción + (si filtra por pisos) sector de la operatoria.
+      const denyPatch = await authzCirugia(req, ACCION_PERMISO[act] ?? 'cirugia_cancelar', cur.area);
+      if (denyPatch) return res.status(denyPatch.status).json({ error: denyPatch.error });
 
       const permitidas = TRANSICIONES[String(cur.estado)] ?? [];
       if (!permitidas.includes(act)) {

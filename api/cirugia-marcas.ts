@@ -14,6 +14,7 @@
  */
 import { requireAuth } from './jwt.js';
 import { getSupabaseAdmin } from './supabase-admin.js';
+import { authzCirugia } from './cirugia-authz.js';
 
 const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 
@@ -82,6 +83,9 @@ async function handler(req: any, res: any) {
     const { pacienteCodigo, pacienteNombre, camaLabel, area, userId, userName, operador } = req.body ?? {};
     if (!String(pacienteCodigo ?? '').trim()) return res.status(400).json({ error: 'pacienteCodigo is required' });
 
+    const denyMarcar = await authzCirugia(req, 'cirugia_marcar', area != null ? String(area) : null);
+    if (denyMarcar) return res.status(denyMarcar.status).json({ error: denyMarcar.error });
+
     try {
       const { data: created, error } = await supa.from('cirugia_marcas').insert({
         entorno: ENTORNO,
@@ -121,6 +125,13 @@ async function handler(req: any, res: any) {
     const act = String(action ?? '');
     if (act !== 'CERRAR' && act !== 'ANULAR') return res.status(400).json({ error: 'action must be CERRAR or ANULAR' });
     if (!String(id ?? '').trim() && !String(pacienteCodigo ?? '').trim()) return res.status(400).json({ error: 'id o pacienteCodigo requerido' });
+
+    // ANULAR (Admisión desmarca "va a cirugía") requiere cirugia_marcar. CERRAR es el cierre automático
+    // por RECIBIDA (lo dispara el flujo de recepción, no una acción de marcado) → sin gate propio.
+    if (act === 'ANULAR') {
+      const denyAnular = await authzCirugia(req, 'cirugia_marcar');
+      if (denyAnular) return res.status(denyAnular.status).json({ error: denyAnular.error });
+    }
 
     try {
       // Ubicar la marca (por id, o la ACTIVA de ese paciente).
