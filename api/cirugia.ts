@@ -308,8 +308,15 @@ async function handler(req: any, res: any) {
         fields.motivo_cancelacion = String(motivoCancelacion);
       }
 
-      const { error } = await supa.from('cirugia_traslados').update(fields).eq('id', String(id)).eq('entorno', ENTORNO);
+      // CAS (compare-and-set): el UPDATE reafirma el estado que leímos recién. Si otra transición ganó
+      // la carrera entre el read y el write (doble-tap, dos dispositivos), afecta 0 filas → 409 y NO se
+      // loguea el evento (evita duplicar el paso en la auditoría y un push repetido).
+      const { data: updated, error } = await supa.from('cirugia_traslados').update(fields)
+        .eq('id', String(id)).eq('entorno', ENTORNO).eq('estado', String(cur.estado)).select('id');
       if (error) { console.error('[cirugia] PATCH failed:', error.message, act); return res.status(500).json({ error: 'Failed to update cirugia' }); }
+      if (!updated || updated.length === 0) {
+        return res.status(409).json({ error: 'La cirugía cambió de estado; recargá e intentá de nuevo.' });
+      }
 
       // Detalle: un evento por transición. `tipo` = la acción (el click), `estadoResultante` = el
       // estado que quedó (== la acción; TOLERANCIA_EVALUADA cierra el ticket).
