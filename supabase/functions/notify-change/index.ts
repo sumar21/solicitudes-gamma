@@ -128,6 +128,10 @@ Deno.serve(async (req: Request) => {
   const rowId = String(record.id ?? '');
   if (!rowId) return new Response('no row id', { status: 200 });
 
+  // Actor que originó el evento (solo cirugia_eventos trae usuario_id): se excluye de los destinatarios
+  // para que no reciba el push de su propia acción, igual que el camino de traslados (notify-push).
+  const actorId = String(record.usuario_id ?? '');
+
   // ── Idempotencia ante reintentos del webhook: una fila = un despacho ──
   // La marca se ESCRIBE recién al FINAL (tras enviar). Acá sólo CHEQUEAMOS si ya se despachó por
   // completo: si un intento anterior murió por timeout a mitad del envío, no dejó marca → este
@@ -207,6 +211,7 @@ Deno.serve(async (req: Request) => {
 
   // ── Filtrado (isRelevant): sede + permiso + filter_by_floors con remapeo HRA ─
   const relevant = fresh.filter(s => {
+    if (actorId && String(s.user_id) === actorId) return false; // no auto-notificar al actor de la transición
     const subSede = String(s.sede ?? '');
     if (subSede && subSede !== PUSH_SEDE && subSede !== 'SUMAR') return false;
     const roleCfg = roleByName.get(String(s.user_role ?? '').trim().toLowerCase());
