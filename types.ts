@@ -373,7 +373,7 @@ export interface SortConfig {
 // columna Permisos_RT) como string separado por ';'. El helper `can(user, perm)`
 // chequea contra user.permissions al renderizar botones / disparar mutaciones.
 export const PERMISSIONS = [
-  'crear_ticket','editar_ticket','cancelar_ticket','asignar_cama',
+  'crear_ticket','editar_ticket','cancelar_ticket',
   'confirmar_limpieza','iniciar_traslado','confirmar_recepcion','consolidar',
   // Acción del módulo Gestión de Limpieza: consolidar una cama marcada limpia contra PROGAL.
   'consolidar_limpieza',
@@ -415,10 +415,8 @@ export const PERMISSIONS = [
   // Azafata marcó una habitación limpia desde el mapa → aviso a Admisión (u otro rol que
   // lo tenga tildado en el ABM). Push + campanita, mismo pipeline que los demás.
   'notif_habitacion_limpia',
-  // Cirugía: a Admisión (consolidación pendiente: cambio de cama / UCI), a Quirófano (paciente
-  // listo) y a la azafata del piso (camillero en camino, retiro/entrega). El mapeo tipo→permiso y
-  // la emisión del push se cablean en la iteración 1c; acá solo se registran para el ABM.
-  'notif_cirugia_consolidar',
+  // Cirugía: paso "Listo para cirugía" (Quirófano) y "Camillero va a buscar" (azafata del piso).
+  // Reusados por las notis por-paso (Fase B); el resto de los notif_cirugia_* van abajo.
   'notif_cirugia_lista',
   'notif_cirugia_camillero',
   // Detección PROGAL→app: el enrich (cron) descubre que un paciente EN CIRUGÍA cambió de cama en

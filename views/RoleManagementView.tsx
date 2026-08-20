@@ -52,7 +52,6 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
       { code: 'crear_ticket',        label: 'Crear ticket' },
       { code: 'editar_ticket',       label: 'Editar ticket' },
       { code: 'cancelar_ticket',     label: 'Cancelar ticket' },
-      { code: 'asignar_cama',        label: 'Asignar cama destino' },
       { code: 'confirmar_limpieza',  label: 'Confirmar limpieza (Habitación Lista)' },
       { code: 'iniciar_traslado',    label: 'Iniciar traslado' },
       { code: 'confirmar_recepcion', label: 'Confirmar recepción' },
@@ -71,7 +70,7 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
     perms: [
       { code: 'cirugia_buscar',   label: 'Van a buscar (despachar camillero)' },
       { code: 'cirugia_operar',   label: 'En cirugía' },
-      { code: 'cirugia_devolver', label: 'En devolución (elegir destino)' },
+      { code: 'cirugia_devolver', label: 'En devolución' },
       { code: 'cirugia_cancelar', label: 'Cancelar operatoria' },
     ],
   },
@@ -134,7 +133,6 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
       { code: 'notif_cirugia_recibido',    label: 'Cirugía · Paciente recibido' },
       { code: 'notif_cirugia_finalizada',  label: 'Cirugía · Evaluación de tolerancia realizada (ya puede ir la comanda)' },
       { code: 'notif_cirugia_cama_progal', label: 'Cirugía · Cambio de cama detectado en PROGAL (fuera de la app)' },
-      { code: 'notif_cirugia_consolidar',  label: 'Cirugía · Consolidación pendiente (legacy)' },
     ],
   },
 ];
