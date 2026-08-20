@@ -36,7 +36,7 @@ const STALE_SUB_MS = 90 * 24 * 60 * 60 * 1000;
 const STATUS_LABELS: Record<string, string> = {
   'Habitacion Lista': 'Habitación Lista',   // IN_TRANSIT
   'En Traslado':      'Traslado en Curso',  // IN_TRANSPORT
-  'Por Consolidar':   'Recepción Confirmada', // WAITING_CONSOLIDATION → RECEPTION_CONFIRMED
+  'Por Consolidar':   'Paciente en habitación', // WAITING_CONSOLIDATION → RECEPTION_CONFIRMED
   'Consolidado':      'Traslado Finalizado', // COMPLETED
   'Cancelado':        'Traslado Cancelado',  // REJECTED
   // 'Esperando Habitacion' (WAITING_ROOM) no tiene label → sin push.

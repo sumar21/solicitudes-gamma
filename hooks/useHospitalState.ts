@@ -568,7 +568,7 @@ function statusChangeLabel(_from: string, to: string): { title: string } | null 
   switch (to) {
     case TicketStatus.IN_TRANSIT:             return { title: 'Habitacion Lista' };
     case TicketStatus.IN_TRANSPORT:           return { title: 'Traslado en Curso' };
-    case TicketStatus.WAITING_CONSOLIDATION:  return { title: 'Recepcion Confirmada' };
+    case TicketStatus.WAITING_CONSOLIDATION:  return { title: 'Paciente en habitación' };
     case TicketStatus.COMPLETED:              return { title: 'Traslado Consolidado' };
     case TicketStatus.REJECTED:               return { title: 'Traslado Cancelado' };
     default: return null;
@@ -2905,7 +2905,7 @@ export const useHospitalState = () => {
       const now     = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       const updates = { status: TicketStatus.WAITING_CONSOLIDATION, receptionConfirmedAt: now, destinationBedStatus: BedStatus.OCCUPIED, intervenedByHostess: 'SI' } as const;
       setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
-      addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Recepción Confirmada',
+      addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Paciente en habitación',
         message: `${ticket.patientName} ha sido recibido en ${ticket.destination}. Pendiente consolidar en PROGAL.`,
         ticketId: ticket.id, sede: ticket.sede,
         originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
