@@ -774,7 +774,7 @@ const CirugiaBedBlock: React.FC<{
               if (r.ok) onDone(); else setError(r.error ?? 'No se pudo confirmar.');
             }}
             className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-yellow-500 hover:bg-yellow-600 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm disabled:opacity-50">
-            <ArrowRight className="w-4 h-4" /> {busy ? 'Registrando…' : 'Se lo llevó el camillero'}
+            <ArrowRight className="w-4 h-4" /> {busy ? 'Registrando…' : 'En traslado a cirugía'}
           </button>
         )}
         {puedoRecibir && onCirugiaRecibida && (
@@ -798,7 +798,7 @@ const CirugiaBedBlock: React.FC<{
               if (r.ok) onDone(); else setError(r.error ?? 'No se pudo confirmar.');
             }}
             className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm disabled:opacity-50">
-            <CheckCircle2 className="w-4 h-4" /> {busy ? 'Confirmando…' : 'Evaluación de tolerancia'}
+            <CheckCircle2 className="w-4 h-4" /> {busy ? 'Confirmando…' : 'Iniciar dieta'}
           </button>
         )}
       </div>

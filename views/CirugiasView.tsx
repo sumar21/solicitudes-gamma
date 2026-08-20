@@ -265,7 +265,7 @@ export const CirugiasView: React.FC<Props> = ({
         return can(currentUser, 'cirugia_buscar') ? (
           <Button size="sm" disabled={p} onClick={() => withPending(c.id, () => onVanABuscar(c.id))}
             className="h-8 text-[10px] uppercase font-bold tracking-tight bg-orange-500 hover:bg-orange-600 text-white">
-            <ArrowRight className="w-3.5 h-3.5 mr-1.5" /> Voy a buscar
+            <ArrowRight className="w-3.5 h-3.5 mr-1.5" /> Búsqueda para cirugía
           </Button>
         ) : null;
       case 'VAN_A_BUSCAR':
@@ -274,7 +274,7 @@ export const CirugiasView: React.FC<Props> = ({
         return can(currentUser, 'cirugia_entregar') ? (
           <Button size="sm" disabled={p} onClick={() => withPending(c.id, () => onEnTraslado(c.id))}
             className="h-8 text-[10px] uppercase font-bold tracking-tight bg-yellow-500 hover:bg-yellow-600 text-white">
-            <ArrowRight className="w-3.5 h-3.5 mr-1.5" /> Se lo llevó el camillero
+            <ArrowRight className="w-3.5 h-3.5 mr-1.5" /> En traslado a cirugía
           </Button>
         ) : null;
       case 'EN_TRASLADO':
@@ -290,24 +290,18 @@ export const CirugiasView: React.FC<Props> = ({
         return can(currentUser, 'cirugia_devolver') ? (
           <Button size="sm" disabled={p} onClick={() => withPending(c.id, () => onEnDevolucion(c.id))}
             className="h-8 text-[10px] uppercase font-bold tracking-tight bg-violet-600 hover:bg-violet-700 text-white">
-            <BedDouble className="w-3.5 h-3.5 mr-1.5" /> En devolución
+            <BedDouble className="w-3.5 h-3.5 mr-1.5" /> Regreso de cirugía
           </Button>
         ) : null;
-      case 'EN_DEVOLUCION':
-        // La recepción la confirma ENFERMERÍA del piso destino (desde el Mapa de Camas). También
-        // acá para un rol que gestione todo.
-        return can(currentUser, 'cirugia_recibir') ? (
-          <Button size="sm" disabled={p} onClick={() => withPending(c.id, () => onRecibida(c.id))}
-            className="h-8 text-[10px] uppercase font-bold tracking-tight bg-emerald-600 hover:bg-emerald-700 text-white">
-            <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> Recibida
-          </Button>
-        ) : null;
+      // 'EN_DEVOLUCION' (Regreso de cirugía): la recepción NO se muestra en Operativa. La hace SOLO
+      // Enfermería del piso desde el Mapa de Camas (tarjeta de la cama). Por eso acá no hay botón y
+      // cae al default (null).
       case 'RECIBIDA':
-        // Evaluación de tolerancia: la hace quien recibió; CIERRA el ticket. Nuevo permiso.
+        // Iniciar dieta: la hace quien recibió; CIERRA el ticket y avisa a Catering.
         return can(currentUser, 'cirugia_tolerancia') && onTolerancia ? (
           <Button size="sm" disabled={p} onClick={() => withPending(c.id, () => onTolerancia(c.id))}
             className="h-8 text-[10px] uppercase font-bold tracking-tight bg-green-600 hover:bg-green-700 text-white">
-            <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> Evaluación de tolerancia
+            <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> Iniciar dieta
           </Button>
         ) : null;
       default:

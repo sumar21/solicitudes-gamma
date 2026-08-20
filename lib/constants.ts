@@ -9,24 +9,24 @@ import { Area, Bed, BedStatus, CirugiaEstado, Role, SedeType, Ticket, TicketStat
 // Las clases van como literales para que el JIT de Tailwind las incluya en el build.
 export const CIRUGIA_ESTADO_LABEL: Record<CirugiaEstado, string> = {
   LISTO_PARA_CIRUGIA: 'Listo para cirugía',
-  VAN_A_BUSCAR:       'En camino',
-  EN_TRASLADO:        'En traslado a quirófano',
+  VAN_A_BUSCAR:       'Búsqueda para cirugía',
+  EN_TRASLADO:        'En traslado a cirugía',
   EN_CIRUGIA:         'En cirugía',
-  EN_DEVOLUCION:      'Volviendo',
+  EN_DEVOLUCION:      'Regreso de cirugía',
   RECIBIDA:           'Recibida',
-  TOLERANCIA_EVALUADA: 'Tolerancia evaluada',
+  TOLERANCIA_EVALUADA: 'Iniciar dieta',
   CANCELADO:          'Cancelada',
 };
 
 // Label corto para la pill de la celda del mapa (con prefijo "Cx").
 export const CIRUGIA_ESTADO_SHORT: Record<CirugiaEstado, string> = {
   LISTO_PARA_CIRUGIA: 'Listo',
-  VAN_A_BUSCAR:       'En camino',
+  VAN_A_BUSCAR:       'Búsqueda',
   EN_TRASLADO:        'En traslado',
   EN_CIRUGIA:         'En cirugía',
-  EN_DEVOLUCION:      'Volviendo',
+  EN_DEVOLUCION:      'Regreso',
   RECIBIDA:           'Recibida',
-  TOLERANCIA_EVALUADA: 'Tolerancia',
+  TOLERANCIA_EVALUADA: 'Dieta',
   CANCELADO:          'Cancelada',
 };
 

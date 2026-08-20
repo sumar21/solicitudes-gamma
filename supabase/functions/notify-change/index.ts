@@ -57,12 +57,12 @@ const TABLE_CONFIG: Record<string, { type: string; permission: string; title: st
 // finalizar, etc.). type = valor guardado en notificaciones.type (mapea al permiso en lib/permissions).
 const CX_STEP_CONFIG: Record<string, { type: string; permission: string; title: string }> = {
   LISTO_PARA_CIRUGIA:  { type: 'CX_LISTO_PARA_CIRUGIA',  permission: 'notif_cirugia_lista',      title: 'Listo para cirugía' },
-  VAN_A_BUSCAR:        { type: 'CX_VAN_A_BUSCAR',        permission: 'notif_cirugia_camillero',  title: 'Camillero va a buscar' },
-  EN_TRASLADO:         { type: 'CX_EN_TRASLADO',         permission: 'notif_cirugia_retirado',   title: 'Paciente retirado a cirugía' },
+  VAN_A_BUSCAR:        { type: 'CX_VAN_A_BUSCAR',        permission: 'notif_cirugia_camillero',  title: 'Búsqueda para cirugía' },
+  EN_TRASLADO:         { type: 'CX_EN_TRASLADO',         permission: 'notif_cirugia_retirado',   title: 'En traslado a cirugía' },
   EN_CIRUGIA:          { type: 'CX_EN_CIRUGIA',          permission: 'notif_cirugia_en_cirugia', title: 'Paciente en cirugía' },
-  EN_DEVOLUCION:       { type: 'CX_EN_DEVOLUCION',       permission: 'notif_cirugia_volviendo',  title: 'Paciente volviendo de cirugía' },
+  EN_DEVOLUCION:       { type: 'CX_EN_DEVOLUCION',       permission: 'notif_cirugia_volviendo',  title: 'Regreso de cirugía' },
   RECIBIDA:            { type: 'CX_RECIBIDA',            permission: 'notif_cirugia_recibido',   title: 'Paciente recibido de cirugía' },
-  TOLERANCIA_EVALUADA: { type: 'CX_TOLERANCIA_EVALUADA', permission: 'notif_cirugia_finalizada', title: 'Evaluación de tolerancia realizada' },
+  TOLERANCIA_EVALUADA: { type: 'CX_TOLERANCIA_EVALUADA', permission: 'notif_cirugia_finalizada', title: 'Iniciar dieta' },
 };
 
 // DJB2 — para el tag del SW (colapsa el mismo evento lógico en una burbuja).
