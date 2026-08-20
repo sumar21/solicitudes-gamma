@@ -396,12 +396,11 @@ export const PERMISSIONS = [
   // SI podés hacerlo. Un rol con todos los cirugia_* gestiona el circuito entero desde Operativa;
   // la enfermera hace su parte (listo/entregar/recibir) desde el mapa.
   'cirugia_listo',      // marcar "listo para cirugía" (alta, desde la cama)
-  'cirugia_buscar',     // "van a buscar" (quirófano despacha al camillero)
-  'cirugia_entregar',   // "se lo llevó el camillero" (entrega de custodia)
+  'cirugia_buscar',     // "búsqueda para cirugía" (quirófano despacha al camillero)
+  'cirugia_entregar',   // "en traslado a cirugía" (entrega de custodia)
   'cirugia_operar',     // "en cirugía"
-  'cirugia_devolver',   // "en devolución" (el paciente vuelve; el destino lo detecta el cron)
-  'cirugia_recibir',    // "recibí al paciente" (recepción)
-  'cirugia_tolerancia', // "evalué la tolerancia" (cierra el ticket; por defecto lo hace quien recibió)
+  'cirugia_devolver',   // "regreso de cirugía" (el paciente vuelve; el destino lo detecta el cron)
+  'cirugia_tolerancia', // "iniciar dieta" (paso FINAL; cierra la operatoria y avisa a Catering)
   'cirugia_cancelar',   // cancelar la operatoria (transversal)
   'cirugia_marcar',     // Admisión: marcar "va a cirugía" un paciente NO quirúrgico (flag, desde el mapa)
   'abm_usuarios','abm_roles',
@@ -428,9 +427,8 @@ export const PERMISSIONS = [
   // LISTO reusa notif_cirugia_lista y VAN_A_BUSCAR reusa notif_cirugia_camillero (ya existían).
   'notif_cirugia_retirado',    // EN_TRASLADO   — camillero se llevó al paciente (cama libre)
   'notif_cirugia_en_cirugia',  // EN_CIRUGIA    — el paciente entró a quirófano
-  'notif_cirugia_volviendo',   // EN_DEVOLUCION — el paciente vuelve
-  'notif_cirugia_recibido',    // RECIBIDA      — enfermería recibió al paciente
-  'notif_cirugia_finalizada',  // TOLERANCIA_EVALUADA — prueba de tolerancia OK (cierra la operatoria)
+  'notif_cirugia_volviendo',   // EN_DEVOLUCION — el paciente vuelve (regreso de cirugía)
+  'notif_cirugia_finalizada',  // TOLERANCIA_EVALUADA — iniciar dieta (cierra la operatoria)
 ] as const;
 export type Permission = typeof PERMISSIONS[number];
 
@@ -556,7 +554,6 @@ export type CirugiaEstado =
   | 'EN_TRASLADO'
   | 'EN_CIRUGIA'
   | 'EN_DEVOLUCION'
-  | 'RECIBIDA'
   | 'TOLERANCIA_EVALUADA'
   | 'CANCELADO';
 

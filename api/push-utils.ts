@@ -157,7 +157,6 @@ const NOTIF_TYPE_TO_PERMISSION: Record<string, string> = {
   CX_EN_TRASLADO:         'notif_cirugia_retirado',
   CX_EN_CIRUGIA:          'notif_cirugia_en_cirugia',
   CX_EN_DEVOLUCION:       'notif_cirugia_volviendo',
-  CX_RECIBIDA:            'notif_cirugia_recibido',
   CX_TOLERANCIA_EVALUADA: 'notif_cirugia_finalizada',
 };
 

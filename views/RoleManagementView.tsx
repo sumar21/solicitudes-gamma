@@ -68,9 +68,9 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
     // Cirugía — acciones de QUIRÓFANO, se operan desde la solapa Operativa → Cirugías (la grilla).
     module: 'Operativa', label: 'Cirugía — Quirófano (solapa Operativa)',
     perms: [
-      { code: 'cirugia_buscar',   label: 'Van a buscar (despachar camillero)' },
+      { code: 'cirugia_buscar',   label: 'Búsqueda para cirugía (despachar camillero)' },
       { code: 'cirugia_operar',   label: 'En cirugía' },
-      { code: 'cirugia_devolver', label: 'En devolución' },
+      { code: 'cirugia_devolver', label: 'Regreso de cirugía' },
       { code: 'cirugia_cancelar', label: 'Cancelar operatoria' },
     ],
   },
@@ -93,9 +93,8 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
     perms: [
       { code: 'cirugia_marcar',   label: 'Marcar "va a cirugía" (Admisión, paciente no quirúrgico)' },
       { code: 'cirugia_listo',    label: 'Marcar "listo para cirugía"' },
-      { code: 'cirugia_entregar', label: 'Registrar "se lo llevó el camillero"' },
-      { code: 'cirugia_recibir',  label: 'Confirmar recepción del paciente' },
-      { code: 'cirugia_tolerancia', label: 'Confirmar evaluación de tolerancia (cierra el ticket)' },
+      { code: 'cirugia_entregar', label: 'Registrar "en traslado a cirugía"' },
+      { code: 'cirugia_tolerancia', label: 'Iniciar dieta (paso final, cierra la operatoria)' },
     ],
   },
   {
@@ -126,12 +125,11 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
       { code: 'notif_habitacion_limpia',   label: 'Habitación limpia (azafata la marcó desde el mapa)' },
       // Pasos de la operatoria, en orden del flujo (cada uno configurable a quién le llega):
       { code: 'notif_cirugia_lista',       label: 'Cirugía · Listo para cirugía' },
-      { code: 'notif_cirugia_camillero',   label: 'Cirugía · Camillero va a buscar al paciente' },
-      { code: 'notif_cirugia_retirado',    label: 'Cirugía · Paciente retirado (cama libre para limpiar)' },
+      { code: 'notif_cirugia_camillero',   label: 'Cirugía · Búsqueda para cirugía' },
+      { code: 'notif_cirugia_retirado',    label: 'Cirugía · En traslado a cirugía (cama libre)' },
       { code: 'notif_cirugia_en_cirugia',  label: 'Cirugía · Paciente en cirugía' },
-      { code: 'notif_cirugia_volviendo',   label: 'Cirugía · Paciente volviendo' },
-      { code: 'notif_cirugia_recibido',    label: 'Cirugía · Paciente recibido' },
-      { code: 'notif_cirugia_finalizada',  label: 'Cirugía · Evaluación de tolerancia realizada (ya puede ir la comanda)' },
+      { code: 'notif_cirugia_volviendo',   label: 'Cirugía · Regreso de cirugía' },
+      { code: 'notif_cirugia_finalizada',  label: 'Cirugía · Iniciar dieta (ya puede ir la comanda)' },
       { code: 'notif_cirugia_cama_progal', label: 'Cirugía · Cambio de cama detectado en PROGAL (fuera de la app)' },
     ],
   },

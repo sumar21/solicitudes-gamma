@@ -11,7 +11,7 @@
  * PATCH  /api/cirugia                                   → transición de estado (máquina guardada server-side)
  *
  * Máquina de estados propia (no reusa el pipeline de traslados). Estados VIVOS = todos menos los
- * terminales (RECIBIDA/CANCELADO). El índice único parcial cirugia_viva_uidx garantiza UNA operatoria
+ * terminales (TOLERANCIA_EVALUADA/CANCELADO). El índice único parcial cirugia_viva_uidx garantiza UNA operatoria
  * viva por (entorno, cama_origen). Cada escritura estampa version + last_actor_id.
  *
  * ⚠️ Push: NO se emite en esta fase (va en F6). Sin llamadas a push-utils todavía.

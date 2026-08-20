@@ -3,12 +3,12 @@
  * FUENTE: Supabase public.cirugia_marcas. Es un overlay/flag keyed por PACIENTE (no por cama): sigue
  * al paciente aunque un traslado normal lo mueva de cama antes de operarse. NO es una operatoria
  * (public.cirugia_traslados queda intacta) — sólo habilita el botón "Listo para cirugía" para camas
- * no quirúrgicas. Admisión prende el flag; se cierra solo cuando la cirugía llega a RECIBIDA.
+ * no quirúrgicas. Admisión prende el flag; se cierra solo cuando la cirugía cierra (Iniciar dieta).
  *
  * GET   /api/cirugia-marcas                     → marcas ACTIVAS del entorno → overlay del mapa
  * GET   /api/cirugia-marcas?paciente=<codigo>   → todas las marcas de ese paciente (journey/histórico)
  * POST  /api/cirugia-marcas                     → MARCAR (nace ACTIVA); idempotente por (entorno, paciente)
- * PATCH /api/cirugia-marcas                     → CERRAR (auto por RECIBIDA) / ANULAR (Admisión desmarca)
+ * PATCH /api/cirugia-marcas                     → CERRAR (auto al Iniciar dieta) / ANULAR (Admisión desmarca)
  *
  * Sin push en esta fase (paridad con api/cirugia.ts). Cada escritura estampa version.
  */

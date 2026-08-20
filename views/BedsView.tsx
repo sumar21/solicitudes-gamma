@@ -68,7 +68,6 @@ interface BedsViewProps {
   // mergeBeds (bed.cirugia). El gating fino por permiso cirugia_* llega en F5/go-live.
   onMarcarListo?: (bed: Bed) => Promise<{ ok: boolean; id?: string; error?: string }>;
   onCirugiaEnTraslado?: (id: string) => Promise<{ ok: boolean; error?: string }>;
-  onCirugiaRecibida?: (id: string) => Promise<{ ok: boolean; error?: string }>;
   onCirugiaTolerancia?: (id: string) => Promise<{ ok: boolean; error?: string }>;
   // Limpieza de rutina (camas ocupadas): iniciar / finalizar. Se pasan solo si el rol tiene el
   // permiso `limpieza_rutina` (App.tsx los gatea) → undefined = sin permiso = botón escondido.
@@ -711,10 +710,9 @@ const CirugiaBedBlock: React.FC<{
   bed: Bed;
   onMarcarListo?: (bed: Bed) => Promise<{ ok: boolean; id?: string; error?: string }>;
   onCirugiaEnTraslado?: (id: string) => Promise<{ ok: boolean; error?: string }>;
-  onCirugiaRecibida?: (id: string) => Promise<{ ok: boolean; error?: string }>;
   onCirugiaTolerancia?: (id: string) => Promise<{ ok: boolean; error?: string }>;
   onDone: () => void;
-}> = ({ bed, onMarcarListo, onCirugiaEnTraslado, onCirugiaRecibida, onCirugiaTolerancia, onDone }) => {
+}> = ({ bed, onMarcarListo, onCirugiaEnTraslado, onCirugiaTolerancia, onDone }) => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cx = bed.cirugia;
@@ -995,7 +993,7 @@ const AdmissionDateFilter: React.FC<{
   );
 };
 
-export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onFetchPatientTickets, onRefresh, onMarkClean, onUndoClean, onSaveMeal, onClearMeal, onSaveCompanion, onClearCompanion, onMarcarListo, onCirugiaEnTraslado, onCirugiaRecibida, onCirugiaTolerancia, onStartRoutineCleaning, onFinishRoutineCleaning, onMarcarVaCirugia, onDesmarcarVaCirugia }) => {
+export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onFetchPatientTickets, onRefresh, onMarkClean, onUndoClean, onSaveMeal, onClearMeal, onSaveCompanion, onClearCompanion, onMarcarListo, onCirugiaEnTraslado, onCirugiaTolerancia, onStartRoutineCleaning, onFinishRoutineCleaning, onMarcarVaCirugia, onDesmarcarVaCirugia }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
   // Turnos abiertos en el modal de la cama. Vive en el PADRE y no en cada box: si viviera adentro,
   // se perdería al cerrar/reabrir. Se resetea al cambiar de cama (el default se recalcula abajo).
@@ -3035,13 +3033,12 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                   })()}
 
                   {/* Cirugía (feature Cx): alta "Listo para cirugía" (Enfermería, cama ocupada) o
-                      pill + "Recibida" cuando el paciente vuelve. Ver CirugiaBedBlock. */}
-                  {(onMarcarListo || onCirugiaEnTraslado || onCirugiaRecibida) && (
+                      pill + "Iniciar dieta" cuando el paciente vuelve. Ver CirugiaBedBlock. */}
+                  {(onMarcarListo || onCirugiaEnTraslado || onCirugiaTolerancia) && (
                     <CirugiaBedBlock
                       bed={cirugiaBed ?? selectedBed}
                       onMarcarListo={onMarcarListo}
                       onCirugiaEnTraslado={onCirugiaEnTraslado}
-                      onCirugiaRecibida={onCirugiaRecibida}
                       onCirugiaTolerancia={onCirugiaTolerancia}
                       onDone={() => setSelectedBed(null)}
                     />

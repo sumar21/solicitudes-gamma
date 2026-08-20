@@ -32,7 +32,6 @@ interface Props {
   onEnTraslado: (id: string) => Promise<TxResult>;
   onEnCirugia: (id: string) => Promise<TxResult>;
   onEnDevolucion: (id: string) => Promise<TxResult>;
-  onRecibida: (id: string) => Promise<TxResult>;
   onTolerancia?: (id: string) => Promise<TxResult>;
   onCancelar: (id: string, motivo: string) => Promise<TxResult>;
   onRefresh?: () => void | Promise<void>;
@@ -53,7 +52,7 @@ const Pill: React.FC<{ estado: CirugiaEstado; short?: boolean; hist?: boolean }>
 // Orden del flujo para ordenar la lista ÚNICA (la columna Estado reemplaza a las secciones
 // separadas, para dar concordancia con Traslados/Limpiezas/Comandas).
 const ORDEN_ESTADO: Record<string, number> = {
-  LISTO_PARA_CIRUGIA: 0, VAN_A_BUSCAR: 1, EN_TRASLADO: 2, EN_CIRUGIA: 3, EN_DEVOLUCION: 4, RECIBIDA: 5,
+  LISTO_PARA_CIRUGIA: 0, VAN_A_BUSCAR: 1, EN_TRASLADO: 2, EN_CIRUGIA: 3, EN_DEVOLUCION: 4,
 };
 
 // Fecha+hora absoluta (para el histórico: inicio/cierre de la operatoria).
@@ -116,7 +115,7 @@ const DateRangeTrigger = React.forwardRef<
 DateRangeTrigger.displayName = 'DateRangeTrigger';
 
 export const CirugiasView: React.FC<Props> = ({
-  cirugias, beds, currentUser, onVanABuscar, onEnTraslado, onEnCirugia, onEnDevolucion, onRecibida, onTolerancia, onCancelar, onRefresh,
+  cirugias, beds, currentUser, onVanABuscar, onEnTraslado, onEnCirugia, onEnDevolucion, onTolerancia, onCancelar, onRefresh,
 }) => {
   const [search, setSearch] = useState('');
   const [pending, setPending] = useState<Set<string>>(new Set());
@@ -362,7 +361,7 @@ export const CirugiasView: React.FC<Props> = ({
           {/* Acciones (pinneadas a la derecha en desktop) */}
           <div className="flex items-center gap-1.5 flex-wrap md:justify-end md:shrink-0">
             {renderCirugiaActions(c)}
-            {c.estado !== 'RECIBIDA' && can(currentUser, 'cirugia_cancelar') && (
+            {can(currentUser, 'cirugia_cancelar') && (
               <Button size="sm" variant="outline" disabled={p}
                 onClick={() => setCancelando({ id: c.id, motivo: '' })}
                 className="h-8 text-[10px] uppercase font-bold tracking-tight border-red-200 text-red-600 hover:bg-red-50">
@@ -427,7 +426,7 @@ export const CirugiasView: React.FC<Props> = ({
           {rowError[c.id] && <p className="text-[10px] font-bold text-red-600 mb-1">{rowError[c.id]}</p>}
           <div className="flex items-center gap-1.5 flex-wrap">
             {renderCirugiaActions(c)}
-            {c.estado !== 'RECIBIDA' && can(currentUser, 'cirugia_cancelar') && (
+            {can(currentUser, 'cirugia_cancelar') && (
               <Button size="sm" variant="outline" disabled={p}
                 onClick={() => setCancelando({ id: c.id, motivo: '' })}
                 className="h-8 text-[10px] uppercase font-bold tracking-tight border-red-200 text-red-600 hover:bg-red-50">

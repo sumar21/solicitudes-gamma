@@ -13,7 +13,6 @@ export const CIRUGIA_ESTADO_LABEL: Record<CirugiaEstado, string> = {
   EN_TRASLADO:        'En traslado a cirugía',
   EN_CIRUGIA:         'En cirugía',
   EN_DEVOLUCION:      'Regreso de cirugía',
-  RECIBIDA:           'Recibida',
   TOLERANCIA_EVALUADA: 'Iniciar dieta',
   CANCELADO:          'Cancelada',
 };
@@ -25,7 +24,6 @@ export const CIRUGIA_ESTADO_SHORT: Record<CirugiaEstado, string> = {
   EN_TRASLADO:        'En traslado',
   EN_CIRUGIA:         'En cirugía',
   EN_DEVOLUCION:      'Regreso',
-  RECIBIDA:           'Recibida',
   TOLERANCIA_EVALUADA: 'Dieta',
   CANCELADO:          'Cancelada',
 };
@@ -37,7 +35,6 @@ export const CIRUGIA_PILL_CLASS: Record<CirugiaEstado, string> = {
   EN_TRASLADO:        'bg-yellow-100 text-yellow-800 border-yellow-200',
   EN_CIRUGIA:         'bg-cyan-100 text-cyan-700 border-cyan-200',
   EN_DEVOLUCION:      'bg-violet-100 text-violet-700 border-violet-200',
-  RECIBIDA:           'bg-emerald-100 text-emerald-700 border-emerald-200',
   TOLERANCIA_EVALUADA: 'bg-green-100 text-green-800 border-green-300',
   CANCELADO:          'bg-red-100 text-red-700 border-red-200',
 };
@@ -49,7 +46,6 @@ export const CIRUGIA_DOT_CLASS: Record<CirugiaEstado, string> = {
   EN_TRASLADO:        'bg-yellow-500',
   EN_CIRUGIA:         'bg-cyan-500',
   EN_DEVOLUCION:      'bg-violet-500',
-  RECIBIDA:           'bg-emerald-500',
   TOLERANCIA_EVALUADA: 'bg-green-600',
   CANCELADO:          'bg-red-500',
 };

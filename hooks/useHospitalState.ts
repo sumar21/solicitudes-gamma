@@ -1731,8 +1731,7 @@ export const useHospitalState = () => {
   const cirugiaEnTraslado   = useCallback((id: string) => transicionarCirugia(id, 'EN_TRASLADO'), [transicionarCirugia]);        // Enfermería (entrega al camillero)
   const cirugiaEnCirugia    = useCallback((id: string) => transicionarCirugia(id, 'EN_CIRUGIA'), [transicionarCirugia]);          // Cirugía
   const cirugiaEnDevolucion = useCallback((id: string) => transicionarCirugia(id, 'EN_DEVOLUCION'), [transicionarCirugia]);       // Cirugía (el paciente vuelve; sin elegir destino)
-  const cirugiaRecibida     = useCallback((id: string) => transicionarCirugia(id, 'RECIBIDA'), [transicionarCirugia]);            // Enfermería destino
-  const cirugiaTolerancia   = useCallback((id: string) => transicionarCirugia(id, 'TOLERANCIA_EVALUADA'), [transicionarCirugia]); // Quien recibió — evalúa tolerancia y CIERRA
+  const cirugiaTolerancia   = useCallback((id: string) => transicionarCirugia(id, 'TOLERANCIA_EVALUADA'), [transicionarCirugia]); // Enfermería del piso — inicia dieta y CIERRA (paso final)
   const cancelarCirugia     = useCallback((id: string, motivoCancelacion: string) => transicionarCirugia(id, 'CANCELADO', { motivoCancelacion }), [transicionarCirugia]);
 
   // ── On-demand bed enrichment (single bed) ─────────────────────────────────
@@ -3583,7 +3582,7 @@ export const useHospitalState = () => {
       startRoutineCleaning, finishRoutineCleaning, fetchRoutineCleanings,
       saveMealLoad, clearMealLoad, saveCompanionLoad, clearCompanionLoad, setMealStatus,
       fetchCirugias, marcarListoParaCirugia, transicionarCirugia,
-      cirugiaVanABuscar, cirugiaEnTraslado, cirugiaEnCirugia, cirugiaEnDevolucion, cirugiaRecibida, cirugiaTolerancia, cancelarCirugia,
+      cirugiaVanABuscar, cirugiaEnTraslado, cirugiaEnCirugia, cirugiaEnDevolucion, cirugiaTolerancia, cancelarCirugia,
       marcarVaCirugia, desmarcarVaCirugia, fetchCirugiaMarcas,
       setOperativaSubview,
       handleUpdateUserAreas, refreshSessionRole, syncSessionRole, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleOpenNotifications, handleDismissToast,

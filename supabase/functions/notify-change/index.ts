@@ -61,7 +61,6 @@ const CX_STEP_CONFIG: Record<string, { type: string; permission: string; title: 
   EN_TRASLADO:         { type: 'CX_EN_TRASLADO',         permission: 'notif_cirugia_retirado',   title: 'En traslado a cirugía' },
   EN_CIRUGIA:          { type: 'CX_EN_CIRUGIA',          permission: 'notif_cirugia_en_cirugia', title: 'Paciente en cirugía' },
   EN_DEVOLUCION:       { type: 'CX_EN_DEVOLUCION',       permission: 'notif_cirugia_volviendo',  title: 'Regreso de cirugía' },
-  RECIBIDA:            { type: 'CX_RECIBIDA',            permission: 'notif_cirugia_recibido',   title: 'Paciente recibido de cirugía' },
   TOLERANCIA_EVALUADA: { type: 'CX_TOLERANCIA_EVALUADA', permission: 'notif_cirugia_finalizada', title: 'Iniciar dieta' },
 };
 
