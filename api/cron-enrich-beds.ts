@@ -466,34 +466,16 @@ export default async function handler(req: any, res: any) {
             }
           }
 
-          // Persistir PRIMERO. Si falla, no notificamos (se reintenta en la próxima
-          // corrida y se notifica una sola vez cuando SP persista el nuevo baseline).
-          const persisted = await upsertEnrich({
-            existing,
-            eventKey,
-            patientCode: b.patientCode,
-            payload,
-          });
-          if (!persisted) {
-            stats.skippedPersistFail++;
-            console.warn(`[cron-enrich] persist FAIL ${eventKey} patient=${b.patientName} — push pospuesto`);
-            continue;
-          }
-          stats.upserted++;
-
-          // Fase 2 — dual-write a Supabase (enrich_camas). SP sigue siendo la fuente de verdad (la
-          // lectura no cambió); esto puebla la tabla para validar y, más adelante, hacer el read-flip.
-          // Best-effort: un fallo NO corta el cron. El UNIQUE(entorno,event_key) lo hace inmune a dupes.
-          if (WRITE_ENRICH_SUPABASE) {
-            if (await upsertEnrichSupabase(ENTORNO, eventKey, b.patientCode, payload)) supaUpserted++;
-          }
-
           // ── Detección de cambio de CAMA en PROGAL para pacientes EN CIRUGÍA (dirección PROGAL→app) ──
-          // El snapshot ahora recuerda la cama; si cambió respecto al ciclo anterior y ese paciente tiene
-          // una operatoria abierta, es un movimiento que Admisión hizo en PROGAL sin pasar por la app.
+          // El snapshot recuerda la cama; si cambió respecto al ciclo anterior y ese paciente tiene una
+          // operatoria abierta, es un movimiento que Admisión hizo en PROGAL sin pasar por la app.
           // Insertamos en cirugia_cambios (webhook → notify-change → push al equipo de cirugía) y
           // alimentamos el cartel de la grilla (cama_destino). Bootstrap silencioso: si el snapshot viejo
           // no tenía cama guardada (oldCama undefined), sólo se aprende ahora, no se notifica.
+          // ORDEN: va ANTES de persistir el snapshot. Si el insert falla, NO avanzamos payload.cama (lo
+          // dejamos en el valor viejo) para re-detectar y reintentar el próximo ciclo — antes el snapshot
+          // avanzaba primero y un insert fallido perdía la noti para siempre. La idempotencia (una noti
+          // por move real) la da el baseline: cuando avanza, el próximo ciclo ve oldCama == newCama.
           const newCama = b.bedLabel || '';
           // Sólo comparamos si el snapshot viejo ya tenía un label bed-level (contiene ' - '). Si tenía
           // el formato viejo room-level (sin ' - ') o nada, es bootstrap silencioso (aprende, no notifica)
@@ -517,14 +499,39 @@ export default async function handler(req: any, res: any) {
                 });
                 // Alimenta el cartel de la grilla (cama_destino ≠ cama_origen) y deja registrada la cama
                 // nueva. Guardamos el label FULL (mismo formato que cama_origen → el grid lo compacta con
-                // formatBedName). La idempotencia real la da el snapshot: próximo ciclo oldCama == newCama.
+                // formatBedName).
                 await getSupabaseAdmin().from('cirugia_traslados')
                   .update({ cama_destino: newCama })
                   .eq('id', cx.id).eq('entorno', ENTORNO);
               } catch (e: any) {
                 console.error(`[cron-enrich] cirugia_cambios insert falló ${eventKey}:`, e?.message ?? e);
+                // Insert falló → NO avanzar el baseline de cama: el próximo ciclo re-detecta y reintenta
+                // (mejor una noti repetida en el caso rarísimo de fallo simultáneo que perderla para siempre).
+                payload.cama = existing.oldCama;
               }
             }
+          }
+
+          // Persistir el snapshot. Si falla, no notificamos (se reintenta en la próxima corrida y se
+          // notifica una sola vez cuando SP persista el nuevo baseline).
+          const persisted = await upsertEnrich({
+            existing,
+            eventKey,
+            patientCode: b.patientCode,
+            payload,
+          });
+          if (!persisted) {
+            stats.skippedPersistFail++;
+            console.warn(`[cron-enrich] persist FAIL ${eventKey} patient=${b.patientName} — push pospuesto`);
+            continue;
+          }
+          stats.upserted++;
+
+          // Fase 2 — dual-write a Supabase (enrich_camas). SP sigue siendo la fuente de verdad (la
+          // lectura no cambió); esto puebla la tabla para validar y, más adelante, hacer el read-flip.
+          // Best-effort: un fallo NO corta el cron. El UNIQUE(entorno,event_key) lo hace inmune a dupes.
+          if (WRITE_ENRICH_SUPABASE) {
+            if (await upsertEnrichSupabase(ENTORNO, eventKey, b.patientCode, payload)) supaUpserted++;
           }
 
           // Ubicación legible ("Habitación 413 (Piso 4)") para el body del push FALLBACK (push-utils).
