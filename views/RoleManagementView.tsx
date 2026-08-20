@@ -132,7 +132,7 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
       { code: 'notif_cirugia_en_cirugia',  label: 'Cirugía · Paciente en cirugía' },
       { code: 'notif_cirugia_volviendo',   label: 'Cirugía · Paciente volviendo' },
       { code: 'notif_cirugia_recibido',    label: 'Cirugía · Paciente recibido' },
-      { code: 'notif_cirugia_finalizada',  label: 'Cirugía · Finalizada (tolerancia OK — ya puede ir la comanda)' },
+      { code: 'notif_cirugia_finalizada',  label: 'Cirugía · Evaluación de tolerancia realizada (ya puede ir la comanda)' },
       { code: 'notif_cirugia_cama_progal', label: 'Cirugía · Cambio de cama detectado en PROGAL (fuera de la app)' },
       { code: 'notif_cirugia_consolidar',  label: 'Cirugía · Consolidación pendiente (legacy)' },
     ],
