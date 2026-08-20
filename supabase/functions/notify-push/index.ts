@@ -107,7 +107,9 @@ Deno.serve(async (req: Request) => {
   let title = '', excludeUserId: string | null = null;
   if (type === 'INSERT') {
     notifType = 'NEW_TICKET';
-    title = 'Nueva Solicitud de Traslado';
+    // "Ingreso" si el paciente entra desde Sala de Espera (workflow ITR_TO_FLOOR); "Traslado" para el
+    // resto (interno / Ingreso a ITR). Pedido de Julieta: identificar el ingreso en la notificación.
+    title = record.workflow === 'ITR_TO_FLOOR' ? 'Nueva Solicitud de Ingreso' : 'Nueva Solicitud de Traslado';
     excludeUserId = record.created_by_id != null ? String(record.created_by_id) : null;
   } else if (type === 'UPDATE') {
     if (old_record?.status === record.status) return new Response('no status change', { status: 200 });

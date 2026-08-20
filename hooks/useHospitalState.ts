@@ -551,6 +551,11 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
 const POLL_BEDS_MS        = 60_000;  // beds: poll every 60s (tickets ahora van por Realtime, ver efecto de polling)
 
 /** Human-readable labels for status transitions (for poll-based notifications) */
+// Título de la notif de traslado NUEVO: "Ingreso" si el paciente entra desde Sala de Espera
+// (workflow ITR_TO_FLOOR), "Traslado" para el resto (interno / Ingreso a ITR). Pedido de Julieta 20/08.
+const newTicketTitle = (workflow?: string | null): string =>
+  workflow === 'ITR_TO_FLOOR' ? 'Nueva Solicitud de Ingreso' : 'Nueva Solicitud de Traslado';
+
 function statusChangeLabel(_from: string, to: string): { title: string } | null {
   // Guard anti-retroceso: un poll stale (read-after-write de SP) puede reportar una
   // transición HACIA ATRÁS en el workflow (ej. COMPLETED→WAITING_CONSOLIDATION). Eso no
@@ -2126,7 +2131,7 @@ export const useHospitalState = () => {
           id: `NOTIF-POLL-${t.id}`, isRead: false,
           timestamp: timestampOfTicketEvent(t),
           type: NotificationType.NEW_TICKET,
-          title: 'Nueva Solicitud de Traslado',
+          title: newTicketTitle(t.workflow),
           message: `${t.patientName}: ${t.origin} → ${t.destination ?? '?'}`,
           ticketId: t.id, sede: t.sede,
           originArea, destinationArea: destArea,
@@ -2179,7 +2184,7 @@ export const useHospitalState = () => {
               id: `NOTIF-POLL-${t.id}-NEW-${t.destination}`, isRead: false,
               timestamp: timestampOfTicketEvent(t),
               type: NotificationType.NEW_TICKET,
-              title: 'Nueva Solicitud de Traslado',
+              title: newTicketTitle(t.workflow),
               message: `${t.patientName}: ${t.origin} → ${t.destination ?? '?'}`,
               ticketId: t.id, sede: t.sede,
               originArea, destinationArea: destArea,
@@ -3116,7 +3121,7 @@ export const useHospitalState = () => {
     }
     if (destChanged && newDestArea && newDestArea !== oldDestArea) {
       addNotification({
-        type: NotificationType.NEW_TICKET, title: 'Nueva Solicitud de Traslado',
+        type: NotificationType.NEW_TICKET, title: newTicketTitle(ticket.workflow),
         message: `${ticket.patientName}: ${ticket.origin} → ${payload.destination}`,
         ticketId: ticket.id, sede: ticket.sede,
         originArea, destinationArea: newDestArea,
