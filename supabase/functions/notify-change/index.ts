@@ -128,13 +128,15 @@ Deno.serve(async (req: Request) => {
   const rowId = String(record.id ?? '');
   if (!rowId) return new Response('no row id', { status: 200 });
 
-  // ── Idempotencia ante reintentos por timeout del webhook: una fila = un despacho ──
+  // ── Idempotencia ante reintentos del webhook: una fila = un despacho ──
+  // La marca se ESCRIBE recién al FINAL (tras enviar). Acá sólo CHEQUEAMOS si ya se despachó por
+  // completo: si un intento anterior murió por timeout a mitad del envío, no dejó marca → este
+  // reintento re-envía. Antes se marcaba ANTES de enviar, y un timeout perdía las notis que faltaban
+  // (el reintento veía la marca y respondía "already dispatched" sin reenviar).
   const idemKey = `${table}:${rowId}`;
-  const { error: idemErr } = await supa.from('push_dispatch_log').insert({ idempotency_key: idemKey });
-  if (idemErr) {
-    if ((idemErr as any).code === '23505') return new Response('already dispatched', { status: 200 });
-    console.error('[notify-change] push_dispatch_log:', idemErr.message);
-  }
+  const { data: alreadyDispatched } = await supa.from('push_dispatch_log')
+    .select('idempotency_key').eq('idempotency_key', idemKey).maybeSingle();
+  if (alreadyDispatched) return new Response('already dispatched', { status: 200 });
 
   if (!VAPID_PUBLIC || !VAPID_PRIVATE) { console.warn('[notify-change] VAPID no configurado'); return new Response('no vapid', { status: 200 }); }
 
@@ -256,6 +258,11 @@ Deno.serve(async (req: Request) => {
     });
     if (error) console.error('[notify-change] notificaciones insert:', error.message);
   }));
+
+  // Recién ahora (envío + campanita completos) marcamos el despacho: si un intento previo murió a
+  // mitad de camino no dejó marca y este re-envió; ahora que terminó, un futuro reintento se saltea.
+  const { error: idemErr } = await supa.from('push_dispatch_log').insert({ idempotency_key: idemKey });
+  if (idemErr && (idemErr as any).code !== '23505') console.error('[notify-change] push_dispatch_log:', idemErr.message);
 
   return new Response(JSON.stringify({ ok: true, table, type: cfg.type, sent: toSend.length, notified: byUser.size }), {
     status: 200, headers: { 'Content-Type': 'application/json' },
