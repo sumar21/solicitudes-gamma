@@ -1589,10 +1589,12 @@ export const useHospitalState = () => {
     } catch { /* keep current */ }
   }, [authFetch]);
 
-  // Alta = LISTO_PARA_CIRUGIA (la marca Enfermería desde la cama del Mapa). POST idempotente:
-  // idUnivoco estable por cama+paciente → un doble-click no duplica (el server además tiene el
-  // índice único de "una viva por cama_origen"). Optimista con id provisional que se reemplaza
-  // por el uuid real al responder.
+  // Alta = LISTO_PARA_CIRUGIA (la marca Enfermería desde la cama del Mapa). El idUnivoco lleva un
+  // timestamp por alta (ddmmyyyyhhmmss, igual que el ID de traslado) para que CADA ronda sea única:
+  // una cirugía nueva NO choca contra una vieja YA CERRADA en la misma cama (antes eso devolvía la
+  // fila terminal y la operatoria nueva se perdía en silencio). El doble-click igual no duplica: el
+  // server tiene el índice único de "una viva por cama_origen". Optimista con id provisional que se
+  // reemplaza por el uuid real al responder.
   const marcarListoParaCirugia = useCallback(async (bed: Bed): Promise<{ ok: boolean; id?: string; error?: string }> => {
     if (!bed?.label) return { ok: false };
     const u = currentUser;
@@ -1601,9 +1603,12 @@ export const useHospitalState = () => {
     const pacienteNombre = bed.patientName || bed.mealsPatientName || undefined;
     const area           = bed.area || undefined;
     const tipo           = bed.admissionType || undefined;   // "Tipo" de la solapa Internación (Quirúrgica/Trasplante/Hemodinamia/…)
-    const idUnivoco      = `cx:${camaOrigen}:${pacienteCodigo ?? pacienteNombre ?? 'sp'}`;
+    const stampDate      = new Date();
+    const pad2           = (n: number) => String(n).padStart(2, '0');
+    const stamp          = `${pad2(stampDate.getDate())}${pad2(stampDate.getMonth() + 1)}${stampDate.getFullYear()}${pad2(stampDate.getHours())}${pad2(stampDate.getMinutes())}${pad2(stampDate.getSeconds())}`;
+    const idUnivoco      = `cx:${camaOrigen}:${pacienteCodigo ?? pacienteNombre ?? 'sp'}:${stamp}`;
     const tempId         = `temp-${idUnivoco}`;
-    const now            = new Date().toISOString();
+    const now            = stampDate.toISOString();
     cirugiasWritingRef.current += 1;
     setCirugias(prev => {
       // No pisar si ya hay una operatoria viva para esa cama (idempotencia del lado cliente).
