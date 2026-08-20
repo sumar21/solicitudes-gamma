@@ -424,6 +424,15 @@ export const PERMISSIONS = [
   // Detección PROGAL→app: el enrich (cron) descubre que un paciente EN CIRUGÍA cambió de cama en
   // PROGAL fuera de la app → aviso al equipo de cirugía (camillero + enfermería de la grilla).
   'notif_cirugia_cama_progal',
+  // Notificaciones POR PASO de la operatoria (Fase B): un webhook sobre cirugia_eventos dispara
+  // notify-change por cada transición; cada paso tiene su permiso configurable → se asigna a los
+  // roles que le sirva (limpieza al retirar, admisión al entrar, catering al finalizar, etc.).
+  // LISTO reusa notif_cirugia_lista y VAN_A_BUSCAR reusa notif_cirugia_camillero (ya existían).
+  'notif_cirugia_retirado',    // EN_TRASLADO   — camillero se llevó al paciente (cama libre)
+  'notif_cirugia_en_cirugia',  // EN_CIRUGIA    — el paciente entró a quirófano
+  'notif_cirugia_volviendo',   // EN_DEVOLUCION — el paciente vuelve
+  'notif_cirugia_recibido',    // RECIBIDA      — enfermería recibió al paciente
+  'notif_cirugia_finalizada',  // TOLERANCIA_EVALUADA — prueba de tolerancia OK (cierra la operatoria)
 ] as const;
 export type Permission = typeof PERMISSIONS[number];
 

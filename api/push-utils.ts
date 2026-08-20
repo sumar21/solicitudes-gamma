@@ -152,6 +152,13 @@ const NOTIF_TYPE_TO_PERMISSION: Record<string, string> = {
   FASTING_CHANGE:       'notif_fasting_change',
   ROOM_CLEANED:         'notif_habitacion_limpia',
   CIRUGIA_MOVE:         'notif_cirugia_cama_progal',
+  CX_LISTO_PARA_CIRUGIA:  'notif_cirugia_lista',
+  CX_VAN_A_BUSCAR:        'notif_cirugia_camillero',
+  CX_EN_TRASLADO:         'notif_cirugia_retirado',
+  CX_EN_CIRUGIA:          'notif_cirugia_en_cirugia',
+  CX_EN_DEVOLUCION:       'notif_cirugia_volviendo',
+  CX_RECIBIDA:            'notif_cirugia_recibido',
+  CX_TOLERANCIA_EVALUADA: 'notif_cirugia_finalizada',
 };
 
 function isRelevant(sub: Subscription, params: PushParams, roleCfg: RoleConfig | null): boolean {

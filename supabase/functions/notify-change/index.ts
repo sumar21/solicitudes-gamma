@@ -2,8 +2,8 @@
 /**
  * Supabase Edge Function: notify-change
  *
- * Disparada por Database Webhooks sobre public.dieta_cambios, public.ayuno_cambios y
- * public.cirugia_cambios (INSERT).
+ * Disparada por Database Webhooks (INSERT) sobre public.dieta_cambios, public.ayuno_cambios,
+ * public.cirugia_cambios y public.cirugia_eventos (notificación por paso de la operatoria, Fase B).
  * Reproduce el envío de Web Push que antes hacía api/push-utils.ts desde Vercel para DIET_CHANGE /
  * FASTING_CHANGE, pero UNA sola vez por fila insertada → mata los duplicados ("TIN TIN TIN") del
  * guard en memoria por-lambda. Mismo patrón que notify-push (traslados); acá el "evento" es la fila
@@ -50,6 +50,21 @@ const TABLE_CONFIG: Record<string, { type: string; permission: string; title: st
   cirugia_cambios: { type: 'CIRUGIA_MOVE',   permission: 'notif_cirugia_cama_progal',  title: 'Cambio de cama en PROGAL' },
 };
 
+// Fase B — notificación POR PASO de la operatoria. La tabla origen es cirugia_eventos (append-only,
+// una fila por transición); el `tipo` = estado alcanzado. Solo los pasos acá listados notifican; el
+// resto (CANCELADO, etc.) se ignora. paciente/cama salen de un JOIN a cirugia_traslados por cirugia_id.
+// Cada permiso es CONFIGURABLE por rol en el ABM (limpieza al retirar, admisión al entrar, catering al
+// finalizar, etc.). type = valor guardado en notificaciones.type (mapea al permiso en lib/permissions).
+const CX_STEP_CONFIG: Record<string, { type: string; permission: string; title: string }> = {
+  LISTO_PARA_CIRUGIA:  { type: 'CX_LISTO_PARA_CIRUGIA',  permission: 'notif_cirugia_lista',      title: 'Listo para cirugía' },
+  VAN_A_BUSCAR:        { type: 'CX_VAN_A_BUSCAR',        permission: 'notif_cirugia_camillero',  title: 'Camillero va a buscar' },
+  EN_TRASLADO:         { type: 'CX_EN_TRASLADO',         permission: 'notif_cirugia_retirado',   title: 'Paciente retirado a cirugía' },
+  EN_CIRUGIA:          { type: 'CX_EN_CIRUGIA',          permission: 'notif_cirugia_en_cirugia', title: 'Paciente en cirugía' },
+  EN_DEVOLUCION:       { type: 'CX_EN_DEVOLUCION',       permission: 'notif_cirugia_volviendo',  title: 'Paciente volviendo de cirugía' },
+  RECIBIDA:            { type: 'CX_RECIBIDA',            permission: 'notif_cirugia_recibido',   title: 'Paciente recibido de cirugía' },
+  TOLERANCIA_EVALUADA: { type: 'CX_TOLERANCIA_EVALUADA', permission: 'notif_cirugia_finalizada', title: 'Cirugía finalizada (tolerancia OK)' },
+};
+
 // DJB2 — para el tag del SW (colapsa el mismo evento lógico en una burbuja).
 function simpleHash(str: string): string {
   let hash = 5381;
@@ -91,6 +106,12 @@ function formatRoom(roomName?: string, areaName?: string): string {
   return floor ? `${room} (${floor})` : room;
 }
 
+// Compacta el label de cama: "Habitación 417 HPR - Cama 01" → "417 - 01". Réplica de formatBedName.
+function formatBedShort(bedName: string): string {
+  const m = bedName.match(/Habitaci[oó]n\s+([A-Za-z0-9]+)(?:\s+HPR)?\s*-\s*Cama\s+([A-Za-z0-9]+)/i);
+  return m ? `${m[1]} - ${m[2]}` : bedName;
+}
+
 Deno.serve(async (req: Request) => {
   // Autorización: header secreto configurado en el Database Webhook (solo si WEBHOOK_SECRET está set,
   // igual que notify-push; en este proyecto está vacío → no se exige header).
@@ -102,9 +123,6 @@ Deno.serve(async (req: Request) => {
 
   const { type, table, record } = payload ?? {};
   if (type !== 'INSERT' || !record) return new Response('ignored event', { status: 200 });
-
-  const cfg = TABLE_CONFIG[String(table)];
-  if (!cfg) return new Response('unknown table', { status: 200 });
 
   const entorno = String(record.entorno ?? '');
   const rowId = String(record.id ?? '');
@@ -120,36 +138,55 @@ Deno.serve(async (req: Request) => {
 
   if (!VAPID_PUBLIC || !VAPID_PRIVATE) { console.warn('[notify-change] VAPID no configurado'); return new Response('no vapid', { status: 200 }); }
 
-  // ── Body: se arma de la fila (mismo texto que armaba push-utils) ────────────
-  const paciente = String(record.paciente_nombre ?? '').trim() || 'Paciente';
-  const roomLabel = formatRoom(record.habitacion, record.area);
-  let core: string;
-  let title = cfg.title;
-  let appendRoom = true; // dieta/ayuno agregan " — ubicación"; cirugía ya trae las camas en el core.
-  if (cfg.type === 'DIET_CHANGE') {
-    const tags = String(record.tags_new ?? '').trim();
-    // tags_new se guarda como join '; '; el body histórico usaba ', '. Normalizamos a ', '.
-    const tagsLabel = tags ? tags.split(';').map((t: string) => t.trim()).filter(Boolean).join(', ') : 'sin dieta especial';
-    core = `${paciente}: ${tagsLabel}`;
-  } else if (cfg.type === 'FASTING_CHANGE') {
-    const detalle = String(record.detalle ?? '').trim() || 'Ayuno actualizado';
-    // Cancelación: el enrich (cron-enrich-beds) escribe detalle 'Ayuno cancelado' como literal fijo.
-    // Título propio (más claro que "actualizado") y no repetimos el texto en el body (ya lo dice el título).
-    if (detalle.toLowerCase().includes('cancelad')) {
-      title = 'Ayuno cancelado';
-      core = paciente;
-    } else {
-      core = `${paciente}: ${detalle}`;
-    }
+  // ── Config + body según la tabla de origen ─────────────────────────────────
+  let cfg: { type: string; permission: string; title: string };
+  let title: string;
+  let body: string;
+  let paciente: string;
+  let areaName: string | undefined;
+
+  if (String(table) === 'cirugia_eventos') {
+    // Paso de cirugía (Fase B): tipo = estado alcanzado. Solo notifican los pasos de CX_STEP_CONFIG;
+    // el resto (CANCELADO, etc.) se ignora. paciente/cama vienen de cirugia_traslados (JOIN por id).
+    const stepCfg = CX_STEP_CONFIG[String(record.tipo ?? '')];
+    if (!stepCfg) return new Response('paso sin notificacion', { status: 200 });
+    const { data: cx } = await supa.from('cirugia_traslados')
+      .select('paciente_nombre, cama_origen, area').eq('id', String(record.cirugia_id ?? '')).maybeSingle();
+    paciente = String(cx?.paciente_nombre ?? '').trim() || 'Paciente';
+    const camaShort = formatBedShort(String(cx?.cama_origen ?? ''));
+    body = camaShort ? `${paciente} — ${camaShort}` : paciente;
+    areaName = cx?.area ? String(cx.area) : undefined;
+    cfg = stepCfg;
+    title = cfg.title;
   } else {
-    // CIRUGIA_MOVE: PROGAL movió de cama a un paciente en cirugía (detectado por el enrich).
-    const prev = String(record.cama_prev ?? '').trim();
-    const next = String(record.cama_new ?? '').trim();
-    core = prev && next ? `${paciente}: ${prev} → ${next}` : paciente;
-    appendRoom = false; // las camas ya están en el core; no repetir la ubicación.
+    cfg = TABLE_CONFIG[String(table)];
+    if (!cfg) return new Response('unknown table', { status: 200 });
+    // Body: se arma de la fila (mismo texto que armaba push-utils).
+    paciente = String(record.paciente_nombre ?? '').trim() || 'Paciente';
+    const roomLabel = formatRoom(record.habitacion, record.area);
+    let core: string;
+    let appendRoom = true; // dieta/ayuno agregan " — ubicación"; cirugía ya trae las camas en el core.
+    title = cfg.title;
+    if (cfg.type === 'DIET_CHANGE') {
+      const tags = String(record.tags_new ?? '').trim();
+      // tags_new se guarda como join '; '; el body histórico usaba ', '. Normalizamos a ', '.
+      const tagsLabel = tags ? tags.split(';').map((t: string) => t.trim()).filter(Boolean).join(', ') : 'sin dieta especial';
+      core = `${paciente}: ${tagsLabel}`;
+    } else if (cfg.type === 'FASTING_CHANGE') {
+      const detalle = String(record.detalle ?? '').trim() || 'Ayuno actualizado';
+      // Cancelación: el enrich escribe detalle 'Ayuno cancelado' como literal fijo → título propio.
+      if (detalle.toLowerCase().includes('cancelad')) { title = 'Ayuno cancelado'; core = paciente; }
+      else { core = `${paciente}: ${detalle}`; }
+    } else {
+      // CIRUGIA_MOVE: PROGAL movió de cama a un paciente en cirugía (detectado por el enrich).
+      const prev = String(record.cama_prev ?? '').trim();
+      const next = String(record.cama_new ?? '').trim();
+      core = prev && next ? `${paciente}: ${prev} → ${next}` : paciente;
+      appendRoom = false; // las camas ya están en el core; no repetir la ubicación.
+    }
+    body = (appendRoom && roomLabel) ? `${core} — ${roomLabel}` : core;
+    areaName = record.area ? String(record.area) : undefined;
   }
-  const body = (appendRoom && roomLabel) ? `${core} — ${roomLabel}` : core;
-  const areaName = record.area ? String(record.area) : undefined;
 
   // ── Roles activos (join case-insensitive por nombre) ───────────────────────
   const { data: roleRows } = await supa.from('roles').select('name, permissions, filter_by_floors').eq('status', 'Activo');
