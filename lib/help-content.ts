@@ -113,49 +113,42 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
       },
       {
         permission: "cirugia_buscar",
-        title: "Cirugía: despachar al camillero ('Voy a buscar')",
-        description: "Marcá que quirófano manda al camillero a buscar al paciente. Pasa la cirugía de 'Listo para cirugía' a 'Van a buscar'.",
+        title: "Cirugía: búsqueda para cirugía",
+        description: "Marcá que quirófano despacha al camillero a buscar al paciente. Pasa la cirugía de 'Listo para cirugía' a 'Búsqueda para cirugía'.",
         scopeNote: "Si tu rol filtra por pisos, solo ves las cirugías de tus sectores.",
-        uiLocation: "Operativa → Cirugías → solapa Activas → botón 'Voy a buscar'",
+        uiLocation: "Operativa → Cirugías → solapa Activas → botón 'Búsqueda para cirugía'",
       },
       {
         permission: "cirugia_entregar",
-        title: "Cirugía: registrar 'se lo llevó el camillero'",
-        description: "Registrá que el camillero se llevó al paciente. Pasa de 'Van a buscar' a 'En traslado' y la cama queda libre para limpiar.",
+        title: "Cirugía: en traslado a cirugía",
+        description: "Registrá que el camillero se llevó al paciente. Pasa de 'Búsqueda para cirugía' a 'En traslado a cirugía' y la cama queda libre para limpiar.",
         scopeNote: "Si tu rol filtra por pisos, solo ves las cirugías de tus sectores.",
-        uiLocation: "Operativa → Cirugías → solapa Activas → botón 'Se lo llevó el camillero'",
+        uiLocation: "Operativa → Cirugías → solapa Activas → botón 'En traslado a cirugía'",
       },
       {
         permission: "cirugia_operar",
         title: "Cirugía: marcar 'en cirugía'",
-        description: "Marcá que el paciente entró a quirófano. Pasa de 'En traslado' a 'En cirugía'.",
+        description: "Marcá que el paciente entró a quirófano. Pasa de 'En traslado a cirugía' a 'En cirugía'.",
         scopeNote: "Si tu rol filtra por pisos, solo ves las cirugías de tus sectores.",
         uiLocation: "Operativa → Cirugías → solapa Activas → botón 'En cirugía'",
       },
       {
         permission: "cirugia_devolver",
-        title: "Cirugía: marcar 'en devolución'",
-        description: "Marcá que el paciente sale de quirófano y vuelve al piso. Pasa de 'En cirugía' a 'En devolución'.",
+        title: "Cirugía: regreso de cirugía",
+        description: "Marcá que el paciente sale de quirófano y vuelve al piso. Pasa de 'En cirugía' a 'Regreso de cirugía'.",
         scopeNote: "Si tu rol filtra por pisos, solo ves las cirugías de tus sectores.",
-        uiLocation: "Operativa → Cirugías → solapa Activas → botón 'En devolución'",
-      },
-      {
-        permission: "cirugia_recibir",
-        title: "Cirugía: confirmar recepción ('Recibida')",
-        description: "Confirmá que el piso de destino recibió al paciente. Pasa de 'En devolución' a 'Recibida'.",
-        scopeNote: "Si tu rol filtra por pisos, solo ves las cirugías de tus sectores.",
-        uiLocation: "Operativa → Cirugías → solapa Activas → botón 'Recibida'",
+        uiLocation: "Operativa → Cirugías → solapa Activas → botón 'Regreso de cirugía'",
       },
       {
         permission: "cirugia_tolerancia",
-        title: "Cirugía: confirmar evaluación de tolerancia (cierra)",
-        description: "Registrá la evaluación de tolerancia. Es el último paso: cierra la cirugía y habilita la comanda del paciente.",
-        uiLocation: "Operativa → Cirugías → solapa Activas → botón 'Evaluación de tolerancia'",
+        title: "Cirugía: iniciar dieta (paso final, cierra)",
+        description: "Cuando el paciente volvió ('Regreso de cirugía'), registrá la evaluación de tolerancia e iniciá la dieta. Es el último paso: cierra la cirugía y le avisa a Catering.",
+        uiLocation: "Operativa → Cirugías → solapa Activas → botón 'Iniciar dieta' (aparece en 'Regreso de cirugía')",
       },
       {
         permission: "cirugia_cancelar",
         title: "Cirugía: cancelar la operatoria",
-        description: "Cancelá una cirugía en curso con un motivo obligatorio. Disponible en cualquier estado salvo 'Recibida'.",
+        description: "Cancelá una cirugía en curso con un motivo obligatorio. Disponible mientras la cirugía esté en curso (hasta antes de iniciar la dieta).",
         scopeNote: "Si tu rol filtra por pisos, solo ves las cirugías de tus sectores.",
         uiLocation: "Operativa → Cirugías → solapa Activas → botón 'Cancelar' de la fila",
       },
@@ -184,7 +177,7 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
       {
         permission: "notif_new_ticket",
         title: "Traslado pedido (nuevo)",
-        description: "Te avisa cuando Admisión crea un traslado nuevo.",
+        description: "Te avisa cuando Admisión crea un traslado nuevo. Si el paciente entra desde Sala de Espera aparece como 'Nueva Solicitud de Ingreso'; el resto, como 'Nueva Solicitud de Traslado'.",
       },
       {
         permission: "notif_status_update",
@@ -193,8 +186,8 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
       },
       {
         permission: "notif_reception_confirmed",
-        title: "Recepción confirmada (traslado finalizado)",
-        description: "Te avisa cuando la azafata confirma que recibió al paciente y el traslado queda 'Por Consolidar'.",
+        title: "Paciente en habitación (traslado recibido)",
+        description: "Te avisa cuando la azafata confirma que el paciente llegó a la habitación de destino (queda pendiente de consolidar).",
       },
       {
         permission: "notif_habitacion_limpia",
@@ -213,12 +206,12 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
       },
       {
         permission: "notif_cirugia_camillero",
-        title: "Cirugía · Camillero va a buscar al paciente",
+        title: "Cirugía · Búsqueda para cirugía",
         description: "Te avisa cuando el camillero sale a buscar al paciente.",
       },
       {
         permission: "notif_cirugia_retirado",
-        title: "Cirugía · Paciente retirado",
+        title: "Cirugía · En traslado a cirugía",
         description: "Te avisa cuando el camillero se llevó al paciente y la cama quedó libre para limpiar.",
       },
       {
@@ -228,18 +221,13 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
       },
       {
         permission: "notif_cirugia_volviendo",
-        title: "Cirugía · Paciente volviendo",
+        title: "Cirugía · Regreso de cirugía",
         description: "Te avisa cuando el paciente vuelve de quirófano al piso.",
       },
       {
-        permission: "notif_cirugia_recibido",
-        title: "Cirugía · Paciente recibido",
-        description: "Te avisa cuando el piso recibió al paciente que volvió de cirugía.",
-      },
-      {
         permission: "notif_cirugia_finalizada",
-        title: "Cirugía · Evaluación de tolerancia realizada",
-        description: "Te avisa cuando se evaluó la tolerancia y se cerró la cirugía (ya se le puede llevar la comanda).",
+        title: "Cirugía · Iniciar dieta",
+        description: "Te avisa cuando la enfermería inició la dieta y se cerró la cirugía (ya se le puede llevar la comanda).",
       },
     ],
     tips: [
@@ -311,21 +299,15 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
       },
       {
         permission: "cirugia_entregar",
-        title: "Registrar 'se lo llevó el camillero'",
+        title: "Registrar 'en traslado a cirugía'",
         description: "Confirmá que el camillero se llevó al paciente. La cama queda libre para limpiar.",
-        uiLocation: "Detalle de la cama con cirugía en 'Van a buscar' → botón amarillo 'Se lo llevó el camillero'",
-      },
-      {
-        permission: "cirugia_recibir",
-        title: "Confirmar recepción del paciente",
-        description: "Confirmá que recibiste al paciente en el piso donde llega, cuando la cirugía está 'en devolución'.",
-        uiLocation: "Detalle de la cama con cirugía en 'En devolución' → botón verde 'Recibí al paciente'",
+        uiLocation: "Detalle de la cama con cirugía en 'Búsqueda para cirugía' → botón amarillo 'En traslado a cirugía'",
       },
       {
         permission: "cirugia_tolerancia",
-        title: "Confirmar evaluación de tolerancia (cierra la cirugía)",
-        description: "Después de recibir al paciente, registrá la evaluación de tolerancia. Este paso cierra la cirugía.",
-        uiLocation: "Detalle de la cama con cirugía en 'Recibida' → botón verde 'Evaluación de tolerancia'",
+        title: "Iniciar dieta (paso final, cierra la cirugía)",
+        description: "Cuando el paciente volvió ('Regreso de cirugía'), registrá la evaluación de tolerancia e iniciá la dieta. Este paso cierra la cirugía y le avisa a Catering.",
+        uiLocation: "Detalle de la cama con cirugía en 'Regreso de cirugía' → botón verde 'Iniciar dieta'",
       },
       {
         permission: "ver_dieta",
@@ -369,23 +351,18 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
       },
       {
         permission: "notif_cirugia_camillero",
-        title: "Cirugía · Camillero va a buscar al paciente",
+        title: "Cirugía · Búsqueda para cirugía",
         description: "Te avisa cuando el camillero sale a buscar al paciente.",
       },
       {
         permission: "notif_cirugia_retirado",
-        title: "Cirugía · Paciente retirado",
+        title: "Cirugía · En traslado a cirugía",
         description: "Te avisa cuando el camillero se llevó al paciente y la cama quedó libre para limpiar.",
       },
       {
-        permission: "notif_cirugia_recibido",
-        title: "Cirugía · Paciente recibido",
-        description: "Te avisa cuando el piso recibió al paciente que volvió de cirugía.",
-      },
-      {
         permission: "notif_cirugia_finalizada",
-        title: "Cirugía · Evaluación de tolerancia realizada",
-        description: "Te avisa cuando se evaluó la tolerancia y se cerró la cirugía (ya se le puede llevar la comanda).",
+        title: "Cirugía · Iniciar dieta",
+        description: "Te avisa cuando la enfermería inició la dieta y se cerró la cirugía (ya se le puede llevar la comanda).",
       },
     ],
     tips: [
@@ -498,12 +475,12 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
       },
       {
         permission: "notif_reception_confirmed",
-        title: "Recepción confirmada (traslado finalizado)",
+        title: "Paciente en habitación (traslado recibido)",
         description: "Te avisa cuando un traslado llega a destino, para saber dónde entregar la bandeja.",
       },
       {
         permission: "notif_cirugia_finalizada",
-        title: "Cirugía · Evaluación de tolerancia realizada",
+        title: "Cirugía · Iniciar dieta",
         description: "Te avisa cuando se cerró la cirugía y ya se le puede llevar la comanda al paciente.",
       },
     ],
@@ -579,7 +556,7 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
       },
       {
         permission: "notif_reception_confirmed",
-        title: "Recepción confirmada (traslado finalizado)",
+        title: "Paciente en habitación (traslado recibido)",
         description: "Te avisa cuando un traslado pasa a 'Por Consolidar'. Aparece en la lista 'Admisión Pendiente'.",
       },
     ],
@@ -753,7 +730,7 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
       {
         permission: "abm_roles",
         title: "Configurar qué notificaciones recibe el rol",
-        description: "Tildá en la solapa Notificaciones qué avisos (push + campanita) recibe el rol: nuevo traslado, cambios de estado, recepción confirmada, cambio de dieta, cambio de ayuno, habitación limpia y los pasos de Cirugía.",
+        description: "Tildá en la solapa Notificaciones qué avisos (push + campanita) recibe el rol: nuevo traslado, cambios de estado, paciente en habitación, cambio de dieta, cambio de ayuno, habitación limpia y los pasos de Cirugía.",
         uiLocation: "Modal de rol → solapa 'Notificaciones'",
       },
     ],
