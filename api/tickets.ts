@@ -130,6 +130,7 @@ async function handler(req: any, res: any) {
     if (req.method === 'GET') {
       const fetchAll = req.query?.all === '1';
       const patientCode = typeof req.query?.patientCode === 'string' ? req.query.patientCode.trim() : '';
+      const search = typeof req.query?.search === 'string' ? req.query.search.trim() : '';
       // Rango de fechas ART (opcional): el cliente (Historial/Monitor) manda from/to y el filtro va
       // SERVER-SIDE por created_at. Antes se traía TODO y se filtraba en el front (parche de la época
       // SharePoint); con la tabla acumulada chocaba con el cap de filas de Supabase → no traía nada.
@@ -140,7 +141,24 @@ async function handler(req: any, res: any) {
       let data: Record<string, any>[] | null = null;
       let error: { message: string } | null = null;
 
-      if (fetchAll) {
+      if (search) {
+        // Búsqueda del Historial por nombre de paciente o ID, CROSS-fecha (ignora el rango): trae los
+        // traslados cerrados (Consolidado/Cancelado) que matchean, así el buscador encuentra al paciente
+        // aunque su traslado sea de otro día. Se sanitiza el término (chars que romperían el filtro .or de
+        // PostgREST) y se limita el resultado.
+        const safe = search.replace(/[,()%*\\]/g, ' ').trim();
+        if (safe) {
+          const like = `%${safe}%`;
+          const resS = await supa.from('traslados').select('*').eq('entorno', ENTORNO)
+            .in('status', [TicketStatus.COMPLETED, TicketStatus.REJECTED])
+            .or(`paciente.ilike.${like},id_univoco.ilike.${like}`)
+            .order('created_at', { ascending: false })
+            .limit(300);
+          data = resS.data; error = resS.error;
+        } else {
+          data = [];
+        }
+      } else if (fetchAll) {
         // Histórico por RANGO (Monitor/Historial). Se pagina server-side: PostgREST corta cada
         // request en db-max-rows (histórico ~1000 en el proyecto), así que una sola query se
         // truncaba en silencio y el filtro por fecha del front no encontraba nada. Acá pedimos

@@ -31,6 +31,8 @@ interface HistoryViewProps {
   onRangeChange?: (from: string, to: string) => void;
   /** Trae la historia COMPLETA de un paciente por código (para la Trayectoria). */
   onFetchPatientTickets?: (patientCode?: string) => Promise<Ticket[]>;
+  /** Busca en TODO el histórico por nombre/ID (cross-fecha) — para el buscador de la Lista. */
+  onSearchHistory?: (term: string) => Promise<Ticket[]>;
 }
 
 const DateRangeTrigger = React.forwardRef<
@@ -57,7 +59,7 @@ const DateRangeTrigger = React.forwardRef<
 ));
 DateRangeTrigger.displayName = "DateRangeTrigger";
 
-export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, refreshing, onRangeChange, onFetchPatientTickets }) => {
+export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, refreshing, onRangeChange, onFetchPatientTickets, onSearchHistory }) => {
   const todayISO = (() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -82,6 +84,25 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
   // Modo de vista: lista de traslados (clásico) o trayectoria por paciente (journey).
   const [viewMode, setViewMode] = useState<'list' | 'journey'>('list');
   const [journeyPatientKey, setJourneyPatientKey] = useState<string | null>(null);
+
+  // Búsqueda CROSS-fecha (Lista): con término, se pide al server TODO el histórico que matchea (no solo
+  // el rango cargado) → resuelve que un paciente cuyo traslado es de otro día "no aparecía". searchResults
+  // = null → sin búsqueda server activa (se usa el filtro local del rango). Debounce 350ms.
+  const [searchResults, setSearchResults] = useState<Ticket[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  useEffect(() => {
+    const term = searchTerm.trim();
+    if (viewMode !== 'list' || !term || !onSearchHistory) { setSearchResults(null); setSearching(false); return; }
+    setSearching(true);
+    let alive = true;
+    const h = setTimeout(async () => {
+      const res = await onSearchHistory(term);
+      if (!alive) return;
+      setSearchResults(res);
+      setSearching(false);
+    }, 350);
+    return () => { alive = false; clearTimeout(h); };
+  }, [searchTerm, viewMode, onSearchHistory]);
 
   // Agrupa TODOS los tickets de la sede por paciente (código Gamma, fallback nombre).
   // Incluye activos + históricos para que la trayectoria sea una historia completa.
@@ -138,7 +159,11 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
   }, [journeyPatientKey, patientGroups, onFetchPatientTickets]);
 
   const filteredHistory = useMemo(() => {
-    return tickets
+    // Con búsqueda CROSS-fecha resuelta usamos esos resultados (el server ya filtró por nombre/ID en
+    // TODO el histórico); si no, el set del rango cargado.
+    const searchingMode = searchResults !== null;
+    const base = searchingMode ? searchResults : tickets;
+    return base
       .filter(t => t.status === TicketStatus.COMPLETED || t.status === TicketStatus.REJECTED)
       .filter(t => {
         if (statusFilter === 'completed') return t.status === TicketStatus.COMPLETED;
@@ -146,10 +171,8 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
         return true;
       })
       .filter(t => {
-        // Búsqueda por paciente/ID DENTRO del rango cargado. Antes, con TODO el histórico en
-        // memoria, la búsqueda salteaba el filtro de fecha; ahora el set ya viene acotado por el
-        // server, así que la búsqueda es sobre esas fechas (para ver un paciente viejo se amplía el
-        // rango, o se usa la Trayectoria que trae su historia completa por código).
+        if (searchingMode) return true; // el server ya filtró por nombre/ID; sin filtro de fecha
+        // Sin búsqueda cross-fecha: filtro local por término DENTRO del rango cargado + rango de fechas.
         const matchesSearch = searchTerm
           ? t.patientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
             t.id.toLowerCase().includes(searchTerm.toLowerCase())
@@ -161,7 +184,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
         return matchesStart && matchesEnd;
       })
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-  }, [tickets, startDate, endDate, searchTerm, statusFilter]);
+  }, [tickets, searchResults, startDate, endDate, searchTerm, statusFilter]);
 
   const hasFilters = startDate !== todayISO || endDate !== todayISO || !!searchTerm || statusFilter !== 'all';
 
@@ -306,11 +329,13 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
               onChange={e => setSearchTerm(e.target.value)}
               className="pl-9 h-9 text-xs rounded-xl border-slate-200"
             />
-            {searchTerm && (
+            {searching ? (
+              <div title="Buscando en todo el histórico…" className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 rounded-full border-2 border-slate-300 border-t-slate-600 animate-spin" />
+            ) : searchTerm ? (
               <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
                 <X className="h-3.5 w-3.5" />
               </button>
-            )}
+            ) : null}
           </div>
         ) : (
           <div className="flex-1 min-w-[180px] max-w-sm">

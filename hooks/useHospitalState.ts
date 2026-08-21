@@ -1769,6 +1769,20 @@ export const useHospitalState = () => {
     } catch { return []; }
   }, [authFetch]);
 
+  // Búsqueda del Historial por nombre de paciente o ID, CROSS-fecha (el server ignora el rango y trae
+  // los cerrados que matchean). Resuelve que el buscador solo veía el rango cargado (ej. buscar un
+  // paciente cuyo traslado fue otro día y "no aparecía").
+  const searchHistory = useCallback(async (term: string): Promise<Ticket[]> => {
+    const t = term.trim();
+    if (!t) return [];
+    try {
+      const r = await authFetch(`/api/tickets?search=${encodeURIComponent(t)}`);
+      if (!r.ok) return [];
+      const data = await r.json();
+      return Array.isArray(data.tickets) ? data.tickets : [];
+    } catch { return []; }
+  }, [authFetch]);
+
   const fetchTickets = useCallback(async () => {
     if (writingRef.current) return; // skip poll while writing to SP
     try {
@@ -3577,7 +3591,7 @@ export const useHospitalState = () => {
       handleLogin, handleLogout, enableNotifications,
       setOperador, cambioTurno,
       handleCreateTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
-      fetchBeds, enrichBed, fetchPatientTickets, refreshAll, fetchAllTickets, setHistoryRange,
+      fetchBeds, enrichBed, fetchPatientTickets, searchHistory, refreshAll, fetchAllTickets, setHistoryRange,
       markBedClean, undoBedClean,
       startRoutineCleaning, finishRoutineCleaning, fetchRoutineCleanings,
       saveMealLoad, clearMealLoad, saveCompanionLoad, clearCompanionLoad, setMealStatus,
