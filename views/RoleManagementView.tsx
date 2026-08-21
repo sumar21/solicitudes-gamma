@@ -65,6 +65,15 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
   },
 
   {
+    // Pre-ticket de traslado: la Coordinadora pide una cama; Admisión la configura. Ver docs/planes/pre-ticket.md.
+    module: 'Operativa', label: 'Pre-ticket de traslado',
+    perms: [
+      { code: 'crear_pre_ticket',     label: 'Crear pre-ticket (Coordinadora: pide cama)' },
+      { code: 'completar_pre_ticket', label: 'Configurar destino de un pre-ticket (Admisión)' },
+    ],
+  },
+
+  {
     // Cirugía — acciones de QUIRÓFANO, se operan desde la solapa Operativa → Cirugías (la grilla).
     module: 'Operativa', label: 'Cirugía — Quirófano (solapa Operativa)',
     perms: [
@@ -118,6 +127,7 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
     module: '__cross__', label: 'Notificaciones',
     perms: [
       { code: 'notif_new_ticket',          label: 'Traslado pedido (nuevo)' },
+      { code: 'notif_pre_ticket',          label: 'Pre-ticket creado (Coordinadora pidió una cama)' },
       { code: 'notif_status_update',       label: 'Actualizaciones de estado (en tránsito, en transporte, cancelado, etc.)' },
       { code: 'notif_reception_confirmed', label: 'Recepción confirmada (traslado finalizado)' },
       { code: 'notif_diet_change',         label: 'Cambio de dieta' },

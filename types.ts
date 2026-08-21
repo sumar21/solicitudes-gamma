@@ -18,6 +18,10 @@ export enum WorkflowType {
   /** Origen: las 8 camas de HIT (Internación Transitoria). Workflow nuevo (2026-05)
    *  para traslados que salen de ITR hacia pisos. */
   INGRESO_A_ITR = 'INGRESO_A_ITR',
+  /** Pre-ticket: la Coordinadora pide una cama (paciente + movimiento + requisitos) SIN destino.
+   *  Vive como traslado en estado PRESOLICITUD hasta que Admisión "Configura destino" y lo convierte
+   *  en un traslado vivo. El tipo (badge) queda "Pre-Ticket" para trazar su origen. Ver docs/planes/pre-ticket.md. */
+  PRE_TICKET = 'PRE_TICKET',
   /** @deprecated fusionado con INTERNAL — ya no se ofrece al crear nuevos tickets;
    *  los tickets viejos en SP con este valor siguen leyéndose y se renderizan como "Traslado Interno". */
   ROOM_CHANGE = 'ROOM_CHANGE',
@@ -403,6 +407,9 @@ export const PERMISSIONS = [
   'cirugia_tolerancia', // "iniciar dieta" (paso FINAL; cierra la operatoria y avisa a Catering)
   'cirugia_cancelar',   // cancelar la operatoria (transversal)
   'cirugia_marcar',     // Admisión: marcar "va a cirugía" un paciente NO quirúrgico (flag, desde el mapa)
+  // Pre-ticket de traslado (pedido de cama de la Coordinadora). Ver docs/planes/pre-ticket.md.
+  'crear_pre_ticket',      // Coordinadora: crea el pre-ticket (paciente + movimiento + requisitos, sin destino)
+  'completar_pre_ticket',  // Admisión: ve el pre-ticket en la grilla y "Configura destino" → lo convierte en traslado
   'abm_usuarios','abm_roles',
   // Notificaciones granulares por tipo (antes había un solo `recibe_push`).
   // Cada permiso gobierna que el usuario reciba push + in-app de ese tipo.
@@ -429,6 +436,8 @@ export const PERMISSIONS = [
   'notif_cirugia_en_cirugia',  // EN_CIRUGIA    — el paciente entró a quirófano
   'notif_cirugia_volviendo',   // EN_DEVOLUCION — el paciente vuelve (regreso de cirugía)
   'notif_cirugia_finalizada',  // TOLERANCIA_EVALUADA — iniciar dieta (cierra la operatoria)
+  // Pre-ticket creado por la Coordinadora → aviso a Admisión (push + campanita) para que configure el destino.
+  'notif_pre_ticket',
 ] as const;
 export type Permission = typeof PERMISSIONS[number];
 
@@ -463,6 +472,7 @@ export interface User {
 
 export enum NotificationType {
   NEW_TICKET = 'NEW_TICKET',
+  PRE_TICKET = 'PRE_TICKET', // Coordinadora creó un pre-ticket → aviso a Admisión (configurar destino)
   STATUS_UPDATE = 'STATUS_UPDATE',
   RECEPTION_CONFIRMED = 'RECEPTION_CONFIRMED',
   DIET_CHANGE = 'DIET_CHANGE',
@@ -486,6 +496,10 @@ export interface Notification {
 }
 
 export enum TicketStatus {
+  // Estado inicial de un pre-ticket: la Coordinadora lo creó y espera que Admisión configure el
+  // destino. NO tiene cama destino todavía. Al configurarse pasa a IN_TRANSIT/WAITING_ROOM y entra
+  // al ciclo normal. Es un estado "vivo" (no terminal) → aparece en la grilla de Operativa.
+  PRESOLICITUD = 'Presolicitud',
   WAITING_ROOM = 'Esperando Habitacion',
   IN_TRANSIT = 'Habitacion Lista',
   IN_TRANSPORT = 'En Traslado',
@@ -526,6 +540,10 @@ export interface Ticket {
   isReasonValidated: boolean;
   targetBedOriginalStatus?: BedStatus;
   observations?: string;
+  // Pre-ticket: requisitos de cama tildados por la Coordinadora (Con colchón, Diálisis, etc.).
+  // Snapshot estructurado para medir — se escribe al crear y NO se toca al editar la observación.
+  // Columna `requisitos_cama text[]` en public.traslados. Ver docs/planes/pre-ticket.md.
+  requisitosCama?: string[];
   canCancel?: boolean;          // true while no hostess action has touched this ticket
   intervenedByHostess?: 'SI' | 'NO'; // IntervinoAzafata_T in SP — "NO" at creation, "SI" after first hostess action
 }

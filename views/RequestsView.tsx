@@ -62,6 +62,7 @@ const WORKFLOW_SHORT: Record<WorkflowType, string> = {
   [WorkflowType.INTERNAL]: 'Int.',
   [WorkflowType.ITR_TO_FLOOR]: 'Sala Esp.',
   [WorkflowType.INGRESO_A_ITR]: 'ITR',
+  [WorkflowType.PRE_TICKET]: 'Pre-Ticket',
   [WorkflowType.ROOM_CHANGE]: 'Hab.',
 };
 
@@ -69,6 +70,7 @@ const WORKFLOW_LABEL_BADGE: Record<WorkflowType, string> = {
   [WorkflowType.INTERNAL]: 'Interno',
   [WorkflowType.ITR_TO_FLOOR]: 'Sala de Espera',
   [WorkflowType.INGRESO_A_ITR]: 'Ingreso ITR',
+  [WorkflowType.PRE_TICKET]: 'Pre-Ticket',
   [WorkflowType.ROOM_CHANGE]: 'Interno',
 };
 

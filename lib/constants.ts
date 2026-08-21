@@ -67,10 +67,34 @@ export const WORKFLOW_LABELS: Record<WorkflowType, string> = {
   // de Admisión (HRA). Renombrado en 2026-05 para reflejar la semántica real.
   [WorkflowType.ITR_TO_FLOOR]: 'Sala de Espera Admisión',
   [WorkflowType.INGRESO_A_ITR]: 'Ingreso de ITR',
+  // Pre-ticket: pedido de cama de la Coordinadora. Mantiene el label "Pre-Ticket" en el badge
+  // aun después de que Admisión configura el destino, para trazar el origen del traslado.
+  [WorkflowType.PRE_TICKET]: 'Pre-Ticket',
   // Tickets legacy creados como "Cambio de Habitación" → se muestran como "Traslado
   // Interno" porque ambos workflows fueron fusionados.
   [WorkflowType.ROOM_CHANGE]: 'Traslado Interno',
 };
+
+// ── Pre-ticket de traslado (Coordinadora) ────────────────────────────────────
+// Ver docs/planes/pre-ticket.md. Un solo desplegable = el "movimiento" (queda en motivo_cambio).
+// Área crítica se desglosa en UCO y UTI como opciones separadas.
+export const MOVIMIENTOS_PRETICKET = [
+  "Solicitud a internación general",
+  "Movimiento dentro de área crítica — UCO",
+  "Movimiento dentro de área crítica — UTI",
+];
+
+// Requisitos de la nueva cama (checkboxes). Se guardan estructurados en requisitos_cama (para medir)
+// y además compuestos como texto en observaciones (lo que ve/edita Admisión). "Sin requerimiento"
+// es EXCLUYENTE: al tildarlo se destildan los otros y viceversa (lógica en el modal).
+export const REQUISITO_SIN = "Sin requerimiento";
+export const REQUISITOS_CAMA = [
+  "Con colchón",
+  "Frente al office de enfermería",
+  "Diálisis",
+  "Intento autólisis",
+  REQUISITO_SIN,
+];
 
 export const ROOM_CHANGE_REASONS = [
   "Solicitud familiar",

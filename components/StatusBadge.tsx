@@ -8,6 +8,7 @@ interface Props {
 }
 
 const statusConfig: Record<TicketStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "info" | "purple" }> = {
+  [TicketStatus.PRESOLICITUD]: { label: 'Presolicitud', variant: 'purple' },
   [TicketStatus.WAITING_ROOM]: { label: 'Esperando Habitación', variant: 'warning' },
   [TicketStatus.IN_TRANSIT]: { label: 'Habitación Lista', variant: 'info' },
   [TicketStatus.IN_TRANSPORT]: { label: 'En Traslado', variant: 'secondary' },
