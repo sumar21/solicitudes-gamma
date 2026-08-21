@@ -259,6 +259,18 @@ async function handler(req: any, res: any) {
       const idUnivoco = String(updates.id ?? spItemId ?? '');
       if (!idUnivoco) return res.status(400).json({ error: 'id/spItemId required' });
 
+      // Conversión de un pre-ticket (Admisión configura destino): si la fila está en 'Presolicitud',
+      // exige completar_pre_ticket. Solo consultamos el estado actual cuando el update PARECE una
+      // conversión (trae destino + status y NO es una acción de azafata) → costo acotado.
+      if (updates.destination && updates.status && updates.intervenedByHostess !== 'SI') {
+        const { data: cur } = await supa.from('traslados').select('status')
+          .eq('id_univoco', idUnivoco).eq('entorno', ENTORNO).limit(1).maybeSingle();
+        if (cur?.status === TicketStatus.PRESOLICITUD) {
+          const denied = await authzPreTicket(req, 'completar_pre_ticket');
+          if (denied) return res.status(denied.status).json({ error: denied.error });
+        }
+      }
+
       // ── Enforcement de piso para acciones de azafata (SIN CAMBIOS respecto de SP) ──
       // Una azafata solo puede ejecutar acciones de su(s) piso(s). Regla HRA (Sala de Espera):
       // si el extremo requerido es HRA, se usa el piso real del otro extremo. Solo aplica a roles

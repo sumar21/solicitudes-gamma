@@ -29,6 +29,7 @@ interface RequestsViewProps {
   onSort: (key: SortKey) => void;
   onNewRequest: () => void;
   onNewPreTicket?: () => void;
+  onConfigureDestino?: (id: string) => void;
   onValidateReason: (id: string) => void;
   onAssignBed: (id: string) => void;
   onHousekeepingAction: (id: string, action: 'mark_dirty' | 'mark_clean') => void;
@@ -78,7 +79,7 @@ const WORKFLOW_LABEL_BADGE: Record<WorkflowType, string> = {
 export const RequestsView: React.FC<RequestsViewProps> = ({
   tickets, activeRole, setActiveRole, averageWaitTime,
   searchTerm, setSearchTerm, sortConfig, onSort,
-  onNewRequest, onNewPreTicket, onValidateReason, onAssignBed,
+  onNewRequest, onNewPreTicket, onConfigureDestino, onValidateReason, onAssignBed,
   onHousekeepingAction, onStartTransport, onCompleteTransport,
   onRoomReady, onConfirmReception, onConsolidate, onReject, onEdit, onAddObservation, currentUser, beds
 }) => {
@@ -178,6 +179,11 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   const sortedTickets = useMemo(() => {
     let filtered = tickets.filter(t => t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED);
 
+    // Pre-tickets (Presolicitud): solo los ven Admisión (completar_pre_ticket) y la Coordinadora
+    // (crear_pre_ticket). El resto no los ve hasta que se convierten en traslado vivo.
+    const canSeePreTickets = can(currentUser, 'completar_pre_ticket') || can(currentUser, 'crear_pre_ticket');
+    filtered = filtered.filter(t => t.status !== TicketStatus.PRESOLICITUD || canSeePreTickets);
+
     if (searchTerm) {
       const searchLower = searchTerm.toLowerCase();
       filtered = filtered.filter(t =>
@@ -220,12 +226,31 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
       return 0;
     });
+    // Pin: los pre-tickets (Presolicitud) SIEMPRE arriba de todo, sin importar el sort configurable.
+    // Array.sort es estable → conserva el orden previo dentro de cada grupo.
+    sortableItems.sort((a, b) => {
+      const ap = a.status === TicketStatus.PRESOLICITUD ? 0 : 1;
+      const bp = b.status === TicketStatus.PRESOLICITUD ? 0 : 1;
+      return ap - bp;
+    });
     return sortableItems;
   }, [tickets, activeRole, sortConfig, searchTerm, beds, currentUser]);
 
   const renderActionButtons = (ticket: Ticket, isMobile = false) => {
     const size = isMobile ? "default" : "sm";
     const btnClass = isMobile ? "w-full h-11 text-xs font-black uppercase tracking-widest rounded-xl" : "h-8 text-[10px] uppercase font-bold tracking-tight";
+
+    // ── Pre-ticket (Presolicitud): única acción = Admisión configura el destino ──
+    // No aplican las acciones de azafata/admisión de un traslado normal (todavía no tiene destino).
+    if (ticket.status === TicketStatus.PRESOLICITUD) {
+      if (!can(currentUser, 'completar_pre_ticket') || !onConfigureDestino) return null;
+      return (
+        <Button size={size} onClick={() => onConfigureDestino(ticket.id)}
+          className={cn(btnClass, "bg-emerald-950 hover:bg-emerald-900 text-white rounded-xl px-4")}>
+          <MapPin className="w-3.5 h-3.5 mr-1.5" /> Configurar destino
+        </Button>
+      );
+    }
 
     // ── Acciones de Azafata (tab activeRole=HOSTESS) ──────────────────────────
     // Cada botón está gateado por su permiso fino. El filtro de área se aplica solo

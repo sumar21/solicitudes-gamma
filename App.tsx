@@ -38,6 +38,7 @@ import { Bell } from './components/Icons';
 // Modals
 import { NewRequestModal } from './components/modals/NewRequestModal';
 import { PreTicketModal } from './components/modals/PreTicketModal';
+import { ConfigureDestinoModal } from './components/modals/ConfigureDestinoModal';
 import { EditRequestModal, EditRequestPayload } from './components/modals/EditRequestModal';
 import { AssignBedModal } from './components/modals/AssignBedModal';
 import { AreaSelectionModal } from './components/modals/AreaSelectionModal';
@@ -137,6 +138,7 @@ export default function App() {
   // UI State local (para control de modales)
   const [isNewRequestOpen, setIsNewRequestOpen] = useState(false);
   const [isPreTicketOpen, setIsPreTicketOpen] = useState(false);
+  const [configureDestinoId, setConfigureDestinoId] = useState<string | null>(null);
   const [isAssignBedOpen, setIsAssignBedOpen] = useState(false);
   const [isAreaSelectionOpen, setIsAreaSelectionOpen] = useState(false);
   const [isRejectOpen, setIsRejectOpen] = useState(false);
@@ -820,6 +822,7 @@ export default function App() {
                 onSort={(key) => actions.setSortConfig(prev => ({ key, direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc' }))}
                 onNewRequest={() => setIsNewRequestOpen(true)}
                 onNewPreTicket={() => setIsPreTicketOpen(true)}
+                onConfigureDestino={(id) => setConfigureDestinoId(id)}
                 onValidateReason={actions.handleValidateTicket}
                 onAssignBed={handleOpenAssignBed}
                 onHousekeepingAction={actions.handleHousekeepingAction}
@@ -868,6 +871,18 @@ export default function App() {
         onOpenChange={setIsPreTicketOpen}
         onCreate={actions.createPreTicket}
         beds={state.beds}
+      />
+      <ConfigureDestinoModal
+        open={!!configureDestinoId}
+        onOpenChange={(open) => { if (!open) setConfigureDestinoId(null); }}
+        ticket={configureDestinoId ? (state.tickets.find(t => t.id === configureDestinoId) ?? null) : null}
+        beds={state.beds}
+        activeTransferDestinations={new Set(
+          state.tickets
+            .filter(t => t.status !== 'Consolidado' && t.status !== 'Cancelado' && t.destination)
+            .map(t => t.destination as string)
+        )}
+        onConfirm={actions.completePreTicket}
       />
       <EditRequestModal
         open={!!editTicketId}

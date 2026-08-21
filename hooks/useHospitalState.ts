@@ -2913,6 +2913,46 @@ export const useHospitalState = () => {
     }
   };
 
+  // Admisión "Configura destino": elige la cama destino (+ ajusta la observación) y CONVIERTE el
+  // pre-ticket en traslado vivo. El workflow queda PRE_TICKET (badge "Pre-Ticket"); solo cambia el
+  // status (Presolicitud → Habitacion Lista / Esperando Habitacion). Ver docs/planes/pre-ticket.md.
+  const completePreTicket = async (ticketId: string, data: { destination: string; observations?: string }) => {
+    if (!can(currentUser, 'completar_pre_ticket')) { alert('Tu rol no tiene permiso para configurar destinos.'); return; }
+    const pre = tickets.find(t => t.id === ticketId);
+    if (!pre || pre.status !== TicketStatus.PRESOLICITUD) { alert('El pre-ticket ya no está disponible.'); return; }
+    if (!pre.spItemId) { alert('El pre-ticket todavía no terminó de guardarse. Esperá unos segundos.'); return; }
+    const targetBed = beds.find(b => b.label === data.destination);
+    if (!targetBed || (targetBed.status !== BedStatus.AVAILABLE && targetBed.status !== BedStatus.PREPARATION)) {
+      alert('El destino debe estar DISPONIBLE o EN PREPARACIÓN.'); return;
+    }
+
+    setTicketActionLoading(true);
+    writingRef.current = true;
+    const isDestAvailable = targetBed.status === BedStatus.AVAILABLE;
+    const updates: Partial<Ticket> = {
+      status:               isDestAvailable ? TicketStatus.IN_TRANSIT : TicketStatus.WAITING_ROOM,
+      destination:          data.destination,
+      destinationBedCode:   targetBed.bedCode,
+      destinationBedStatus: isDestAvailable ? BedStatus.ASSIGNED : BedStatus.PREPARATION,
+      observations:         data.observations ?? pre.observations,
+    };
+    const updatedTicket: Ticket = { ...pre, ...updates, targetBedOriginalStatus: targetBed.status };
+    setTickets(prev => prev.map(t => t.id === ticketId ? updatedTicket : t));
+    try {
+      const { ok, conflict } = await spUpdate(pre.spItemId, updates, updatedTicket);
+      if (!ok) {
+        setTickets(prev => prev.map(t => t.id === ticketId ? pre : t)); // rollback
+        const extra = conflict?.conflictingTicketId ? ` (ticket ${conflict.conflictingTicketId})` : '';
+        alert(`${conflict?.error ?? 'No pudimos configurar el destino. Volvé a intentarlo.'}${extra}`);
+        return;
+      }
+      spLogEvent(ticketId, 'Destino configurado');
+    } finally {
+      setTimeout(async () => { writingRef.current = false; ticketsEtagRef.current = null; await fetchTickets(); setTicketActionLoading(false); }, 1000);
+      setTimeout(() => { ticketsEtagRef.current = null; fetchTickets(); }, 4500);
+    }
+  };
+
   const handleRoomReady = (ticketId: string) => runTicketAction(ticketId, async () => {
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket?.destination || ticket.status === TicketStatus.IN_TRANSIT) return;
@@ -3663,7 +3703,7 @@ export const useHospitalState = () => {
       setLoginEmail, setLoginPass,
       handleLogin, handleLogout, enableNotifications,
       setOperador, cambioTurno,
-      handleCreateTicket, createPreTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
+      handleCreateTicket, createPreTicket, completePreTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
       fetchBeds, enrichBed, fetchPatientTickets, searchHistory, refreshAll, fetchAllTickets, setHistoryRange,
       markBedClean, undoBedClean,
       startRoutineCleaning, finishRoutineCleaning, fetchRoutineCleanings,
