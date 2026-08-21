@@ -129,9 +129,23 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
       ...events.map(e => ({ kind: 'event' as const, key: `e-${e.id}`, fecha: e.fecha, evt: e })),
       ...observations.map(o => ({ kind: 'obs' as const, key: `o-${o.id}`, fecha: o.fecha, obs: o })),
     ];
+    // Observación ORIGINAL de la solicitud (la que cargó Admisión al crear el reclamo). Vive en
+    // ticket.observations (NO en /api/ticket-observations, que trae solo las post-cierre) → antes solo
+    // salía en el Excel. Se inyecta como nodo, fechado en la creación, para que aparezca en la auditoría.
+    const original = (ticket?.observations ?? '').trim();
+    if (original) {
+      const fecha = ticket!.createdAt || ticket!.date || '';
+      items.push({
+        kind: 'obs', key: 'o-original', fecha,
+        obs: {
+          id: 'original', ticketId: ticket!.id, status: '', texto: original,
+          usuario: ticket!.createdBy ?? 'Admisión', usuarioId: ticket!.createdById ?? '', fecha,
+        },
+      });
+    }
     items.sort((a, b) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime());
     return items;
-  }, [events, observations]);
+  }, [events, observations, ticket]);
 
   // Tras agregar una observación, scrollea el timeline al fondo (NO en la carga inicial).
   useEffect(() => {
@@ -363,6 +377,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                     if (item.kind === 'obs') {
                       const o = item.obs;
                       const post = isPostCloseObs(o.status);
+                      const isOriginal = o.id === 'original';
                       return (
                         <div key={item.key} className="relative">
                           <div className={cn(
@@ -378,6 +393,11 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                             {post && (
                               <span className="inline-flex items-center gap-1 mb-1.5 px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200 text-[9px] font-bold uppercase tracking-wider">
                                 Post cierre
+                              </span>
+                            )}
+                            {isOriginal && (
+                              <span className="inline-flex items-center gap-1 mb-1.5 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 text-[9px] font-bold uppercase tracking-wider">
+                                Observación de la solicitud
                               </span>
                             )}
                             <p className="text-sm text-slate-800 leading-snug whitespace-pre-wrap break-words">{o.texto}</p>
