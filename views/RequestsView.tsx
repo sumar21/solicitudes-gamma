@@ -28,6 +28,7 @@ interface RequestsViewProps {
   sortConfig: SortConfig;
   onSort: (key: SortKey) => void;
   onNewRequest: () => void;
+  onNewPreTicket?: () => void;
   onValidateReason: (id: string) => void;
   onAssignBed: (id: string) => void;
   onHousekeepingAction: (id: string, action: 'mark_dirty' | 'mark_clean') => void;
@@ -77,7 +78,7 @@ const WORKFLOW_LABEL_BADGE: Record<WorkflowType, string> = {
 export const RequestsView: React.FC<RequestsViewProps> = ({
   tickets, activeRole, setActiveRole, averageWaitTime,
   searchTerm, setSearchTerm, sortConfig, onSort,
-  onNewRequest, onValidateReason, onAssignBed,
+  onNewRequest, onNewPreTicket, onValidateReason, onAssignBed,
   onHousekeepingAction, onStartTransport, onCompleteTransport,
   onRoomReady, onConfirmReception, onConsolidate, onReject, onEdit, onAddObservation, currentUser, beds
 }) => {
@@ -391,6 +392,12 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
             <Input placeholder="Paciente o ID..." className="pl-10 h-10 rounded-xl text-xs" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
             {searchTerm && <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="w-3.5 h-3.5" /></button>}
           </div>
+          {can(currentUser, 'crear_pre_ticket') && onNewPreTicket && (
+            <Button onClick={onNewPreTicket} variant="outline" className="h-10 border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-xl px-4 flex items-center gap-2 shrink-0">
+              <Plus className="w-4 h-4" />
+              <span className="hidden sm:inline text-xs font-bold">Pre-ticket</span>
+            </Button>
+          )}
           {can(currentUser, 'crear_ticket') && (
             <Button onClick={onNewRequest} className="h-10 bg-emerald-950 hover:bg-emerald-900 rounded-xl shadow-lg px-4 flex items-center gap-2 shrink-0">
               <Plus className="w-4 h-4 text-white" />

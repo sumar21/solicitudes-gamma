@@ -43,9 +43,15 @@ const STATUS_LABELS: Record<string, string> = {
 };
 const NOTIF_TYPE_TO_PERMISSION: Record<string, string> = {
   NEW_TICKET:          'notif_new_ticket',
+  PRE_TICKET:          'notif_pre_ticket',
   STATUS_UPDATE:       'notif_status_update',
   RECEPTION_CONFIRMED: 'notif_reception_confirmed',
 };
+
+// Estado inicial de un pre-ticket (Coordinadora pidió cama; espera que Admisión configure el destino).
+const PRESOLICITUD = 'Presolicitud';
+const newTicketTitle = (workflow?: string) =>
+  workflow === 'ITR_TO_FLOOR' ? 'Nueva Solicitud de Ingreso' : 'Nueva Solicitud de Traslado';
 
 // DJB2 — para el tag del SW (colapsa el mismo evento lógico en una burbuja).
 function simpleHash(str: string): string {
@@ -106,18 +112,34 @@ Deno.serve(async (req: Request) => {
   let notifType: string | null = null;
   let title = '', excludeUserId: string | null = null;
   if (type === 'INSERT') {
-    notifType = 'NEW_TICKET';
-    // "Ingreso" si el paciente entra desde Sala de Espera (workflow ITR_TO_FLOOR); "Traslado" para el
-    // resto (interno / Ingreso a ITR). Pedido de Julieta: identificar el ingreso en la notificación.
-    title = record.workflow === 'ITR_TO_FLOOR' ? 'Nueva Solicitud de Ingreso' : 'Nueva Solicitud de Traslado';
-    excludeUserId = record.created_by_id != null ? String(record.created_by_id) : null;
+    if (record.status === PRESOLICITUD) {
+      // Pre-ticket recién creado por la Coordinadora → aviso a Admisión (permiso notif_pre_ticket)
+      // para que configure el destino. NO se avisa a las azafatas todavía (ese push sale al convertir).
+      notifType = 'PRE_TICKET';
+      title = 'Nueva Solicitud de Cama';
+      excludeUserId = record.created_by_id != null ? String(record.created_by_id) : null;
+    } else {
+      notifType = 'NEW_TICKET';
+      // "Ingreso" si el paciente entra desde Sala de Espera (workflow ITR_TO_FLOOR); "Traslado" para el
+      // resto (interno / Ingreso a ITR). Pedido de Julieta: identificar el ingreso en la notificación.
+      title = newTicketTitle(record.workflow);
+      excludeUserId = record.created_by_id != null ? String(record.created_by_id) : null;
+    }
   } else if (type === 'UPDATE') {
     if (old_record?.status === record.status) return new Response('no status change', { status: 200 });
-    const label = STATUS_LABELS[record.status];
-    if (!label) return new Response('status sin label', { status: 200 }); // WAITING_ROOM u otro
-    notifType = record.status === 'Por Consolidar' ? 'RECEPTION_CONFIRMED' : 'STATUS_UPDATE';
-    title = label;
-    excludeUserId = record.last_actor_id != null ? String(record.last_actor_id) : null;
+    // Conversión de un pre-ticket: Presolicitud → estado vivo (Admisión configuró el destino). Recién
+    // acá el traslado se vuelve "real" → se comporta como un alta nueva y avisa a azafatas/limpieza.
+    if (old_record?.status === PRESOLICITUD && record.status !== PRESOLICITUD) {
+      notifType = 'NEW_TICKET';
+      title = newTicketTitle(record.workflow);
+      excludeUserId = record.last_actor_id != null ? String(record.last_actor_id) : null;
+    } else {
+      const label = STATUS_LABELS[record.status];
+      if (!label) return new Response('status sin label', { status: 200 }); // WAITING_ROOM u otro
+      notifType = record.status === 'Por Consolidar' ? 'RECEPTION_CONFIRMED' : 'STATUS_UPDATE';
+      title = label;
+      excludeUserId = record.last_actor_id != null ? String(record.last_actor_id) : null;
+    }
   } else {
     return new Response('ignored event', { status: 200 });
   }
@@ -132,9 +154,12 @@ Deno.serve(async (req: Request) => {
   }
 
   const paciente = record.paciente ?? 'Paciente';
-  const body = notifType === 'NEW_TICKET'
-    ? `${paciente}: ${record.cama_origen} → ${record.cama_destino ?? '?'}`
-    : `${paciente}: ${record.cama_origen ?? ''} → ${record.cama_destino ?? ''}`;
+  const body = notifType === 'PRE_TICKET'
+    // Un pre-ticket no tiene destino todavía → mostramos paciente + movimiento (motivo_cambio).
+    ? `${paciente} — ${record.motivo_cambio ?? 'pedido de cama'}`
+    : notifType === 'NEW_TICKET'
+      ? `${paciente}: ${record.cama_origen} → ${record.cama_destino ?? '?'}`
+      : `${paciente}: ${record.cama_origen ?? ''} → ${record.cama_destino ?? ''}`;
 
   const params: Params = {
     type: notifType, title, body, ticketId: String(record.id_univoco ?? ''),

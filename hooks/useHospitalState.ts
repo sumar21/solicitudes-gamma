@@ -2840,6 +2840,79 @@ export const useHospitalState = () => {
     spLogEvent(newTicket.id, 'Solicitud Creada');
   };
 
+  // ── Pre-ticket (Coordinadora) ────────────────────────────────────────────────
+  // La observación del traslado = los requisitos tildados (lo que ve/edita Admisión). Se guardan
+  // ADEMÁS estructurados en requisitosCama para medir. Ver docs/planes/pre-ticket.md.
+  const composeRequisitosObs = (requisitos: string[], freeText?: string): string => {
+    const reqs = (requisitos ?? []).filter(Boolean);
+    const reqPart = reqs.length ? `Requisitos: ${reqs.join(', ')}` : '';
+    const free = (freeText ?? '').trim();
+    return [reqPart, free].filter(Boolean).join(' — ');
+  };
+
+  // La Coordinadora crea un pre-ticket: elige un paciente (por su cama ocupada), un movimiento y los
+  // requisitos. NO tiene destino — status 'Presolicitud', workflow PRE_TICKET. Admisión lo completa
+  // después ("Configurar destino") y lo convierte en un traslado vivo.
+  const createPreTicket = async (data: { originBedLabel: string; movimiento: string; requisitos: string[]; observations?: string }) => {
+    if (!can(currentUser, 'crear_pre_ticket')) { alert('Tu rol no tiene permiso para crear pre-tickets.'); return; }
+    if (!data.originBedLabel || !data.movimiento) { alert('Seleccioná el paciente y el movimiento.'); return; }
+    const sourceBed = beds.find(b => b.label === data.originBedLabel);
+    if (!sourceBed) { alert('No se encontró la cama del paciente seleccionado.'); return; }
+
+    // Evitar duplicados: un solo traslado/pre-ticket activo por cama de origen.
+    const existingActive = tickets.find(t =>
+      t.origin === data.originBedLabel && t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED,
+    );
+    if (existingActive) { alert(`Ya existe un traslado o pre-ticket activo para esta cama (${existingActive.id}).`); return; }
+
+    setTicketActionLoading(true);
+    writingRef.current = true;
+
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const ticketId = `TSL-${currentUser?.id ?? '0'}-${pad(now.getDate())}${pad(now.getMonth() + 1)}${now.getFullYear()}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+
+    const newTicket: Ticket = {
+      id:                  ticketId,
+      sede:                currentUser?.sede || SedeType.HPR,
+      patientName:         sourceBed.patientName || 'Paciente',
+      patientCode:         sourceBed.patientCode,
+      origin:              data.originBedLabel,
+      originBedCode:       sourceBed.bedCode,
+      originBedStatus:     BedStatus.OCCUPIED,
+      destination:         null,
+      workflow:            WorkflowType.PRE_TICKET,
+      status:              TicketStatus.PRESOLICITUD,
+      createdAt:           now.toISOString(),
+      date:                now.toISOString().split('T')[0],
+      isBedClean:          false,
+      isReasonValidated:   true,
+      financier:           sourceBed.institution,
+      createdBy:           currentUser?.name,
+      createdById:         currentUser?.id,
+      changeReason:        data.movimiento, // el "motivo" = el movimiento elegido
+      observations:        composeRequisitosObs(data.requisitos, data.observations) || undefined,
+      requisitosCama:      (data.requisitos ?? []).filter(Boolean),
+      intervenedByHostess: 'NO',
+    };
+
+    setTickets(prev => [newTicket, ...prev]);
+    setCurrentView('REQUESTS');
+    try {
+      const { spItemId, conflict } = await spCreate(newTicket);
+      if (conflict || !spItemId) {
+        setTickets(prev => prev.filter(t => t.id !== newTicket.id));
+        alert(conflict?.error ?? 'No pudimos confirmar el guardado del pre-ticket. Volvé a intentarlo.');
+        return;
+      }
+      setTickets(prev => prev.map(t => t.id === newTicket.id ? { ...t, spItemId } : t));
+      spLogEvent(newTicket.id, 'Pre-ticket creado');
+    } finally {
+      setTimeout(async () => { writingRef.current = false; ticketsEtagRef.current = null; await fetchTickets(); setTicketActionLoading(false); }, 1000);
+      setTimeout(() => { ticketsEtagRef.current = null; fetchTickets(); }, 4500);
+    }
+  };
+
   const handleRoomReady = (ticketId: string) => runTicketAction(ticketId, async () => {
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket?.destination || ticket.status === TicketStatus.IN_TRANSIT) return;
@@ -3590,7 +3663,7 @@ export const useHospitalState = () => {
       setLoginEmail, setLoginPass,
       handleLogin, handleLogout, enableNotifications,
       setOperador, cambioTurno,
-      handleCreateTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
+      handleCreateTicket, createPreTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
       fetchBeds, enrichBed, fetchPatientTickets, searchHistory, refreshAll, fetchAllTickets, setHistoryRange,
       markBedClean, undoBedClean,
       startRoutineCleaning, finishRoutineCleaning, fetchRoutineCleanings,

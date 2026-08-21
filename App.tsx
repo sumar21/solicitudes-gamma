@@ -37,6 +37,7 @@ import { Bell } from './components/Icons';
 
 // Modals
 import { NewRequestModal } from './components/modals/NewRequestModal';
+import { PreTicketModal } from './components/modals/PreTicketModal';
 import { EditRequestModal, EditRequestPayload } from './components/modals/EditRequestModal';
 import { AssignBedModal } from './components/modals/AssignBedModal';
 import { AreaSelectionModal } from './components/modals/AreaSelectionModal';
@@ -135,6 +136,7 @@ export default function App() {
 
   // UI State local (para control de modales)
   const [isNewRequestOpen, setIsNewRequestOpen] = useState(false);
+  const [isPreTicketOpen, setIsPreTicketOpen] = useState(false);
   const [isAssignBedOpen, setIsAssignBedOpen] = useState(false);
   const [isAreaSelectionOpen, setIsAreaSelectionOpen] = useState(false);
   const [isRejectOpen, setIsRejectOpen] = useState(false);
@@ -817,6 +819,7 @@ export default function App() {
                 searchTerm={state.requestsSearchTerm} setSearchTerm={actions.setRequestsSearchTerm} sortConfig={state.sortConfig}
                 onSort={(key) => actions.setSortConfig(prev => ({ key, direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc' }))}
                 onNewRequest={() => setIsNewRequestOpen(true)}
+                onNewPreTicket={() => setIsPreTicketOpen(true)}
                 onValidateReason={actions.handleValidateTicket}
                 onAssignBed={handleOpenAssignBed}
                 onHousekeepingAction={actions.handleHousekeepingAction}
@@ -859,6 +862,12 @@ export default function App() {
             .filter(t => t.status !== 'Consolidado' && t.status !== 'Cancelado' && t.destination)
             .map(t => t.destination as string)
         )}
+      />
+      <PreTicketModal
+        open={isPreTicketOpen}
+        onOpenChange={setIsPreTicketOpen}
+        onCreate={actions.createPreTicket}
+        beds={state.beds}
       />
       <EditRequestModal
         open={!!editTicketId}

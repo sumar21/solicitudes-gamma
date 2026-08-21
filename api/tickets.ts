@@ -18,6 +18,7 @@ import { effectiveAreaNames } from './push-utils.js';
 import { getRoleByName } from './role-cache.js';
 import { getUserAreasById } from './user-cache.js';
 import { getSupabaseAdmin } from './supabase-admin.js';
+import { authzPreTicket } from './pre-ticket-authz.js';
 
 const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 
@@ -60,6 +61,8 @@ function rowToTicket(r: Record<string, any>): Ticket {
     changeReason:           r.motivo_cambio ? String(r.motivo_cambio) : undefined,
     rejectionReason:        r.motivo_cancelacion ? String(r.motivo_cancelacion) : undefined,
     observations:           r.observaciones ? String(r.observaciones) : undefined,
+    // Pre-ticket: requisitos de cama tildados por la Coordinadora (snapshot estructurado, para medir).
+    requisitosCama:         Array.isArray(r.requisitos_cama) ? r.requisitos_cama.map((x: any) => String(x)) : undefined,
     targetBedOriginalStatus: r.cama_destino_status ? (r.cama_destino_status as BedStatus) : undefined,
     intervenedByHostess,
     canCancel:              intervenedByHostess === 'NO',
@@ -88,6 +91,7 @@ function ticketToRow(t: Partial<Ticket>): Record<string, unknown> {
     ['changeReason',         'motivo_cambio'],
     ['rejectionReason',      'motivo_cancelacion'],
     ['observations',         'observaciones'],
+    ['requisitosCama',       'requisitos_cama'],
     ['intervenedByHostess',  'intervino_azafata'],
   ];
   const row = Object.fromEntries(
@@ -214,6 +218,12 @@ async function handler(req: any, res: any) {
     if (req.method === 'POST') {
       const { originAreaName, destinationAreaName } = req.body ?? {};
       const row = ticketToRow(req.body ?? {});
+      // Pre-ticket (status 'Presolicitud'): exige el permiso crear_pre_ticket (la Coordinadora).
+      // El resto de los altos siguen gateados client-side por crear_ticket (sin cambios).
+      if (String(row.status) === TicketStatus.PRESOLICITUD) {
+        const denied = await authzPreTicket(req, 'crear_pre_ticket');
+        if (denied) return res.status(denied.status).json({ error: denied.error });
+      }
       row.entorno = ENTORNO;
       row.version = String(req.body?.version ?? ''); // versión del build del cliente que creó el ticket
       // Responsable (operador de sesión / cuenta compartida) que creó el traslado.
