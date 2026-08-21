@@ -4,6 +4,7 @@ import {
   X, MapPin, MoveRight, Activity, Calendar, Hash, User, CheckCircle2, XCircle,
   Clock, ArrowRightLeft, History,
 } from './Icons';
+import { MessageSquare } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
 import { Badge } from './ui/badge';
 import { cn, formatDateTime, formatTime, formatBedName, formatDateReadable } from '../lib/utils';
@@ -471,6 +472,21 @@ const EpisodeCard: React.FC<{
               <XCircle className="w-3 h-3" /> Motivo de Cancelación
             </p>
             <p className="text-xs font-bold text-red-900 leading-snug italic">"{ticket.rejectionReason}"</p>
+          </div>
+        )}
+
+        {/* Observación con la que Admisión cargó la solicitud (campo del ticket, no un evento). */}
+        {(ticket.observations ?? '').trim() && (
+          <div className="mb-3 p-3 bg-amber-50/60 rounded-xl border border-amber-100">
+            <span className="inline-flex items-center gap-1 mb-1.5 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 text-[9px] font-bold uppercase tracking-wider">
+              <MessageSquare className="w-2.5 h-2.5" /> Observación de la solicitud
+            </span>
+            <p className="text-sm text-slate-800 leading-snug whitespace-pre-wrap break-words">{ticket.observations!.trim()}</p>
+            <p className="text-[10px] text-slate-400 font-medium mt-2 flex items-center gap-1.5 flex-wrap">
+              <span className="font-semibold text-slate-600">{ticket.createdBy ?? 'Admisión'}</span>
+              <span>·</span>
+              <span>{formatDateTime(ticket.createdAt)}</span>
+            </p>
           </div>
         )}
 
