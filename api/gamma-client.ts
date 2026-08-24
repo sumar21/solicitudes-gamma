@@ -4,7 +4,7 @@
  * Token cache is module-level (survives warm Vercel invocations).
  */
 
-export const GAMMA_BASE = process.env.GAMMA_VM_URL ?? 'http://35.224.5.114/proxy/index.php';
+export const GAMMA_BASE = process.env.GAMMA_VM_URL ?? 'https://gamma-vm.sumardigital.com.ar/proxy/index.php';
 const CLIENT_ID = process.env.CLIENT_ID ?? '';
 const CLIENT_SECRET = process.env.CLIENT_SECRET ?? '';
 

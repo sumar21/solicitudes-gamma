@@ -41,7 +41,7 @@ const PUSH_VIA_WEBHOOK = WEBHOOK_PUSH_ENTORNOS.includes(ENTORNO);
 // Fase 2: además de SP, escribir el enrich a Supabase (enrich_camas) en estos entornos (dual-write).
 // La LECTURA sigue en SP hasta el read-flip (ver enrich-store.ENRICH_READ_SUPABASE). Gate en TESTING.
 const WRITE_ENRICH_SUPABASE = enrichWritesToSupabase(ENTORNO);
-const GAMMA_BASE = process.env.GAMMA_VM_URL ?? 'http://35.224.5.114/proxy/index.php';
+const GAMMA_BASE = process.env.GAMMA_VM_URL ?? 'https://gamma-vm.sumardigital.com.ar/proxy/index.php';
 
 // Concurrencia contra Gamma. La VM es SINGLE-NODE (docs/arquitectura.md §41): 8 workers en
 // paralelo la saturan y entran en congestion collapse — más concurrencia la vuelve más lenta,

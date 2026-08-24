@@ -216,7 +216,7 @@ export default async function handler(req: any, res: any) {
     // 2) Camas ocupadas desde Gamma
     const tokenOcc = await getToken('obtenermapacamasocupadas');
     const occRes = await fetchWithTimeout(
-      `${process.env.GAMMA_VM_URL ?? 'http://35.224.5.114/proxy/index.php'}/oauth_resource/obtenermapacamasocupadas`,
+      `${process.env.GAMMA_VM_URL ?? 'https://gamma-vm.sumardigital.com.ar/proxy/index.php'}/oauth_resource/obtenermapacamasocupadas`,
       { headers: { Authorization: `Bearer ${tokenOcc}` } },
     );
     if (!occRes.ok) {
