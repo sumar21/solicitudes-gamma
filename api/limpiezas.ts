@@ -180,7 +180,7 @@ async function handler(req: any, res: any) {
 
       const { error } = await supa.from('limpiezas')
         .update({ status: 'Inactivo', motivo_cierre: motivo, fecha_cierre: nowIso, version: String(req.body?.version ?? '') })
-        .eq('id', itemId);
+        .eq('id', itemId).eq('entorno', ENTORNO); // re-afirma el entorno: un spItemId de otro entorno no cierra acá
       if (error) { console.error('[limpiezas] PATCH failed:', error.message); return res.status(500).json({ error: 'Failed to close cleaning' }); }
       return res.status(200).json({ ok: true });
     } catch (err: any) {

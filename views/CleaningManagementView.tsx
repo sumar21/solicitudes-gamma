@@ -152,13 +152,18 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
   // Auto-carga al entrar a Rutina y al cambiar el día.
   useEffect(() => { if (tab === 'rutina') fetchRoutine(); }, [tab, fetchRoutine]);
 
-  // GAMMA y TICKET se muestran agrupados como "Traslado" (pedido del negocio); los otros igual.
-  const REASON_LABEL: Record<string, string> = { GAMMA: 'Traslado', TICKET: 'Traslado', ANULADA: 'Anulada', CONSOLIDADO: 'Consolidado' };
+  // Motivo de cierre → rótulo. IMPORTANTE: TICKET y GAMMA son cosas DISTINTAS y antes se
+  // colapsaban ambas en "Traslado" — eso hacía que un cierre GAMMA (PROGAL avanzó la cama por
+  // fuera de la app, SIN traslado) figurara como "cerrada por Traslado" y se reportara como bug.
+  //   TICKET = un traslado de la app tomó la cama (sí hubo traslado).
+  //   GAMMA  = PROGAL avanzó el estado de la cama (se liberó/reasignó en el sistema, sin traslado en la app).
+  const REASON_LABEL: Record<string, string> = { GAMMA: 'PROGAL', TICKET: 'Traslado', ANULADA: 'Anulada', CONSOLIDADO: 'Consolidado' };
   const reasonLabel = (r: string) => REASON_LABEL[r] ?? (r || '—');
   const reasonClass = (r: string) =>
     r === 'CONSOLIDADO' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
     : r === 'ANULADA'   ? 'bg-amber-50 text-amber-700 border-amber-200'
-    : 'bg-sky-50 text-sky-700 border-sky-200'; // GAMMA/TICKET = Traslado
+    : r === 'GAMMA'     ? 'bg-violet-50 text-violet-700 border-violet-200' // PROGAL avanzó la cama
+    : 'bg-sky-50 text-sky-700 border-sky-200'; // TICKET = Traslado
 
   // ── Buscador (aplica a las dos tabs) ───────────────────────────────────────
   // Mismo criterio que el buscador de comandas: se indexa cada fila una vez y la búsqueda
