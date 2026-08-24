@@ -33,7 +33,7 @@
 import { graphFetch, graphFetchRetry } from './graph.js';
 import {
   getToken, fetchEventDetails, fetchWithTimeout, simpleHash,
-  GammaSector, GammaBed, GammaEvent,
+  GammaSector, GammaBed, GammaEvent, GAMMA_BASE,
 } from './gamma-client.js';
 import { sendPushToSubscribers } from './push-utils.js';
 
@@ -216,7 +216,7 @@ export default async function handler(req: any, res: any) {
     // 2) Camas ocupadas desde Gamma
     const tokenOcc = await getToken('obtenermapacamasocupadas');
     const occRes = await fetchWithTimeout(
-      `${process.env.GAMMA_VM_URL ?? 'https://gamma-vm.sumardigital.com.ar/proxy/index.php'}/oauth_resource/obtenermapacamasocupadas`,
+      `${GAMMA_BASE}/oauth_resource/obtenermapacamasocupadas`,
       { headers: { Authorization: `Bearer ${tokenOcc}` } },
     );
     if (!occRes.ok) {

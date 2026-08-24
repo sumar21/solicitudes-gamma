@@ -12,7 +12,7 @@
  */
 
 import { graphFetch, graphFetchRetry } from './graph.js';
-import { getToken, fetchWithTimeout, simpleHash, GammaSector } from './gamma-client.js';
+import { getToken, fetchWithTimeout, simpleHash, GammaSector, GAMMA_BASE } from './gamma-client.js';
 import { buildEnrich, type EnrichResult } from './enrich-core.js';
 import type { FastingSummary } from './ayunos.js';
 import { sendPushToSubscribers } from './push-utils.js';
@@ -41,7 +41,7 @@ const PUSH_VIA_WEBHOOK = WEBHOOK_PUSH_ENTORNOS.includes(ENTORNO);
 // Fase 2: además de SP, escribir el enrich a Supabase (enrich_camas) en estos entornos (dual-write).
 // La LECTURA sigue en SP hasta el read-flip (ver enrich-store.ENRICH_READ_SUPABASE). Gate en TESTING.
 const WRITE_ENRICH_SUPABASE = enrichWritesToSupabase(ENTORNO);
-const GAMMA_BASE = process.env.GAMMA_VM_URL ?? 'https://gamma-vm.sumardigital.com.ar/proxy/index.php';
+// GAMMA_BASE se importa de gamma-client (fuente única, fail-loud si falta GAMMA_VM_URL).
 
 // Concurrencia contra Gamma. La VM es SINGLE-NODE (docs/arquitectura.md §41): 8 workers en
 // paralelo la saturan y entran en congestion collapse — más concurrencia la vuelve más lenta,

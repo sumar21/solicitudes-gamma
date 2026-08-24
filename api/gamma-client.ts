@@ -4,7 +4,17 @@
  * Token cache is module-level (survives warm Vercel invocations).
  */
 
-export const GAMMA_BASE = process.env.GAMMA_VM_URL ?? 'https://gamma-vm.sumardigital.com.ar/proxy/index.php';
+// La URL de PROGAL viene SIEMPRE de la env var GAMMA_VM_URL — es lo que enruta por entorno
+// (progal-test.sumardigital.com.ar en TEST, gamma-vm.sumardigital.com.ar en PROD). NO hay fallback
+// hardcodeado a propósito: una URL fija sería incorrecta para al menos un entorno y podría cruzar
+// datos (TEST leyendo la PROGAL de PROD) o —antes, con http— viajar en texto plano. Si falta la env,
+// FAIL-LOUD: se aborta con error claro en vez de pegar a una PROGAL equivocada en silencio.
+function requireGammaBase(): string {
+  const url = process.env.GAMMA_VM_URL?.trim();
+  if (!url) throw new Error('[gamma] Falta la env var GAMMA_VM_URL — se aborta para no pegar a una PROGAL equivocada.');
+  return url;
+}
+export const GAMMA_BASE = requireGammaBase();
 const CLIENT_ID = process.env.CLIENT_ID ?? '';
 const CLIENT_SECRET = process.env.CLIENT_SECRET ?? '';
 
