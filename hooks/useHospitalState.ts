@@ -2145,6 +2145,11 @@ export const useHospitalState = () => {
       // abajo — así admisión se entera de la finalización aunque el web-push falle.
       if ((t.status === TicketStatus.COMPLETED || t.status === TicketStatus.REJECTED) && prevKey === undefined) continue;
 
+      // Pre-ticket (Presolicitud): la notif de "pedido de cama" a Admisión la maneja el webhook
+      // (tipo PRE_TICKET). La detección local NO debe emitir "Nueva Solicitud" a las azafatas
+      // mientras el pre-ticket no tenga destino; recién al convertirse (abajo) se trata como alta.
+      if (t.status === TicketStatus.PRESOLICITUD) continue;
+
       const originArea = areaOf(t.origin);
       const destArea   = areaOf(t.destination);
 
@@ -2169,6 +2174,23 @@ export const useHospitalState = () => {
         const prevDest = prevDestRaw || null;
         const destChanged = (prevDest ?? '') !== (t.destination ?? '');
         const statusChanged = prevStatus !== t.status;
+
+        // Conversión de un pre-ticket (Presolicitud → estado vivo): Admisión configuró el destino.
+        // NO es la edición de un traslado existente → es una solicitud que recién nace. Emitimos UNA
+        // "Nueva Solicitud" y cortamos, sin el "Modificación de Solicitud / destino cambiado" (que
+        // aparecía porque el destino pasó de vacío a la cama elegida).
+        if (prevStatus === TicketStatus.PRESOLICITUD) {
+          newNotifs.push({
+            id: `NOTIF-POLL-${t.id}-CONV`, isRead: false,
+            timestamp: timestampOfTicketEvent(t),
+            type: NotificationType.NEW_TICKET,
+            title: newTicketTitle(t.workflow),
+            message: `${t.patientName}: ${t.origin} → ${t.destination ?? '?'}`,
+            ticketId: t.id, sede: t.sede,
+            originArea, destinationArea: destArea,
+          });
+          continue;
+        }
 
         // A destination change always causes a status recalculation (WAITING_ROOM
         // ↔ IN_TRANSIT depending on whether the new bed was AVAILABLE or PREPARATION).
