@@ -2054,10 +2054,11 @@ export const useHospitalState = () => {
   }, [token, currentUser?.roleName, syncSessionRole]);
 
   // ── Auto-cierre de limpiezas (Opción B) ─────────────────────────────────────
-  // Cierra en SP las limpiezas que dejaron de aplicar: la cama ya no está "En preparación"
-  // en Gamma (PROGAL avanzó → motivo GAMMA) o un traslado activo la tomó (→ motivo TICKET).
-  // Así no depende de un "consolidar" manual que se pueda olvidar. Best-effort e idempotente
-  // (closedCleaningsRef evita repetir; el PATCH a Inactivo es idempotente del lado server).
+  // Cierra las limpiezas que dejaron de aplicar cuando un traslado activo tomó la cama
+  // (→ motivo TICKET). El cierre por PROGAL avanzado (→ motivo GAMMA) está DESACTIVADO por
+  // pedido del negocio: consolidan a mano después de modificar PROGAL (ver el guard abajo).
+  // Best-effort e idempotente (closedCleaningsRef evita repetir; el PATCH a Inactivo es
+  // idempotente del lado server).
   useEffect(() => {
     if (cleanings.size === 0 || rawBeds.length === 0) return;
     // Toda la decisión (incluida la exención del limbo post-traslado) vive en
@@ -2067,6 +2068,19 @@ export const useHospitalState = () => {
       if (!info.spItemId || closedCleaningsRef.current.has(info.spItemId)) continue;
       const reason = cleaningAutoCloseReason(rawByLabel.get(label)?.status, label, tickets);
       if (!reason) continue;
+      // ⛔ Auto-cierre GAMMA DESACTIVADO (pedido del negocio, 2026-08-24).
+      // GAMMA = "PROGAL avanzó la cama fuera de la app". Pero el flujo real es: el personal
+      // MODIFICA PROGAL y RECIÉN DESPUÉS toca "Consolidar PROGAL" en la app. Como PROGAL siempre
+      // cambia primero, este auto-cierre le ganaba de mano y cerraba la limpieza ANTES del paso
+      // manual (y encima figuraba como "Traslado" en el historial). Ahora la marca de la azafata
+      // se cierra SOLO por el consolidado manual (motivo CONSOLIDADO) o por un traslado REAL de la
+      // app que tome la cama (motivo TICKET). La lógica de detección sigue viva e intacta en
+      // cleaningAutoCloseReason → para RE-ACTIVAR: borrá este guard.
+      // Seguridad visual: mergeBeds solo pinta "Limpia" sobre camas 'En preparación', así que una
+      // cama ya Ocupada/Disponible NO se muestra limpia aunque la marca quede 'Activo' sin consolidar.
+      // Tradeoff conocido: si la MISMA cama vuelve a 'En preparación' en un ciclo nuevo sin haberse
+      // consolidado la marca vieja, esa marca podría reaparecer — antes GAMMA lo tapaba.
+      if (reason === 'GAMMA') continue;
       const spItemId = info.spItemId;
       closedCleaningsRef.current.add(spItemId); // evita disparos duplicados mientras el PATCH viaja
       setCleanings(prev => { const n = new Map(prev); n.delete(label); return n; });
