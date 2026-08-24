@@ -220,7 +220,20 @@ export async function fetchEventDetails(token: string, eventOrigin: string, even
     );
     if (!res.ok) return null;
     const data: unknown = await res.json();
-    if (data && typeof data === 'object') return data as GammaEvent;
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      const ev = data as GammaEvent;
+      // Guard anti 200-parcial de Gamma (inestable): un evento de internación VÁLIDO siempre trae su
+      // identidad/estructura (origen/número/paciente/tipo/ingreso). Un 200 con objeto vacío o de error
+      // NO → lo tratamos como fallo (null) para que buildEnrich marque eventFetchFailed y el cron NO
+      // pise el enrich bueno con uno sin dieta/ayuno (reintroduciría el falso "sin dieta") ni emita un
+      // falso "Ayuno cancelado". OJO: DIETAS/AYUNOS/AISLAMIENTOS vacíos SÍ son válidos (paciente sin
+      // dieta especial) → NO se validan acá. Importa sobre todo con el read-flip a Supabase (PROD lee
+      // enrich_camas). Ver docs/historial/runbook-pase-prod-2026-08-24.md (B7).
+      const looksLikeEvent =
+        ev.EVE_NUMERO != null || !!ev.EVE_ORIGEN || !!ev.EVE_PACIENTE ||
+        !!ev.EVE_TIPO_INTERNACION || !!ev.EVE_FECHA_HORA_INGRESO;
+      if (looksLikeEvent) return ev;
+    }
     return null;
   } catch {
     return null;

@@ -32,7 +32,10 @@ const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 // WHEN del trigger notify_change_* (migración webhook_notify_change): al habilitar un entorno, agregarlo
 // ACÁ y sacar el WHEN del trigger, juntos → nunca hay doble push (webhook y push-utils son excluyentes
 // por entorno) ni ventana sin push.
-const WEBHOOK_PUSH_ENTORNOS = ['TESTING'];
+// PRODUCTIVO habilitado en el pase del 2026-08-24 JUNTO con la migración que saca el WHEN='TESTING'
+// de los triggers notify_change_dieta/_ayuno (20260824..._notify_change_all_entornos). Las dos piezas
+// DEBEN estar coherentes: acá lista los entornos donde el push sale del webhook (y el cron NO pushea).
+const WEBHOOK_PUSH_ENTORNOS = ['TESTING', 'PRODUCTIVO'];
 const PUSH_VIA_WEBHOOK = WEBHOOK_PUSH_ENTORNOS.includes(ENTORNO);
 
 // Fase 2: además de SP, escribir el enrich a Supabase (enrich_camas) en estos entornos (dual-write).

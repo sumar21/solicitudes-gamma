@@ -4,20 +4,20 @@
  * UNIQUE(entorno, event_key) + upsert ON CONFLICT → una fila por evento, sin duplicados por diseño
  * (a diferencia de SP, que no tenía unicidad y acumulaba dupes → el bug de falso "sin dieta").
  *
- * Migración TESTING-primero y por PASOS, gateada por entorno:
- *   - ENRICH_WRITE_SUPABASE: entornos que ESCRIBEN el enrich a Supabase (dual-write con SP mientras
- *     se valida). Arranca en ['TESTING'].
+ * Migración gateada por entorno:
+ *   - ENRICH_WRITE_SUPABASE: entornos que ESCRIBEN el enrich a Supabase (dual-write con SP).
  *   - ENRICH_READ_SUPABASE: entornos que LEEN el enrich desde Supabase (mapa de camas + backstop
- *     'sin_dieta') en vez de SP. Arranca VACÍO — se pasa a ['TESTING'] recién cuando la tabla está
- *     poblada y validada (el cron la llena en ~1 ciclo). Así el read-flip no deja el mapa sin enrich.
+ *     'sin_dieta') en vez de SP. El read tiene fallback a SP (fillEnrichMapFromSP): si falta la fila
+ *     en Supabase, el mapa se completa desde SP → el read-flip nunca deja el mapa sin enrich.
+ *   PRODUCTIVO habilitado en el pase del 2026-08-24 (ver docs/historial/runbook-pase-prod-2026-08-24.md).
  *
  * Los datos son médicos (dni, diagnóstico) → SOLO service_role (getSupabaseAdmin). Nunca al cliente.
  */
 import { getSupabaseAdmin } from './supabase-admin.js';
 import type { EnrichResult } from './enrich-core.js';
 
-export const ENRICH_WRITE_SUPABASE: string[] = ['TESTING'];
-export const ENRICH_READ_SUPABASE:  string[] = ['TESTING'];
+export const ENRICH_WRITE_SUPABASE: string[] = ['TESTING', 'PRODUCTIVO'];
+export const ENRICH_READ_SUPABASE:  string[] = ['TESTING', 'PRODUCTIVO'];
 
 export const enrichWritesToSupabase = (entorno: string): boolean => ENRICH_WRITE_SUPABASE.includes(entorno);
 export const enrichReadsFromSupabase = (entorno: string): boolean => ENRICH_READ_SUPABASE.includes(entorno);
