@@ -438,6 +438,9 @@ export const PERMISSIONS = [
   'notif_cirugia_finalizada',  // TOLERANCIA_EVALUADA — iniciar dieta (cierra la operatoria)
   // Pre-ticket creado por la Coordinadora → aviso a Admisión (push + campanita) para que configure el destino.
   'notif_pre_ticket',
+  // Ingreso QUIRÚRGICO desde Sala de Espera (workflow ITR_TO_FLOOR + internación 'Q') → solo Enfermería,
+  // para que se entere de esos ingresos de su interés sin recibir todos los traslados.
+  'notif_ingreso_quirurgico',
 ] as const;
 export type Permission = typeof PERMISSIONS[number];
 
@@ -473,6 +476,7 @@ export interface User {
 export enum NotificationType {
   NEW_TICKET = 'NEW_TICKET',
   PRE_TICKET = 'PRE_TICKET', // Coordinadora creó un pre-ticket → aviso a Admisión (configurar destino)
+  SURGICAL_ADMISSION = 'SURGICAL_ADMISSION', // ingreso quirúrgico desde Sala de Espera → solo Enfermería
   STATUS_UPDATE = 'STATUS_UPDATE',
   RECEPTION_CONFIRMED = 'RECEPTION_CONFIRMED',
   DIET_CHANGE = 'DIET_CHANGE',
@@ -544,6 +548,10 @@ export interface Ticket {
   // Snapshot estructurado para medir — se escribe al crear y NO se toca al editar la observación.
   // Columna `requisitos_cama text[]` en public.traslados. Ver docs/planes/pre-ticket.md.
   requisitosCama?: string[];
+  // Snapshot del tipo de internación del paciente al crear ("Q" quirúrgica, "C" clínica, etc.,
+  // de admissionTypeCode/PROGAL). Lo usa notify-push para el aviso de ingreso quirúrgico a Enfermería.
+  // Columna `tipo_internacion` en public.traslados.
+  tipoInternacion?: string;
   canCancel?: boolean;          // true while no hostess action has touched this ticket
   intervenedByHostess?: 'SI' | 'NO'; // IntervinoAzafata_T in SP — "NO" at creation, "SI" after first hostess action
 }

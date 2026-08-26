@@ -146,6 +146,7 @@ function subAreaMatches(sub: Subscription, params: PushParams): boolean {
 // Mapeo tipo de notif → permiso requerido. Misma fuente de verdad que lib/permissions.ts.
 const NOTIF_TYPE_TO_PERMISSION: Record<string, string> = {
   NEW_TICKET:           'notif_new_ticket',
+  SURGICAL_ADMISSION:   'notif_ingreso_quirurgico',
   STATUS_UPDATE:        'notif_status_update',
   RECEPTION_CONFIRMED:  'notif_reception_confirmed',
   DIET_CHANGE:          'notif_diet_change',

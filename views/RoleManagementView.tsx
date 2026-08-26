@@ -128,6 +128,7 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
     perms: [
       { code: 'notif_new_ticket',          label: 'Traslado pedido (nuevo)' },
       { code: 'notif_pre_ticket',          label: 'Pre-ticket creado (Coordinadora pidió una cama)' },
+      { code: 'notif_ingreso_quirurgico',  label: 'Ingreso quirúrgico desde Sala de Espera (para Enfermería)' },
       { code: 'notif_status_update',       label: 'Actualizaciones de estado (en tránsito, en transporte, cancelado, etc.)' },
       { code: 'notif_reception_confirmed', label: 'Recepción confirmada (traslado finalizado)' },
       { code: 'notif_diet_change',         label: 'Cambio de dieta' },

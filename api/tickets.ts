@@ -63,6 +63,7 @@ function rowToTicket(r: Record<string, any>): Ticket {
     observations:           r.observaciones ? String(r.observaciones) : undefined,
     // Pre-ticket: requisitos de cama tildados por la Coordinadora (snapshot estructurado, para medir).
     requisitosCama:         Array.isArray(r.requisitos_cama) ? r.requisitos_cama.map((x: any) => String(x)) : undefined,
+    tipoInternacion:        r.tipo_internacion ? String(r.tipo_internacion) : undefined,
     targetBedOriginalStatus: r.cama_destino_status ? (r.cama_destino_status as BedStatus) : undefined,
     intervenedByHostess,
     canCancel:              intervenedByHostess === 'NO',
@@ -92,6 +93,7 @@ function ticketToRow(t: Partial<Ticket>): Record<string, unknown> {
     ['rejectionReason',      'motivo_cancelacion'],
     ['observations',         'observaciones'],
     ['requisitosCama',       'requisitos_cama'],
+    ['tipoInternacion',      'tipo_internacion'],
     ['intervenedByHostess',  'intervino_azafata'],
   ];
   const row = Object.fromEntries(
@@ -192,11 +194,15 @@ async function handler(req: any, res: any) {
         if (patientCode) {
           q = q.eq('codigo_paciente', patientCode);
         } else {
-          // Vista viva: activos + cerrados en la ventana de gracia de 30min. La ventana existe para
-          // que el detector de cambios del cliente vea la transición a Consolidado/Cancelado antes de
-          // que el ticket se caiga del payload (misma razón que en la versión SP).
-          const graceCutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-          q = q.or(`status.not.in.(${TicketStatus.COMPLETED},${TicketStatus.REJECTED}),completed_at.gte.${graceCutoff}`);
+          // Vista viva: activos + cerrados en la ventana de gracia. La ventana existe para que el
+          // detector de cambios del cliente vea la transición a Consolidado/Cancelado antes de que el
+          // ticket se caiga del payload (misma razón que en la versión SP).
+          // Cancelados (Cancelado) con ventana de 1h: las azafatas los siguen viendo en Operativa un
+          // rato (admisión a veces carga y cancela, y creían que se "borraron"). Consolidados quedan
+          // en 30min. Se discrimina por status con and() anidado dentro del or().
+          const graceCutoff  = new Date(Date.now() - 30 * 60 * 1000).toISOString(); // Consolidado: 30min
+          const cancelCutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // Cancelado: 1h
+          q = q.or(`status.not.in.(${TicketStatus.COMPLETED},${TicketStatus.REJECTED}),and(status.eq.${TicketStatus.COMPLETED},completed_at.gte.${graceCutoff}),and(status.eq.${TicketStatus.REJECTED},completed_at.gte.${cancelCutoff})`);
         }
         const res = await q;
         data = res.data; error = res.error;

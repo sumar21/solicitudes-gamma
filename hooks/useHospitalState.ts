@@ -2840,6 +2840,9 @@ export const useHospitalState = () => {
       // aceptamos también `changeReason` por compatibilidad con llamadas internas.
       changeReason:            (data as any).reason ?? data.changeReason,
       observations:            data.observations,
+      // Snapshot del tipo de internación del paciente (admissionTypeCode: 'Q' quirúrgica, etc.). Lo usa
+      // notify-push para el aviso de ingreso quirúrgico a Enfermería (workflow ITR_TO_FLOOR + 'Q').
+      tipoInternacion:         sourceBed.admissionTypeCode,
       intervenedByHostess:     'NO',
     };
 

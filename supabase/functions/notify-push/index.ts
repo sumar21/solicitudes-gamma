@@ -10,7 +10,9 @@
  * Lee roles + push_subscriptions de Supabase (service_role, bypassa RLS), reproduce isRelevant
  * (sede/permiso por tipo/filter_by_floors con remapeo HRA), envía el push y escribe la campanita
  * en public.notificaciones (una fila por usuario). Idempotencia ante reintentos por timeout:
- * public.push_dispatch_log con key = id_univoco:status:updated_at (insert on conflict do nothing).
+ * public.push_dispatch_log con key = id_univoco:status:updated_at:type (insert on conflict do nothing).
+ * Una fila puede emitir MÁS de una notificación (ej. un ingreso quirúrgico manda el NEW_TICKET normal
+ * + un SURGICAL_ADMISSION a Enfermería) → la key incluye el `type` para que no colisionen.
  *
  * Secrets (supabase secrets set): SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, VAPID_PUBLIC_KEY,
  * VAPID_PRIVATE_KEY, VAPID_SUBJECT, WEBHOOK_SECRET.
@@ -46,6 +48,8 @@ const NOTIF_TYPE_TO_PERMISSION: Record<string, string> = {
   PRE_TICKET:          'notif_pre_ticket',
   STATUS_UPDATE:       'notif_status_update',
   RECEPTION_CONFIRMED: 'notif_reception_confirmed',
+  // Ingreso quirúrgico desde Sala de Espera → SOLO a quien tenga notif_ingreso_quirurgico (Enfermería).
+  SURGICAL_ADMISSION:  'notif_ingreso_quirurgico',
 };
 
 // Estado inicial de un pre-ticket (Coordinadora pidió cama; espera que Admisión configure el destino).
@@ -144,13 +148,91 @@ Deno.serve(async (req: Request) => {
     return new Response('ignored event', { status: 200 });
   }
 
-  // ── Idempotencia ante reintentos por timeout del webhook ───────────────────
-  const idemKey = `${record.id_univoco}:${record.status}:${record.updated_at}`;
-  const { error: idemErr } = await supa.from('push_dispatch_log').insert({ idempotency_key: idemKey });
-  if (idemErr) {
-    // 23505 = ya se despachó esta versión → salir sin re-enviar. Otro error → log y seguir.
-    if ((idemErr as any).code === '23505') return new Response('already dispatched', { status: 200 });
-    console.error('[notify-push] push_dispatch_log:', idemErr.message);
+  if (!VAPID_PUBLIC || !VAPID_PRIVATE) { console.warn('[notify-push] VAPID no configurado'); return new Response('no vapid', { status: 200 }); }
+
+  // ── Roles + suscripciones del entorno (una sola vez; las comparten los despachos) ──
+  const { data: roleRows } = await supa.from('roles').select('name, permissions, filter_by_floors').eq('status', 'Activo');
+  const roleByName = new Map<string, any>();
+  for (const r of roleRows ?? []) roleByName.set(String(r.name).trim().toLowerCase(), r);
+
+  const { data: subRows } = await supa.from('push_subscriptions')
+    .select('endpoint, keys, user_id, user_role, assigned_areas, sede, last_seen_at')
+    .eq('entorno', String(record.entorno ?? ''));
+  const now = Date.now();
+  const fresh = (subRows ?? []).filter(s => {
+    if (!s.last_seen_at) return true; // fail-open
+    const t = Date.parse(s.last_seen_at); return !Number.isFinite(t) || now - t <= STALE_SUB_MS;
+  });
+
+  // Despacha UNA notificación: idempotencia (la key incluye el tipo → dos avisos del MISMO evento no
+  // colisionan), filtra destinatarios por permiso + área, envía web push y escribe la campanita.
+  async function dispatchNotification(p: Params): Promise<{ type: string; sent: number; notified: number; skipped?: string }> {
+    const idemKey = `${p.ticketId}:${record.status}:${record.updated_at}:${p.type}`;
+    const { error: idemErr } = await supa.from('push_dispatch_log').insert({ idempotency_key: idemKey });
+    if (idemErr) {
+      if ((idemErr as any).code === '23505') return { type: p.type, sent: 0, notified: 0, skipped: 'already dispatched' };
+      console.error('[notify-push] push_dispatch_log:', idemErr.message);
+    }
+
+    const reqPerm = NOTIF_TYPE_TO_PERMISSION[p.type];
+    const relevant = fresh.filter(s => {
+      if (p.excludeUserId != null && s.user_id === p.excludeUserId) return false;
+      const roleCfg = roleByName.get(String(s.user_role ?? '').trim().toLowerCase());
+      if (!roleCfg) return false;
+      if (!reqPerm || !(roleCfg.permissions ?? []).includes(reqPerm)) return false;
+      if (roleCfg.filter_by_floors && !subAreaMatches(s.assigned_areas ?? [], p.originAreaName, p.destinationAreaName)) return false;
+      return true;
+    });
+    if (relevant.length === 0) return { type: p.type, sent: 0, notified: 0, skipped: 'no relevant subs' };
+
+    // ── Payloads (tag por evento lógico → el SW colapsa duplicados) ────────────
+    const tagBase = `${p.ticketId}-${p.type}-${simpleHash(p.title + p.body)}`;
+    const ts = Date.now();
+    const genericPayload = JSON.stringify({ title: p.title, body: p.body, ticketId: p.ticketId, type: p.type, tag: `${tagBase}-g`, timestamp: ts });
+    const cateringPayload = p.cateringBody
+      ? JSON.stringify({ title: p.cateringTitle ?? p.title, body: p.cateringBody, ticketId: p.ticketId, type: p.type, tag: `${tagBase}-c`, timestamp: ts })
+      : genericPayload;
+
+    // ── Envío (dedup por endpoint; a TODOS los endpoints del user para multi-device) ──
+    const seen = new Set<string>();
+    const toSend = relevant.filter(s => seen.has(s.endpoint) ? false : (seen.add(s.endpoint), true));
+    await Promise.allSettled(toSend.map(async (sub) => {
+      const isCatering = String(sub.user_role ?? '').toUpperCase() === 'CATERING';
+      try {
+        await webpush.sendNotification(
+          { endpoint: sub.endpoint, keys: sub.keys },
+          isCatering ? cateringPayload : genericPayload,
+          { urgency: 'high', TTL: 3600 },
+        );
+      } catch (err: any) {
+        // Solo 404/410 = sub vencida → se borra. El 403 NO (podría ser misconfig VAPID global del
+        // sender → borraría toda la tabla en un broadcast). El chequeo client-side ya regenera.
+        if (err?.statusCode === 404 || err?.statusCode === 410) {
+          await supa.from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
+        } else {
+          console.error('[notify-push] send failed:', err?.statusCode ?? err?.message ?? err);
+        }
+      }
+    }));
+
+    // ── Campanita: UNA fila por usuario ────────────────────────────────────────
+    const byUser = new Map<string, any>();
+    for (const s of relevant) if (!byUser.has(String(s.user_id))) byUser.set(String(s.user_id), s);
+    await Promise.allSettled([...byUser.values()].map(async (sub) => {
+      const isCatering = String(sub.user_role ?? '').toUpperCase() === 'CATERING';
+      const { error } = await supa.from('notificaciones').insert({
+        traslado_id: p.ticketId,
+        user_id: String(sub.user_id),
+        title: isCatering ? (p.cateringTitle ?? p.title) : p.title,
+        message: isCatering ? (p.cateringBody ?? p.body) : p.body,
+        type: p.type,
+        status: 'Enviada',
+        entorno: p.entorno,
+      });
+      if (error) console.error('[notify-push] notificaciones insert:', error.message);
+    }));
+
+    return { type: p.type, sent: toSend.length, notified: byUser.size };
   }
 
   const paciente = record.paciente ?? 'Paciente';
@@ -161,7 +243,7 @@ Deno.serve(async (req: Request) => {
       ? `${paciente}: ${record.cama_origen} → ${record.cama_destino ?? '?'}`
       : `${paciente}: ${record.cama_origen ?? ''} → ${record.cama_destino ?? ''}`;
 
-  const params: Params = {
+  const mainParams: Params = {
     type: notifType, title, body, ticketId: String(record.id_univoco ?? ''),
     entorno: String(record.entorno ?? ''), excludeUserId,
     originAreaName: record.cama_origen_area ?? undefined,
@@ -173,86 +255,33 @@ Deno.serve(async (req: Request) => {
     const floorO = extractFloor(record.cama_origen_area), floorD = extractFloor(record.cama_destino_area);
     const fromP = floorO ? `Habitación ${roomO} (${floorO})` : `Habitación ${roomO}`;
     const toP   = floorD ? `Habitación ${roomD} (${floorD})` : `Habitación ${roomD}`;
-    params.cateringTitle = 'Traslado concretado';
-    params.cateringBody = `${paciente} pasó de ${fromP} a ${toP}`;
+    mainParams.cateringTitle = 'Traslado concretado';
+    mainParams.cateringBody = `${paciente} pasó de ${fromP} a ${toP}`;
   }
 
-  if (!VAPID_PUBLIC || !VAPID_PRIVATE) { console.warn('[notify-push] VAPID no configurado'); return new Response('no vapid', { status: 200 }); }
+  const mainRes = await dispatchNotification(mainParams);
 
-  // ── Roles activos (join case-insensitive por nombre) ───────────────────────
-  const { data: roleRows } = await supa.from('roles').select('name, permissions, filter_by_floors').eq('status', 'Activo');
-  const roleByName = new Map<string, any>();
-  for (const r of roleRows ?? []) roleByName.set(String(r.name).trim().toLowerCase(), r);
-
-  // ── Suscripciones del entorno, frescas (heartbeat ≤ 36h) ───────────────────
-  const { data: subRows } = await supa.from('push_subscriptions')
-    .select('endpoint, keys, user_id, user_role, assigned_areas, sede, last_seen_at')
-    .eq('entorno', params.entorno);
-  const now = Date.now();
-  const fresh = (subRows ?? []).filter(s => {
-    if (!s.last_seen_at) return true; // fail-open
-    const t = Date.parse(s.last_seen_at); return !Number.isFinite(t) || now - t <= STALE_SUB_MS;
-  });
-
-  const reqPerm = NOTIF_TYPE_TO_PERMISSION[params.type];
-  const relevant = fresh.filter(s => {
-    if (params.excludeUserId != null && s.user_id === params.excludeUserId) return false;
-    const roleCfg = roleByName.get(String(s.user_role ?? '').trim().toLowerCase());
-    if (!roleCfg) return false;
-    if (!reqPerm || !(roleCfg.permissions ?? []).includes(reqPerm)) return false;
-    if (roleCfg.filter_by_floors && !subAreaMatches(s.assigned_areas ?? [], params.originAreaName, params.destinationAreaName)) return false;
-    return true;
-  });
-  if (relevant.length === 0) return new Response('no relevant subs', { status: 200 });
-
-  // ── Payloads (tag por evento lógico → el SW colapsa duplicados) ────────────
-  const tagBase = `${params.ticketId}-${params.type}-${simpleHash(params.title + params.body)}`;
-  const ts = Date.now();
-  const genericPayload = JSON.stringify({ title: params.title, body: params.body, ticketId: params.ticketId, type: params.type, tag: `${tagBase}-g`, timestamp: ts });
-  const cateringPayload = params.cateringBody
-    ? JSON.stringify({ title: params.cateringTitle ?? params.title, body: params.cateringBody, ticketId: params.ticketId, type: params.type, tag: `${tagBase}-c`, timestamp: ts })
-    : genericPayload;
-
-  // ── Envío (dedup por endpoint; a TODOS los endpoints del user para multi-device) ──
-  const seen = new Set<string>();
-  const toSend = relevant.filter(s => seen.has(s.endpoint) ? false : (seen.add(s.endpoint), true));
-  await Promise.allSettled(toSend.map(async (sub) => {
-    const isCatering = String(sub.user_role ?? '').toUpperCase() === 'CATERING';
-    try {
-      await webpush.sendNotification(
-        { endpoint: sub.endpoint, keys: sub.keys },
-        isCatering ? cateringPayload : genericPayload,
-        { urgency: 'high', TTL: 3600 },
-      );
-    } catch (err: any) {
-      // Solo 404/410 = sub vencida → se borra. El 403 NO (podría ser misconfig VAPID global del
-      // sender → borraría toda la tabla en un broadcast). El chequeo client-side ya regenera.
-      if (err?.statusCode === 404 || err?.statusCode === 410) {
-        await supa.from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
-      } else {
-        console.error('[notify-push] send failed:', err?.statusCode ?? err?.message ?? err);
-      }
-    }
-  }));
-
-  // ── Campanita: UNA fila por usuario ────────────────────────────────────────
-  const byUser = new Map<string, any>();
-  for (const s of relevant) if (!byUser.has(String(s.user_id))) byUser.set(String(s.user_id), s);
-  await Promise.allSettled([...byUser.values()].map(async (sub) => {
-    const isCatering = String(sub.user_role ?? '').toUpperCase() === 'CATERING';
-    const { error } = await supa.from('notificaciones').insert({
-      traslado_id: params.ticketId,
-      user_id: String(sub.user_id),
-      title: isCatering ? (params.cateringTitle ?? params.title) : params.title,
-      message: isCatering ? (params.cateringBody ?? params.body) : params.body,
-      type: params.type,
-      status: 'Enviada',
-      entorno: params.entorno,
+  // ── Ingreso QUIRÚRGICO desde Sala de Espera → aviso EXTRA solo a Enfermería ──
+  // Un ingreso (workflow ITR_TO_FLOOR) cuyo paciente es de internación Quirúrgica (tipo_internacion='Q',
+  // snapshot guardado al crear el traslado). Va con su tipo propio (SURGICAL_ADMISSION → permiso
+  // notif_ingreso_quirurgico) para que Enfermería se entere SOLO de estos ingresos que le interesan,
+  // sin recibir todos los traslados. Es un despacho INDEPENDIENTE del NEW_TICKET normal.
+  let surgicalRes: { type: string; sent: number; notified: number; skipped?: string } | null = null;
+  if (type === 'INSERT' && record.workflow === 'ITR_TO_FLOOR'
+      && String(record.tipo_internacion ?? '').trim().toUpperCase() === 'Q') {
+    surgicalRes = await dispatchNotification({
+      type: 'SURGICAL_ADMISSION',
+      title: 'Nuevo ingreso quirúrgico',
+      body: `${paciente} — ${record.cama_destino ?? record.cama_origen ?? 'ingreso'}`,
+      ticketId: String(record.id_univoco ?? ''),
+      entorno: String(record.entorno ?? ''),
+      excludeUserId: record.created_by_id != null ? String(record.created_by_id) : null,
+      originAreaName: record.cama_origen_area ?? undefined,
+      destinationAreaName: record.cama_destino_area ?? undefined,
     });
-    if (error) console.error('[notify-push] notificaciones insert:', error.message);
-  }));
+  }
 
-  return new Response(JSON.stringify({ ok: true, sent: toSend.length, notified: byUser.size }), {
+  return new Response(JSON.stringify({ ok: true, main: mainRes, surgical: surgicalRes }), {
     status: 200, headers: { 'Content-Type': 'application/json' },
   });
 });

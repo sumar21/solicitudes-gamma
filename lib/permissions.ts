@@ -29,6 +29,7 @@ export const hasModule = (user: User | null | undefined, mod: RoleModule): boole
 const NOTIF_TYPE_TO_PERMISSION: Record<string, Permission> = {
   NEW_TICKET:           'notif_new_ticket',
   PRE_TICKET:           'notif_pre_ticket',
+  SURGICAL_ADMISSION:   'notif_ingreso_quirurgico',
   STATUS_UPDATE:        'notif_status_update',
   RECEPTION_CONFIRMED:  'notif_reception_confirmed',
   DIET_CHANGE:          'notif_diet_change',

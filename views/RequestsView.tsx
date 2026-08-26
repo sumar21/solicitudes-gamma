@@ -177,7 +177,17 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   };
 
   const sortedTickets = useMemo(() => {
-    let filtered = tickets.filter(t => t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED);
+    // Azafatas (filterByFloors) ven los cancelados recientes (< 1h) para no creer que un traslado
+    // "se borró" cuando admisión lo cargó y canceló. El resto de los roles NO los ve.
+    const CANCEL_WINDOW_MS = 60 * 60 * 1000;
+    const isRecentCancelado = (t: Ticket) =>
+      t.status === TicketStatus.REJECTED && !!t.completedAt && (Date.now() - Date.parse(t.completedAt) < CANCEL_WINDOW_MS);
+
+    let filtered = tickets.filter(t => {
+      if (t.status === TicketStatus.COMPLETED) return false;
+      if (t.status === TicketStatus.REJECTED) return !!currentUser?.filterByFloors && isRecentCancelado(t);
+      return true;
+    });
 
     // Pre-tickets (Presolicitud): solo los ven Admisión (completar_pre_ticket) y la Coordinadora
     // (crear_pre_ticket). El resto no los ve hasta que se convierten en traslado vivo.
@@ -200,7 +210,8 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
         if (!currentUser?.filterByFloors) return true;
         const validStatus = t.status === TicketStatus.WAITING_ROOM ||
           t.status === TicketStatus.IN_TRANSIT ||
-          t.status === TicketStatus.IN_TRANSPORT;
+          t.status === TicketStatus.IN_TRANSPORT ||
+          isRecentCancelado(t); // cancelado reciente también pasa (respeta el filtro de área de abajo)
         if (!validStatus) return false;
         if (currentUser.assignedAreas?.length && beds.length > 0) {
           const allAreas = Object.values(Area);
