@@ -1635,6 +1635,7 @@ export const useHospitalState = () => {
         method: 'POST',
         body: JSON.stringify({
           idUnivoco, pacienteCodigo, pacienteNombre, camaOrigen, area, tipo,
+          admissionTypeCode: bed.admissionTypeCode, // 'Q' → el server valida el gate de consentimiento por cirugía
           userId: u?.id ?? '', userName: u?.name ?? '', operador: getOperador(), version: APP_VERSION,
         }),
       });

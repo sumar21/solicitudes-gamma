@@ -708,16 +708,22 @@ const CompanionEditor: React.FC<{
 //   "Iniciar dieta" (paso final: la enfermería del piso destino recibe e inicia la dieta — CIERRA).
 const CirugiaBedBlock: React.FC<{
   bed: Bed;
+  // ¿El paciente ya tiene una cirugía COMPLETADA? Si sí, el auto-habilitado del quirúrgico (Q) ya NO
+  // aplica: cada cirugía firma su consentimiento, así que de la 2da en adelante Admisión debe re-habilitar.
+  tieneCirugiaCompletada?: boolean;
   onMarcarListo?: (bed: Bed) => Promise<{ ok: boolean; id?: string; error?: string }>;
   onCirugiaEnTraslado?: (id: string) => Promise<{ ok: boolean; error?: string }>;
   onCirugiaTolerancia?: (id: string) => Promise<{ ok: boolean; error?: string }>;
   onDone: () => void;
-}> = ({ bed, onMarcarListo, onCirugiaEnTraslado, onCirugiaTolerancia, onDone }) => {
+}> = ({ bed, tieneCirugiaCompletada, onMarcarListo, onCirugiaEnTraslado, onCirugiaTolerancia, onDone }) => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cx = bed.cirugia;
   const esQuirurgico = (bed.admissionTypeCode ?? '').toUpperCase() === 'Q';
-  const flagActivo = !!bed.goingToSurgery; // marca "va a cirugía" de Admisión (paciente no-Q)
+  // Auto-habilitado SOLO en la 1ra cirugía del quirúrgico (consentimiento del ingreso). Si ya tiene una
+  // completada, deja de auto-habilitarse → necesita la marca de Admisión (nuevo consentimiento).
+  const autoQ = esQuirurgico && !tieneCirugiaCompletada;
+  const flagActivo = !!bed.goingToSurgery; // marca "va a cirugía" de Admisión
   const fmtFecha = (iso?: string) => {
     if (!iso) return '';
     const d = new Date(iso);
@@ -786,13 +792,14 @@ const CirugiaBedBlock: React.FC<{
     );
   }
 
-  // Cama ocupada sin cirugía → alta (Enfermería marca "listo"). Endurecimiento: sólo aparece para
-  // pacientes quirúrgicos (PROGAL, admissionTypeCode==='Q') o marcados por Admisión (flag "va a
-  // cirugía"). Antes aparecía para CUALQUIER cama ocupada.
-  if (bed.status !== BedStatus.OCCUPIED || !onMarcarListo || !(esQuirurgico || flagActivo)) return null;
+  // Cama ocupada sin cirugía → alta (Enfermería marca "listo"). Solo aparece si el paciente está
+  // HABILITADO: quirúrgico en su 1ra cirugía (autoQ) o marcado por Admisión (flag "va a cirugía").
+  // Un Q que ya se operó NO se auto-habilita → necesita la marca (nuevo consentimiento). Antes
+  // aparecía para cualquier Q sin importar cuántas cirugías previas tuviera.
+  if (bed.status !== BedStatus.OCCUPIED || !onMarcarListo || !(autoQ || flagActivo)) return null;
   return (
     <div className="rounded-2xl p-3.5 border border-amber-200 bg-amber-50/50 flex flex-col gap-2.5">
-      {esQuirurgico && (
+      {autoQ && (
         <div className="flex items-start gap-2">
           <Activity className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" strokeWidth={2.5} />
           <p className="text-[11px] font-medium text-amber-800">
@@ -800,11 +807,11 @@ const CirugiaBedBlock: React.FC<{
           </p>
         </div>
       )}
-      {!esQuirurgico && flagActivo && (
+      {flagActivo && (
         <div className="flex items-start gap-2">
           <Activity className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" strokeWidth={2.5} />
           <p className="text-[11px] font-medium text-amber-800">
-            Marcado para cirugía por Admisión{bed.goingToSurgeryBy ? ` (${bed.goingToSurgeryBy})` : ''}.
+            {esQuirurgico ? 'Nueva cirugía autorizada por Admisión' : 'Marcado para cirugía por Admisión'}{bed.goingToSurgeryBy ? ` (${bed.goingToSurgeryBy})` : ''}.
           </p>
         </div>
       )}
@@ -824,21 +831,24 @@ const CirugiaBedBlock: React.FC<{
 };
 
 // Toggle "Va a cirugía" (Admisión) en la solapa Internación del detalle de cama. Prende/apaga el
-// flag public.cirugia_marcas sobre un paciente NO quirúrgico para habilitar el circuito Cx. El flag
-// sigue al paciente (keyed por código). No aplica si ya hay operatoria Cx viva o el paciente no
-// tiene código Gamma. Estado local busy/error (como CirugiaBedBlock).
+// flag public.cirugia_marcas para habilitar el circuito Cx. El flag sigue al paciente (keyed por
+// código) y se auto-borra al cerrar una cirugía → es "por cirugía". Habilita a los NO quirúrgicos y,
+// además, a un quirúrgico que YA se operó (nueva cirugía = nuevo consentimiento). No aplica si ya hay
+// operatoria Cx viva o el paciente no tiene código Gamma. Estado local busy/error (como CirugiaBedBlock).
 const VaCirugiaToggle: React.FC<{
   bed: Bed;
+  tieneCirugiaCompletada?: boolean;
   onMarcar: (bed: Bed) => Promise<{ ok: boolean; error?: string }>;
   onDesmarcar: (patientCode: string) => Promise<{ ok: boolean; error?: string }>;
-}> = ({ bed, onMarcar, onDesmarcar }) => {
+}> = ({ bed, tieneCirugiaCompletada, onMarcar, onDesmarcar }) => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const checked = !!bed.goingToSurgery;
   const cxViva = !!bed.cirugia;                                    // operatoria Cx ya iniciada → el flag ya no aplica
   const esQuirurgico = (bed.admissionTypeCode ?? '').toUpperCase() === 'Q';
+  const autoQ = esQuirurgico && !tieneCirugiaCompletada;          // 1ra cirugía del Q → auto-habilitado, el toggle no aplica
   const sinCodigo = !bed.patientCode;
-  const disabled = busy || cxViva || sinCodigo;
+  const disabled = busy || cxViva || sinCodigo || autoQ;
   const toggle = async () => {
     if (disabled) return;
     setBusy(true); setError(null);
@@ -852,7 +862,8 @@ const VaCirugiaToggle: React.FC<{
         <div className="min-w-0">
           <p className="text-[8px] font-bold uppercase text-violet-500 mb-0.5">Va a cirugía</p>
           <p className="text-[11px] font-medium text-violet-900">
-            {esQuirurgico ? 'Paciente quirúrgico (PROGAL) — ya habilitado'
+            {autoQ ? 'Paciente quirúrgico (PROGAL) — ya habilitado'
+              : esQuirurgico ? (checked ? `Nueva cirugía autorizada${bed.goingToSurgeryBy ? ` por ${bed.goingToSurgeryBy}` : ''}` : 'Ya se operó — autorizar nueva cirugía (nuevo consentimiento)')
               : checked ? `Marcado${bed.goingToSurgeryBy ? ` por ${bed.goingToSurgeryBy}` : ''}`
               : 'Habilitar cirugía para este paciente'}
           </p>
@@ -1092,16 +1103,25 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   // trayectoria (que muestra ambas solapas) debe aparecer igual. Se chequea on-demand por código.
   const [patientHasCirugias, setPatientHasCirugias] = useState(false);
   const [patientCirugiasLoaded, setPatientCirugiasLoaded] = useState(false);
+  // ¿El paciente YA tiene una cirugía COMPLETADA (TOLERANCIA_EVALUADA)? Cada cirugía firma su propio
+  // consentimiento → de la 2da en adelante, aunque el paciente sea quirúrgico (Q), Admisión tiene que
+  // re-habilitar con "va a cirugía". Solo las completadas cuentan (una cancelada no consumió consentimiento).
+  const [patientTieneCxCompletada, setPatientTieneCxCompletada] = useState(false);
   React.useEffect(() => {
     const code = selectedBed?.patientCode?.trim();
-    if (!code || !selectedBed?.patientName) { setPatientHasCirugias(false); setPatientCirugiasLoaded(false); return; }
+    if (!code || !selectedBed?.patientName) { setPatientHasCirugias(false); setPatientTieneCxCompletada(false); setPatientCirugiasLoaded(false); return; }
     let cancelled = false;
     setPatientCirugiasLoaded(false);
     const token = localStorage.getItem('mediflow_token');
     fetch(`/api/cirugia?paciente=${encodeURIComponent(code)}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
       .then(r => r.ok ? r.json() : { cirugias: [] })
-      .then((d: { cirugias?: unknown[] }) => { if (!cancelled) setPatientHasCirugias(Array.isArray(d.cirugias) && d.cirugias.length > 0); })
-      .catch(() => { if (!cancelled) setPatientHasCirugias(false); })
+      .then((d: { cirugias?: { estado?: string }[] }) => {
+        if (cancelled) return;
+        const list = Array.isArray(d.cirugias) ? d.cirugias : [];
+        setPatientHasCirugias(list.length > 0);
+        setPatientTieneCxCompletada(list.some(c => c?.estado === 'TOLERANCIA_EVALUADA'));
+      })
+      .catch(() => { if (!cancelled) { setPatientHasCirugias(false); setPatientTieneCxCompletada(false); } })
       .finally(() => { if (!cancelled) setPatientCirugiasLoaded(true); });
     return () => { cancelled = true; };
   }, [selectedBed?.id]);
@@ -3037,6 +3057,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                   {(onMarcarListo || onCirugiaEnTraslado || onCirugiaTolerancia) && (
                     <CirugiaBedBlock
                       bed={cirugiaBed ?? selectedBed}
+                      tieneCirugiaCompletada={patientTieneCxCompletada}
                       onMarcarListo={onMarcarListo}
                       onCirugiaEnTraslado={onCirugiaEnTraslado}
                       onCirugiaTolerancia={onCirugiaTolerancia}
@@ -3296,6 +3317,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                             {onMarcarVaCirugia && onDesmarcarVaCirugia && (
                               <VaCirugiaToggle
                                 bed={cirugiaBed ?? selectedBed}
+                                tieneCirugiaCompletada={patientTieneCxCompletada}
                                 onMarcar={onMarcarVaCirugia} onDesmarcar={onDesmarcarVaCirugia} />
                             )}
                             {!enrichLoading && !hasInternacionData && (

@@ -205,12 +205,37 @@ async function handler(req: any, res: any) {
 
   // ── POST — alta (LISTO_PARA_CIRUGIA; la marca Enfermería de piso) ─────────
   if (req.method === 'POST') {
-    const { idUnivoco, pacienteCodigo, pacienteNombre, camaOrigen, area, tipo, userId, userName } = req.body ?? {};
+    const { idUnivoco, pacienteCodigo, pacienteNombre, camaOrigen, area, tipo, admissionTypeCode, userId, userName } = req.body ?? {};
     if (!String(idUnivoco ?? '').trim())  return res.status(400).json({ error: 'idUnivoco is required' });
     if (!String(camaOrigen ?? '').trim()) return res.status(400).json({ error: 'camaOrigen is required' });
 
     const denyPost = await authzCirugia(req, 'cirugia_listo', area != null ? String(area) : null);
     if (denyPost) return res.status(denyPost.status).json({ error: denyPost.error });
+
+    // ── Gate de consentimiento por cirugía ─────────────────────────────────────
+    // Cada cirugía firma su consentimiento. Un paciente quirúrgico (Q) se auto-habilita SOLO en su 1ra
+    // cirugía (consentimiento del ingreso); un clínico necesita siempre la marca de Admisión. De la 2da
+    // en adelante (ya tiene una COMPLETADA), aunque sea Q, requiere la marca (nuevo consentimiento).
+    //   permitido = marca ACTIVA de Admisión  ||  (es Q && SIN cirugía completada previa)
+    // Espeja el gate del cliente (BedsView) y lo hace REAL: un POST directo no lo saltea. Solo se evalúa
+    // con código de paciente (marca e historial se keyean por código); sin código, fail-open.
+    const pcode = pacienteCodigo != null ? String(pacienteCodigo).trim() : '';
+    if (pcode) {
+      const esQ = String(admissionTypeCode ?? '').trim().toUpperCase() === 'Q'
+        || String(tipo ?? '').trim().toLowerCase() === 'quirúrgica';
+      const [{ data: marcaActiva }, { data: prevCompletada }] = await Promise.all([
+        supa.from('cirugia_marcas').select('id')
+          .eq('entorno', ENTORNO).eq('paciente_codigo', pcode).eq('estado', 'ACTIVA').limit(1),
+        supa.from('cirugia_traslados').select('id')
+          .eq('entorno', ENTORNO).eq('paciente_codigo', pcode).eq('estado', 'TOLERANCIA_EVALUADA').limit(1),
+      ]);
+      const permitido = !!(marcaActiva?.length) || (esQ && !(prevCompletada?.length));
+      if (!permitido) {
+        return res.status(403).json({
+          error: 'Este paciente requiere que Admisión lo habilite para una nueva cirugía (nuevo consentimiento).',
+        });
+      }
+    }
 
     try {
       const { data: created, error } = await supa.from('cirugia_traslados').insert({
