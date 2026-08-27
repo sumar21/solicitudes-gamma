@@ -17,6 +17,42 @@
 import { requireAuth } from './jwt.js';
 import { getSupabaseAdmin } from './supabase-admin.js';
 import { invalidateRoleCache } from './role-cache.js';
+import { graphFetch, graphFetchRetry } from './graph.js';
+
+// Para la cascada de rename: los usuarios (SharePoint 00.Usuarios) se vinculan al rol por el NOMBRE
+// (Perfil_U ↔ roles.name en getRoleByName), no por id. Al renombrar un rol hay que actualizar el
+// Perfil_U de esos usuarios o quedan huérfanos (rol null → pantalla en blanco). Mismo list id que api/users.ts.
+const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
+const USUARIOS_LIST_ID = 'e623ad06-ff62-441f-b67d-666224af5805'; // 00.Usuarios
+
+// Cascada: al renombrar un rol, re-vincula en SharePoint a todos los usuarios que tenían el nombre
+// viejo. Best-effort: un fallo de un usuario se loguea pero NO tumba el rename (ya aplicado en la base).
+async function cascadeRoleRename(oldName: string, newName: string): Promise<{ matched: number; updated: number; failed: number }> {
+  let matched = 0, updated = 0, failed = 0;
+  try {
+    const filter = "fields/Aplicacion_U eq 'Traslados' and fields/Status_U eq 'Activo'";
+    const spRes = await graphFetch(
+      `/sites/${SITE_ID}/lists/${USUARIOS_LIST_ID}/items?$expand=fields&$top=500&$filter=${filter}`,
+      { headers: { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' } },
+    );
+    if (!spRes.ok) { console.error('[roles] cascade GET usuarios failed:', spRes.status); return { matched, updated, failed }; }
+    const data = (await spRes.json()) as { value?: { id: string; fields?: { Perfil_U?: string } }[] };
+    const needle = oldName.trim().toLowerCase();
+    const targets = (data.value ?? []).filter(it => String(it.fields?.Perfil_U ?? '').trim().toLowerCase() === needle);
+    matched = targets.length;
+    for (const it of targets) {
+      const upd = await graphFetchRetry(
+        `/sites/${SITE_ID}/lists/${USUARIOS_LIST_ID}/items/${it.id}/fields`,
+        { method: 'PATCH', body: JSON.stringify({ Perfil_U: newName }) },
+      );
+      if (upd.ok) updated++;
+      else { failed++; console.error(`[roles] cascade usuario ${it.id} failed:`, upd.status); }
+    }
+  } catch (e: any) {
+    console.error('[roles] cascade error:', e?.message ?? e);
+  }
+  return { matched, updated, failed };
+}
 
 interface RoleRow {
   id: string;
@@ -123,6 +159,13 @@ async function handler(req: any, res: any) {
     const { spItemId, name, access, permissions, filterByFloors, bypassLocationCheck, requiresIdentification } = req.body ?? {};
     if (!spItemId) return res.status(400).json({ error: 'spItemId required' });
 
+    // Nombre viejo (para la cascada): solo se consulta si el rename está en juego.
+    let oldName: string | null = null;
+    if (name !== undefined) {
+      const { data: cur } = await supa.from('roles').select('name').eq('id', spItemId).maybeSingle();
+      oldName = cur?.name != null ? String(cur.name) : null;
+    }
+
     const fields: Record<string, unknown> = {};
     if (name !== undefined) fields.name = String(name);
     if (access !== undefined) fields.modules = splitModules(access);
@@ -145,8 +188,16 @@ async function handler(req: any, res: any) {
         return res.status(500).json({ error: 'Failed to update role' });
       }
       invalidateRoleCache();
+
+      // Cascada de rename: si cambió el nombre, re-vincular los usuarios de SharePoint (link por
+      // nombre, no por id) para que no queden huérfanos. Best-effort, no rompe el rename si falla.
+      let cascade: { matched: number; updated: number; failed: number } | undefined;
+      if (oldName != null && String(name).trim() !== oldName.trim()) {
+        cascade = await cascadeRoleRename(oldName, String(name));
+        console.log(`[roles] rename "${oldName}" → "${name}" — usuarios: ${cascade.matched} match, ${cascade.updated} ok, ${cascade.failed} fail`);
+      }
       console.log(`[roles] Updated role ${spItemId}`);
-      return res.status(200).json({ ok: true });
+      return res.status(200).json({ ok: true, cascade });
     } catch (err: any) {
       console.error('[roles] PATCH error:', err);
       return res.status(500).json({ error: err.message });
