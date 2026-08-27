@@ -2846,16 +2846,17 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                         <span>Cx</span>
                       </div>
                     )}
-                    {/* Pre-Cx: marca "va a cirugía" de Admisión (flag) sobre un paciente SIN operatoria
-                        viva. Estilo tenue/dashed para diferenciarlo de la pill Cx (cirugía en curso). */}
+                    {/* Marca "va a cirugía" de Admisión (flag) sobre un paciente SIN operatoria viva.
+                        Label "C→Q" = pasa de clínico a quirúrgico (habilitado para cirugía). Si el
+                        paciente YA es quirúrgico (re-habilitado para una nueva cirugía), "Re-Cx".
+                        Estilo tenue/dashed para diferenciarlo de la pill Cx (cirugía en curso). */}
                     {bed.goingToSurgery && !bed.cirugia && (
                       <div
                         className="absolute top-0.5 left-1/2 -translate-x-1/2 flex items-center gap-0.5 px-1 h-3 md:h-3.5 rounded-full ring-1 ring-white shadow-sm text-[7px] md:text-[8px] font-black uppercase z-10 whitespace-nowrap bg-violet-100 text-violet-700 border border-dashed border-violet-400"
-                        title={`Marcado para cirugía por Admisión${bed.goingToSurgeryBy ? ` · ${bed.goingToSurgeryBy}` : ''}`}
+                        title={`${(bed.admissionTypeCode ?? '').toUpperCase() === 'Q' ? 'Nueva cirugía autorizada' : 'De clínico a quirúrgico'} — marcado por Admisión${bed.goingToSurgeryBy ? ` · ${bed.goingToSurgeryBy}` : ''}`}
                       >
                         <Activity className="w-2 h-2 md:w-2.5 md:h-2.5 shrink-0" strokeWidth={3} />
-                        <span className="md:hidden">Pre</span>
-                        <span className="hidden md:inline">Pre-Cx</span>
+                        <span className="tracking-tight">{(bed.admissionTypeCode ?? '').toUpperCase() === 'Q' ? 'Re-Cx' : 'C→Q'}</span>
                       </div>
                     )}
                     {/* Limpieza de RUTINA en curso: badge celeste (spray). Esquina inf. izq.; si hay
