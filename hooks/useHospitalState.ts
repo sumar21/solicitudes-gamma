@@ -2004,6 +2004,41 @@ export const useHospitalState = () => {
     };
   }, [token, fetchBeds, fetchTickets, fetchCleanings, fetchMeals, fetchCirugias, fetchRoutineCleanings, fetchCirugiaMarcas]);
 
+  // ── Reconexión de Realtime al volver a FOREGROUND / recuperar red ────────────
+  // En móvil, el SO congela el websocket al mandar la app a background; al volver, el socket puede
+  // estar MUERTO y el cliente no lo detecta enseguida (su heartbeat estuvo congelado) → la grilla
+  // deja de actualizarse hasta que el usuario refresca o re-loguea. Acá, en cada foreground (o al
+  // recuperar red), hacemos DOS cosas: (1) un catch-up —refetch de todo— para que la data quede al
+  // día al toque, sin importar el estado del socket; (2) un nudge de reconexión (realtime.connect()
+  // es idempotente: reconecta si está caído, no-op si está vivo). Al reconectar, el cliente re-pide
+  // el "pase" (getPase) → también refresca la auth que expira cada ~1h. Debounce de 1s para no
+  // duplicar cuando visibilitychange y focus disparan juntos.
+  useEffect(() => {
+    if (!token) return;
+    let last = 0;
+    const catchUp = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (now - last < 1000) return; // debounce visibilitychange + focus
+      last = now;
+      ticketsEtagRef.current = null;
+      fetchTickets(); fetchCleanings(); fetchMeals(); fetchCirugias(); fetchRoutineCleanings(); fetchCirugiaMarcas(); fetchBeds();
+      try {
+        const rt: any = (supabase as any).realtime;
+        if (rt && typeof rt.isConnected === 'function' && !rt.isConnected() && typeof rt.connect === 'function') rt.connect();
+      } catch { /* best-effort */ }
+    };
+    const onVis = () => { if (document.visibilityState === 'visible') catchUp(); };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('online', catchUp);
+    window.addEventListener('focus', catchUp);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('online', catchUp);
+      window.removeEventListener('focus', catchUp);
+    };
+  }, [token, fetchBeds, fetchTickets, fetchCleanings, fetchMeals, fetchCirugias, fetchRoutineCleanings, fetchCirugiaMarcas]);
+
   // ── Resync de rol en caliente (para TODOS los usuarios) ──────────────────────
   // Los módulos/permisos sólo se hidratan en el login. Sin esto, cuando un admin edita
   // un rol, los usuarios con ese rol no ven el cambio en su navbar hasta re-loguear.
