@@ -161,16 +161,28 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
       },
       {
         permission: "cirugia_marcar",
-        title: "Marcar 'va a cirugía' a un paciente",
-        description: "Habilitá el circuito de cirugía para un paciente que no es quirúrgico. Es una marca que sigue al paciente. Ojo: esta acción no está en Operativa, se hace desde el Mapa de Camas.",
+        title: "Habilitar 'va a cirugía' a un paciente",
+        description: "Habilitá el circuito de cirugía. Sirve para un paciente clínico (no quirúrgico) y también para un quirúrgico que YA se operó: cada cirugía firma su propio consentimiento, así que de la segunda en adelante Admisión lo tiene que volver a habilitar. Es una marca que sigue al paciente y se apaga sola al cerrar la cirugía. Se hace desde el Mapa de Camas, no desde Operativa.",
         uiLocation: "Mapa de Camas → tocá la cama ocupada → solapa 'Internación' → toggle 'Va a cirugía'",
       },
       {
         permission: "cirugia_listo",
         title: "Marcar 'listo para cirugía' (alta del circuito)",
         description: "Da de alta la cirugía sobre una cama ocupada: es el arranque del circuito que después seguís en Operativa → Cirugías. También se hace desde el Mapa de Camas, no desde Operativa.",
-        scopeNote: "Aparece si el paciente es quirúrgico o si ya lo marcaron 'va a cirugía'.",
+        scopeNote: "Aparece si el paciente es quirúrgico en su PRIMERA cirugía, o si Admisión lo habilitó con 'va a cirugía' (un clínico, o un quirúrgico que ya se operó). Un quirúrgico que ya tuvo una cirugía no se auto-habilita: necesita la marca de Admisión.",
         uiLocation: "Mapa de Camas → detalle de la cama ocupada → botón 'Listo para cirugía'",
+      },
+      {
+        permission: "crear_pre_ticket",
+        title: "Crear un pre-ticket (pedido de cama)",
+        description: "Coordinación pide una cama con lo mínimo: paciente, tipo de movimiento y requisitos de la cama. Queda como 'Presolicitud' arriba de todo en la grilla hasta que Admisión le configura el destino.",
+        uiLocation: "Operativa → Traslados → botón 'Pre-ticket'",
+      },
+      {
+        permission: "completar_pre_ticket",
+        title: "Configurar el destino de un pre-ticket",
+        description: "Admisión toma un pre-ticket ('Presolicitud'), elige la cama de destino y lo convierte en una solicitud de traslado normal. Puede ajustar la observación antes de confirmar.",
+        uiLocation: "Operativa → Traslados → botón 'Configurar destino' de la fila en 'Presolicitud'",
       },
     ],
     notifications: [
@@ -193,6 +205,16 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
         permission: "notif_habitacion_limpia",
         title: "Habitación limpia",
         description: "Te avisa cuando una azafata marca una habitación como limpia desde el mapa.",
+      },
+      {
+        permission: "notif_pre_ticket",
+        title: "Pre-ticket creado (pedido de cama)",
+        description: "Te avisa cuando Coordinación crea un pre-ticket para que le configures el destino. Pensado para Admisión.",
+      },
+      {
+        permission: "notif_ingreso_quirurgico",
+        title: "Ingreso quirúrgico desde Sala de Espera",
+        description: "Te avisa SOLO cuando entra un paciente quirúrgico desde la Sala de Espera. Pensado para Enfermería: así se entera de esos ingresos de su interés sin recibir todos los traslados.",
       },
       {
         permission: "notif_cirugia_cama_progal",
@@ -233,6 +255,8 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
     tips: [
       "Cancelar o consolidar no borra nada: el traslado queda guardado en el Historial.",
       "Muchos pasos de cirugía también se hacen desde la tarjeta de la cama, en el Mapa.",
+      "Si sos azafata, los traslados cancelados te siguen apareciendo alrededor de una hora: así no parece que 'se borraron' cuando Admisión carga uno y lo cancela.",
+      "Los pre-tickets (Presolicitud) aparecen arriba de todo y solo los ven Coordinación y Admisión, hasta que se les configura el destino.",
     ],
   },
   MapaCamas: {
@@ -287,14 +311,14 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
       },
       {
         permission: "cirugia_marcar",
-        title: "Marcar 'va a cirugía' (y desmarcar)",
-        description: "Prendé o apagá la marca 'va a cirugía' de un paciente que no es quirúrgico, para habilitarle el circuito de cirugía. La marca sigue al paciente. Los pacientes quirúrgicos ya vienen habilitados.",
+        title: "Habilitar 'va a cirugía' (y desmarcar)",
+        description: "Prendé o apagá la marca 'va a cirugía' para habilitar el circuito. Sirve para un paciente clínico y también para un quirúrgico que YA se operó: cada cirugía firma su consentimiento, así que de la segunda en adelante hay que volver a habilitarlo. Un quirúrgico en su PRIMERA cirugía ya viene habilitado. La marca sigue al paciente y se apaga sola al cerrar la cirugía.",
         uiLocation: "Detalle de la cama → solapa Internación → toggle 'Va a cirugía'",
       },
       {
         permission: "cirugia_listo",
         title: "Marcar 'Listo para cirugía' (alta del circuito)",
-        description: "Da de alta la cirugía sobre una cama ocupada. Solo aparece para pacientes quirúrgicos o marcados 'va a cirugía'.",
+        description: "Da de alta la cirugía sobre una cama ocupada. Aparece para un quirúrgico en su PRIMERA cirugía, o para quien Admisión haya habilitado con 'va a cirugía' (un clínico, o un quirúrgico que ya se operó).",
         uiLocation: "Detalle de la cama ocupada → bloque ámbar → botón 'Listo para cirugía'",
       },
       {
