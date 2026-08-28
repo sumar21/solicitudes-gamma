@@ -70,6 +70,7 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
     perms: [
       { code: 'crear_pre_ticket',     label: 'Crear pre-ticket (Coordinadora: pide cama)' },
       { code: 'completar_pre_ticket', label: 'Configurar destino de un pre-ticket (Admisión)' },
+      { code: 'cancelar_pre_ticket',  label: 'Cancelar un pre-ticket (Presolicitud)' },
     ],
   },
 

@@ -410,6 +410,7 @@ export const PERMISSIONS = [
   // Pre-ticket de traslado (pedido de cama de la Coordinadora). Ver docs/planes/pre-ticket.md.
   'crear_pre_ticket',      // Coordinadora: crea el pre-ticket (paciente + movimiento + requisitos, sin destino)
   'completar_pre_ticket',  // Admisión: ve el pre-ticket en la grilla y "Configura destino" → lo convierte en traslado
+  'cancelar_pre_ticket',   // Cancelar un pre-ticket en Presolicitud (configurable por ABM: Coordinadora, Admisión, o quien se le asigne)
   'abm_usuarios','abm_roles',
   // Notificaciones granulares por tipo (antes había un solo `recibe_push`).
   // Cada permiso gobierna que el usuario reciba push + in-app de ese tipo.

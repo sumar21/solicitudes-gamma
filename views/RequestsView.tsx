@@ -251,15 +251,29 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     const size = isMobile ? "default" : "sm";
     const btnClass = isMobile ? "w-full h-11 text-xs font-black uppercase tracking-widest rounded-xl" : "h-8 text-[10px] uppercase font-bold tracking-tight";
 
-    // ── Pre-ticket (Presolicitud): única acción = Admisión configura el destino ──
+    // ── Pre-ticket (Presolicitud): Admisión configura el destino + (si el rol lo tiene) Cancelar ──
     // No aplican las acciones de azafata/admisión de un traslado normal (todavía no tiene destino).
+    // "Cancelar" es un permiso configurable por ABM (cancelar_pre_ticket): quien lo tenga puede
+    // sacar de la grilla un pre-ticket cargado por error o que dejó de hacer falta.
     if (ticket.status === TicketStatus.PRESOLICITUD) {
-      if (!can(currentUser, 'completar_pre_ticket') || !onConfigureDestino) return null;
+      const canConfig = can(currentUser, 'completar_pre_ticket') && !!onConfigureDestino;
+      const canCancelPre = can(currentUser, 'cancelar_pre_ticket') && !!onReject;
+      if (!canConfig && !canCancelPre) return null;
       return (
-        <Button size={size} onClick={() => onConfigureDestino(ticket.id)}
-          className={cn(btnClass, "bg-emerald-950 hover:bg-emerald-900 text-white rounded-xl px-4")}>
-          <MapPin className="w-3.5 h-3.5 mr-1.5" /> Configurar destino
-        </Button>
+        <>
+          {canConfig && (
+            <Button size={size} onClick={() => onConfigureDestino!(ticket.id)}
+              className={cn(btnClass, "bg-emerald-950 hover:bg-emerald-900 text-white rounded-xl px-4")}>
+              <MapPin className="w-3.5 h-3.5 mr-1.5" /> Configurar destino
+            </Button>
+          )}
+          {canCancelPre && (
+            <Button size={size} variant="outline" className={cn(btnClass, "border-red-200 text-red-600 hover:bg-red-50")}
+              onClick={() => onReject!(ticket.id)}>
+              <XCircle className="w-3.5 h-3.5 mr-2" /> Cancelar
+            </Button>
+          )}
+        </>
       );
     }
 

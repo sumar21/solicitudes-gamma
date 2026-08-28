@@ -3162,29 +3162,42 @@ export const useHospitalState = () => {
   });
 
   const handleRejectTicket = (ticketId: string, reason: string) => runTicketAction(ticketId, async () => {
-    // Solo Admisión/Admin pueden cancelar, en cualquier etapa activa y sin importar si la
-    // azafata ya intervino. Rol fijo + permiso (cinturón de seguridad sobre la config de SP).
-    if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) {
-      alert('Solo Admisión o Admin pueden cancelar traslados.'); return;
-    }
-    if (!can(currentUser, 'cancelar_ticket')) {
-      alert('Tu rol no tiene permiso para cancelar traslados.'); return;
-    }
-    if (!reason || !reason.trim()) {
-      alert('La observación es obligatoria para cancelar el traslado.'); return;
-    }
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket || ticket.status === TicketStatus.REJECTED || ticket.status === TicketStatus.COMPLETED) return;
+    const isPreTicket = ticket.status === TicketStatus.PRESOLICITUD;
+
+    // Autorización. Pre-ticket (Presolicitud): permiso CONFIGURABLE por ABM (cancelar_pre_ticket) —
+    // se lo asigna a la Coordinadora, Admisión o quien corresponda; sin rol fijo. Traslado normal:
+    // rol fijo Admisión/Admin + cancelar_ticket (cinturón de seguridad sobre la config de SP).
+    if (isPreTicket) {
+      if (!can(currentUser, 'cancelar_pre_ticket')) {
+        alert('Tu rol no tiene permiso para cancelar pre-tickets.'); return;
+      }
+    } else {
+      if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) {
+        alert('Solo Admisión o Admin pueden cancelar traslados.'); return;
+      }
+      if (!can(currentUser, 'cancelar_ticket')) {
+        alert('Tu rol no tiene permiso para cancelar traslados.'); return;
+      }
+    }
+    if (!reason || !reason.trim()) {
+      alert('La observación es obligatoria para cancelar.'); return;
+    }
     writingRef.current = true; // block polls durante la escritura a SP (mismo ciclo que create/edit)
     try {
       const updates = { status: TicketStatus.REJECTED, rejectionReason: reason, completedAt: new Date().toISOString() };
       setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
-      addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Traslado Cancelado',
-        message: `El traslado de ${ticket.patientName} ha sido cancelado. Motivo: ${reason}`,
-        ticketId: ticket.id, sede: ticket.sede,
-        originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
-        destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
-      });
+      // El pre-ticket solo lo ven Admisión/Coordinadora y todavía no tiene destino → NO se emite
+      // notificación de área (evita un push "cancelado" a azafatas que nunca vieron el pre-ticket).
+      if (!isPreTicket) {
+        addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Traslado Cancelado',
+          message: `El traslado de ${ticket.patientName} ha sido cancelado. Motivo: ${reason}`,
+          ticketId: ticket.id, sede: ticket.sede,
+          originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
+          destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
+        });
+      }
       if (ticket.spItemId && !(await persistTicketUpdate(ticket, updates, 'No se pudo cancelar el traslado (error de conexión o del servidor). Reintentá.'))) return;
       spLogEvent(ticket.id, `Cancelado: ${reason}`);
     } finally {

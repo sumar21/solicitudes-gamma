@@ -277,6 +277,18 @@ async function handler(req: any, res: any) {
         }
       }
 
+      // Cancelación de un pre-ticket: el update lo pasa a 'Cancelado' SIN destino (distinto de la
+      // conversión de arriba, que trae destino). Si la fila está en 'Presolicitud', exige
+      // cancelar_pre_ticket (mismo seam fail-open que el resto de la app; el gating de UI ya lo pide).
+      if (updates.status === TicketStatus.REJECTED && !updates.destination) {
+        const { data: cur } = await supa.from('traslados').select('status')
+          .eq('id_univoco', idUnivoco).eq('entorno', ENTORNO).limit(1).maybeSingle();
+        if (cur?.status === TicketStatus.PRESOLICITUD) {
+          const denied = await authzPreTicket(req, 'cancelar_pre_ticket');
+          if (denied) return res.status(denied.status).json({ error: denied.error });
+        }
+      }
+
       // ── Enforcement de piso para acciones de azafata (SIN CAMBIOS respecto de SP) ──
       // Una azafata solo puede ejecutar acciones de su(s) piso(s). Regla HRA (Sala de Espera):
       // si el extremo requerido es HRA, se usa el piso real del otro extremo. Solo aplica a roles

@@ -184,6 +184,12 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
         description: "Admisión toma un pre-ticket ('Presolicitud'), elige la cama de destino y lo convierte en una solicitud de traslado normal. Puede ajustar la observación antes de confirmar.",
         uiLocation: "Operativa → Traslados → botón 'Configurar destino' de la fila en 'Presolicitud'",
       },
+      {
+        permission: "cancelar_pre_ticket",
+        title: "Cancelar un pre-ticket",
+        description: "Saca de la grilla un pre-ticket en 'Presolicitud' (cargado por error o que dejó de hacer falta), con una observación obligatoria. Asignalo a quien corresponda: Coordinación (para dar de baja lo que pidió) y/o Admisión.",
+        uiLocation: "Operativa → Traslados → botón 'Cancelar' de la fila en 'Presolicitud'",
+      },
     ],
     notifications: [
       {
