@@ -724,10 +724,12 @@ const CirugiaBedBlock: React.FC<{
   // completada, deja de auto-habilitarse → necesita la marca de Admisión (nuevo consentimiento).
   const autoQ = esQuirurgico && !tieneCirugiaCompletada;
   const flagActivo = !!bed.goingToSurgery; // marca "va a cirugía" de Admisión
-  const fmtFecha = (iso?: string) => {
+  // La fecha probable de cirugía (EVE_FECHA_PROBABLE_CIRUGIA) viene de PROGAL a medianoche (sin hora
+  // real) → se muestra SOLO fecha; con timeStyle salía un "00:00" confuso. Igual que el modal (fmtDateOnly).
+  const fmtFechaProbable = (iso?: string) => {
     if (!iso) return '';
     const d = new Date(iso);
-    return isNaN(d.getTime()) ? '' : d.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
+    return isNaN(d.getTime()) ? '' : d.toLocaleDateString('es-AR');
   };
 
   // Cama con operatoria viva → pill + (Iniciar dieta si está de regreso de cirugía).
@@ -803,7 +805,7 @@ const CirugiaBedBlock: React.FC<{
         <div className="flex items-start gap-2">
           <Activity className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" strokeWidth={2.5} />
           <p className="text-[11px] font-medium text-amber-800">
-            Paciente quirúrgico (PROGAL){bed.expectedSurgeryDate ? ` · cirugía probable: ${fmtFecha(bed.expectedSurgeryDate)}` : ''}.
+            Paciente quirúrgico (PROGAL){bed.expectedSurgeryDate ? ` · cirugía probable: ${fmtFechaProbable(bed.expectedSurgeryDate)}` : ''}.
           </p>
         </div>
       )}
