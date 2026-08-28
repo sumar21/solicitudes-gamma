@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Bed, BedStatus } from '../../types';
+import { Area, Bed, BedStatus } from '../../types';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -8,6 +8,24 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { MOVIMIENTOS_PRETICKET, REQUISITOS_CAMA, REQUISITO_SIN } from '../../lib/constants';
 import { formatBedName } from '../../lib/utils';
 import { Check } from 'lucide-react';
+
+// Orden por SECTOR (no por apellido): mismo criterio que NewRequestModal/BedsView —
+// pre-internación (HRA, HIT) primero, después pisos, después unidades críticas; empate por cama.
+const AREA_ORDER: Area[] = [
+  Area.HRA, Area.HIT,
+  Area.PISO_4, Area.PISO_5, Area.PISO_6, Area.PISO_7, Area.PISO_8,
+  Area.HUC, Area.HUT, Area.HUQ, Area.HSS,
+];
+const areaRank = (a?: Area | string) => {
+  const idx = AREA_ORDER.indexOf(a as Area);
+  return idx === -1 ? AREA_ORDER.length : idx;
+};
+const sortByAreaThenLabel = (a: Bed, b: Bed) => {
+  const ra = areaRank(a.area);
+  const rb = areaRank(b.area);
+  if (ra !== rb) return ra - rb;
+  return a.label.localeCompare(b.label, 'es', { numeric: true });
+};
 
 // Pre-ticket: la Coordinadora pide una cama. Carga lo mínimo (paciente + movimiento + requisitos);
 // Admisión configura el destino después. Ver docs/planes/pre-ticket.md.
@@ -37,7 +55,7 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
   // la cama es el dato secundario y la clave real (de ahí salen obra social + origen).
   const patientOptions = beds
     .filter(b => b.status === BedStatus.OCCUPIED && b.patientName)
-    .sort((a, b) => (a.patientName || '').localeCompare(b.patientName || '', 'es'))
+    .sort(sortByAreaThenLabel)
     .map(b => ({ label: `${b.patientName} — ${formatBedName(b.label)}`, value: b.label }));
 
   const selectedBed = beds.find(b => b.label === originBedLabel);
