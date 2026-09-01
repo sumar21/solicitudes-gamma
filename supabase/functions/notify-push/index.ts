@@ -76,7 +76,10 @@ function effectiveAreaNames(originArea?: string, destArea?: string) {
   return { origin: remap(originArea, destArea), dest: remap(destArea, originArea) };
 }
 function subAreaMatches(assignedAreas: string[], originAreaName?: string, destAreaName?: string): boolean {
-  if (!assignedAreas.length) return false;
+  // Fail-OPEN cuando la suscripción no trae sectores — mismo criterio que notify-change (ver ahí el
+  // razonamiento completo): una sub sin sectores quedaba muda para siempre y en silencio, porque
+  // assigned_areas es una foto del login que sólo se regrababa al re-loguear.
+  if (!assignedAreas.length) return true;
   if (assignedAreas.length >= 9) return true; // full access
   const { origin, dest } = effectiveAreaNames(originAreaName, destAreaName);
   return Boolean((origin && assignedAreas.includes(origin)) || (dest && assignedAreas.includes(dest)));

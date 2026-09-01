@@ -792,7 +792,10 @@ export const useHospitalState = () => {
       subscribeToPush(tk, u.id, u.roleName ?? u.role, u.assignedAreas ?? [], u.sede);
     }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, currentUser?.id]);
+    // Depende también de sectores y rol: la suscripción guarda una FOTO de ambos (push-subscribe),
+    // así que cuando syncSessionRole los refresca hay que regrabarla en el acto. Sin esto el cambio
+    // del ABM esperaba a la próxima apertura de la app para tener efecto.
+  }, [token, currentUser?.id, currentUser?.roleName, (currentUser?.assignedAreas ?? []).join(';')]);
 
   // Check token expiry every minute
   useEffect(() => {
@@ -2051,10 +2054,27 @@ export const useHospitalState = () => {
     try {
       const r = await authFetch(`/api/me?roleName=${encodeURIComponent(roleName)}`);
       if (!r.ok) return false;
-      const { role } = await r.json();
-      if (!role) return false;
+      const { role, user } = await r.json();
       const prev = currentUserRef.current;
       if (!prev) return false;
+
+      // Sectores del PROPIO usuario (no del rol). `user: null` = la lectura de SP falló → conservar
+      // los actuales; vaciarlos por un hipo dejaría el dispositivo mudo, porque el heartbeat de push
+      // regraba la suscripción con esta foto y una sub sin sectores no matchea nada. Ver api/me.ts.
+      const nextAreas: Area[] = Array.isArray(user?.assignedAreas)
+        ? (user.assignedAreas.map(String) as Area[])
+        : (prev.assignedAreas ?? []);
+      const areasChanged =
+        JSON.stringify(prev.assignedAreas ?? []) !== JSON.stringify(nextAreas);
+
+      // Rol borrado/renombrado: mantenemos la config vigente, pero los sectores igual se refrescan.
+      if (!role) {
+        if (!areasChanged) return false;
+        const onlyAreas = { ...prev, assignedAreas: nextAreas };
+        setCurrentUser(onlyAreas);
+        localStorage.setItem(USER_KEY, JSON.stringify(onlyAreas));
+        return true;
+      }
       // NO bajar requiresIdentification a mitad de sesión si YA hay un operador identificado: el
       // cache de rol es per-lambda y puede devolver un valor viejo distinto al del login → un blip
       // apagaría el flag y haría desaparecer el operador + "Cambio de turno" del navbar (reaparecían
@@ -2068,13 +2088,15 @@ export const useHospitalState = () => {
         JSON.stringify(prev.permissions ?? []) === JSON.stringify(role.permissions ?? []) &&
         (prev.filterByFloors ?? false) === !!role.filterByFloors &&
         (prev.bypassLocationCheck ?? false) === !!role.bypassLocationCheck &&
-        (prev.requiresIdentification ?? false) === nextRequiresId;
+        (prev.requiresIdentification ?? false) === nextRequiresId &&
+        !areasChanged;
       if (same) return false; // sin cambios → no re-render
       const updated = {
         ...prev,
         modules: role.modules, permissions: role.permissions,
         filterByFloors: !!role.filterByFloors, bypassLocationCheck: !!role.bypassLocationCheck,
         requiresIdentification: nextRequiresId,
+        assignedAreas: nextAreas,
       };
       setCurrentUser(updated);
       localStorage.setItem(USER_KEY, JSON.stringify(updated));

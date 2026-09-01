@@ -120,7 +120,10 @@ export function effectiveAreaNames(originArea?: string, destinationArea?: string
 }
 
 function subAreaMatches(sub: Subscription, params: PushParams): boolean {
-  if (!sub.assignedAreas.length) return false;
+  // Fail-OPEN sin sectores — mismo criterio que notify-change / notify-push (ver ahí el razonamiento
+  // completo). assigned_areas es una foto tomada al loguearse: hasta que /api/me empezó a refrescar
+  // los sectores, una sub grabada antes de cargarlos quedaba muda para siempre y en silencio.
+  if (!sub.assignedAreas.length) return true;
   if (sub.assignedAreas.length >= 9) return true; // full access
 
   const { originArea, destinationArea, originAreaName, destinationAreaName } = params;

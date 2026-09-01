@@ -85,7 +85,14 @@ function effectiveAreaNames(originArea?: string, destArea?: string) {
 // dieta/ayuno traen un solo área (el sector del paciente): origin === dest → el remapeo HRA es no-op,
 // igual que cuando push-utils pasaba originAreaName = destinationAreaName = area.
 function subAreaMatches(assignedAreas: string[], originAreaName?: string, destAreaName?: string): boolean {
-  if (!assignedAreas.length) return false;
+  // Fail-OPEN cuando la suscripción no trae sectores. Antes devolvía false y el dispositivo quedaba
+  // mudo PARA SIEMPRE y en silencio: sin push, sin campanita (byUser sale de esta misma lista) y sin
+  // ninguna señal de que algo fallara. La sub guarda una FOTO de assigned_areas tomada al loguearse
+  // (push-subscribe), así que una sesión anterior a la carga de sectores en el ABM no se sanaba sola
+  // — la única salida era re-loguear. Ahora /api/me refresca los sectores en el poll de 60s, pero
+  // dejamos el fail-open como red: una notificación de más es preferible a un dispositivo apagado
+  // sin que nadie se entere, y si el endpoint ya está muerto el 404/410 lo purga solo.
+  if (!assignedAreas.length) return true;
   if (assignedAreas.length >= 9) return true; // full access
   const { origin, dest } = effectiveAreaNames(originAreaName, destAreaName);
   return Boolean((origin && assignedAreas.includes(origin)) || (dest && assignedAreas.includes(dest)));
