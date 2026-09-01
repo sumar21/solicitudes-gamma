@@ -277,11 +277,21 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       );
     }
 
-    // ── Acciones de Azafata (tab activeRole=HOSTESS) ──────────────────────────
-    // Cada botón está gateado por su permiso fino. El filtro de área se aplica solo
-    // si el usuario filtra por pisos; sin él (admin/admision "actuando como"), no hay
-    // restricción de área.
-    if (activeRole === Role.HOSTESS) {
+    // ── Qué SET de acciones mostrar: por PERMISO, no por la categoría que mapRole saca del nombre ──
+    // Los roles multi-tab (Admin/Admisión: tienen crear_ticket → ven el switcher) eligen el set con el
+    // tab (activeRole). Un rol SIMPLE (sin switcher) muestra lo que habilitan sus PERMISOS, sin importar
+    // cómo lo clasificó el enum: así un rol custom (p. ej. "Mucama UTI/UCO") con iniciar_traslado /
+    // confirmar_recepcion ve los botones de azafata aunque mapRole lo haya tipado como HOUSEKEEPING.
+    const canSwitchTabs = can(currentUser, 'crear_ticket');
+    const hasHostessPerms = can(currentUser, 'confirmar_limpieza') || can(currentUser, 'iniciar_traslado') || can(currentUser, 'confirmar_recepcion');
+    const hasAdminActionPerms = can(currentUser, 'consolidar') || can(currentUser, 'editar_ticket') || can(currentUser, 'cancelar_ticket');
+    const showHostessActions = activeRole === Role.HOSTESS || (!canSwitchTabs && hasHostessPerms);
+    const showAdminActions = activeRole === Role.ADMISSION || activeRole === Role.ADMIN || (!canSwitchTabs && !hasHostessPerms && hasAdminActionPerms);
+
+    // ── Acciones de Azafata (iniciar traslado / recepción / habitación lista) ──────────────────
+    // Cada botón está gateado por su permiso fino. El filtro de área se aplica solo si el usuario
+    // filtra por pisos; sin él (admin/admisión "actuando como"), no hay restricción de área.
+    if (showHostessActions) {
       const filtersFloors = !!currentUser?.filterByFloors;
       if (filtersFloors && !currentUser?.assignedAreas) return null;
 
@@ -346,9 +356,10 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       return null;
     }
 
-    // ── Acciones de Admisión/Admin (tab activeRole=ADMIN/ADMISSION) ──────────
-    // Cada botón gateado por su permiso fino.
-    if (activeRole === Role.ADMISSION || activeRole === Role.ADMIN) {
+    // ── Acciones de Admisión/Admin (consolidar / editar / cancelar) ──────────
+    // Cada botón gateado por su permiso fino. Igual que la azafata: un rol simple con estos permisos
+    // los ve aunque el enum del nombre no sea ADMISSION/ADMIN.
+    if (showAdminActions) {
       // notTerminal: el traslado sigue activo (no Consolidado ni Cancelado).
       const notTerminal = ticket.status !== TicketStatus.COMPLETED && ticket.status !== TicketStatus.REJECTED;
       // Editar sigue bloqueado tras intervención de azafata (canCancel === false).

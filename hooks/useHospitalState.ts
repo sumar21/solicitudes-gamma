@@ -3174,9 +3174,8 @@ export const useHospitalState = () => {
         alert('Tu rol no tiene permiso para cancelar pre-tickets.'); return;
       }
     } else {
-      if (currentUser?.role !== Role.ADMISSION && currentUser?.role !== Role.ADMIN) {
-        alert('Solo Admisión o Admin pueden cancelar traslados.'); return;
-      }
+      // Traslado normal: gatea por PERMISO (cancelar_ticket), no por rol fijo — respeta la config del
+      // ABM (un rol custom con el permiso puede cancelar; el server igual enforça áreas/authz).
       if (!can(currentUser, 'cancelar_ticket')) {
         alert('Tu rol no tiene permiso para cancelar traslados.'); return;
       }
