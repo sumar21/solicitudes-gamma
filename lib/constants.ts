@@ -79,9 +79,9 @@ export const WORKFLOW_LABELS: Record<WorkflowType, string> = {
 // Ver docs/planes/pre-ticket.md. Un solo desplegable = el "movimiento" (queda en motivo_cambio).
 // Área crítica se desglosa en UCO y UTI como opciones separadas.
 export const MOVIMIENTOS_PRETICKET = [
-  "Solicitud a internación general",
-  "Movimiento dentro de área crítica — UCO",
-  "Movimiento dentro de área crítica — UTI",
+  "Destino Internación General",
+  "Destino Área Crítica - UTI",
+  "Destino Área Crítica - UCO",
 ];
 
 // Requisitos de la nueva cama (checkboxes). Se guardan estructurados en requisitos_cama (para medir)
