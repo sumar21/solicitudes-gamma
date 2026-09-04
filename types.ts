@@ -138,10 +138,11 @@ export interface Bed {
   // ENTREGADAS que quedan visibles donde se sirvieron tras un traslado). Fallback de
   // patientName para el panel de comandas; lo setea mergeBeds al adjuntar el overlay.
   mealsPatientName?: string;
-  // Traslado a cirugía VIVO sobre esta cama (overlay "Cx", keyed por cama_origen). En
-  // EN_DEVOLUCION con cambio de cama, mergeBeds también lo adjunta sobre la cama_destino
-  // (limbo, `role==='destino'`). BedsView/CirugiasView leen `cirugia.estado` para pintar la
-  // pill Cx por color. Lo setea mergeBeds a partir del Map de cirugías vivas. Ver mergeBeds.
+  // Traslado a cirugía VIVO sobre esta cama (overlay "Cx"). SIGUE AL PACIENTE, no a la cama: el
+  // Map entra keyed por cama_origen, pero mergeBeds lo adjunta donde está internado el paciente de
+  // la operatoria y NUNCA sobre una cama que ocupa otro. En EN_DEVOLUCION con cambio de cama
+  // también lo adjunta sobre la cama_destino (limbo, `role==='destino'`). BedsView/CirugiasView
+  // leen `cirugia.estado` para pintar la pill Cx por color. Ver mergeBeds.
   cirugia?: BedCirugiaOverlay;
   // Marca "va a cirugía" de Admisión sobre un paciente NO quirúrgico (overlay de
   // public.cirugia_marcas ACTIVA, keyed por PACIENTE). Lo setea el useMemo `beds` AL FINAL
@@ -624,6 +625,11 @@ export interface BedCirugiaOverlay {
   pacienteCodigo?: string;
   area?: string;
   role: 'origin' | 'destino';
+  // ISO del último cambio de estado de la operatoria. Lo usa mergeBeds SOLO para el caso borde
+  // "el paciente no figura en el mapa y la cama de origen quedó vacía": ahí la pill se sostiene
+  // porque puede estar EN quirófano, pero una operatoria que hace días no se mueve está abandonada
+  // y no debe seguir marcando una cama vacía. Ver CIRUGIA_OVERLAY_STALE_MS.
+  updatedAt?: string;
 }
 
 // Marca "va a cirugía" (public.cirugia_marcas) — flag que Admisión prende sobre un PACIENTE NO

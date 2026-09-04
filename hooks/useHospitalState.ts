@@ -189,37 +189,31 @@ const emptySlot = (): MealSlotLoad => ({ acompanantes: [] });
 // SEPARADAS. Antes se keyeaba solo por label: la segunda comanda se fundía en la primera y
 // le pisaba el patientCode (`cur.patientCode || …` se quedaba con el PRIMERO) → la del
 // paciente actual no matcheaba por paciente en mergeBeds y "desaparecía" del mapa apenas se
-// guardaba. El mismo paciente en dos camas (se mudó) también quedan separadas: es lo que
-// necesita la lógica de "las bandejas entregadas se quedan en la cama donde se sirvieron".
+// guardaba. El mismo paciente en dos camas (se mudó) quedan separadas y mergeBeds las FUNDE
+// sobre la cama donde está hoy: el indicador es del paciente, no de la cama.
 const mealKey = (patientCode: string | null | undefined, label: string) => `${patientCode || ''}::${label}`;
 
-// ¿La bandeja ya fue servida? Las entregadas NO viajan con el paciente: se siguen
-// mostrando en la cama donde se sirvieron. `status` undefined cuenta como pendiente
-// (los updates optimistas crean la carga sin status, y una bandeja recién creada no
-// puede estar entregada; el poll igual lo normaliza en fetchMeals).
-const bandejaEntregada = (l: MealLoad): boolean => l.status === COMANDA_STATUS.ENTREGADO;
+// Ventana para sostener la pill Cx sobre una cama VACÍA cuyo paciente no figura en el mapa (puede
+// estar en quirófano y Gamma haber liberado la cama). Pasada esa ventana la operatoria está
+// abandonada —nadie está "listo para cirugía" durante días— y dejar la pill sólo ensucia el mapa.
+// Sólo aplica a ese caso borde: con el paciente presente la pill se muestra sin mirar el reloj.
+const CIRUGIA_OVERLAY_STALE_MS = 24 * 60 * 60 * 1000;
 
-// Proyección de una entrada de cargas dejando solo las bandejas que cumplen `keep`,
-// slot a slot y bandeja a bandeja (titular y acompañantes por separado): así un slot
-// MIXTO —titular entregado + acompañante pendiente— se PARTE y cada bandeja se
-// muestra donde corresponde. No muta la entrada original (los arrays salen de filter).
-// Devuelve undefined si no sobrevive ninguna, para que el caller no adjunte nada.
-function filtrarBandejas(info: MealsInfo, keep: (l: MealLoad) => boolean): MealsInfo | undefined {
-  const out: MealsInfo = { patientCode: info.patientCode, patientName: info.patientName, label: info.label, slots: {} };
-  let alguna = false;
-  for (const { slot } of MEAL_SLOTS) {
-    const s = info.slots[slot];
-    if (!s) continue;
-    const titular = s.titular && keep(s.titular) ? s.titular : undefined;
-    const acompanantes = s.acompanantes.filter(keep);
-    if (titular || acompanantes.length > 0) { out.slots[slot] = { titular, acompanantes }; alguna = true; }
-  }
-  return alguna ? out : undefined;
+function cirugiaOverlayStale(info: BedCirugiaOverlay): boolean {
+  if (!info.updatedAt) return false;                  // sin dato → no castigar (comportamiento previo)
+  const t = Date.parse(info.updatedAt);
+  if (!Number.isFinite(t)) return false;
+  return Date.now() - t > CIRUGIA_OVERLAY_STALE_MS;
 }
 
+// Nota: hubo un `bandejaEntregada` + `filtrarBandejas` que partían una carga para dejar las
+// bandejas ENTREGADAS ancladas en la cama donde se sirvieron y hacer viajar sólo las pendientes.
+// Se eliminaron: el tenedor del mapa responde "¿comió esta persona?", no "¿se sirvió algo en esta
+// cama?", así que hoy la carga viaja ENTERA con el paciente. Dónde se sirvió cada bandeja sigue
+// registrado en `cama_label` de la fila en la base, que es la fuente para auditoría y cocina.
+
 // Funde varias entradas de cargas en una sola: el mismo paciente cargado en VARIAS camas
-// (se mudó y arrastra bandejas pendientes), o varias bandejas entregadas de distintos
-// pacientes sobre una misma cama. Por slot, gana el titular más reciente (por `at`) y los
+// (se mudó y arrastra todas sus bandejas), o varias cargas huérfanas sobre una misma cama. Por slot, gana el titular más reciente (por `at`) y los
 // acompañantes se deduplican por spItemId. Devuelve el único elemento si no hay que fundir.
 function mergeMealParts(parts: MealsInfo[], patientCode: string, label: string): MealsInfo | undefined {
   if (parts.length === 0) return undefined;
@@ -443,35 +437,31 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
         // cambiaba la habitación a un pedido ya cumplido (el bug de "me movió también el
         // desayuno que ya había entregado"). Lo cargado en ESTA cama entra completo:
         // una bandeja entregada en la cama actual se muestra acá, como siempre.
+        // TODAS las bandejas viajan con el paciente, entregadas incluidas: el tenedor del mapa
+        // responde "¿comió esta persona?", no "¿se sirvió algo en esta cama?". Antes las entregadas
+        // se quedaban ancladas en la cama vieja y encendían el indicador en una cama ya vacía.
+        // El registro de DÓNDE se sirvió no se pierde: la fila de la base conserva su cama_label.
         const parts: MealsInfo[] = [];
         for (const l of labels) {
           const info = meals.get(mealKey(bed.patientCode, l));
-          if (!info) continue;
-          const part = l === bed.label ? info : filtrarBandejas(info, x => !bandejaEntregada(x));
-          if (part) parts.push(part);
+          if (info) parts.push(info);
         }
         return mergeMealParts(parts, bed.patientCode!, bed.label);
       }
-      // Por label. De las comandas cargadas en ESTA cama, la de un paciente que reclamó en
-      // OTRA cama deja acá SOLO sus bandejas ya ENTREGADAS (se sirvieron acá y su registro
-      // pertenece a este label); las pendientes se las llevó el paciente. Puede haber varias
-      // (el ocupante que no reclamó + una vieja colgada del anterior) → se funden.
+      // Por label. Acá sólo quedan las cargas que NO tienen dueño presente en el mapa: si el
+      // paciente está internado, TODAS sus bandejas (pendientes y entregadas) se muestran en su
+      // cama actual por la rama de arriba, no en este label.
       const candidatos = byLabel.get(bed.label);
       if (!candidatos || candidatos.length === 0) return undefined;
       const kept: MealsInfo[] = [];
       for (const direct of candidatos) {
-        if (direct.patientCode && claimedAt.get(direct.patientCode) === bed.label) continue; // reclamó ACÁ → ya salió por la rama de arriba
-        if (direct.patientCode && claimedAt.has(direct.patientCode)) {
-          // El paciente se movió a OTRA cama pero SIGUE en el mapa: acá quedan solo sus bandejas
-          // ya ENTREGADAS (se sirvieron en este label); las pendientes se las llevó a la cama nueva.
-          const only = filtrarBandejas(direct, bandejaEntregada);
-          if (only) kept.push(only);
-        } else if (!direct.patientCode) {
-          // Carga huérfana SIN código de paciente (fila vieja): se conserva (comportamiento previo).
-          kept.push(direct);
-        }
-        // else: paciente CON código que ya NO figura en el mapa (ALTA/egreso) → se DESCARTA. Antes su
-        // bandeja quedaba colgada del label y el tenedor seguía figurando en la cama ya vacía.
+        // Paciente con código que SIGUE en el mapa (acá o en otra cama): sus bandejas ya viajaron
+        // con él. Antes las entregadas se quedaban ancladas en este label y encendían el tenedor
+        // sobre una cama vacía — el indicador es de la persona, no de la habitación.
+        if (direct.patientCode && claimedAt.has(direct.patientCode)) continue;
+        // Carga huérfana SIN código de paciente (fila vieja): se conserva (comportamiento previo).
+        if (!direct.patientCode) kept.push(direct);
+        // else: paciente CON código que ya NO figura en el mapa (ALTA/egreso) → se DESCARTA.
       }
       return mergeMealParts(kept, bed.patientCode ?? (kept[0]?.patientCode ?? ''), bed.label);
     };
@@ -510,10 +500,44 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
   // sale de la cola y el mapa vuelve a confiar en PROGAL. Sin cambio de cama (o antes de la
   // devolución) es solo la pill Cx: nadie se mueve, el paciente sigue en su cama.
   if (cirugias && cirugias.size) {
-    // 1) Pill Cx sobre cada cama con overlay (origen y/o destino).
+    // Dónde está HOY cada paciente (índice por código sobre el mapa ya mergeado, así incluye los
+    // moves de tickets de más arriba). Es lo que permite que la pill siga a la PERSONA.
+    const bedByPatientCode = new Map<string, Bed>();
+    for (const bed of result) {
+      const code = bed.patientCode ? String(bed.patientCode).trim() : '';
+      if (code && !bedByPatientCode.has(code)) bedByPatientCode.set(code, bed);
+    }
+
+    // 1) Pill Cx: sigue al PACIENTE, no a la cama. Antes se pegaba por label a secas y quedaba
+    //    colgada en la cama de origen para siempre — una operatoria abandonada marcaba una cama ya
+    //    vacía (o peor, se la pegaba encima al paciente siguiente). Mismo criterio anti pill-fantasma
+    //    que ya tenía la marca `goingToSurgery`, que sí está keyed por paciente.
     for (const bed of result) {
       const info = cirugias.get(bed.label);
-      if (info) bed.cirugia = info;
+      if (!info) continue;
+      const cxCode  = info.pacienteCodigo ? String(info.pacienteCodigo).trim() : '';
+      const bedCode = bed.patientCode ? String(bed.patientCode).trim() : '';
+      // Sin código de paciente en la operatoria no hay con qué discriminar → comportamiento previo.
+      if (!cxCode) { bed.cirugia = info; continue; }
+      if (bedCode) {
+        if (bedCode === cxCode) bed.cirugia = info;   // su paciente sigue acá → pill correcta
+        continue;                                     // la ocupa OTRO → no es su cama
+      }
+      // Cama SIN ocupante. Puede ser el paciente en quirófano (Gamma liberó la cama) o una
+      // operatoria zombi. Se sostiene sólo si el paciente no aparece en otra cama y la operatoria
+      // sigue fresca: si hace días que no se mueve, está abandonada y no debe marcar nada.
+      if (bedByPatientCode.has(cxCode)) continue;     // está internado en OTRA cama → la pill va allá
+      if (cirugiaOverlayStale(info)) continue;
+      bed.cirugia = info;
+    }
+
+    // 1b) El paciente se movió de cama (PROGAL lo reasignó, o un traslado ya lo mudó): la pill lo
+    //     acompaña a donde esté, en vez de quedarse en la cama_origen que ya no es suya.
+    for (const info of cirugias.values()) {
+      const cxCode = info.pacienteCodigo ? String(info.pacienteCodigo).trim() : '';
+      if (!cxCode) continue;
+      const target = bedByPatientCode.get(cxCode);
+      if (target && !target.cirugia) target.cirugia = info;
     }
     // 2) Move del cambio de cama (hay una entrada 'destino' por operatoria en limbo).
     for (const [label, info] of cirugias) {
@@ -953,6 +977,7 @@ export const useHospitalState = () => {
       const base: BedCirugiaOverlay = {
         id: c.id, estado: c.estado, camaOrigen: c.camaOrigen, camaDestino: c.camaDestino,
         pacienteNombre: c.pacienteNombre, pacienteCodigo: c.pacienteCodigo, area: c.area, role: 'origin',
+        updatedAt: c.updatedAt,   // corte de operatoria abandonada (ver cirugiaOverlayStale)
       };
       m.set(c.camaOrigen, base);
       if (c.estado === 'EN_DEVOLUCION' && c.camaDestino && c.camaDestino !== c.camaOrigen) {
