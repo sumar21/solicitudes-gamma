@@ -598,6 +598,10 @@ export interface CirugiaTraslado {
   camaOrigen: string;            // cama donde está el paciente (clave de la operatoria viva)
   camaDestino?: string;          // se setea al devolver, solo si cambia de cama
   area?: string;                 // área/piso del origen (filtro de notis por sector + agrupar la cola)
+  // Evento de internación PROGAL (`${EVE_ORIGEN}-${EVE_NUMERO}`) en el que ocurrió esta cirugía.
+  // Acota el gate de consentimiento a la internación ACTUAL: el consentimiento se firma por
+  // internación, no de por vida. undefined = fila previa a la columna → el gate la cuenta igual.
+  eventKey?: string;
   tipo?: string;                 // "Tipo" de la solapa Internación (admissionType: Quirúrgica/Trasplante/…). Snapshot al alta.
   estado: CirugiaEstado;
   motivoCancelacion?: string;

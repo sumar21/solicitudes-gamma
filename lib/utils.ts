@@ -334,3 +334,23 @@ export function normalizeText(s: string | null | undefined): string {
     .replace(/\s+/g, ' ')
     .trim();
 }
+
+/**
+ * Clave del EVENTO DE INTERNACIÓN de una cama: `${EVE_ORIGEN}-${EVE_NUMERO}` (ej. "HIN-70952").
+ *
+ * MISMA convención que `enrich_camas.event_key` / `EventKey_EC` y que el match del enrich en
+ * api/beds.ts — deliberadamente no se inventa una clave nueva ni se cambia el case, porque el valor
+ * se COMPARA contra lo que ya está guardado con ese formato.
+ *
+ * Identifica una internación concreta, no al paciente: si la persona egresa y reingresa, PROGAL le
+ * da un evento nuevo. Eso es lo que permite que el consentimiento se evalúe "por internación" y no
+ * de por vida (ver el gate en api/cirugia.ts).
+ *
+ * Devuelve '' si la cama no trae el par (cama libre, o paciente sin evento). Los callers tratan ''
+ * como "sin dato" y caen al camino conservador: contar TODAS las cirugías previas del paciente.
+ */
+export function bedEventKey(bed: Pick<Bed, 'eventOrigin' | 'eventNumber'>): string {
+  const origen = String(bed.eventOrigin ?? '').trim();
+  const numero = bed.eventNumber;
+  return origen && numero != null ? `${origen}-${numero}` : '';
+}

@@ -9,7 +9,7 @@ import {
 } from '../types';
 import { MOCK_TICKETS } from '../lib/constants';
 import { can, hasModule, canReceiveNotif } from '../lib/permissions';
-import { effectiveHostessAreas, formatDateTime, createActionLock } from '../lib/utils';
+import { effectiveHostessAreas, formatDateTime, createActionLock, bedEventKey } from '../lib/utils';
 import { supabase, resetSupabasePase } from '../lib/supabase';
 import { APP_VERSION } from '../lib/version';
 
@@ -1664,6 +1664,7 @@ export const useHospitalState = () => {
         body: JSON.stringify({
           idUnivoco, pacienteCodigo, pacienteNombre, camaOrigen, area, tipo,
           admissionTypeCode: bed.admissionTypeCode, // 'Q' → el server valida el gate de consentimiento por cirugía
+          eventKey: bedEventKey(bed),               // internación actual → acota ese gate (ver api/cirugia.ts)
           userId: u?.id ?? '', userName: u?.name ?? '', operador: getOperador(), version: APP_VERSION,
         }),
       });

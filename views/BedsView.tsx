@@ -3,7 +3,7 @@ import { Bed, BedStatus, Ticket, TicketStatus, User, Area, IsolationEntry, MealS
 import { can, canLoadMealSlot, canLoadAnyMealSlot } from '../lib/permissions';
 import { hasLiveFasting, fastingOccurrences, formatFastingDateTime, fastingTimesForToday } from '../lib/fasting';
 import { Input } from '../components/ui/input';
-import { cn, dietRequiresCustomComanda, suggestedRoomSex, formatBedName, formatDateReadable } from '../lib/utils';
+import { cn, dietRequiresCustomComanda, suggestedRoomSex, formatBedName, formatDateReadable, bedEventKey } from '../lib/utils';
 import { BedDouble, User as UserIcon, Info, Search, X, Plus, ChevronDown, ChevronRight, Check, AlertTriangle, AlertCircle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan, History, Lock, Activity, ArrowRight, Calendar as CalendarIcon } from 'lucide-react';
 import { Calendar } from '../components/ui/calendar';
 import { Dialog, DialogContent, DialogTitle } from '../components/ui/dialog';
@@ -1114,14 +1114,21 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     if (!code || !selectedBed?.patientName) { setPatientHasCirugias(false); setPatientTieneCxCompletada(false); setPatientCirugiasLoaded(false); return; }
     let cancelled = false;
     setPatientCirugiasLoaded(false);
+    // Internación ACTUAL: sólo cuentan las cirugías cerradas de este mismo evento. El consentimiento
+    // se firma por internación, así que una cirugía de un ingreso anterior no debe seguir bloqueando.
+    const ekey = bedEventKey(selectedBed);
     const token = localStorage.getItem('mediflow_token');
     fetch(`/api/cirugia?paciente=${encodeURIComponent(code)}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
       .then(r => r.ok ? r.json() : { cirugias: [] })
-      .then((d: { cirugias?: { estado?: string }[] }) => {
+      .then((d: { cirugias?: { estado?: string; eventKey?: string }[] }) => {
         if (cancelled) return;
         const list = Array.isArray(d.cirugias) ? d.cirugias : [];
         setPatientHasCirugias(list.length > 0);
-        setPatientTieneCxCompletada(list.some(c => c?.estado === 'TOLERANCIA_EVALUADA'));
+        // Sin eventKey (de la cama o de la fila) no se puede discriminar → cuenta, como antes.
+        // Espeja exactamente el gate del servidor en api/cirugia.ts; ante falta de dato, nunca
+        // desbloquear de más.
+        setPatientTieneCxCompletada(list.some(c =>
+          c?.estado === 'TOLERANCIA_EVALUADA' && (!ekey || !c.eventKey || c.eventKey === ekey)));
       })
       .catch(() => { if (!cancelled) { setPatientHasCirugias(false); setPatientTieneCxCompletada(false); } })
       .finally(() => { if (!cancelled) setPatientCirugiasLoaded(true); });

@@ -67,6 +67,7 @@ function rowToCirugia(r: any) {
     camaOrigen:         String(r.cama_origen ?? ''),
     camaDestino:        r.cama_destino != null ? String(r.cama_destino) : undefined,
     area:               r.area != null ? String(r.area) : undefined,
+    eventKey:           r.event_key != null ? String(r.event_key) : undefined,
     tipo:               r.tipo != null ? String(r.tipo) : undefined,
     estado:             String(r.estado ?? ''),
     motivoCancelacion:  r.motivo_cancelacion != null ? String(r.motivo_cancelacion) : undefined,
@@ -205,7 +206,7 @@ async function handler(req: any, res: any) {
 
   // ── POST — alta (LISTO_PARA_CIRUGIA; la marca Enfermería de piso) ─────────
   if (req.method === 'POST') {
-    const { idUnivoco, pacienteCodigo, pacienteNombre, camaOrigen, area, tipo, admissionTypeCode, userId, userName } = req.body ?? {};
+    const { idUnivoco, pacienteCodigo, pacienteNombre, camaOrigen, area, tipo, admissionTypeCode, eventKey, userId, userName } = req.body ?? {};
     if (!String(idUnivoco ?? '').trim())  return res.status(400).json({ error: 'idUnivoco is required' });
     if (!String(camaOrigen ?? '').trim()) return res.status(400).json({ error: 'camaOrigen is required' });
 
@@ -214,20 +215,38 @@ async function handler(req: any, res: any) {
 
     // ── Gate de consentimiento por cirugía ─────────────────────────────────────
     // Cada cirugía firma su consentimiento. Un paciente quirúrgico (Q) se auto-habilita SOLO en su 1ra
-    // cirugía (consentimiento del ingreso); un clínico necesita siempre la marca de Admisión. De la 2da
-    // en adelante (ya tiene una COMPLETADA), aunque sea Q, requiere la marca (nuevo consentimiento).
-    //   permitido = marca ACTIVA de Admisión  ||  (es Q && SIN cirugía completada previa)
+    // cirugía DE ESTA INTERNACIÓN (consentimiento del ingreso); un clínico necesita siempre la marca de
+    // Admisión. De la 2da en adelante (ya tiene una COMPLETADA en la misma internación), aunque sea Q,
+    // requiere la marca (nuevo consentimiento).
+    //   permitido = marca ACTIVA de Admisión  ||  (es Q && SIN cirugía completada en ESTA internación)
     // Espeja el gate del cliente (BedsView) y lo hace REAL: un POST directo no lo saltea. Solo se evalúa
     // con código de paciente (marca e historial se keyean por código); sin código, fail-open.
+    //
+    // El alcance es la INTERNACIÓN, no la vida del paciente: el consentimiento se firma por internación.
+    // Antes se miraba todo el historial sin límite de tiempo, así que alguien operado hace meses que
+    // reingresaba como quirúrgico no se auto-habilitaba nunca más. Se acota por event_key
+    // (`${EVE_ORIGEN}-${EVE_NUMERO}`, ver lib/utils.bedEventKey).
+    // Las filas con event_key NULL (previas a la columna, o cama sin el dato) siguen contando SIEMPRE:
+    // ante falta de dato nunca desbloqueamos de más.
     const pcode = pacienteCodigo != null ? String(pacienteCodigo).trim() : '';
     if (pcode) {
       const esQ = String(admissionTypeCode ?? '').trim().toUpperCase() === 'Q'
         || String(tipo ?? '').trim().toLowerCase() === 'quirúrgica';
+      const ekeyRaw = eventKey != null ? String(eventKey).trim() : '';
+      // El .or() de abajo interpola la clave DENTRO de la gramática de filtros de PostgREST, donde
+      // la coma y los paréntesis son separadores. Sólo se acepta la forma real del EventKey
+      // (`HIN-70952`); cualquier otra cosa se descarta y se cae al chequeo amplio — que es el lado
+      // seguro y además evita construir un filtro roto o inyectado.
+      const ekey = /^[A-Za-z0-9_-]{1,64}$/.test(ekeyRaw) ? ekeyRaw : '';
+      let prevQuery = supa.from('cirugia_traslados').select('id')
+        .eq('entorno', ENTORNO).eq('paciente_codigo', pcode).eq('estado', 'TOLERANCIA_EVALUADA');
+      // Con EventKey: sólo cuentan las de ESTA internación + las sin dato. Sin EventKey (no vino en el
+      // body, o no tiene forma válida): no podemos discriminar → se cuentan todas, como antes.
+      if (ekey) prevQuery = prevQuery.or(`event_key.eq.${ekey},event_key.is.null`);
       const [{ data: marcaActiva }, { data: prevCompletada }] = await Promise.all([
         supa.from('cirugia_marcas').select('id')
           .eq('entorno', ENTORNO).eq('paciente_codigo', pcode).eq('estado', 'ACTIVA').limit(1),
-        supa.from('cirugia_traslados').select('id')
-          .eq('entorno', ENTORNO).eq('paciente_codigo', pcode).eq('estado', 'TOLERANCIA_EVALUADA').limit(1),
+        prevQuery.limit(1),
       ]);
       const permitido = !!(marcaActiva?.length) || (esQ && !(prevCompletada?.length));
       if (!permitido) {
@@ -244,6 +263,8 @@ async function handler(req: any, res: any) {
         paciente_codigo: pacienteCodigo != null ? String(pacienteCodigo) : null,
         paciente_nombre: pacienteNombre != null ? String(pacienteNombre) : null,
         cama_origen: String(camaOrigen),
+        // Internación en la que ocurre esta cirugía — acota el gate de consentimiento (ver arriba).
+        event_key: eventKey != null && String(eventKey).trim() !== '' ? String(eventKey).trim() : null,
         area: area != null ? String(area) : null,
         tipo: tipo != null ? String(tipo) : null,
         estado: 'LISTO_PARA_CIRUGIA',
