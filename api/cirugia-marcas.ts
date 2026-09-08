@@ -119,7 +119,11 @@ async function handler(req: any, res: any) {
     }
   }
 
-  // ── PATCH — CERRAR (auto por RECIBIDA) / ANULAR (Admisión desmarca) ────────
+  // ── PATCH — CERRAR (auto al Iniciar dieta) / ANULAR (Admisión desmarca) ────
+  // Nota: el cierre automático AHORA lo hace también api/cirugia.ts dentro del PATCH que cierra la
+  // operatoria (TOLERANCIA_EVALUADA), que es la vía confiable. Esta ruta sigue viva porque el
+  // cliente la llama igual (doble red) y porque ANULAR la necesita. El estado RECIBIDA que nombraba
+  // el comentario anterior ya no existe en el flujo (se eliminó el 20/08).
   if (req.method === 'PATCH') {
     const { id, pacienteCodigo, action, motivo, userId, userName } = req.body ?? {};
     const act = String(action ?? '');
@@ -146,7 +150,7 @@ async function handler(req: any, res: any) {
       const { error } = await supa.from('cirugia_marcas').update({
         estado: act === 'ANULAR' ? 'ANULADA' : 'CERRADA',
         fecha_cierre: new Date().toISOString(),
-        motivo_cierre: motivo != null && motivo !== '' ? String(motivo) : (act === 'ANULAR' ? 'admision_desmarco' : 'cirugia_recibida'),
+        motivo_cierre: motivo != null && motivo !== '' ? String(motivo) : (act === 'ANULAR' ? 'admision_desmarco' : 'cirugia_finalizada'),
         cerrada_por_id: userId != null ? String(userId) : null,
         cerrada_por: userName != null ? String(userName) : null,
         version: String(req.body?.version ?? ''),

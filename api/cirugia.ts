@@ -299,7 +299,7 @@ async function handler(req: any, res: any) {
       // Guard: leer el estado ACTUAL antes de escribir (fuente de verdad del 409). Trae `area` para
       // la autorización por sector.
       const { data: cur, error: readErr } = await supa.from('cirugia_traslados')
-        .select('estado, cama_origen, cama_destino, area').eq('id', String(id)).eq('entorno', ENTORNO).maybeSingle();
+        .select('estado, cama_origen, cama_destino, area, paciente_codigo').eq('id', String(id)).eq('entorno', ENTORNO).maybeSingle();
       if (readErr) { console.error('[cirugia] PATCH read failed:', readErr.message); return res.status(500).json({ error: 'Failed to read cirugia' }); }
       if (!cur) return res.status(404).json({ error: 'Cirugia not found' });
 
@@ -339,6 +339,28 @@ async function handler(req: any, res: any) {
       if (error) { console.error('[cirugia] PATCH failed:', error.message, act); return res.status(500).json({ error: 'Failed to update cirugia' }); }
       if (!updated || updated.length === 0) {
         return res.status(409).json({ error: 'La cirugía cambió de estado; recargá e intentá de nuevo.' });
+      }
+
+      // ── Cierre del flag "va a cirugía" DEL LADO DEL SERVIDOR ──────────────────
+      // La marca de Admisión es "por cirugía": al cerrar la operatoria tiene que apagarse, porque es
+      // la mitad del gate de consentimiento del POST (permitido = marcaActiva || Q sin previa). Una
+      // marca que sobrevive al cierre auto-habilita una 2da cirugía SIN consentimiento nuevo — justo
+      // la validación que Enfermería usa para asegurar la firma.
+      // El cliente ya lo dispara (useHospitalState, al Iniciar dieta), pero fire-and-forget: si esa
+      // llamada se perdía (red caída, pestaña cerrada justo ahí) la marca quedaba ACTIVA y nadie se
+      // enteraba. Acá corre DESPUÉS del CAS, así que sólo lo hace la transición que ganó la carrera.
+      // Idempotente (filtra por estado ACTIVA) y best-effort: si falla no se revierte una transición
+      // clínica ya commiteada — queda el log y el cierre del cliente como segunda red.
+      if (act === 'TOLERANCIA_EVALUADA' && cur.paciente_codigo) {
+        const { error: marcaErr } = await supa.from('cirugia_marcas').update({
+          estado: 'CERRADA',
+          fecha_cierre: nowIso,
+          motivo_cierre: 'cirugia_finalizada',
+          cerrada_por_id: userId != null ? String(userId) : null,
+          cerrada_por: userName != null ? String(userName) : null,
+          version: String(req.body?.version ?? ''),
+        }).eq('entorno', ENTORNO).eq('paciente_codigo', String(cur.paciente_codigo)).eq('estado', 'ACTIVA');
+        if (marcaErr) console.error('[cirugia] cierre de marca falló:', marcaErr.message);
       }
 
       // Detalle: un evento por transición. `tipo` = la acción (el click), `estadoResultante` = el
