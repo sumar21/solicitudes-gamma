@@ -1,7 +1,7 @@
 
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
-import { Bed, Ticket, BedStatus } from "../types"
+import { Bed, Ticket, BedStatus, TicketStatus } from "../types"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -353,4 +353,17 @@ export function bedEventKey(bed: Pick<Bed, 'eventOrigin' | 'eventNumber'>): stri
   const origen = String(bed.eventOrigin ?? '').trim();
   const numero = bed.eventNumber;
   return origen && numero != null ? `${origen}-${numero}` : '';
+}
+
+/**
+ * Etiqueta de la cama DESTINO para las vistas de historia/auditoría. Un destino vacío ya no
+ * significa 'cancelado antes de asignar cama': desde los pre-tickets, un traslado en
+ * Presolicitud vive sin destino hasta que Admisión se lo configura. Mostrar 'Anulado' ahí hacía
+ * creer que el pre-ticket se había cancelado (y seguía vivo en la grilla).
+ */
+export function formatTicketDestination(ticket: Pick<Ticket, 'destination' | 'status'>): string {
+  if (ticket.destination) return formatBedName(ticket.destination);
+  if (ticket.status === TicketStatus.REJECTED) return 'Anulado';
+  if (ticket.status === TicketStatus.PRESOLICITUD) return 'Sin destino';
+  return 'Pendiente';
 }
