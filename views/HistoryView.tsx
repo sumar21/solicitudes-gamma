@@ -19,7 +19,7 @@ import { AuditModal } from '../components/AuditModal';
 import { PatientJourney } from '../components/PatientJourney';
 import { SearchableSelect } from '../components/ui/searchable-select';
 import { movementLabel } from '../lib/ticketEvents';
-import { cn, formatDateReadable, formatDateTime, calculateTicketMetrics, formatBedName } from '../lib/utils';
+import { cn, formatDateReadable, formatDateTime, calculateTicketMetrics, formatBedName, formatTicketDestination } from '../lib/utils';
 import { WORKFLOW_LABELS } from '../lib/constants';
 
 interface HistoryViewProps {
@@ -524,7 +524,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
               <div className="flex items-center justify-between gap-2">
                 <span className="flex-1 min-w-0 text-[10px] font-black text-slate-800 uppercase bg-slate-100 px-2 py-1 rounded-lg break-words leading-tight text-center">{formatBedName(t.origin)}</span>
                 <ArrowRightLeft className="w-3 h-3 text-slate-300 shrink-0" />
-                <span className="flex-1 min-w-0 text-[10px] font-black text-blue-700 uppercase bg-blue-50 px-2 py-1 rounded-lg break-words leading-tight text-center">{t.destination ? formatBedName(t.destination) : 'ANULADO'}</span>
+                <span className="flex-1 min-w-0 text-[10px] font-black text-blue-700 uppercase bg-blue-50 px-2 py-1 rounded-lg break-words leading-tight text-center">{formatTicketDestination(t)}</span>
               </div>
             </Card>
           ))
