@@ -204,15 +204,21 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       // Si el user no filtra por pisos (Admin/Admision/Direccion/etc.), ve todos
       // los tickets activos sin importar el tab activo (el tab solo gobierna
       // qué botones de acción aparecen para "actuar como" otro rol).
-      // Si filtra por pisos (Azafata, Catering, futuros roles), aplica filtro de área
-      // limitado a estados operativos.
+      // Si filtra por pisos (Azafata, Catering, futuros roles), aplica filtro de área.
+      // Quien puede CREAR (pre-)tickets (Coordinación, y cualquier rol al que el ABM le dé
+      // crear_ticket/crear_pre_ticket) NO se recorta por estado: ve todos los activos de sus pisos,
+      // incluidos los Presolicitud y los que ya se convirtieron. El recorte por estado es para las
+      // azafatas, que solo actúan sobre traslados operativos.
+      const canCreateTickets = can(currentUser, 'crear_pre_ticket') || can(currentUser, 'crear_ticket');
       filtered = filtered.filter(t => {
         if (!currentUser?.filterByFloors) return true;
-        const validStatus = t.status === TicketStatus.WAITING_ROOM ||
-          t.status === TicketStatus.IN_TRANSIT ||
-          t.status === TicketStatus.IN_TRANSPORT ||
-          isRecentCancelado(t); // cancelado reciente también pasa (respeta el filtro de área de abajo)
-        if (!validStatus) return false;
+        if (!canCreateTickets) {
+          const validStatus = t.status === TicketStatus.WAITING_ROOM ||
+            t.status === TicketStatus.IN_TRANSIT ||
+            t.status === TicketStatus.IN_TRANSPORT ||
+            isRecentCancelado(t); // cancelado reciente también pasa (respeta el filtro de área de abajo)
+          if (!validStatus) return false;
+        }
         if (currentUser.assignedAreas?.length && beds.length > 0) {
           const allAreas = Object.values(Area);
           if (currentUser.assignedAreas.length < allAreas.length - 1) {
@@ -225,7 +231,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                    (!!destArea && currentUser.assignedAreas.includes(destArea));
           }
         }
-        return validStatus;
+        return true;
       });
     }
 

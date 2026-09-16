@@ -34,9 +34,13 @@ interface PreTicketModalProps {
   onOpenChange: (open: boolean) => void;
   onCreate: (data: { originBedLabel: string; movimiento: string; requisitos: string[]; observations?: string }) => void;
   beds: Bed[];
+  /** Sectores del usuario (solo para roles con filterByFloors). Recorta el desplegable de
+   *  pacientes a sus pisos: si podía pedir una cama para un paciente de otro sector, el
+   *  pre-ticket resultante le quedaba invisible en la grilla (que sí filtra por piso). */
+  assignedAreas?: Area[];
 }
 
-export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChange, onCreate, beds }) => {
+export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChange, onCreate, beds, assignedAreas }) => {
   const [originBedLabel, setOriginBedLabel] = useState('');
   const [movimiento, setMovimiento] = useState('');
   const [requisitos, setRequisitos] = useState<string[]>([]);
@@ -55,6 +59,7 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
   // la cama es el dato secundario y la clave real (de ahí salen obra social + origen).
   const patientOptions = beds
     .filter(b => b.status === BedStatus.OCCUPIED && b.patientName)
+    .filter(b => !assignedAreas?.length || assignedAreas.includes(b.area))
     .sort(sortByAreaThenLabel)
     .map(b => ({ label: `${b.patientName} — ${formatBedName(b.label)}`, value: b.label }));
 
