@@ -127,6 +127,14 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
   const { allowed: allowedDestinations, blocked: isolationBlocked } =
     splitDestinationsByIsolation(beds, origin, availableDestinations);
 
+  // El destino se elige ANTES o DESPUÉS del origen, indistinto. Si ya había uno cargado y el
+  // origen que se elige después lo vuelve incompatible (p. ej. pasa a ser un paciente DP), hay
+  // que soltarlo: el SearchableSelect dejaría de mostrarlo pero el estado seguiría teniendo la
+  // cama vieja y el submit la mandaría igual, salteando la regla.
+  React.useEffect(() => {
+    if (destination && !allowedDestinations.some(b => b.label === destination)) setDestination('');
+  }, [destination, allowedDestinations]);
+
   // Warning NO bloqueante: habitación destino con pacientes del sexo opuesto. Ver roomSexConflict.
   const sexLabel = (s?: string) => (s === 'M' ? 'Masculino' : s === 'F' ? 'Femenino' : '');
   const sexWarning = React.useMemo(
