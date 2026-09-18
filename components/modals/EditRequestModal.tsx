@@ -8,6 +8,7 @@ import { SearchableSelect } from '../ui/searchable-select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { ROOM_CHANGE_REASONS } from '../../lib/constants';
 import { isHitArea, isHraArea } from '../../lib/utils';
+import { splitDestinationsByIsolation } from '../../lib/isolations';
 
 // Same ordering used elsewhere: pre-internación (HRA, HIT) first, then floors, then critical units
 const AREA_ORDER: Area[] = [
@@ -114,6 +115,12 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
     .filter(b => b.label === ticket.destination || !activeTransferDestinations.has(b.label))
     .sort(sortByAreaThenLabel);
 
+  // Reglas de convivencia por aislamiento (Quemado / Diálisis peritoneal) — ver NewRequestModal.
+  // El destino YA cargado nunca se excluye: si no, el select quedaría apuntando a una opción
+  // inexistente y una edición de observación borraría el destino sin querer.
+  const { allowed: allowedDestinations, blocked: isolationBlocked } =
+    splitDestinationsByIsolation(beds, ticket.origin, availableDestinations, ticket.destination);
+
   const destinationChanged = destination !== (ticket.destination ?? '');
 
   return (
@@ -174,7 +181,7 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
             <SearchableSelect
               value={destination}
               onValueChange={setDestination}
-              options={availableDestinations.map(bed => ({
+              options={allowedDestinations.map(bed => ({
                 label: bed.label === ticket.destination
                   ? `${bed.label} (actual)`
                   : `${bed.label} (${bed.status})`,
@@ -183,6 +190,17 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
               placeholder="Seleccionar Destino"
               searchPlaceholder="Buscar cama de destino..."
             />
+            {isolationBlocked.length > 0 && (
+              <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-300">
+                <span className="w-2 h-2 mt-1 rounded-full bg-emerald-800 shrink-0" />
+                <div className="text-[11px] text-emerald-900">
+                  <p className="font-bold">
+                    {isolationBlocked.length} cama{isolationBlocked.length > 1 ? 's' : ''} no se ofrece{isolationBlocked.length > 1 ? 'n' : ''} por reglas de aislamiento.
+                  </p>
+                  <p className="font-medium opacity-90">{isolationBlocked[0].conflict.reason}</p>
+                </div>
+              </div>
+            )}
             {destinationChanged && (
               <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200">
                 <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />

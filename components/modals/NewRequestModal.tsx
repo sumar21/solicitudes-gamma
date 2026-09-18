@@ -9,6 +9,7 @@ import { SearchableSelect } from '../ui/searchable-select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { ITR_SOURCES, ROOM_CHANGE_REASONS } from '../../lib/constants';
 import { isHitArea, isHraArea, roomSexConflict } from '../../lib/utils';
+import { splitDestinationsByIsolation } from '../../lib/isolations';
 
 // Same ordering used in BedsView: pre-internación (HRA, HIT) first, then floors, then critical units
 const AREA_ORDER: Area[] = [
@@ -120,6 +121,12 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
     .filter(b => !activeTransferDestinations.has(b.label)) // ocultar camas ya asignadas a otro ticket activo
     .sort(sortByAreaThenLabel);
 
+  // Reglas de convivencia por aislamiento (Quemado / Diálisis peritoneal): a diferencia del
+  // warning de sexo, estas SÍ recortan la lista — son una indicación clínica, no una sugerencia.
+  // Se muestra el conteo y el motivo para que nunca desaparezca una cama en silencio.
+  const { allowed: allowedDestinations, blocked: isolationBlocked } =
+    splitDestinationsByIsolation(beds, origin, availableDestinations);
+
   // Warning NO bloqueante: habitación destino con pacientes del sexo opuesto. Ver roomSexConflict.
   const sexLabel = (s?: string) => (s === 'M' ? 'Masculino' : s === 'F' ? 'Femenino' : '');
   const sexWarning = React.useMemo(
@@ -201,13 +208,24 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
             <SearchableSelect
               value={destination}
               onValueChange={setDestination}
-              options={availableDestinations.map(bed => ({
+              options={allowedDestinations.map(bed => ({
                 label: `${bed.label} (${bed.status})`,
                 value: bed.label
               }))}
               placeholder="Seleccionar Destino"
               searchPlaceholder="Buscar cama de destino..."
             />
+            {isolationBlocked.length > 0 && (
+              <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-300">
+                <span className="w-2 h-2 mt-1 rounded-full bg-emerald-800 shrink-0" />
+                <div className="text-xs text-emerald-900">
+                  <p className="font-bold">
+                    {isolationBlocked.length} cama{isolationBlocked.length > 1 ? 's' : ''} no se ofrece{isolationBlocked.length > 1 ? 'n' : ''} por reglas de aislamiento.
+                  </p>
+                  <p className="font-medium opacity-90">{isolationBlocked[0].conflict.reason}</p>
+                </div>
+              </div>
+            )}
             {sexWarning && (
               <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200">
                 <span className="w-2 h-2 mt-1 rounded-full bg-amber-500 shrink-0" />

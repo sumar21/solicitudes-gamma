@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback } from 'react';
 import { Bed, BedStatus, Ticket, TicketStatus, User, Area, IsolationEntry, MealSlot, MealLoad, MEAL_SLOTS, mealSlotFromSp, hasAnyMealLoad, hasPendingMealLoad, MAX_ACOMPANANTES, COMANDA_STATUS, titularSinDieta, dietTypeFromDiets } from '../types';
 import { can, canLoadMealSlot, canLoadAnyMealSlot } from '../lib/permissions';
 import { hasLiveFasting, fastingOccurrences, formatFastingDateTime, fastingTimesForToday } from '../lib/fasting';
+import { isolationSigla, isolationRule } from '../lib/isolations';
 import { Input } from '../components/ui/input';
 import { cn, dietRequiresCustomComanda, suggestedRoomSex, formatBedName, formatDateReadable, bedEventKey } from '../lib/utils';
 import { BedDouble, User as UserIcon, Info, Search, X, Plus, ChevronDown, ChevronRight, Check, AlertTriangle, AlertCircle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan, History, Lock, Activity, ArrowRight, Calendar as CalendarIcon } from 'lucide-react';
@@ -93,6 +94,9 @@ const ISOLATION_COLORS: Record<string, { ring: string; bg: string; text: string;
   amber:   { ring: 'ring-amber-700',   bg: 'bg-amber-800',   text: 'text-amber-800',   dot: 'bg-amber-800',   pill: 'bg-amber-100 text-amber-800' },
   fuchsia: { ring: 'ring-fuchsia-400', bg: 'bg-fuchsia-500', text: 'text-fuchsia-700', dot: 'bg-fuchsia-500', pill: 'bg-fuchsia-100 text-fuchsia-700' },
   violet:  { ring: 'ring-violet-400',  bg: 'bg-violet-500',  text: 'text-violet-700',  dot: 'bg-violet-500',  pill: 'bg-violet-100 text-violet-700' },
+  // Verde inglés — cartelería de Quemado (Q) y Diálisis peritoneal (DP), alta 16/09/2026.
+  // Deliberadamente MÁS OSCURO que `green` (Respiratorio, green-500) para no confundirlos.
+  englishGreen: { ring: 'ring-emerald-800', bg: 'bg-emerald-800', text: 'text-emerald-900', dot: 'bg-emerald-800', pill: 'bg-emerald-100 text-emerald-900' },
 };
 const DEFAULT_ISO_COLOR = ISOLATION_COLORS.violet;
 
@@ -2813,11 +2817,18 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     )}
                   >
                     <div className={cn("absolute top-1 right-1 w-1 h-1 md:w-1.5 md:h-1.5 rounded-full shadow-sm", isBlocked ? "bg-violet-400" : isPreventiveAdj ? PREVENTIVE_ADJ_DOT : getStatusDot(bed.status))} />
-                    {isIsolated && (
-                      <div className={cn("absolute top-0.5 left-0.5 w-3 h-3 md:w-3.5 md:h-3.5 rounded-full flex items-center justify-center", isoColor.bg)}>
-                        <ShieldAlert className="w-2 h-2 md:w-2.5 md:h-2.5 text-white" strokeWidth={3} />
-                      </div>
-                    )}
+                    {/* Aislamientos con sigla de cartelería (Q, DP) muestran la sigla en vez del escudo:
+                        es el mismo dato que el cartel de la puerta, legible de un vistazo en la grilla. */}
+                    {isIsolated && (() => {
+                      const sigla = isoTipos.map(i => isolationSigla(i.name)).find(Boolean);
+                      return (
+                        <div className={cn("absolute top-0.5 left-0.5 w-3 h-3 md:w-3.5 md:h-3.5 rounded-full flex items-center justify-center", isoColor.bg)}>
+                          {sigla
+                            ? <span className="text-[6px] md:text-[7px] font-black text-white leading-none tracking-tighter">{sigla}</span>
+                            : <ShieldAlert className="w-2 h-2 md:w-2.5 md:h-2.5 text-white" strokeWidth={3} />}
+                        </div>
+                      );
+                    })()}
                     {/* Multi-isolation tag: a tiny pill in the bottom-left corner with the count
                         and a thumbnail of the SECOND isolation color, so the user can tell at a glance
                         that the patient has more than one precaution active. */}
@@ -3566,7 +3577,15 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                           </span>
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-bold text-slate-700">Aislamiento{plural ? 's' : ''} activo{plural ? 's' : ''}</p>
-                            <p className="text-[10px] text-slate-400">{onlyPreventive ? 'Camas contiguas señalizadas (no bloqueadas)' : 'Camas de la habitación bloqueadas'}</p>
+                            <p className="text-[10px] text-slate-400">{
+                              onlyPreventive ? 'Camas contiguas señalizadas (no bloqueadas)'
+                              // Quemado: el mapa igual bloquea (no sabe a quién van a traer), pero el
+                              // selector de destino SÍ deja convivir Q con Q. Se aclara para que no
+                              // parezca contradictorio con lo que ofrece el alta de traslado.
+                              : tipos.some(i => isolationRule(i.name) === 'igual') ? 'Solo comparte habitación con otro paciente igual'
+                              : tipos.some(i => isolationRule(i.name) === 'solo') ? 'No comparte habitación'
+                              : 'Camas de la habitación bloqueadas'
+                            }</p>
                           </div>
                         </div>
                         <div className="space-y-1.5">
@@ -3577,6 +3596,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                                 <span className={cn("inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold", c.pill)}>
                                   <span className={cn("w-2 h-2 rounded-full", c.dot)} />
                                   {iso.name}
+                                  {isolationSigla(iso.name) && <span className="opacity-70">({isolationSigla(iso.name)})</span>}
                                 </span>
                                 {iso.observation && (
                                   <span className="text-[11px] text-slate-600 italic break-words">— {iso.observation}</span>
