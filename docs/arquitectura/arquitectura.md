@@ -1478,7 +1478,7 @@ Hasta acá los aislamientos se **cargaban a mano** desde la app y vivían en la 
 ### Flujo de datos (espejo de `DIETAS`/`AYUNOS`)
 
 - `obtenereventointernacion` retorna `AISLAMIENTOS[]`, misma forma que `DIETAS`: `{ HCG_DESCRIPCION, EIP_RESPUESTA_VALOR }`. El tipo base trae `"Prescribe"`; la observación llega como fila aparte `"<Tipo> - Observaciones"` con el texto libre.
-- [api/isolations-summary.ts](api/isolations-summary.ts) (**nuevo**, análogo a [api/diet-tags.ts](api/diet-tags.ts)/[api/ayunos.ts](api/ayunos.ts)): `summarizeIsolations()` filtra los prescriptos, **normaliza** el nombre de Gamma a un nombre canónico + clave de color (la app los nombra distinto: "De contacto"→"Contacto", "COVID 19"→"Covid", etc.) y adjunta la observación. `hashIsolations()` para detección de cambios.
+- [api/isolations-summary.ts](api/isolations-summary.ts) (**nuevo**, análogo a [api/diet-tags.ts](api/diet-tags.ts)/[api/ayunos.ts](api/ayunos.ts)): `summarizeIsolations()` filtra los prescriptos, **normaliza** el nombre de Gamma a un nombre canónico + clave de color (la app los nombra distinto: "De contacto"→"Contacto", "COVID 19"→"Covid", etc.) y adjunta la observación.
 - Se guarda como `isolations: IsolationEntry[]` (`{ name, color, observation? }`) en `EnrichResult` ([api/enrich-core.ts](api/enrich-core.ts) `buildEventData`) → `Payload_EC` de `12.EnrichCamas` → `bed.isolations` vía `applyEnrichToBed` ([api/beds.ts](api/beds.ts)). **El cron no necesitó cambios**: ya persiste el payload completo.
 
 ### Front
@@ -1490,6 +1490,35 @@ Hasta acá los aislamientos se **cargaban a mano** desde la app y vivían en la 
 ### Deprecado
 
 `/api/isolations` + lista `08.Aislamientos` + enum `IsolationType` quedan **sin uso** (el archivo del endpoint sigue en el repo, inactivo). La fuente única es PROGAL.
+
+## 46bis. Quemado (Q) y Diálisis peritoneal (DP): aislamientos con regla de convivencia (2026-09-18)
+
+Alta de dos aislamientos nuevos pedidos por HPR (mail 16/09/2026, POE 1698 y 1673). Es el primer caso en que un aislamiento **condiciona a qué cama se puede trasladar un paciente**, no solo cómo se pinta el mapa.
+
+| Aislamiento | Sigla | Color | Regla de convivencia |
+|---|---|---|---|
+| Quemado | `Q` | verde inglés (`englishGreen`) | Solo comparte habitación con otro Quemado |
+| Diálisis peritoneal | `DP` | verde inglés (`englishGreen`) | No comparte habitación con nadie |
+
+### Dónde vive cada cosa
+
+- **Nombre + color** → [api/isolations-summary.ts](api/isolations-summary.ts), como el resto. Se suman al `ISOLATION_MAP` y, además, un `FUZZY_TYPES` los reconoce por patrón (`/quemad/`, `/dialisis\s*peritoneal/`): PROGAL publica el 21/09/2026 y el string exacto todavía no está confirmado, así que una variante de nombre no puede hacerlos caer al violeta genérico.
+- **Sigla + regla** → [lib/isolations.ts](lib/isolations.ts) (**nuevo**). El back solo nombra y colorea; con quién convive cada aislamiento es una regla de negocio del front. `isolationSigla()`, `isolationRule()` (`'solo'` | `'igual'` | `'libre'`), `roomIsolationConflict()` y `splitDestinationsByIsolation()`.
+- **Interinato sin PROGAL**: mientras la indicación no exista en el formulario, el hospital escribe `Q` o `DP` en las **observaciones** de un aislamiento de contacto / contacto preventivo. `OBSERVATION_MARKERS` los rescata de ahí y los agrega como aislamiento propio (idempotente: si ya vino como tipo, no duplica). La **sigla se busca en mayúscula sobre el texto crudo** — una `q` minúscula suelta es abreviatura de "que" en texto libre y daría un falso positivo clínico.
+
+### Efecto en los traslados
+
+Los tres modales que eligen destino ([NewRequestModal](components/modals/NewRequestModal.tsx), [ConfigureDestinoModal](components/modals/ConfigureDestinoModal.tsx), [EditRequestModal](components/modals/EditRequestModal.tsx)) pasan `availableDestinations` por `splitDestinationsByIsolation()`. A diferencia del warning de sexo (`roomSexConflict`, no bloqueante) este **recorta la lista**: es una indicación clínica, no una sugerencia. Nunca desaparece una cama en silencio — se muestra el conteo de excluidas y el motivo textual. El destino ya cargado de un ticket que se está editando jamás se excluye (si no, el select apuntaría a una opción inexistente).
+
+La regla se evalúa **en los dos sentidos**, porque es simétrica: bloquea tanto meter un DP en una habitación ocupada como meter a cualquiera en la habitación de un DP. Ocupante = `status === OCCUPIED` (no `patientName`, que queda residual en camas liberadas — misma razón que documenta `suggestedRoomSex`); habitación = `roomCode` + `area`.
+
+### Lo que deliberadamente NO cambió
+
+- `computeIsolationBlocks` (el bloqueo violeta del mapa) **no se tocó**: no sabe a quién van a traer, así que sigue bloqueando la habitación de un Q. El selector de destino sí deja convivir Q con Q, y el detalle de cama aclara la regla ("Solo comparte habitación con otro paciente igual") para que no parezca contradictorio.
+- Los aislamientos preexistentes (Contacto, Respiratorio, Covid…) siguen con regla `'libre'`: **no** recortan destinos. Extenderlo sería un cambio de alcance no pedido.
+- `hashIsolations()` se eliminó (export muerto, sin un solo uso). Con eso el import de `gamma-client` quedó `import type` y el módulo dejó de arrastrar el side-effect que aborta sin `GAMMA_VM_URL` — por eso el self-check puede importarlo sin credenciales de PROGAL.
+
+Self-check: [scripts/check-isolation-sharing.mts](scripts/check-isolation-sharing.mts) (`npx tsx scripts/check-isolation-sharing.mts`) cubre normalización, variantes de nombre, derivación desde observación, falsos positivos (`q` minúscula, `DPOC`), las reglas en ambos sentidos, el paciente fantasma, el recorte de destinos y la no-regresión de los aislamientos viejos.
 
 ## 47. Mapa de camas y traslados: ajustes finos (2026-06-25)
 
