@@ -15,6 +15,8 @@ import { Badge } from '../components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table';
 import { Dialog, DialogContent, DialogTitle, DialogHeader, DialogFooter } from '../components/ui/dialog';
 import { StatusBadge } from '../components/StatusBadge';
+import { TicketStatusFilter } from '../components/TicketStatusFilter';
+import { visibleStatusChips, countByStatus, applyStatusFilter, toggleStatus } from '../lib/ticketFilters';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { cn, formatBedName, formatDateTime, effectiveHostessAreas } from '../lib/utils';
 import { realRequisitos } from '../lib/roomCheck';
@@ -84,6 +86,10 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   onHousekeepingAction, onStartTransport, onCompleteTransport,
   onRoomReady, onConfirmReception, onConsolidate, onReject, onEdit, onAddObservation, currentUser, beds
 }) => {
+
+  // Filtro por estado (botonera). Vacío = se ve todo. Es de la sesión de pantalla: NO se persiste a
+  // propósito — un filtro viejo escondiendo traslados al día siguiente parecería que "no hay nada".
+  const [statusFilter, setStatusFilter] = useState<Set<TicketStatus>>(new Set());
 
   // Observaciones por traslado: UN solo modal (hilo + redactor). Todos los roles ven el
   // historial y pueden cargar una nota nueva en el mismo lugar. La nota queda ligada al
@@ -196,7 +202,14 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     return [];
   };
 
-  const sortedTickets = useMemo(() => {
+  // Pre-tickets (Presolicitud): solo los ven Admisión (completar_pre_ticket) y la Coordinadora
+  // (crear_pre_ticket). El resto no los ve hasta que se convierten en traslado vivo.
+  const canSeePreTickets = can(currentUser, 'completar_pre_ticket') || can(currentUser, 'crear_pre_ticket');
+
+  // Lo que ESTE usuario puede ver (rol, pisos, búsqueda) ANTES del filtro por estado y del orden. De acá
+  // salen los contadores de la botonera: así "Por Consolidar (3)" siempre dice cuántos hay, aunque haya
+  // otro estado filtrado.
+  const scopedTickets = useMemo(() => {
     // Azafatas (filterByFloors) ven los cancelados recientes (< 1h) para no creer que un traslado
     // "se borró" cuando admisión lo cargó y canceló. El resto de los roles NO los ve.
     const CANCEL_WINDOW_MS = 60 * 60 * 1000;
@@ -209,9 +222,6 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       return true;
     });
 
-    // Pre-tickets (Presolicitud): solo los ven Admisión (completar_pre_ticket) y la Coordinadora
-    // (crear_pre_ticket). El resto no los ve hasta que se convierten en traslado vivo.
-    const canSeePreTickets = can(currentUser, 'completar_pre_ticket') || can(currentUser, 'crear_pre_ticket');
     filtered = filtered.filter(t => t.status !== TicketStatus.PRESOLICITUD || canSeePreTickets);
 
     if (searchTerm) {
@@ -249,7 +259,17 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       });
     }
 
-    const sortableItems = [...filtered];
+    return filtered;
+  }, [tickets, searchTerm, beds, currentUser, canSeePreTickets]);
+
+  const statusChips = useMemo(
+    () => visibleStatusChips({ filterByFloors: !!currentUser?.filterByFloors, canSeePreTickets }),
+    [currentUser?.filterByFloors, canSeePreTickets],
+  );
+  const statusCounts = useMemo(() => countByStatus(scopedTickets), [scopedTickets]);
+
+  const sortedTickets = useMemo(() => {
+    const sortableItems = applyStatusFilter(scopedTickets, statusFilter);
     sortableItems.sort((a, b) => {
       const aVal = a[sortConfig.key] || '';
       const bVal = b[sortConfig.key] || '';
@@ -265,7 +285,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       return ap - bp;
     });
     return sortableItems;
-  }, [tickets, activeRole, sortConfig, searchTerm, beds, currentUser]);
+  }, [scopedTickets, statusFilter, sortConfig]);
 
   const renderActionButtons = (ticket: Ticket, isMobile = false) => {
     const size = isMobile ? "default" : "sm";
@@ -487,6 +507,16 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* Botonera de estados: un chip por estado visible para el rol (colapsada tras "Filtrar" en mobile) */}
+      <TicketStatusFilter
+        statuses={statusChips}
+        counts={statusCounts}
+        total={scopedTickets.length}
+        selected={statusFilter}
+        onToggle={(s) => setStatusFilter(prev => toggleStatus(prev, s))}
+        onClear={() => setStatusFilter(new Set())}
+      />
 
       {/* Vista Mobile (Cards) */}
       <div className="grid grid-cols-1 gap-3 md:hidden">

@@ -17,6 +17,9 @@ const statusConfig: Record<TicketStatus, { label: string; variant: "default" | "
   [TicketStatus.REJECTED]: { label: 'Cancelado', variant: 'destructive' },
 };
 
+/** Label legible de un estado (botonera de filtros de Operativa). */
+export const statusLabel = (status: TicketStatus): string => statusConfig[status].label;
+
 export const StatusBadge: React.FC<Props> = ({ status }) => {
   const config = statusConfig[status];
   return (
