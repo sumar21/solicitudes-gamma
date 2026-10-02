@@ -10,10 +10,20 @@
 import { TicketStatus } from '../types';
 
 /** Orden de los chips = orden del ciclo de vida del traslado. */
-export function visibleStatusChips(opts: { filterByFloors: boolean; canSeePreTickets: boolean }): TicketStatus[] {
+export function visibleStatusChips(opts: {
+  filterByFloors: boolean;
+  canSeePreTickets: boolean;
+  /** Quien carga urgencias ve "Por Consolidar" aunque filtre por pisos (sólo las urgencias, ver RequestsView). */
+  canSeeUrgencias?: boolean;
+}): TicketStatus[] {
   if (opts.filterByFloors) {
     // Azafata / Catering (filtran por pisos): estados operativos + cancelados recientes (< 1h).
-    return [TicketStatus.WAITING_ROOM, TicketStatus.IN_TRANSIT, TicketStatus.IN_TRANSPORT, TicketStatus.REJECTED];
+    // Coordinación (carga urgencias): además "Por Consolidar", que para ella sólo contiene urgencias.
+    return [
+      TicketStatus.WAITING_ROOM, TicketStatus.IN_TRANSIT, TicketStatus.IN_TRANSPORT,
+      ...(opts.canSeeUrgencias ? [TicketStatus.WAITING_CONSOLIDATION] : []),
+      TicketStatus.REJECTED,
+    ];
   }
   const base = [
     TicketStatus.WAITING_ROOM, TicketStatus.IN_TRANSIT, TicketStatus.IN_TRANSPORT, TicketStatus.WAITING_CONSOLIDATION,

@@ -6,8 +6,8 @@ import { Label } from '../ui/label';
 import { SearchableSelect } from '../ui/searchable-select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { MOVIMIENTOS_PRETICKET, REQUISITOS_CAMA, REQUISITO_SIN } from '../../lib/constants';
-import { formatBedName } from '../../lib/utils';
-import { Check } from 'lucide-react';
+import { formatBedName, isHitArea, isHraArea, cn } from '../../lib/utils';
+import { Check, Siren } from 'lucide-react';
 
 // Orden por SECTOR (no por apellido): mismo criterio que NewRequestModal/BedsView —
 // pre-internación (HRA, HIT) primero, después pisos, después unidades críticas; empate por cama.
@@ -29,18 +29,40 @@ const sortByAreaThenLabel = (a: Bed, b: Bed) => {
 
 // Pre-ticket: la Coordinadora pide una cama. Carga lo mínimo (paciente + movimiento + requisitos);
 // Admisión configura el destino después. Ver docs/planes/pre-ticket.md.
+//
+// URGENCIA / INGRESO DIRECTO: el paciente va directo a la cama, sin pasar por Admisión, y por lo general
+// todavía no está internado en PROGAL → no hay cama de origen que elegir. Coordinación tipea nombre y
+// apellido (campo libre) y elige el destino; el ticket nace "Por Consolidar" y Admisión lo vincula a un
+// paciente real al consolidar.
+export interface PreTicketCreateData {
+  originBedLabel: string;
+  movimiento: string;
+  requisitos: string[];
+  observations?: string;
+  urgencia?: boolean;
+  pacienteNombre?: string;
+  destinoBedLabel?: string;
+}
+
 interface PreTicketModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreate: (data: { originBedLabel: string; movimiento: string; requisitos: string[]; observations?: string }) => void;
+  onCreate: (data: PreTicketCreateData) => void;
   beds: Bed[];
+  /** Camas ya tomadas por otro traslado activo (no se ofrecen como destino de una urgencia). */
+  activeTransferDestinations?: Set<string>;
 }
 
-export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChange, onCreate, beds }) => {
+export const MIN_NOMBRE_URGENCIA = 3;
+
+export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChange, onCreate, beds, activeTransferDestinations = new Set() }) => {
   const [originBedLabel, setOriginBedLabel] = useState('');
   const [movimiento, setMovimiento] = useState('');
   const [requisitos, setRequisitos] = useState<string[]>([]);
   const [observations, setObservations] = useState('');
+  const [urgencia, setUrgencia] = useState(false);
+  const [pacienteNombre, setPacienteNombre] = useState('');
+  const [destinoBedLabel, setDestinoBedLabel] = useState('');
 
   React.useEffect(() => {
     if (!open) {
@@ -48,8 +70,22 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
       setMovimiento('');
       setRequisitos([]);
       setObservations('');
+      setUrgencia(false);
+      setPacienteNombre('');
+      setDestinoBedLabel('');
     }
   }, [open]);
+
+  // Destinos de una urgencia: mismas reglas que "Configurar destino" (libre o en preparación; HRA/HIT nunca).
+  const destinoOptions = beds
+    .filter(b => b.status === BedStatus.AVAILABLE || b.status === BedStatus.PREPARATION)
+    .filter(b => !isHitArea(b.area) && !isHraArea(b.area))
+    .filter(b => !activeTransferDestinations.has(b.label))
+    .sort(sortByAreaThenLabel)
+    .map(b => ({ label: `${b.label} (${b.status})`, value: b.label }));
+
+  const nombreOk = pacienteNombre.trim().length >= MIN_NOMBRE_URGENCIA;
+  const canSubmit = urgencia ? (nombreOk && !!destinoBedLabel) : (!!originBedLabel && !!movimiento);
 
   // Camas ocupadas con paciente → el paciente va en primer plano (así busca la Coordinadora),
   // la cama es el dato secundario y la clave real (de ahí salen obra social + origen).
@@ -71,22 +107,85 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!originBedLabel || !movimiento) return;
-    onCreate({
-      originBedLabel,
-      movimiento,
-      requisitos,
-      observations: observations.trim() !== '' ? observations : undefined,
-    });
+    if (!canSubmit) return;
+    if (urgencia) {
+      onCreate({
+        originBedLabel: '', movimiento: '', requisitos: [],
+        observations: observations.trim() !== '' ? observations : undefined,
+        urgencia: true,
+        pacienteNombre: pacienteNombre.trim().replace(/\s+/g, ' '),
+        destinoBedLabel,
+      });
+    } else {
+      onCreate({
+        originBedLabel,
+        movimiento,
+        requisitos,
+        observations: observations.trim() !== '' ? observations : undefined,
+      });
+    }
     onOpenChange(false);
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[550px] rounded-3xl max-h-[92vh] overflow-y-auto">
-        <DialogHeader><DialogTitle className="text-xl pr-6">Nuevo Pre-ticket de Traslado</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle className="text-xl pr-6">{urgencia ? 'Ingreso por urgencia' : 'Nuevo Pre-ticket de Traslado'}</DialogTitle></DialogHeader>
         <form id="create-pre-ticket-form" onSubmit={handleSubmit} className="grid gap-4 py-2">
 
+          {/* Urgencia / ingreso directo: el paciente va directo a la cama y todavía no está internado. */}
+          <label
+            className={cn(
+              'flex items-start gap-3 rounded-2xl border p-3 cursor-pointer transition-colors',
+              urgencia ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-white hover:bg-slate-50',
+            )}
+          >
+            <input
+              type="checkbox"
+              checked={urgencia}
+              onChange={e => setUrgencia(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-red-600"
+              aria-label="Urgencia / ingreso directo"
+            />
+            <span className="grid gap-0.5">
+              <span className={cn('flex items-center gap-1.5 text-sm font-bold', urgencia ? 'text-red-800' : 'text-slate-700')}>
+                <Siren className="h-3.5 w-3.5" /> Urgencia / ingreso directo
+              </span>
+              <span className={cn('text-xs leading-snug', urgencia ? 'text-red-700' : 'text-slate-500')}>
+                El paciente va directo a la cama y todavía no está internado. Admisión lo ingresa en PROGAL y lo vincula al consolidar.
+              </span>
+            </span>
+          </label>
+
+          {urgencia ? (
+            <>
+              <div className="grid gap-2">
+                <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Nombre y apellido del paciente <span className="text-red-500">*</span></Label>
+                <Input
+                  value={pacienteNombre}
+                  onChange={e => setPacienteNombre(e.target.value)}
+                  placeholder="Ej.: Pérez, Juan"
+                  maxLength={120}
+                  autoComplete="off"
+                  className="h-10 rounded-xl"
+                />
+                {pacienteNombre.trim().length > 0 && !nombreOk && (
+                  <p className="text-[11px] text-red-600">Cargá nombre y apellido.</p>
+                )}
+              </div>
+              <div className="grid gap-2">
+                <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Destino (Disponible/Prep) <span className="text-red-500">*</span></Label>
+                <SearchableSelect
+                  value={destinoBedLabel}
+                  onValueChange={setDestinoBedLabel}
+                  options={destinoOptions}
+                  placeholder="Seleccionar cama destino"
+                  searchPlaceholder="Buscar cama de destino..."
+                />
+              </div>
+            </>
+          ) : (
+          <>
           <div className="grid gap-2">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Paciente</Label>
             <SearchableSelect
@@ -157,6 +256,9 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
             </div>
           </div>
 
+          </>
+          )}
+
           <div className="grid gap-2">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Observación (Opcional)</Label>
             <Input placeholder="Información adicional para Admisión..." value={observations} onChange={e => setObservations(e.target.value)} className="h-10 rounded-xl" />
@@ -167,10 +269,10 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
           <Button
             type="submit"
             form="create-pre-ticket-form"
-            disabled={!originBedLabel || !movimiento}
-            className="bg-emerald-950 text-white rounded-xl h-10 px-8 disabled:opacity-50"
+            disabled={!canSubmit}
+            className={cn('text-white rounded-xl h-10 px-8 disabled:opacity-50', urgencia ? 'bg-red-700 hover:bg-red-800' : 'bg-emerald-950')}
           >
-            Enviar a Admisión
+            {urgencia ? 'Registrar urgencia' : 'Enviar a Admisión'}
           </Button>
         </DialogFooter>
       </DialogContent>

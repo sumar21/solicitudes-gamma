@@ -21,6 +21,9 @@ assert.deepEqual(visibleStatusChips({ filterByFloors: false, canSeePreTickets: f
 const azafata = visibleStatusChips({ filterByFloors: true, canSeePreTickets: false });
 assert.deepEqual(azafata, [S.WAITING_ROOM, S.IN_TRANSIT, S.IN_TRANSPORT, S.REJECTED], 'azafata: sólo estados operativos');
 assert(!azafata.includes(S.WAITING_CONSOLIDATION) && !azafata.includes(S.PRESOLICITUD), 'azafata no ve Por Consolidar ni Presolicitud');
+// Coordinación (filtra por pisos Y carga urgencias): ve "Por Consolidar" (sólo urgencias), sin Presolicitud.
+assert.deepEqual(visibleStatusChips({ filterByFloors: true, canSeePreTickets: true, canSeeUrgencias: true }),
+  [S.WAITING_ROOM, S.IN_TRANSIT, S.IN_TRANSPORT, S.WAITING_CONSOLIDATION, S.REJECTED], 'coordinación ve Por Consolidar');
 // Consolidado nunca es un chip (la grilla de Operativa no lo muestra).
 for (const o of [{ filterByFloors: true, canSeePreTickets: true }, { filterByFloors: false, canSeePreTickets: true }]) {
   assert(!visibleStatusChips(o).includes(S.COMPLETED), 'Consolidado nunca es chip');

@@ -4,7 +4,7 @@ import { Ticket, WorkflowType, TicketStatus, BedStatus } from '../types';
 import {
   X, MapPin, Plus, TrendingUp, Activity, CheckCircle2, Calendar, Info, SprayCan, Hash, XCircle, ArrowRightLeft, Pencil
 } from './Icons';
-import { MessageSquare } from 'lucide-react';
+import { MessageSquare, Siren } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle, DialogHeader, DialogFooter } from './ui/dialog';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -284,6 +284,20 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                     <p className="text-sm font-medium text-slate-700">{ticket.origin} → <span className="text-slate-900 font-semibold">{ticket.destination || (isRejected ? 'CANCELADO' : 'Pendiente')}</span></p>
                   </div>
                 </div>
+
+                {ticket.urgencia && (
+                  <div className="p-4 bg-red-50 rounded-xl border border-red-100">
+                    <p className="text-[9px] uppercase font-black text-red-600 tracking-widest mb-1.5 flex items-center gap-1">
+                      <Siren className="w-3 h-3" /> Ingreso por urgencia
+                    </p>
+                    <p className="text-xs text-red-900 leading-relaxed">Declarado por Coordinación: <b>{ticket.pacienteDeclarado || '—'}</b></p>
+                    <p className="text-xs text-red-900 leading-relaxed">
+                      {ticket.patientCode
+                        ? `Vinculado al paciente ${ticket.patientCode}${ticket.eventoInternacion ? ` · evento ${ticket.eventoInternacion}` : ''}`
+                        : 'Sin vincular a un paciente de PROGAL'}
+                    </p>
+                  </div>
+                )}
 
                 {isRejected && ticket.rejectionReason && (
                   <div className="p-4 bg-red-50 rounded-xl border border-red-100">

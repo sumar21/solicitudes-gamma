@@ -39,6 +39,7 @@ import { Bell } from './components/Icons';
 import { NewRequestModal } from './components/modals/NewRequestModal';
 import { PreTicketModal } from './components/modals/PreTicketModal';
 import { ConfigureDestinoModal } from './components/modals/ConfigureDestinoModal';
+import { ConsolidarUrgenciaModal } from './components/modals/ConsolidarUrgenciaModal';
 import { EditRequestModal, EditRequestPayload } from './components/modals/EditRequestModal';
 import { AssignBedModal } from './components/modals/AssignBedModal';
 import { AreaSelectionModal } from './components/modals/AreaSelectionModal';
@@ -139,6 +140,7 @@ export default function App() {
   const [isNewRequestOpen, setIsNewRequestOpen] = useState(false);
   const [isPreTicketOpen, setIsPreTicketOpen] = useState(false);
   const [configureDestinoId, setConfigureDestinoId] = useState<string | null>(null);
+  const [consolidarUrgenciaId, setConsolidarUrgenciaId] = useState<string | null>(null);
   const [isAssignBedOpen, setIsAssignBedOpen] = useState(false);
   const [isAreaSelectionOpen, setIsAreaSelectionOpen] = useState(false);
   const [isRejectOpen, setIsRejectOpen] = useState(false);
@@ -831,6 +833,7 @@ export default function App() {
                 onRoomReady={actions.handleRoomReady}
                 onConfirmReception={actions.handleConfirmReception}
                 onConsolidate={actions.handleConsolidate}
+                onConsolidateUrgencia={(id) => setConsolidarUrgenciaId(id)}
                 onReject={(id) => { setRejectTicketId(id); setIsRejectOpen(true); }}
                 onEdit={(id) => setEditTicketId(id)}
                 onAddObservation={actions.handleAddObservation}
@@ -871,6 +874,18 @@ export default function App() {
         onOpenChange={setIsPreTicketOpen}
         onCreate={actions.createPreTicket}
         beds={state.beds}
+        activeTransferDestinations={new Set(
+          state.tickets
+            .filter(t => t.status !== 'Consolidado' && t.status !== 'Cancelado' && t.destination)
+            .map(t => t.destination as string)
+        )}
+      />
+      <ConsolidarUrgenciaModal
+        open={!!consolidarUrgenciaId}
+        onOpenChange={(open) => { if (!open) setConsolidarUrgenciaId(null); }}
+        ticket={consolidarUrgenciaId ? (state.tickets.find(t => t.id === consolidarUrgenciaId) ?? null) : null}
+        beds={state.beds}
+        onConfirm={(id, link) => actions.handleConsolidate(id, link)}
       />
       <ConfigureDestinoModal
         open={!!configureDestinoId}

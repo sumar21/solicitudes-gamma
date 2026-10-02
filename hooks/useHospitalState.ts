@@ -6,10 +6,11 @@ import {
   RoleModule, Permission, MealLoad, MealSlot, MealSlotLoad, COMANDA_STATUS, ComandaStatus, OperativaSubview,
   MEAL_SLOTS, spFromMealSlot, mealSlotFromSp,
   CirugiaTraslado, CirugiaEstado, BedCirugiaOverlay, CirugiaMarcaInfo,
+  ORIGEN_URGENCIA, MOVIMIENTO_URGENCIA,
 } from '../types';
 import { MOCK_TICKETS } from '../lib/constants';
 import { can, hasModule, canReceiveNotif } from '../lib/permissions';
-import { effectiveHostessAreas, formatDateTime, createActionLock, bedEventKey } from '../lib/utils';
+import { effectiveHostessAreas, formatDateTime, createActionLock, bedEventKey, isHitArea, isHraArea } from '../lib/utils';
 import { roomCheckFor, destinationState, describeRoomCheck } from '../lib/roomCheck';
 import { supabase, resetSupabasePase } from '../lib/supabase';
 import { APP_VERSION } from '../lib/version';
@@ -300,6 +301,9 @@ export function cleaningAutoCloseReason(
   return 'GAMMA';
 }
 
+/** Paciente REAL al que Admisión vincula una urgencia al consolidarla (ver handleConsolidate). */
+export interface UrgenciaLink { patientCode: string; patientName: string; eventKey?: string }
+
 // Exportada para poder testear los escenarios de overlay (limpieza/tickets) contra la
 // función REAL y no contra una réplica.
 export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?: Map<string, CleaningInfo>, meals?: Map<string, MealsInfo>, cirugias?: Map<string, BedCirugiaOverlay>): Bed[] {
@@ -345,6 +349,19 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
         // forzamos a "En preparación" (sino reaparecería como destino reutilizable). El
         // destino mantiene el TICKET como fuente de verdad.
         const originHasPatient = !!origin && progalStillHasTicketPatientOnOrigin(origin, ticket);
+        if (dest && !origin && ticket.urgencia) {
+          // URGENCIA / ingreso directo: no hay cama de origen en el mapa (el paciente viene de guardia).
+          // Si PROGAL ya internó al paciente en la cama destino, MANDA PROGAL (nombre y código reales).
+          // Mientras la cama no tenga ocupante se muestra el nombre que tipeó Coordinación, SIN código y
+          // sin arrastrar el residual de un paciente anterior (la cama puede venir "En preparación").
+          const progalYaLoInterno = dest.status === BedStatus.OCCUPIED && !!dest.patientName;
+          if (!progalYaLoInterno) {
+            clearPatientFromBed(dest);
+            dest.patientName = ticket.patientName;
+            dest.patientCode = ticket.patientCode;
+          }
+          dest.status = BedStatus.OCCUPIED;
+        }
         if (dest && origin) {
           if (originHasPatient) copyPatientToBed(origin, dest);
           dest.status = BedStatus.OCCUPIED;
@@ -2235,6 +2252,11 @@ export const useHospitalState = () => {
       // mientras el pre-ticket no tenga destino; recién al convertirse (abajo) se trata como alta.
       if (t.status === TicketStatus.PRESOLICITUD) continue;
 
+      // Urgencia / ingreso directo recién aparecida: nace "Por Consolidar" y NO hay nada que las azafatas
+      // preparen (el paciente ya va a la cama). El aviso a Admisión lo manda el webhook (PRE_TICKET).
+      // Sin esto, la detección local la mostraría como "Nueva Solicitud de Traslado" a los pisos.
+      if (t.urgencia && prevKey === undefined) continue;
+
       const originArea = areaOf(t.origin);
       const destArea   = areaOf(t.destination);
 
@@ -2980,11 +3002,82 @@ export const useHospitalState = () => {
     return [reqPart, free].filter(Boolean).join(' — ');
   };
 
+  // ── Urgencia / ingreso directo (Coordinadora) ────────────────────────────────
+  // El paciente va DIRECTO a la cama, sin pasar por Admisión, y por lo general todavía no está internado
+  // en PROGAL. Coordinación tipea nombre y apellido (campo libre) + destino; el ticket nace "Por
+  // Consolidar" (Admisión tiene que ingresarlo en PROGAL) con el flag `urgencia`, SIN código de paciente.
+  // Para consolidar, Admisión lo VINCULA a un paciente real (handleConsolidate + gate del servidor): sino la
+  // trayectoria quedaría flotando, asociada a un nombre libre.
+  const createUrgenciaTicket = async (data: { pacienteNombre?: string; destinoBedLabel?: string; observations?: string }) => {
+    const nombre = (data.pacienteNombre ?? '').trim().replace(/\s+/g, ' ');
+    if (nombre.length < 3) { alert('Cargá nombre y apellido del paciente.'); return; }
+    const targetBed = beds.find(b => b.label === data.destinoBedLabel);
+    if (!targetBed || (targetBed.status !== BedStatus.AVAILABLE && targetBed.status !== BedStatus.PREPARATION)) {
+      alert('La cama destino debe estar DISPONIBLE o EN PREPARACIÓN.'); return;
+    }
+    if (isHitArea(targetBed.area) || isHraArea(targetBed.area)) {
+      alert('La cama destino no puede estar en ITR ni en la Sala de Espera.'); return;
+    }
+
+    setTicketActionLoading(true);
+    writingRef.current = true;
+
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const ticketId = `TSL-${currentUser?.id ?? '0'}-${pad(now.getDate())}${pad(now.getMonth() + 1)}${now.getFullYear()}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+
+    const newTicket: Ticket = {
+      id:                      ticketId,
+      sede:                    currentUser?.sede || SedeType.HPR,
+      patientName:             nombre,
+      patientCode:             undefined, // se vincula al consolidar
+      origin:                  ORIGEN_URGENCIA,
+      originBedStatus:         undefined,
+      destination:             targetBed.label,
+      destinationBedCode:      targetBed.bedCode,
+      destinationBedStatus:    BedStatus.OCCUPIED,
+      workflow:                WorkflowType.PRE_TICKET,
+      status:                  TicketStatus.WAITING_CONSOLIDATION,
+      createdAt:               now.toISOString(),
+      date:                    now.toISOString().split('T')[0],
+      isBedClean:              false,
+      isReasonValidated:       true,
+      targetBedOriginalStatus: targetBed.status,
+      createdBy:               currentUser?.name,
+      createdById:             currentUser?.id,
+      changeReason:            MOVIMIENTO_URGENCIA,
+      observations:            data.observations?.trim() || undefined,
+      urgencia:                true,
+      pacienteDeclarado:       nombre,
+      intervenedByHostess:     'NO',
+    };
+
+    setTickets(prev => [newTicket, ...prev]);
+    setCurrentView('REQUESTS');
+    try {
+      const { spItemId, conflict } = await spCreate(newTicket);
+      if (conflict || !spItemId) {
+        setTickets(prev => prev.filter(t => t.id !== newTicket.id)); // rollback del optimista
+        alert(conflict?.error ?? 'No pudimos confirmar el guardado de la urgencia. Volvé a intentarlo.');
+        return;
+      }
+      setTickets(prev => prev.map(t => t.id === newTicket.id ? { ...t, spItemId } : t));
+      spLogEvent(newTicket.id, 'Ingreso por urgencia');
+    } finally {
+      setTimeout(async () => { writingRef.current = false; ticketsEtagRef.current = null; await fetchTickets(); setTicketActionLoading(false); }, 1000);
+      setTimeout(() => { ticketsEtagRef.current = null; fetchTickets(); }, 4500);
+    }
+  };
+
   // La Coordinadora crea un pre-ticket: elige un paciente (por su cama ocupada), un movimiento y los
   // requisitos. NO tiene destino — status 'Presolicitud', workflow PRE_TICKET. Admisión lo completa
   // después ("Configurar destino") y lo convierte en un traslado vivo.
-  const createPreTicket = async (data: { originBedLabel: string; movimiento: string; requisitos: string[]; observations?: string }) => {
+  const createPreTicket = async (data: {
+    originBedLabel: string; movimiento: string; requisitos: string[]; observations?: string;
+    urgencia?: boolean; pacienteNombre?: string; destinoBedLabel?: string;
+  }) => {
     if (!can(currentUser, 'crear_pre_ticket')) { alert('Tu rol no tiene permiso para crear pre-tickets.'); return; }
+    if (data.urgencia) { await createUrgenciaTicket(data); return; }
     if (!data.originBedLabel || !data.movimiento) { alert('Seleccioná el paciente y el movimiento.'); return; }
     const sourceBed = beds.find(b => b.label === data.originBedLabel);
     if (!sourceBed) { alert('No se encontró la cama del paciente seleccionado.'); return; }
@@ -3187,26 +3280,41 @@ export const useHospitalState = () => {
     }
   });
 
-  const handleConsolidate = (ticketId: string) => runTicketAction(ticketId, async () => {
+  // `link` sólo aplica a una URGENCIA: el paciente REAL de PROGAL al que Admisión la vincula. Una urgencia
+  // no se puede consolidar sin él (sino la trayectoria queda flotando, asociada a un nombre libre);
+  // el servidor lo vuelve a exigir (api/tickets.ts → 422), esto es el corte cómodo en la UI.
+  const handleConsolidate = (ticketId: string, link?: UrgenciaLink) => runTicketAction(ticketId, async () => {
     if (!can(currentUser, 'consolidar')) {
       alert('Tu rol no tiene permiso para consolidar.'); return;
     }
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket || ticket.status === TicketStatus.COMPLETED) return;
+    if (ticket.urgencia && !link?.patientCode && !ticket.patientCode) {
+      alert('Una urgencia necesita un paciente vinculado de PROGAL para consolidarse.'); return;
+    }
     writingRef.current = true; // block polls durante la escritura a SP (mismo ciclo que create/edit)
     try {
-      const updates = { status: TicketStatus.COMPLETED, completedAt: new Date().toISOString(), originBedStatus: BedStatus.PREPARATION } as const;
+      const updates: Partial<Ticket> = ticket.urgencia
+        // Urgencia: no hay cama de origen que pasar a "En preparación"; se graba el paciente real.
+        ? {
+            status: TicketStatus.COMPLETED, completedAt: new Date().toISOString(),
+            ...(link ? { patientName: link.patientName, patientCode: link.patientCode, eventoInternacion: link.eventKey || undefined } : {}),
+          }
+        : { status: TicketStatus.COMPLETED, completedAt: new Date().toISOString(), originBedStatus: BedStatus.PREPARATION };
       setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
       // Isolation follows the patient automatically (derived from patientCode + beds)
       addNotification({ type: NotificationType.STATUS_UPDATE, title: 'Traslado Finalizado',
-        message: `El traslado de ${ticket.patientName} ha sido consolidado en PROGAL.`,
+        message: `El traslado de ${updates.patientName ?? ticket.patientName} ha sido consolidado en PROGAL.`,
         ticketId: ticket.id, sede: ticket.sede,
         originArea: rawBeds.find(b => b.label === ticket.origin)?.area,
         destinationArea: rawBeds.find(b => b.label === ticket.destination)?.area,
       });
       if (ticket.spItemId && !(await persistTicketUpdate(ticket, updates, 'No se pudo consolidar el traslado (error de conexión o del servidor). Reintentá.'))) return;
+      if (ticket.urgencia && link) {
+        spLogEvent(ticket.id, `Paciente vinculado: ${link.patientName} (código ${link.patientCode}${link.eventKey ? `, evento ${link.eventKey}` : ''})`);
+      }
       spLogEvent(ticket.id, 'Consolidado Progal');
-      migratePendingMeals(ticket); // red idempotente: por si la migración de la recepción falló
+      migratePendingMeals({ ...ticket, ...updates }); // red idempotente: por si la migración de la recepción falló
       // Refrescamos camas para el mapa. El refetch de tickets va SOLO diferido (~5s, cuando
       // writingRef ya se liberó y SP ya confirmó): un fetchTickets inmediato corre contra la
       // latencia read-after-write de SP y podría re-leer el ticket como activo → snapshot
@@ -3235,7 +3343,8 @@ export const useHospitalState = () => {
     } else {
       // Traslado normal: gatea por PERMISO (cancelar_ticket), no por rol fijo — respeta la config del
       // ABM (un rol custom con el permiso puede cancelar; el server igual enforça áreas/authz).
-      if (!can(currentUser, 'cancelar_ticket')) {
+      // Una urgencia también la cancela quien tiene cancelar_pre_ticket (Coordinación la cargó).
+      if (!can(currentUser, 'cancelar_ticket') && !(ticket.urgencia && can(currentUser, 'cancelar_pre_ticket'))) {
         alert('Tu rol no tiene permiso para cancelar traslados.'); return;
       }
     }
@@ -3293,6 +3402,11 @@ export const useHospitalState = () => {
     if (!ticket) return;
     if (ticket.canCancel === false) {
       alert('No se puede editar: la azafata ya intervino en este traslado.'); return;
+    }
+    // Una urgencia nace "Por Consolidar": editar el destino la recalcularía como traslado normal
+    // (Esperando Habitación / Habitación Lista) y la sacaría de su circuito. Si hay un error se cancela y se recarga.
+    if (ticket.urgencia) {
+      alert('Las urgencias no se editan: cancelá el ticket y volvé a cargarlo.'); return;
     }
     if (!payload.modificationReason.trim()) {
       alert('El motivo de la modificación es obligatorio.'); return;

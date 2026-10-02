@@ -4,9 +4,9 @@ import { Ticket, Role, TicketStatus, SortConfig, SortKey, WorkflowType, User, Be
 import { can } from '../lib/permissions';
 import {
   Search, Plus, Timer, Clock, ArrowRightLeft,
-  ChevronUp, ChevronDown, CheckCircle2, BedDouble, Users, ClipboardCheck, AlertCircle, X, XCircle, Info, MapPin, Pencil
+  ChevronUp, ChevronDown, CheckCircle2, BedDouble, Users, ClipboardCheck, AlertCircle, X, XCircle, Info, MapPin, Pencil, UserCheck
 } from '../components/Icons';
-import { ShieldAlert, MessageSquare } from 'lucide-react';
+import { ShieldAlert, MessageSquare, Siren } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Card } from '../components/ui/card';
@@ -41,6 +41,8 @@ interface RequestsViewProps {
   onRoomReady: (id: string) => void;
   onConfirmReception: (id: string) => void;
   onConsolidate: (id: string) => void;
+  /** Urgencia / ingreso directo: abre el modal para VINCULAR un paciente real antes de consolidar. */
+  onConsolidateUrgencia?: (id: string) => void;
   onReject?: (id: string) => void;
   onEdit?: (id: string) => void;
   onAddObservation?: (id: string, texto: string) => Promise<boolean>;
@@ -84,7 +86,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   searchTerm, setSearchTerm, sortConfig, onSort,
   onNewRequest, onNewPreTicket, onConfigureDestino, onValidateReason, onAssignBed,
   onHousekeepingAction, onStartTransport, onCompleteTransport,
-  onRoomReady, onConfirmReception, onConsolidate, onReject, onEdit, onAddObservation, currentUser, beds
+  onRoomReady, onConfirmReception, onConsolidate, onConsolidateUrgencia, onReject, onEdit, onAddObservation, currentUser, beds
 }) => {
 
   // Filtro por estado (botonera). Vacío = se ve todo. Es de la sesión de pantalla: NO se persiste a
@@ -190,6 +192,31 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     );
   };
 
+  // Urgencia / ingreso directo: tag rojo + aviso mientras el paciente es sólo un nombre libre, sin vincular
+  // a un paciente real de PROGAL (se vincula al consolidar). Ver ConsolidarUrgenciaModal.
+  const renderUrgenciaTags = (ticket: Ticket) => {
+    if (!ticket.urgencia) return null;
+    return (
+      <>
+        <span
+          className="inline-flex items-center gap-1 rounded-full bg-red-600 px-1.5 py-0.5 text-white shrink-0"
+          title="Ingreso por urgencia / ingreso directo"
+        >
+          <Siren className="w-3 h-3" strokeWidth={3} />
+          <span className="text-[9px] font-black uppercase tracking-wide leading-none">Urgencia</span>
+        </span>
+        {!ticket.patientCode && (
+          <span
+            className="inline-flex items-center rounded-full border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-amber-800 shrink-0"
+            title="Todavía no está vinculado a un paciente de PROGAL: se vincula al consolidar"
+          >
+            <span className="text-[9px] font-black uppercase tracking-wide leading-none">Sin vincular a PROGAL</span>
+          </span>
+        )}
+      </>
+    );
+  };
+
   // Aislamientos del paciente del ticket, leídos del enrich de la cama (PROGAL).
   // Se busca por la cama de origen y, si no, por patientCode en cualquier cama.
   const getTicketIsolationTypes = (ticket: Ticket): IsolationEntry[] => {
@@ -205,6 +232,10 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   // Pre-tickets (Presolicitud): solo los ven Admisión (completar_pre_ticket) y la Coordinadora
   // (crear_pre_ticket). El resto no los ve hasta que se convierten en traslado vivo.
   const canSeePreTickets = can(currentUser, 'completar_pre_ticket') || can(currentUser, 'crear_pre_ticket');
+  // Quien carga urgencias (Coordinación, que suele filtrar por pisos) tiene que ver la que acaba de cargar:
+  // nace "Por Consolidar", un estado que a quien filtra por pisos normalmente no se le muestra, y sin esto
+  // el ticket "se carga y desaparece" de su grilla (y no podría ni cancelarlo si se equivocó).
+  const canSeeUrgencias = can(currentUser, 'crear_pre_ticket');
 
   // Lo que ESTE usuario puede ver (rol, pisos, búsqueda) ANTES del filtro por estado y del orden. De acá
   // salen los contadores de la botonera: así "Por Consolidar (3)" siempre dice cuántos hay, aunque haya
@@ -241,7 +272,8 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
         const validStatus = t.status === TicketStatus.WAITING_ROOM ||
           t.status === TicketStatus.IN_TRANSIT ||
           t.status === TicketStatus.IN_TRANSPORT ||
-          isRecentCancelado(t); // cancelado reciente también pasa (respeta el filtro de área de abajo)
+          isRecentCancelado(t) || // cancelado reciente también pasa (respeta el filtro de área de abajo)
+          (canSeeUrgencias && !!t.urgencia && t.status === TicketStatus.WAITING_CONSOLIDATION);
         if (!validStatus) return false;
         if (currentUser.assignedAreas?.length && beds.length > 0) {
           const allAreas = Object.values(Area);
@@ -260,11 +292,11 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     }
 
     return filtered;
-  }, [tickets, searchTerm, beds, currentUser, canSeePreTickets]);
+  }, [tickets, searchTerm, beds, currentUser, canSeePreTickets, canSeeUrgencias]);
 
   const statusChips = useMemo(
-    () => visibleStatusChips({ filterByFloors: !!currentUser?.filterByFloors, canSeePreTickets }),
-    [currentUser?.filterByFloors, canSeePreTickets],
+    () => visibleStatusChips({ filterByFloors: !!currentUser?.filterByFloors, canSeePreTickets, canSeeUrgencias }),
+    [currentUser?.filterByFloors, canSeePreTickets, canSeeUrgencias],
   );
   const statusCounts = useMemo(() => countByStatus(scopedTickets), [scopedTickets]);
 
@@ -314,6 +346,31 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
             </Button>
           )}
         </>
+      );
+    }
+
+    // ── Urgencia / ingreso directo (nace "Por Consolidar"): no hay circuito de azafata. Admisión VINCULA al
+    // paciente real y consolida; no se edita (editar el destino la recalcularía como traslado normal).
+    // Cancelar lo puede quien cancela traslados o quien cancela pre-tickets (Coordinación cargó la urgencia
+    // y es quien se da cuenta del error).
+    if (ticket.urgencia && ticket.status === TicketStatus.WAITING_CONSOLIDATION) {
+      if (can(currentUser, 'crear_ticket') && activeRole === Role.HOSTESS) return null; // admin "actuando como" azafata
+      const canLink = can(currentUser, 'consolidar') && !!onConsolidateUrgencia;
+      const canCancelUrg = (can(currentUser, 'cancelar_ticket') || can(currentUser, 'cancelar_pre_ticket')) && !!onReject;
+      if (!canLink && !canCancelUrg) return null;
+      return (
+        <div className={cn("flex gap-1.5", isMobile ? "flex-col" : "flex-row")}>
+          {canLink && (
+            <Button size={size} className={cn(btnClass, "bg-purple-600 hover:bg-purple-700 text-white")} onClick={() => onConsolidateUrgencia!(ticket.id)}>
+              <UserCheck className="w-3.5 h-3.5 mr-2" /> Vincular y consolidar
+            </Button>
+          )}
+          {canCancelUrg && (
+            <Button size={size} variant="outline" className={cn(btnClass, "border-red-200 text-red-600 hover:bg-red-50")} onClick={() => onReject!(ticket.id)}>
+              <XCircle className="w-3.5 h-3.5 mr-2" /> Cancelar
+            </Button>
+          )}
+        </div>
       );
     }
 
@@ -536,6 +593,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                   </div>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <h3 className="font-black text-slate-950 text-base leading-tight tracking-tight uppercase">{ticket.patientName}</h3>
+                    {renderUrgenciaTags(ticket)}
                     {getTicketIsolationTypes(ticket).map((iso: IsolationEntry, i: number) => (
                       <span
                         key={`${iso.name}-${i}`}
@@ -602,7 +660,9 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                   {ticket.status === TicketStatus.WAITING_ROOM && "Esperando que la habitación de destino esté lista."}
                   {ticket.status === TicketStatus.IN_TRANSIT && "Habitación lista. Esperando inicio de traslado."}
                   {ticket.status === TicketStatus.IN_TRANSPORT && "Traslado en curso. Esperando confirmación de recepción."}
-                  {ticket.status === TicketStatus.WAITING_CONSOLIDATION && "Paciente recibido. Pendiente consolidar en sistema."}
+                  {ticket.status === TicketStatus.WAITING_CONSOLIDATION && (ticket.urgencia
+                    ? "Urgencia: ingresar al paciente en PROGAL y vincularlo para consolidar."
+                    : "Paciente recibido. Pendiente consolidar en sistema.")}
                 </span>
               </div>
               {renderRoomCheckCallout(ticket)}
@@ -665,7 +725,9 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                           {ticket.status === TicketStatus.WAITING_ROOM && "Esperando habitación lista."}
                           {ticket.status === TicketStatus.IN_TRANSIT && "Esperando inicio de traslado."}
                           {ticket.status === TicketStatus.IN_TRANSPORT && "Esperando confirmación de recepción."}
-                          {ticket.status === TicketStatus.WAITING_CONSOLIDATION && "Pendiente consolidar en PROGAL."}
+                          {ticket.status === TicketStatus.WAITING_CONSOLIDATION && (ticket.urgencia
+                            ? "Ingresar al paciente en PROGAL y vincularlo."
+                            : "Pendiente consolidar en PROGAL.")}
                         </div>
                         {renderRoomCheckCallout(ticket)}
                         {ticket.changeReason && (
@@ -678,6 +740,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                     <TableCell>
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="font-black text-slate-950 text-base uppercase tracking-tight">{ticket.patientName}</span>
+                        {renderUrgenciaTags(ticket)}
                         {getTicketIsolationTypes(ticket).map((iso: IsolationEntry, i: number) => (
                           <span
                             key={`${iso.name}-${i}`}
