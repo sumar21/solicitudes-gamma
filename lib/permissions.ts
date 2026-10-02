@@ -35,6 +35,7 @@ const NOTIF_TYPE_TO_PERMISSION: Record<string, Permission> = {
   DIET_CHANGE:          'notif_diet_change',
   FASTING_CHANGE:       'notif_fasting_change',
   ROOM_CLEANED:         'notif_habitacion_limpia',
+  POR_CONSOLIDAR:       'notif_por_consolidar',
   CIRUGIA_MOVE:         'notif_cirugia_cama_progal',
   // Pasos de cirugía (Fase B) — un tipo por transición, cada uno con su permiso configurable.
   CX_LISTO_PARA_CIRUGIA:  'notif_cirugia_lista',

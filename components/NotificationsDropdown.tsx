@@ -33,6 +33,11 @@ export const NotificationsDropdown: React.FC<NotificationsDropdownProps> = ({
           bg: "bg-emerald-50 border-emerald-100",
           icon: <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
         };
+      case NotificationType.POR_CONSOLIDAR:
+        return {
+          bg: "bg-amber-50 border-amber-100",
+          icon: <Clock className="w-3.5 h-3.5 text-amber-600" />
+        };
       case NotificationType.ROLE_CHANGE:
         return {
           bg: "bg-purple-50 border-purple-100",

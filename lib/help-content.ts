@@ -214,8 +214,13 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
       },
       {
         permission: "notif_pre_ticket",
-        title: "Pre-ticket creado (pedido de cama)",
-        description: "Te avisa cuando Coordinación crea un pre-ticket para que le configures el destino. Pensado para Admisión.",
+        title: "Pre-ticket creado (pedido de cama) e ingresos por urgencia",
+        description: "Te avisa cuando Coordinación crea un pre-ticket para que le configures el destino, y cuando registra un ingreso por urgencia (el paciente ya va a la cama: hay que ingresarlo en PROGAL y vincularlo al consolidar). Pensado para Admisión.",
+      },
+      {
+        permission: "notif_por_consolidar",
+        title: "Recordatorio de traslado sin consolidar",
+        description: "Te avisa cuando un traslado lleva 15 minutos 'Por Consolidar' sin que nadie lo consolide en PROGAL. Pensado para Admisión; llega una sola vez por traslado.",
       },
       {
         permission: "notif_ingreso_quirurgico",

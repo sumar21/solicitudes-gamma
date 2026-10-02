@@ -135,6 +135,7 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
       { code: 'notif_diet_change',         label: 'Cambio de dieta' },
       { code: 'notif_fasting_change',      label: 'Cambio de ayuno' },
       { code: 'notif_habitacion_limpia',   label: 'Habitación limpia (azafata la marcó desde el mapa)' },
+      { code: 'notif_por_consolidar',      label: 'Recordatorio: 15 min "Por Consolidar" sin consolidar (para Admisión)' },
       // Pasos de la operatoria, en orden del flujo (cada uno configurable a quién le llega):
       { code: 'notif_cirugia_lista',       label: 'Cirugía · Listo para cirugía' },
       { code: 'notif_cirugia_camillero',   label: 'Cirugía · Búsqueda para cirugía' },

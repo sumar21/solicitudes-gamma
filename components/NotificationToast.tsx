@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Notification, NotificationType } from '../types';
-import { AlertCircle, CheckCircle2, Bell, X } from './Icons';
+import { AlertCircle, CheckCircle2, Bell, Clock, X } from './Icons';
 import { cn } from '../lib/utils';
 
 export interface ToastItem {
@@ -22,6 +22,8 @@ const iconFor = (type: NotificationType) => {
       return <AlertCircle className="w-5 h-5 text-blue-500 shrink-0" />;
     case NotificationType.STATUS_UPDATE:
       return <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />;
+    case NotificationType.POR_CONSOLIDAR:
+      return <Clock className="w-5 h-5 text-amber-500 shrink-0" />;
     default:
       return <Bell className="w-5 h-5 text-slate-500 shrink-0" />;
   }
@@ -33,6 +35,8 @@ const bgFor = (type: NotificationType) => {
       return 'border-l-blue-500 bg-blue-50/95';
     case NotificationType.STATUS_UPDATE:
       return 'border-l-emerald-500 bg-emerald-50/95';
+    case NotificationType.POR_CONSOLIDAR:
+      return 'border-l-amber-500 bg-amber-50/95';
     default:
       return 'border-l-slate-500 bg-white/95';
   }
