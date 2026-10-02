@@ -3,7 +3,7 @@ import { Bed, BedStatus, Ticket, TicketStatus, User, Area, IsolationEntry, MealS
 import { can, canLoadMealSlot, canLoadAnyMealSlot } from '../lib/permissions';
 import { hasLiveFasting, fastingOccurrences, formatFastingDateTime, fastingTimesForToday } from '../lib/fasting';
 import { Input } from '../components/ui/input';
-import { cn, dietRequiresCustomComanda, suggestedRoomSex, formatBedName, formatDateReadable, bedEventKey } from '../lib/utils';
+import { cn, dietRequiresCustomComanda, suggestedRoomSex, formatBedName, formatDateReadable, bedEventKey, isIndividualBoxArea } from '../lib/utils';
 import { BedDouble, User as UserIcon, Info, Search, X, Plus, ChevronDown, ChevronRight, Check, AlertTriangle, AlertCircle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan, History, Lock, Activity, ArrowRight, Calendar as CalendarIcon } from 'lucide-react';
 import { Calendar } from '../components/ui/calendar';
 import { Dialog, DialogContent, DialogTitle } from '../components/ui/dialog';
@@ -113,10 +113,6 @@ const isPreventiveContact = (iso: IsolationEntry) => normIsoName(iso.name).inclu
 const isPreventiveOnlyBed = (bed: Bed) =>
   (bed.isolations?.length ?? 0) > 0 && bed.isolations!.every(isPreventiveContact);
 
-// Áreas con cubículos/lugares físicamente independientes (UCO, UTI, ITR, HRA): no se bloquean
-// entre sí cuando un paciente está aislado. A nivel módulo para poder testear computeIsolationBlocks.
-const CRITICAL_AREAS_NO_BLOCK: Area[] = [Area.HUC, Area.HUT, Area.HIT, Area.HRA];
-
 /**
  * Camas afectadas por el aislamiento de un COMPAÑERO de habitación:
  *  · blocked    → bloqueo duro (violeta/"inhabilitada"): hay un aislamiento no-preventivo.
@@ -140,7 +136,8 @@ export function computeIsolationBlocks(
     roomMap.get(bed.roomCode)!.push(bed);
   }
   for (const [, roomBeds] of roomMap) {
-    if (roomBeds.some(b => CRITICAL_AREAS_NO_BLOCK.includes(b.area))) continue;
+    // Áreas con cubículos independientes (UCO, UTI, ITR, HRA): no se bloquean entre sí al aislar.
+    if (roomBeds.some(b => isIndividualBoxArea(b.area))) continue;
     const isolatedInRoom = roomBeds.filter(b => isolatedBeds.has(b.label));
     if (isolatedInRoom.length === 0) continue;
     const roomHasHard = isolatedInRoom.some(b => !isPreventiveOnlyBed(b));
@@ -1178,7 +1175,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     // Misma exención que ya aplica el bloqueo por aislamiento (:642-644): en estas áreas los
     // cubículos son físicamente independientes (HUC/HUT/HIT) o son sillones de sala de
     // espera (HRA), así que "compartir habitación" no significa lo mismo.
-    if (CRITICAL_AREAS_NO_BLOCK.includes(bed.area)) return null;
+    if (isIndividualBoxArea(bed.area)) return null;
     return suggestedSexByRoom.get(`${bed.area}|${bed.roomCode}`) ?? null;
   };
 

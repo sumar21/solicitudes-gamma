@@ -32,4 +32,17 @@ assert(roomSexConflict([male, otherRoom, dest], 'H401-2', 'H401-3') === null, 'o
 // Cama destino vacía sola en el cuarto → sin warning.
 assert(roomSexConflict([male, dest], 'H401-2', 'H401-3') === null, 'cuarto sin otros ocupantes no avisa');
 
+// UTI / UCO (y ITR / Sala de Espera): boxes individuales → NUNCA avisa, aunque el "vecino" sea del otro sexo.
+for (const area of [Area.HUT, Area.HUC, Area.HIT, Area.HRA]) {
+  const m = bed({ label: 'X-1', area, roomCode: 'B1', patientName: 'Juan', sex: 'M' });
+  const f = bed({ label: 'X-2', area, roomCode: 'B1', patientName: 'Ana', sex: 'F' });
+  const d = bed({ label: 'X-3', area, roomCode: 'B1', status: BedStatus.AVAILABLE });
+  assert(roomSexConflict([m, f, d], 'X-1', 'X-3') === null, `sin warning en ${area}`);
+}
+// Un piso común sigue avisando (la exención NO es global).
+const mP = bed({ label: 'P-1', area: Area.PISO_5, roomCode: '501', patientName: 'Juan', sex: 'M' });
+const fP = bed({ label: 'P-2', area: Area.PISO_5, roomCode: '501', patientName: 'Ana', sex: 'F' });
+const dP = bed({ label: 'P-3', area: Area.PISO_5, roomCode: '501', status: BedStatus.AVAILABLE });
+assert(roomSexConflict([mP, fP, dP], 'P-1', 'P-3') !== null, 'piso 5 sigue avisando');
+
 console.log('OK — roomSexConflict');

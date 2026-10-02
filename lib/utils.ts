@@ -1,7 +1,7 @@
 
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
-import { Bed, Ticket, BedStatus } from "../types"
+import { Area, Bed, Ticket, BedStatus } from "../types"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -225,12 +225,27 @@ export function createActionLock() {
 }
 
 /**
+ * Áreas cuyas camas son boxes/cubículos físicamente independientes (UCO, UTI, ITR) o lugares sin
+ * cuarto compartido (sillones de la Sala de Espera, HRA). Ahí "compartir habitación" no significa
+ * lo mismo que en un piso: no hay mezcla de sexos que avisar, ni aislamiento que se contagie al
+ * vecino, ni cama contigua a la que entre una visita. Fuente única: la usan BedsView (bloqueo por
+ * aislamiento y tag de sexo sugerido), `roomSexConflict` y `sharedRoomOccupiedNeighbors`.
+ *
+ * Tolerante a variaciones de string de Gamma en ITR/HRA (ver isHitArea/isHraArea).
+ */
+export const INDIVIDUAL_BOX_AREAS: readonly Area[] = [Area.HUC, Area.HUT, Area.HIT, Area.HRA];
+export function isIndividualBoxArea(area?: string | null): boolean {
+  if (!area) return false;
+  return INDIVIDUAL_BOX_AREAS.includes(area as Area) || isHitArea(area) || isHraArea(area);
+}
+
+/**
  * Warning NO bloqueante para creación de tickets: ¿la habitación destino ya aloja
  * pacientes del sexo OPUESTO al que se traslada? Habitación = mismo roomCode + area
  * (mismo criterio con que BedsView agrupa cuartos). `sex` viene del enrich de PROGAL;
  * si falta en el origen o en un ocupante, ese lado no cuenta (best-effort, nunca bloquea).
  * Se excluye la propia cama destino. Devuelve el sexo del paciente + las camas en conflicto,
- * o null si no hay incompatibilidad detectable.
+ * o null si no hay incompatibilidad detectable. Sin warning en UTI/UCO/ITR/HRA (ver INDIVIDUAL_BOX_AREAS).
  */
 export function roomSexConflict(
   beds: Bed[],
@@ -240,6 +255,8 @@ export function roomSexConflict(
   const patientSex = beds.find(b => b.label === originLabel)?.sex;
   const destBed = beds.find(b => b.label === destLabel);
   if (!patientSex || !destBed?.roomCode) return null;
+  // UTI/UCO (y ITR): boxes individuales → no hay "habitación compartida" que pueda mezclar sexos.
+  if (isIndividualBoxArea(destBed.area)) return null;
   const roommates = beds.filter(b =>
     b.label !== destBed.label &&
     b.roomCode === destBed.roomCode &&
