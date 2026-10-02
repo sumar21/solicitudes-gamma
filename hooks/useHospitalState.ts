@@ -10,6 +10,7 @@ import {
 import { MOCK_TICKETS } from '../lib/constants';
 import { can, hasModule, canReceiveNotif } from '../lib/permissions';
 import { effectiveHostessAreas, formatDateTime, createActionLock, bedEventKey } from '../lib/utils';
+import { roomCheckFor, destinationState, describeRoomCheck } from '../lib/roomCheck';
 import { supabase, resetSupabasePase } from '../lib/supabase';
 import { APP_VERSION } from '../lib/version';
 
@@ -2896,7 +2897,12 @@ export const useHospitalState = () => {
 
     // Dest available → "Habitacion Lista" + dest "Asignada"
     // Dest preparation → "Esperando Habitacion" + dest keeps "En preparación"
-    const isDestAvailable = targetBed.status === BedStatus.AVAILABLE;
+    // Dest available PERO habitación compartida con la cama contigua ocupada → también "Esperando
+    // Habitacion": una cama en verde no garantiza que esté armada (ver lib/roomCheck.ts), así que la
+    // azafata tiene que confirmarla antes de que Coordinación mande al paciente.
+    const roomCheck = roomCheckFor(beds, data.destination, data.origin, undefined);
+    const destState = destinationState(targetBed.status, roomCheck);
+    const isDestAvailable = destState.isDestAvailable;
 
     const newTicket: Ticket = {
       id:                      ticketId,
@@ -2908,9 +2914,9 @@ export const useHospitalState = () => {
       originBedStatus:         BedStatus.OCCUPIED,
       destination:             data.destination!,
       destinationBedCode:      targetBed.bedCode,
-      destinationBedStatus:    isDestAvailable ? BedStatus.ASSIGNED : BedStatus.PREPARATION,
+      destinationBedStatus:    destState.destinationBedStatus,
       workflow:                data.workflow || WorkflowType.INTERNAL,
-      status:                  isDestAvailable ? TicketStatus.IN_TRANSIT : TicketStatus.WAITING_ROOM,
+      status:                  destState.status,
       createdAt:               now.toISOString(),
       date:                    now.toISOString().split('T')[0],
       isBedClean:              false,
@@ -2927,6 +2933,7 @@ export const useHospitalState = () => {
       // Snapshot del tipo de internación del paciente (admissionTypeCode: 'Q' quirúrgica, etc.). Lo usa
       // notify-push para el aviso de ingreso quirúrgico a Enfermería (workflow ITR_TO_FLOOR + 'Q').
       tipoInternacion:         sourceBed.admissionTypeCode,
+      habCompartida:           roomCheck.shared,
       intervenedByHostess:     'NO',
     };
 
@@ -2936,7 +2943,7 @@ export const useHospitalState = () => {
       title:           targetBed.status === BedStatus.PREPARATION ? 'Traslado en Preparación' : 'Solicitud de Traslado',
       message:         targetBed.status === BedStatus.PREPARATION
         ? `${newTicket.patientName}: ${newTicket.origin} → ${newTicket.destination} (En Preparación)`
-        : `Confirmar disponibilidad de ${newTicket.destination} para ${newTicket.patientName}`,
+        : `Confirmar disponibilidad de ${newTicket.destination} para ${newTicket.patientName}${roomCheck.required ? ` (${describeRoomCheck(roomCheck)})` : ''}`,
       ticketId: newTicket.id, sede: newTicket.sede,
       originArea: sourceBed.area, destinationArea: targetBed.area,
     });
@@ -3051,12 +3058,16 @@ export const useHospitalState = () => {
 
     setTicketActionLoading(true);
     writingRef.current = true;
-    const isDestAvailable = targetBed.status === BedStatus.AVAILABLE;
+    // Los requisitos del pre-ticket (colchón, autólisis…) y una habitación compartida con la cama
+    // contigua ocupada obligan a que la azafata confirme "Habitación Lista" aunque la cama esté verde.
+    const roomCheck = roomCheckFor(beds, data.destination, pre.origin, pre.requisitosCama);
+    const destState = destinationState(targetBed.status, roomCheck);
     const updates: Partial<Ticket> = {
-      status:               isDestAvailable ? TicketStatus.IN_TRANSIT : TicketStatus.WAITING_ROOM,
+      status:               destState.status,
       destination:          data.destination,
       destinationBedCode:   targetBed.bedCode,
-      destinationBedStatus: isDestAvailable ? BedStatus.ASSIGNED : BedStatus.PREPARATION,
+      destinationBedStatus: destState.destinationBedStatus,
+      habCompartida:        roomCheck.shared,
       observations:         data.observations ?? pre.observations,
     };
     const updatedTicket: Ticket = { ...pre, ...updates, targetBedOriginalStatus: targetBed.status };
@@ -3338,13 +3349,17 @@ export const useHospitalState = () => {
       // Gamma-level status (without overlay) drives the new ticket status
       const rawDest = rawBeds.find((b: Bed) => b.label === payload.destination);
       const rawStatus = (rawDest?.status ?? newDestBed.status) as BedStatus;
-      const isDestAvailable = rawStatus === BedStatus.AVAILABLE;
+      // Misma regla que el alta: habitación compartida con vecino ocupado o requisitos del pedido
+      // (pre-ticket) → la azafata confirma la habitación aunque la cama esté Disponible.
+      const roomCheck = roomCheckFor(beds, payload.destination, ticket.origin, ticket.requisitosCama);
+      const destState = destinationState(rawStatus, roomCheck);
 
       updates.destination            = payload.destination;
       updates.destinationBedCode     = newDestBed.bedCode;
-      updates.destinationBedStatus   = isDestAvailable ? BedStatus.ASSIGNED : BedStatus.PREPARATION;
+      updates.destinationBedStatus   = destState.destinationBedStatus;
       updates.targetBedOriginalStatus = rawStatus;
-      updates.status                 = isDestAvailable ? TicketStatus.IN_TRANSIT : TicketStatus.WAITING_ROOM;
+      updates.status                 = destState.status;
+      updates.habCompartida          = roomCheck.shared;
 
       newDestArea = newDestBed.area as Area | undefined;
       changes.push(`Destino: ${ticket.destination ?? '—'} → ${payload.destination}`);

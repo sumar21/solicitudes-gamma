@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogTitle, DialogHeader, DialogFooter } from '
 import { StatusBadge } from '../components/StatusBadge';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { cn, formatBedName, formatDateTime, effectiveHostessAreas } from '../lib/utils';
+import { realRequisitos } from '../lib/roomCheck';
 
 interface RequestsViewProps {
   tickets: Ticket[];
@@ -161,6 +162,25 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       >
         <MessageSquare className="w-3.5 h-3.5 mr-2" /> Observaciones
       </Button>
+    );
+  };
+
+  // "Solicitar limpieza OK": un traslado "Esperando Habitación" con requisitos de cama o habitación
+  // compartida (la otra cama ocupada) NO sale directo: la azafata tiene que revisar que esté todo armado
+  // antes de marcarla lista. Este recuadro le dice por qué y qué mirar. Ver lib/roomCheck.ts.
+  const renderRoomCheckCallout = (ticket: Ticket) => {
+    if (ticket.status !== TicketStatus.WAITING_ROOM) return null;
+    const reqs = realRequisitos(ticket.requisitosCama);
+    if (!ticket.habCompartida && reqs.length === 0) return null;
+    return (
+      <div className="flex items-start gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-2 py-1.5 max-w-[270px]">
+        <ClipboardCheck className="w-3 h-3 mt-0.5 shrink-0 text-sky-600" />
+        <div className="text-[10px] leading-tight text-sky-900">
+          <p className="font-black uppercase tracking-tight">Revisá que esté todo OK antes de marcarla lista</p>
+          {ticket.habCompartida && <p className="font-medium text-sky-800 mt-0.5">Habitación compartida: la otra cama está ocupada.</p>}
+          {reqs.length > 0 && <p className="font-medium text-sky-800 mt-0.5">Requiere: {reqs.join(', ')}.</p>}
+        </div>
+      </div>
     );
   };
 
@@ -555,6 +575,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                   {ticket.status === TicketStatus.WAITING_CONSOLIDATION && "Paciente recibido. Pendiente consolidar en sistema."}
                 </span>
               </div>
+              {renderRoomCheckCallout(ticket)}
 
               {ticket.rejectionReason && (
                 <div className="p-2.5 bg-red-100/50 border border-red-200 rounded-xl flex items-start gap-2">
@@ -616,6 +637,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                           {ticket.status === TicketStatus.IN_TRANSPORT && "Esperando confirmación de recepción."}
                           {ticket.status === TicketStatus.WAITING_CONSOLIDATION && "Pendiente consolidar en PROGAL."}
                         </div>
+                        {renderRoomCheckCallout(ticket)}
                         {ticket.changeReason && (
                           <div className="flex items-center gap-1.5 text-[9px] font-black text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200/50 uppercase mt-1">
                             <Info className="w-3 h-3" /> {ticket.changeReason}
