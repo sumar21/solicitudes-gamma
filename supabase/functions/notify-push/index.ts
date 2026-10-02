@@ -50,7 +50,13 @@ const NOTIF_TYPE_TO_PERMISSION: Record<string, string> = {
   RECEPTION_CONFIRMED: 'notif_reception_confirmed',
   // Ingreso quirúrgico desde Sala de Espera → SOLO a quien tenga notif_ingreso_quirurgico (Enfermería).
   SURGICAL_ADMISSION:  'notif_ingreso_quirurgico',
+  // Recordatorio: lleva 15 min "Por Consolidar" sin consolidarse (lo emite el pg_cron, ver abajo).
+  POR_CONSOLIDAR:      'notif_por_consolidar',
 };
+
+// Opción "sin nada especial" de los requisitos de cama del pre-ticket (EXCLUYENTE; ver lib/constants.ts).
+const REQUISITO_SIN = 'Sin requerimiento';
+const POR_CONSOLIDAR = 'Por Consolidar';
 
 // Estado inicial de un pre-ticket (Coordinadora pidió cama; espera que Admisión configure el destino).
 const PRESOLICITUD = 'Presolicitud';
@@ -125,6 +131,14 @@ Deno.serve(async (req: Request) => {
       notifType = 'PRE_TICKET';
       title = 'Nueva Solicitud de Cama';
       excludeUserId = record.created_by_id != null ? String(record.created_by_id) : null;
+    } else if (record.urgencia === true) {
+      // Urgencia / ingreso directo: el paciente va DIRECTO a la cama y el ticket nace "Por Consolidar".
+      // NO es un traslado que las azafatas tengan que preparar (ya está yendo) → no sale el NEW_TICKET a
+      // pisos. Sí hay que avisarle a Admisión: tiene que ingresarlo en PROGAL y vincularlo. Se reusa el
+      // tipo PRE_TICKET (permiso notif_pre_ticket) porque es el mismo público: quien arma los pedidos de cama.
+      notifType = 'PRE_TICKET';
+      title = 'Ingreso por urgencia';
+      excludeUserId = record.created_by_id != null ? String(record.created_by_id) : null;
     } else {
       notifType = 'NEW_TICKET';
       // "Ingreso" si el paciente entra desde Sala de Espera (workflow ITR_TO_FLOOR); "Traslado" para el
@@ -133,10 +147,21 @@ Deno.serve(async (req: Request) => {
       excludeUserId = record.created_by_id != null ? String(record.created_by_id) : null;
     }
   } else if (type === 'UPDATE') {
-    if (old_record?.status === record.status) return new Response('no status change', { status: 200 });
+    // Recordatorio de los 15 min: avisar_por_consolidar() (pg_cron, cada minuto) estampa
+    // aviso_consolidar_at sobre los traslados que siguen "Por Consolidar". El estado NO cambia, así que
+    // este caso va ANTES del 'no status change'. UNA sola vez por ingreso a "Por Consolidar" (el trigger
+    // de la base rearma aviso_consolidar_at=null si el traslado volviera a entrar).
+    const avisoPorConsolidar = record.status === POR_CONSOLIDAR
+      && old_record?.aviso_consolidar_at == null && record.aviso_consolidar_at != null;
+    if (avisoPorConsolidar) {
+      notifType = 'POR_CONSOLIDAR';
+      title = record.urgencia === true ? 'Urgencia pendiente de consolidar' : 'Pendiente de consolidar';
+      excludeUserId = null; // es un recordatorio para Admisión: no hay "quien lo disparó" a quien excluir
+    } else if (old_record?.status === record.status) {
+      return new Response('no status change', { status: 200 });
     // Conversión de un pre-ticket: Presolicitud → estado vivo (Admisión configuró el destino). Recién
     // acá el traslado se vuelve "real" → se comporta como un alta nueva y avisa a azafatas/limpieza.
-    if (old_record?.status === PRESOLICITUD && record.status !== PRESOLICITUD) {
+    } else if (old_record?.status === PRESOLICITUD && record.status !== PRESOLICITUD) {
       notifType = 'NEW_TICKET';
       title = newTicketTitle(record.workflow);
       excludeUserId = record.last_actor_id != null ? String(record.last_actor_id) : null;
@@ -239,12 +264,29 @@ Deno.serve(async (req: Request) => {
   }
 
   const paciente = record.paciente ?? 'Paciente';
+  // "Solicitar limpieza OK": si el traslado va a quedar esperando que la azafata confirme la habitación
+  // (requisitos de cama reales y/o habitación compartida con la cama contigua ocupada), el push lo dice:
+  // es el aviso que la azafata ve ANTES de abrir la app.
+  const reqsReales: string[] = (Array.isArray(record.requisitos_cama) ? record.requisitos_cama : [])
+    .map((r: unknown) => String(r ?? '').trim()).filter((r: string) => r && r !== REQUISITO_SIN);
+  const checkParts: string[] = [];
+  if (reqsReales.length) checkParts.push(`Requiere: ${reqsReales.join(', ')}`);
+  if (record.hab_compartida === true) checkParts.push('Hab. compartida: revisar que esté todo OK');
+  const checkSuffix = checkParts.length ? ` · ${checkParts.join(' · ')}` : '';
+  const minPorConsolidar = Number.isFinite(Date.parse(record.por_consolidar_at))
+    ? Math.max(1, Math.round((Date.now() - Date.parse(record.por_consolidar_at)) / 60000)) : 15;
+
   const body = notifType === 'PRE_TICKET'
-    // Un pre-ticket no tiene destino todavía → mostramos paciente + movimiento (motivo_cambio).
-    ? `${paciente} — ${record.motivo_cambio ?? 'pedido de cama'}`
-    : notifType === 'NEW_TICKET'
-      ? `${paciente}: ${record.cama_origen} → ${record.cama_destino ?? '?'}`
-      : `${paciente}: ${record.cama_origen ?? ''} → ${record.cama_destino ?? ''}`;
+    ? (record.urgencia === true
+      // Urgencia: el paciente ya va a la cama → paciente + destino + qué hacer.
+      ? `${paciente} → ${record.cama_destino ?? '?'} · ingresarlo en PROGAL y consolidar`
+      // Un pre-ticket no tiene destino todavía → mostramos paciente + movimiento (motivo_cambio).
+      : `${paciente} — ${record.motivo_cambio ?? 'pedido de cama'}`)
+    : notifType === 'POR_CONSOLIDAR'
+      ? `${paciente}: ${record.cama_origen ?? ''} → ${record.cama_destino ?? ''} · hace ${minPorConsolidar} min sin consolidar en PROGAL`
+      : notifType === 'NEW_TICKET'
+        ? `${paciente}: ${record.cama_origen} → ${record.cama_destino ?? '?'}${checkSuffix}`
+        : `${paciente}: ${record.cama_origen ?? ''} → ${record.cama_destino ?? ''}`;
 
   const mainParams: Params = {
     type: notifType, title, body, ticketId: String(record.id_univoco ?? ''),

@@ -13,7 +13,7 @@
  * este GET queda para ?all=1 (Monitor/Historial) y ?patientCode= (historia por cama), on-demand.
  */
 import { requireAuth } from './jwt.js';
-import { Ticket, TicketStatus, WorkflowType, SedeType, BedStatus } from '../types.js';
+import { Ticket, TicketStatus, WorkflowType, SedeType, BedStatus, ORIGEN_URGENCIA, MOVIMIENTO_URGENCIA } from '../types.js';
 import { effectiveAreaNames } from './push-utils.js';
 import { getRoleByName } from './role-cache.js';
 import { getUserAreasById } from './user-cache.js';
@@ -64,6 +64,12 @@ function rowToTicket(r: Record<string, any>): Ticket {
     // Pre-ticket: requisitos de cama tildados por la Coordinadora (snapshot estructurado, para medir).
     requisitosCama:         Array.isArray(r.requisitos_cama) ? r.requisitos_cama.map((x: any) => String(x)) : undefined,
     tipoInternacion:        r.tipo_internacion ? String(r.tipo_internacion) : undefined,
+    // "Solicitar limpieza OK" (habitación compartida) y urgencia / ingreso directo. Ver types.ts.
+    habCompartida:          r.hab_compartida === true,
+    urgencia:               r.urgencia === true,
+    pacienteDeclarado:      r.paciente_declarado ? String(r.paciente_declarado) : undefined,
+    eventoInternacion:      r.evento_internacion ? String(r.evento_internacion) : undefined,
+    porConsolidarAt:        r.por_consolidar_at ? String(r.por_consolidar_at) : undefined,
     targetBedOriginalStatus: r.cama_destino_status ? (r.cama_destino_status as BedStatus) : undefined,
     intervenedByHostess,
     canCancel:              intervenedByHostess === 'NO',
@@ -94,7 +100,12 @@ function ticketToRow(t: Partial<Ticket>): Record<string, unknown> {
     ['observations',         'observaciones'],
     ['requisitosCama',       'requisitos_cama'],
     ['tipoInternacion',      'tipo_internacion'],
+    ['habCompartida',        'hab_compartida'],
+    ['urgencia',             'urgencia'],
+    ['pacienteDeclarado',    'paciente_declarado'],
+    ['eventoInternacion',    'evento_internacion'],
     ['intervenedByHostess',  'intervino_azafata'],
+    // `por_consolidar_at` NO se mapea: lo setea el trigger de la base al entrar a "Por Consolidar".
   ];
   const row = Object.fromEntries(
     map.filter(([key]) => t[key] !== undefined).map(([key, col]) => [col, t[key]]),
@@ -213,7 +224,7 @@ async function handler(req: any, res: any) {
 
       // ETag: hash de ids + campos editables/estado. Una edición de destino/observación (sin
       // mover el status) igual invalida el cache. Útil para ?all=1 on-demand.
-      const etag = `"${simpleHash(tickets.map(t => `${t.id}:${t.status}:${t.destination ?? ''}:${t.destinationBedStatus ?? ''}:${t.observations ?? ''}:${t.changeReason ?? ''}:${t.workflow ?? ''}:${t.financier ?? ''}:${t.intervenedByHostess ?? ''}`).join('|'))}"`;
+      const etag = `"${simpleHash(tickets.map(t => `${t.id}:${t.status}:${t.destination ?? ''}:${t.destinationBedStatus ?? ''}:${t.observations ?? ''}:${t.changeReason ?? ''}:${t.workflow ?? ''}:${t.financier ?? ''}:${t.intervenedByHostess ?? ''}:${t.patientCode ?? ''}:${t.habCompartida ? 1 : 0}:${t.urgencia ? 1 : 0}`).join('|'))}"`;
       res.setHeader('ETag', etag);
       if (req.headers?.['if-none-match'] === etag) return res.status(304).end();
 
@@ -229,6 +240,28 @@ async function handler(req: any, res: any) {
       if (String(row.status) === TicketStatus.PRESOLICITUD) {
         const denied = await authzPreTicket(req, 'crear_pre_ticket');
         if (denied) return res.status(denied.status).json({ error: denied.error });
+      }
+      // Urgencia / ingreso directo: el paciente va directo a la cama y todavía no está internado. El ticket
+      // nace en "Por Consolidar", con nombre libre y SIN código de paciente (se vincula al consolidar).
+      // Se exige el mismo permiso que el pre-ticket (la Coordinadora) y se fuerzan los campos que el
+      // cliente no debería poder elegir (origen sentinela, sin código, workflow PRE_TICKET).
+      if (row.urgencia === true) {
+        const denied = await authzPreTicket(req, 'crear_pre_ticket');
+        if (denied) return res.status(denied.status).json({ error: denied.error });
+        const nombre = String(row.paciente ?? '').trim();
+        if (nombre.length < 3) return res.status(400).json({ error: 'La urgencia necesita nombre y apellido del paciente.' });
+        if (!row.cama_destino) return res.status(400).json({ error: 'La urgencia necesita una cama destino.' });
+        if (String(row.status) !== TicketStatus.WAITING_CONSOLIDATION) {
+          return res.status(400).json({ error: 'La urgencia debe crearse "Por Consolidar".' });
+        }
+        row.paciente = nombre;
+        row.paciente_declarado = nombre;
+        row.codigo_paciente = null;
+        row.evento_internacion = null;
+        row.cama_origen = ORIGEN_URGENCIA;
+        row.cama_origen_codigo = null;
+        row.workflow = WorkflowType.PRE_TICKET;
+        if (!row.motivo_cambio) row.motivo_cambio = MOVIMIENTO_URGENCIA;
       }
       row.entorno = ENTORNO;
       row.version = String(req.body?.version ?? ''); // versión del build del cliente que creó el ticket
@@ -289,6 +322,21 @@ async function handler(req: any, res: any) {
         }
       }
 
+      // Consolidar una URGENCIA exige un paciente REAL: sin código de PROGAL el ticket (y su trayectoria)
+      // quedaría flotando, asociado a un nombre libre. Se enforça acá y no sólo en el modal: un PATCH
+      // directo con un token válido lo saltearía. Mismo criterio que el gate de consentimiento de cirugía
+      // (api/cirugia.ts): la regla vive en el servidor, la UI sólo la hace cómoda.
+      if (updates.status === TicketStatus.COMPLETED) {
+        const { data: cur } = await supa.from('traslados').select('urgencia, codigo_paciente')
+          .eq('id_univoco', idUnivoco).eq('entorno', ENTORNO).limit(1).maybeSingle();
+        if (cur?.urgencia === true) {
+          const codigo = String(updates.patientCode ?? cur.codigo_paciente ?? '').trim();
+          if (!codigo) {
+            return res.status(422).json({ error: 'Una urgencia necesita un paciente vinculado (código de PROGAL) para consolidarse.' });
+          }
+        }
+      }
+
       // ── Enforcement de piso para acciones de azafata (SIN CAMBIOS respecto de SP) ──
       // Una azafata solo puede ejecutar acciones de su(s) piso(s). Regla HRA (Sala de Espera):
       // si el extremo requerido es HRA, se usa el piso real del otro extremo. Solo aplica a roles
@@ -317,6 +365,10 @@ async function handler(req: any, res: any) {
 
       const fields = ticketToRow(updates);
       delete fields.id_univoco; // no reescribir la clave de join
+      // La urgencia se decide al crear y no se puede apagar después (saltearía el gate de consolidación),
+      // ni reescribir lo que tipeó Coordinación (queda como constancia de lo declarado).
+      delete fields.urgencia;
+      delete fields.paciente_declarado;
       fields.last_actor_id = Number(req.user?.id) || null; // quién hizo la acción → excludeUser del webhook
       fields.version = String(req.body?.version ?? ''); // versión del build del cliente que hizo el cambio
       if (originArea !== undefined) fields.cama_origen_area = originArea ? String(originArea) : null;
