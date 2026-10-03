@@ -939,7 +939,7 @@ Diseño en [arquitectura.md §48](../arquitectura/arquitectura.md). **Prerrequis
   - La cama destino se ve **Ocupada** por el nombre tipeado, sin datos clínicos.
   - **No** hay botón "Editar". Evento 'Ingreso por urgencia' en la trayectoria.
   - Push/campanita "Ingreso por urgencia" **solo a Admisión** (`notif_pre_ticket`); **ninguna azafata** recibe `NEW_TICKET` 📵.
-  - La Coordinadora **ve su urgencia en la grilla** aunque filtre por pisos.
+  - La Coordinadora **ve su urgencia en la grilla** aunque filtre por pisos **y aunque la cama destino esté en un sector que no tiene asignado**.
 
 ### QA-URG-02 · Validaciones de la urgencia · P1 · FE+BE
 - **Acción / Resultado esperado**:
@@ -947,7 +947,8 @@ Diseño en [arquitectura.md §48](../arquitectura/arquitectura.md). **Prerrequis
   - Sin destino → deshabilitado. El selector **no ofrece** camas Ocupadas, ITR ni Sala de Espera, ni camas ya asignadas a otro traslado activo.
   - Dos urgencias a **la misma cama destino** → la segunda da **409** ("Cama destino ya asignada…"), con rollback del optimista (sin ticket fantasma).
   - Dos urgencias a camas distintas **sí** pueden coexistir (el origen sentinela no bloquea).
-  - `POST /api/tickets` con `urgencia:true` sin el permiso `crear_pre_ticket` → **403**; con nombre corto, sin destino o con otro status → **400**.
+  - `POST /api/tickets` con `urgencia:true` sin el permiso `crear_pre_ticket` → **403**; con nombre corto, sin destino o con otro status → **400**. Un `urgencia` que no sea el booleano `true` (`"t"`, `"yes"`, `1`) se trata como `false` (no se castea a urgente en la base).
+  - Las urgencias **no entran** en el promedio "Espera" de Operativa ni en el del Monitor; y sus cambios de estado (Consolidado/Cancelado) no generan push/toast a la azafata de piso.
 
 ### QA-URG-03 · Vincular y consolidar: el ticket queda con un paciente real · P0 · FE+BE
 - **Precondición**: urgencia de QA-URG-01; Admisión ya ingresó al paciente en PROGAL (aparece Ocupado, con código, en la cama destino).
