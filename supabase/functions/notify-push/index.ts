@@ -288,11 +288,16 @@ Deno.serve(async (req: Request) => {
         ? `${paciente}: ${record.cama_origen} → ${record.cama_destino ?? '?'}${checkSuffix}`
         : `${paciente}: ${record.cama_origen ?? ''} → ${record.cama_destino ?? ''}`;
 
+  // Una URGENCIA no pasa por el circuito de azafata: sus cambios de estado (Consolidado / Cancelado) no son
+  // asunto de las azafatas del piso destino, que nunca la ven en su grilla. Sin nombres de área, los roles que
+  // filtran por pisos NO matchean (subAreaMatches exige un área cuando la sub trae sectores) y el aviso queda
+  // para los roles que no filtran (Admisión, Enfermería…). El aviso inicial de la urgencia (PRE_TICKET) no se toca.
+  const sinAreas = record.urgencia === true && notifType === 'STATUS_UPDATE';
   const mainParams: Params = {
     type: notifType, title, body, ticketId: String(record.id_univoco ?? ''),
     entorno: String(record.entorno ?? ''), excludeUserId,
-    originAreaName: record.cama_origen_area ?? undefined,
-    destinationAreaName: record.cama_destino_area ?? undefined,
+    originAreaName: sinAreas ? undefined : (record.cama_origen_area ?? undefined),
+    destinationAreaName: sinAreas ? undefined : (record.cama_destino_area ?? undefined),
   };
   // Override CATERING (solo RECEPTION_CONFIRMED).
   if (notifType === 'RECEPTION_CONFIRMED') {

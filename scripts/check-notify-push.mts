@@ -48,7 +48,7 @@ g.__sent = []; g.__inserts = [];
 g.__db = {
   roles: [
     { name: 'Admision', permissions: ['notif_new_ticket', 'notif_pre_ticket', 'notif_por_consolidar'], filter_by_floors: false },
-    { name: 'Azafata', permissions: ['notif_new_ticket'], filter_by_floors: true },
+    { name: 'Azafata', permissions: ['notif_new_ticket', 'notif_status_update'], filter_by_floors: true },
     { name: 'Enfermeria', permissions: ['notif_status_update'], filter_by_floors: false },
   ],
   push_subscriptions: [
@@ -131,6 +131,21 @@ assert(r.payloads[0].type === 'NEW_TICKET' && /Requiere: Intento autólisis/.tes
 const toPC = base({ status: 'Por Consolidar', por_consolidar_at: new Date().toISOString() });
 r = await fire({ type: 'UPDATE', record: toPC, old_record: { ...toPC, status: 'En Traslado', por_consolidar_at: null } });
 assert(r.json?.main?.type === 'RECEPTION_CONFIRMED', 'transición normal intacta');
+
+// G2) el cambio de estado de un traslado NORMAL llega a la azafata del piso destino y a Enfermería (sin cambios)...
+const done = base({ status: 'Consolidado', workflow: 'INTERNAL' });
+r = await fire({ type: 'UPDATE', record: done, old_record: { ...done, status: 'Por Consolidar' } });
+assert.deepEqual(r.to, ['e-aza', 'e-enf'], 'normal: STATUS_UPDATE a azafata del piso y a Enfermería');
+// ...pero el de una URGENCIA (consolidada/cancelada) NO va a la azafata que filtra por pisos: nunca la vio.
+const doneU = base({ status: 'Consolidado', workflow: 'PRE_TICKET', urgencia: true, cama_origen: 'Urgencia / Ingreso directo' });
+r = await fire({ type: 'UPDATE', record: doneU, old_record: { ...doneU, status: 'Por Consolidar' } });
+assert.deepEqual(r.to, ['e-enf'], 'urgencia: el aviso de estado no llega a la azafata de piso');
+const cancU = base({ status: 'Cancelado', workflow: 'PRE_TICKET', urgencia: true });
+r = await fire({ type: 'UPDATE', record: cancU, old_record: { ...cancU, status: 'Por Consolidar' } });
+assert(!r.to.includes('e-aza') && r.to.includes('e-enf'), 'urgencia cancelada: tampoco a la azafata de piso');
+// el aviso INICIAL de la urgencia (PRE_TICKET) sigue yendo a Admisión
+r = await fire({ type: 'INSERT', record: base({ urgencia: true, status: 'Por Consolidar', workflow: 'PRE_TICKET' }) });
+assert.deepEqual(r.to, ['e-adm'], 'el aviso inicial de la urgencia sigue yendo a Admisión');
 
 // H) pre-ticket común (Presolicitud) intacto.
 r = await fire({ type: 'INSERT', record: base({ status: 'Presolicitud', workflow: 'PRE_TICKET', cama_destino: null, motivo_cambio: 'Destino Internación General' }) });

@@ -235,6 +235,11 @@ async function handler(req: any, res: any) {
     if (req.method === 'POST') {
       const { originAreaName, destinationAreaName } = req.body ?? {};
       const row = ticketToRow(req.body ?? {});
+      // Flags booleanos ESTRICTOS: PostgREST castea 't'/'yes'/'1' a true, así que un `urgencia: "t"` se saltearía
+      // la rama de validación de abajo (`=== true`) y quedaría urgente sin permiso ni chequeos. Cualquier cosa
+      // que no sea el booleano true se trata como false.
+      if ('urgencia' in row) row.urgencia = row.urgencia === true;
+      if ('hab_compartida' in row) row.hab_compartida = row.hab_compartida === true;
       // Pre-ticket (status 'Presolicitud'): exige el permiso crear_pre_ticket (la Coordinadora).
       // El resto de los altos siguen gateados client-side por crear_ticket (sin cambios).
       if (String(row.status) === TicketStatus.PRESOLICITUD) {

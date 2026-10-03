@@ -65,6 +65,10 @@ $$;
 -- Sólo la ejecuta el cron (rol postgres). No se expone por la API REST.
 revoke all on function public.avisar_por_consolidar(integer) from public, anon, authenticated;
 
+-- pg_cron ya está instalado en el proyecto qnxckwtssevvhnhyprcl (lo usan otros jobs); esto es un no-op ahí y
+-- evita que la migración falle en un proyecto/branch donde nadie lo haya habilitado.
+create extension if not exists pg_cron;
+
 -- Idempotente: cron.schedule con el mismo nombre reemplaza el job.
 select cron.schedule(
   'traslados-aviso-por-consolidar',

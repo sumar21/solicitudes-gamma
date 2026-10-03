@@ -117,7 +117,8 @@ export default function App() {
   // pasó por esas vistas (p.ej. una azafata en Operativa), promedia solo los cierres recientes
   // del merge vivo, o muestra '--' si no hubo ninguno.
   const avgWaitTime = React.useMemo(() => {
-    const completed = state.historyTickets.filter(t => t.status === TicketStatus.COMPLETED && t.createdAt && t.completedAt);
+    // Sin urgencias: su "ciclo" es hasta que Admisión las vincula, no un traslado (ver DashboardView.computeStats).
+    const completed = state.historyTickets.filter(t => t.status === TicketStatus.COMPLETED && t.createdAt && t.completedAt && !t.urgencia);
     if (completed.length === 0) return '--';
     const total = completed.reduce((acc, t) => acc + calculateTicketMetrics(t).totalCycleTime, 0);
     return Math.round(total / completed.length);

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Bed, BedStatus, Ticket } from '../../types';
 import type { UrgenciaLink } from '../../hooks/useHospitalState';
 import { Button } from '../ui/button';
@@ -29,6 +29,8 @@ interface Props {
 
 export const ConsolidarUrgenciaModal: React.FC<Props> = ({ open, onOpenChange, ticket, beds, onConfirm }) => {
   const [patientCode, setPatientCode] = useState('');
+  // ¿Ya eligió a mano? Si sí, un refresco del mapa (que cambie la sugerencia) NO le pisa la elección.
+  const pickedByUser = useRef(false);
 
   // Una cama por paciente (un código no se repite en el mapa, pero Gamma a veces deja residuales).
   const candidates = useMemo(() => {
@@ -47,8 +49,12 @@ export const ConsolidarUrgenciaModal: React.FC<Props> = ({ open, onOpenChange, t
     return dest ? String(dest.patientCode).trim() : '';
   }, [candidates, ticket]);
 
+  // Al abrir se precarga la sugerencia (y se limpia la marca de "eligió a mano"). Mientras el modal sigue abierto,
+  // la sugerencia solo se aplica si el usuario todavía no tocó el selector: si Admisión eligió a P y el poll de
+  // camas trae a Q recién internado en la cama destino, vincular a Q sin que se note sería un error silencioso.
   React.useEffect(() => {
-    if (open) setPatientCode(suggested);
+    if (!open) { pickedByUser.current = false; return; }
+    if (!pickedByUser.current) setPatientCode(suggested);
   }, [open, suggested]);
 
   if (!ticket) return null;
@@ -99,7 +105,7 @@ export const ConsolidarUrgenciaModal: React.FC<Props> = ({ open, onOpenChange, t
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Paciente en PROGAL <span className="text-red-500">*</span></Label>
             <SearchableSelect
               value={patientCode}
-              onValueChange={setPatientCode}
+              onValueChange={(v) => { pickedByUser.current = true; setPatientCode(v); }}
               options={candidates.map(b => ({
                 label: `${b.patientName} — ${formatBedName(b.label)}${b.dni ? ` · DNI ${b.dni}` : ''}`,
                 value: String(b.patientCode).trim(),

@@ -2255,7 +2255,9 @@ export const useHospitalState = () => {
       // Urgencia / ingreso directo recién aparecida: nace "Por Consolidar" y NO hay nada que las azafatas
       // preparen (el paciente ya va a la cama). El aviso a Admisión lo manda el webhook (PRE_TICKET).
       // Sin esto, la detección local la mostraría como "Nueva Solicitud de Traslado" a los pisos.
-      if (t.urgencia && prevKey === undefined) continue;
+      //   Y mientras es una urgencia, quien filtra por pisos (azafata) no recibe avisos de estado (cancelada /
+      // consolidada) de un ticket que nunca vio: no pasó por su circuito.
+      if (t.urgencia && (prevKey === undefined || currentUser?.filterByFloors)) continue;
 
       const originArea = areaOf(t.origin);
       const destArea   = areaOf(t.destination);
@@ -2810,6 +2812,10 @@ export const useHospitalState = () => {
         for (const b of beds) if (b.area) areaByLabel.set(b.label, b.area);
 
         result = result.filter(t => {
+          // Una URGENCIA no tiene cama de origen (decide sólo el destino) y quien la carga —Coordinación— pide
+          // camas de CUALQUIER sector: si su destino cae fuera de sus sectores asignados, el ticket "se cargaba
+          // y desaparecía" de su grilla y no podía ni cancelarlo. Quien tiene crear_pre_ticket la ve siempre.
+          if (t.urgencia && can(currentUser, 'crear_pre_ticket')) return true;
           // Try matching by label first, then by area prefix in the ticket origin/destination
           const rawOriginArea = areaByLabel.get(t.origin) ?? beds.find(b => t.origin?.includes(b.area))?.area;
           const rawDestArea   = t.destination ? (areaByLabel.get(t.destination) ?? beds.find(b => t.destination?.includes(b.area))?.area) : undefined;
