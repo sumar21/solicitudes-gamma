@@ -210,7 +210,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
             className="inline-flex items-center rounded-full border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-amber-800 shrink-0"
             title="Todavía no está vinculado a un paciente de PROGAL: se vincula al consolidar"
           >
-            <span className="text-[9px] font-black uppercase tracking-wide leading-none">Sin vincular a PROGAL</span>
+            <span className="text-[9px] font-black uppercase tracking-wide leading-none">Sin vincular</span>
           </span>
         )}
       </>
