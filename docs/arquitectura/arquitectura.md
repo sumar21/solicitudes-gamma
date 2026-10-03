@@ -239,19 +239,24 @@ El browser habla con **tres planos**: (a) los endpoints `api/*` de Vercel con el
 
 | Estado | Quién actúa (permiso) | Acción |
 |--------|-------------|--------|
-| **crear** | Admisión (`crear_ticket`) | `POST /api/tickets` → arranca en `WAITING_ROOM` (destino EN PREPARACIÓN) **o directo** en `IN_TRANSIT` (destino DISPONIBLE, se saltea limpieza) |
+| **crear** | Admisión (`crear_ticket`) | `POST /api/tickets` → arranca en `WAITING_ROOM` (destino EN PREPARACIÓN, **o DISPONIBLE pero con habitación compartida / requisitos**, §48.5) **o directo** en `IN_TRANSIT` (destino DISPONIBLE sin nada que verificar, se saltea limpieza) |
 | `WAITING_ROOM → IN_TRANSIT` | **Azafata de destino** (`confirmar_limpieza`, "Habitación Lista") | `PATCH /api/tickets` (status + cama destino "Asignada") |
 | `IN_TRANSIT → IN_TRANSPORT` | **Azafata de origen** (`iniciar_traslado`, "Iniciar Traslado") | `PATCH /api/tickets` (status + cama origen "En preparación") |
 | `IN_TRANSPORT → WAITING_CONSOLIDATION` | **Azafata de destino** (`confirmar_recepcion`, "Recepción OK") | `PATCH /api/tickets` (status + cama destino "Ocupada" + migra comandas) |
 | `WAITING_CONSOLIDATION → COMPLETED` | Admisión/Admin (`consolidar`, "Consolidar PROGAL") | `PATCH /api/tickets` (status + completedAt) |
 | `* → REJECTED` | Admisión/Admin (`cancelar_ticket`, motivo obligatorio) | `PATCH /api/tickets` (status + motivo_cancelacion) |
 
-> **Ojo con dos matices que la tabla vieja tenía mal:** (1) quien confirma la limpieza previa al ingreso es la **azafata de destino** (rol HOSTESS, `confirmar_limpieza`), no un "Housekeeping" genérico; (2) un traslado con cama destino **DISPONIBLE** nace directo en `IN_TRANSIT` (salta el paso de limpieza), solo con destino **EN PREPARACIÓN** nace en `WAITING_ROOM`. El enforcement de piso de la azafata se valida server-side en `api/tickets.ts` (403 si el traslado no pertenece a sus áreas; regla HRA remapea al piso real del otro extremo). La columna `intervino_azafata` pasa de `'NO'` a `'SI'` en la primera acción de azafata y bloquea la **edición** (no la cancelación).
+> **Ojo con dos matices que la tabla vieja tenía mal:** (1) quien confirma la limpieza previa al ingreso es la **azafata de destino** (rol HOSTESS, `confirmar_limpieza`), no un "Housekeeping" genérico; (2) un traslado con cama destino **DISPONIBLE** nace directo en `IN_TRANSIT` (salta el paso de limpieza) **salvo** que la habitación sea compartida con la cama contigua ocupada o el pedido tenga requisitos reales (colchón, autólisis…): ahí nace en `WAITING_ROOM` igual y la azafata lo libera (§48.5); con destino **EN PREPARACIÓN** siempre nace en `WAITING_ROOM`. El enforcement de piso de la azafata se valida server-side en `api/tickets.ts` (403 si el traslado no pertenece a sus áreas; regla HRA remapea al piso real del otro extremo). La columna `intervino_azafata` pasa de `'NO'` a `'SI'` en la primera acción de azafata y bloquea la **edición** (no la cancelación).
 
 Cada transición genera:
 - Un evento en `public.traslado_eventos` (via `POST /api/ticket-events`, append-only) para la trayectoria.
 - Una notificación push, **disparada por la Edge Function `notify-push`** (Database Webhook sobre `public.traslados`, no por `push-utils`) — una sola vez por versión de fila commiteada (§7).
 - Una fila en `public.notificaciones` (campanita in-app) por usuario destinatario; el propio actor ve su acción por `addNotification` local optimista y **no** recibe su propia push.
+
+**Variantes del ciclo** (detalle en §48):
+- **Pre-ticket** (`PRESOLICITUD` → configurar destino → `WAITING_ROOM`/`IN_TRANSIT`): ver `docs/planes/pre-ticket.md`.
+- **Urgencia / ingreso directo** (`urgencia=true`): **no** pasa por Admisión ni por el circuito de azafata; nace directo en `WAITING_CONSOLIDATION` con nombre libre y **no se puede consolidar sin vincular un paciente real** (§48.4).
+- **Aviso a los 15 min**: un traslado que lleva 15 min en `WAITING_CONSOLIDATION` dispara un recordatorio a los roles con `notif_por_consolidar` (§48.1).
 
 ### 3.4. Sincronización: Realtime (transaccional) + poll (solo camas)
 
@@ -324,7 +329,8 @@ Escribe `public.traslados` con el cliente **service_role** ([api/supabase-admin.
 - `GET` — **on-demand**: `?all=1` (Monitor/Historial), `?patientCode=` (historia de un paciente), y la "vista viva" (activos + cerrados en ventana de gracia de 30 min). El grueso de la actualización llega por Realtime (§3.4).
 - `POST` — crea el ticket (upsert idempotente `onConflict (id_univoco, entorno)`). **No** dispara push; el push lo hace la Edge Function por webhook (§7). El índice único parcial `traslados_cama_destino_activa_idx` garantiza 1 traslado activo por cama destino (Postgres 23505 → **409** con `conflictingTicketId`).
 - `PATCH` — transiciones de estado. **Enforcement de piso server-side**: si el rol tiene `filter_by_floors` y no es full access (≥9 áreas), la acción de azafata solo pasa si el piso requerido está en sus áreas → si no, **403**. Mapeo status→extremo: `IN_TRANSIT`→destino, `IN_TRANSPORT`→origen, `WAITING_CONSOLIDATION`→destino (regla HRA: remapea al piso real del otro extremo). Editar destino revalida el 409 de cama y solo se permite con `intervino_azafata='NO'`.
-- Códigos: 400 (falta id/spItemId), 403 (piso), 409 (cama destino tomada), 503 (Supabase sin configurar).
+- **Urgencia** (§48.4): el `POST` con `urgencia:true` exige `crear_pre_ticket` (`authzPreTicket`), nombre ≥ 3 letras, cama destino y status `Por Consolidar`, y **fuerza** `cama_origen = ORIGEN_URGENCIA`, `codigo_paciente = null`, `workflow = PRE_TICKET` ([api/tickets.ts:248](../../api/tickets.ts#L248)). El `PATCH` a `Consolidado` de una urgencia **devuelve 422** si no hay `codigo_paciente` (el del update o el ya guardado) ([api/tickets.ts:329](../../api/tickets.ts#L329)); `urgencia` y `paciente_declarado` son **inmutables** por PATCH (línea 370).
+- Códigos: 400 (falta id/spItemId, o urgencia mal formada), 403 (piso / permiso de pre-ticket), 409 (cama destino tomada), 422 (consolidar una urgencia sin paciente vinculado), 503 (Supabase sin configurar).
 
 ### 4.4. `api/validate-location.ts` — Validación de ubicación
 
@@ -400,7 +406,7 @@ El acceso a cada vista lo gobierna `hasModule(user, mod)` (los módulos del rol,
 | Vista | Módulo (`hasModule`) | Descripción |
 |-------|--------|-------------|
 | `DashboardView` | Home | KPIs (activos, completados, espera media), gráficos (volumen por workflow, donut de estados), tickets recientes |
-| `RequestsView` | Operativa | Tabla de traslados activos + solapa de limpiezas, con acciones contextuales por permiso. Tabs de perfil operativo. Búsqueda/orden |
+| `RequestsView` | Operativa | Tabla de traslados activos + solapa de limpiezas, con acciones contextuales por permiso. Tabs de perfil operativo. Búsqueda/orden. **Botonera de estados** (chips con contador, por rol; colapsada en mobile, §48.2), tag de urgencia y recuadro "revisá que esté todo OK" para la azafata (§48.4/§48.5) |
 | `HistoryView` | Historial | **Lista** (cerrados, filtros fecha/estado/tipo, export XLSX, AuditModal) + **Trayectoria** (paciente → `PatientJourney`) |
 | `BedsView` | Mapa de Camas | Grilla de camas por sector/piso, colores por estado, detalle del paciente (4 tabs), PDFs (sector / A-Z / dietas-ayunos). Marcar/deshacer limpieza |
 | `CleaningManagementView` | Gestion Limpieza | Supervisor: tab Activas (consolidar `CONSOLIDADO PROGAL`, permiso `consolidar_limpieza`) + tab Histórico por `fecha_cierre` |
@@ -466,10 +472,12 @@ Catálogo **cerrado** (`as const`). `can(user, perm)` gatea botones/mutaciones (
 | Grupo | Permisos |
 |---|---|
 | Traslados | `crear_ticket`, `editar_ticket`, `cancelar_ticket`, `asignar_cama` (**legacy**, no-op), `confirmar_limpieza`, `iniciar_traslado`, `confirmar_recepcion`, `consolidar` |
-| Limpiezas | `consolidar_limpieza` |
+| Pre-ticket / urgencia | `crear_pre_ticket` (crea pre-ticket **y urgencias**; ve las urgencias aunque filtre por pisos), `completar_pre_ticket`, `cancelar_pre_ticket` (también cancela una urgencia) |
+| Cirugía | `cirugia_listo`, `cirugia_buscar`, `cirugia_entregar`, `cirugia_operar`, `cirugia_devolver`, `cirugia_tolerancia`, `cirugia_cancelar`, `cirugia_marcar` |
+| Limpiezas | `consolidar_limpieza`, `limpieza_rutina` |
 | Comandas | `cargar_dieta` (todos los turnos), `cargar_comanda_{desayuno,almuerzo,merienda,cena}` (granular, derivados de `MEAL_SLOTS`), `ver_dieta`, `ver_planificacion`, `abm_planificacion` |
 | Configuración | `abm_usuarios`, `abm_roles` |
-| Notificaciones (una por tipo) | `notif_new_ticket`, `notif_status_update`, `notif_reception_confirmed`, `notif_diet_change`, `notif_fasting_change`, `notif_habitacion_limpia` |
+| Notificaciones (una por tipo) | `notif_new_ticket`, `notif_pre_ticket` (también urgencias), `notif_ingreso_quirurgico`, `notif_status_update`, `notif_reception_confirmed`, `notif_por_consolidar` (**nuevo**: recordatorio de 15 min), `notif_diet_change`, `notif_fasting_change`, `notif_habitacion_limpia`, `notif_cirugia_*` (ver `types.ts`) |
 
 Módulos (`ROLE_MODULES`): `Home`, `Operativa`, `Historial`, `Mapa de Camas`, `Gestion Limpieza`, `Gestion Comandas`, `Configuracion`.
 
@@ -491,7 +499,7 @@ Las suscripciones viven en **`public.push_subscriptions`** (Supabase, `UNIQUE(en
 
 | Camino | Tipos | Corre en | Disparo |
 |---|---|---|---|
-| **Edge Function `notify-push`** (Deno) | `NEW_TICKET`, `STATUS_UPDATE`, `RECEPTION_CONFIRMED` | **Supabase** | Database Webhook (`pg_net`) sobre INSERT/UPDATE de `public.traslados` |
+| **Edge Function `notify-push`** (Deno) | `NEW_TICKET`, `PRE_TICKET` (pre-ticket **y urgencia**), `SURGICAL_ADMISSION`, `STATUS_UPDATE`, `RECEPTION_CONFIRMED`, `POR_CONSOLIDAR` | **Supabase** | Database Webhook (`pg_net`) sobre INSERT/UPDATE de `public.traslados` (el aviso de 15 min lo origina un `pg_cron`, §48.1) |
 | **`api/push-utils.ts`** (web-push) | `DIET_CHANGE`, `FASTING_CHANGE`, `ROOM_CLEANED` | **Vercel** | crons (`cron-enrich-beds`) y acciones (`api/limpiezas.ts`) |
 
 **Por qué el split:** mover el push de traslados al webhook lo dispara **una sola vez por versión de fila commiteada** — mató el bug "TIN TIN TIN" de duplicados. Idempotencia extra por `public.push_dispatch_log` (key `id_univoco:status:updated_at`, insert on conflict do nothing).
@@ -501,6 +509,8 @@ Las suscripciones viven en **`public.push_subscriptions`** (Supabase, `UNIQUE(en
 **Reglas de la sub:** solo 404/410 borran la sub (vencida); un **403 NO** (podría ser misconfig VAPID global → vaciaría toda la tabla). El VAPID debe coincidir en 3 puntas (Vercel Production, secrets de la Edge Function, `VITE_VAPID_PUBLIC_KEY` del build). El cliente se auto-cura: `subscribeToPush` regenera la sub si la llave pública no matchea (self-heal en mount/F5) + `touchPushSubscription` refresca el heartbeat cada 6h.
 
 **Entorno:** solo se notifica a subs del `ENTORNO` actual (default `TESTING` para no disparar a reales por misconfig). El Service Worker (`src-sw/sw.ts`) muestra la notificación nativa y al hacer click enruta a la app (marca leído por `ticketId+type`).
+
+> **Contenido extra del push de `NEW_TICKET`** ([supabase/functions/notify-push/index.ts:275](../../supabase/functions/notify-push/index.ts#L275)): si el traslado quedó esperando que la azafata confirme la habitación se agrega `· Requiere: <requisitos reales> · Hab. compartida: revisar que esté todo OK` (§48.5). **Urgencia**: el INSERT no emite `NEW_TICKET` a los pisos sino `PRE_TICKET` a Admisión (§48.4).
 
 > El `STATUS_LABELS` de la Edge Function decide el label de cada transición: `Habitacion Lista`→"Habitación Lista", `En Traslado`→"Traslado en Curso", `Por Consolidar`→"Recepción Confirmada" (RECEPTION_CONFIRMED), `Consolidado`→"Traslado Finalizado", `Cancelado`→"Traslado Cancelado". **`Esperando Habitacion` (WAITING_ROOM) no tiene label → NO dispara push.**
 
@@ -524,7 +534,7 @@ Proyecto `qnxckwtssevvhnhyprcl`, entorno-scoped por columna `entorno`. Ver §1.1
 
 | Tabla | Migración | Reemplazó a | Estados / notas |
 |-------|-----------|-------------|-----------------|
-| `public.traslados` | `20260729163447` (+`170658`) | 07.Traslados | status español; `intervino_azafata`; `version` |
+| `public.traslados` | `20260729163447` (+`170658`, `20260821120000`, `20260824130000`, `20261002120000`, `20261002130000`) | 07.Traslados | status español; `intervino_azafata`; `version`; `requisitos_cama`, `tipo_internacion`; **`hab_compartida`, `urgencia`, `paciente_declarado`, `evento_internacion`** (§48.4/§48.5); **`por_consolidar_at`, `aviso_consolidar_at`** (§48.1) |
 | `public.traslado_eventos` | `20260729163447` | 08.DetalleTraslados | append-only; ahora con `entorno` (08 no lo tenía) |
 | `public.traslado_obs` | `20260729163447` | 13.ObservacionesTraslados | snapshotea el status del ticket |
 | `public.limpiezas` | `20260729172000` | 14.Limpiezas | `status` Activo/Inactivo; `motivo_cierre` ANULADA/TICKET/GAMMA/CONSOLIDADO |
@@ -1506,3 +1516,88 @@ El filtro de origen del workflow `INGRESO_A_ITR` ([components/modals/NewRequestM
 ### 47.3. Aislamiento "Contacto preventivo": cama contigua señalizada, no bloqueada (extiende §46)
 
 `blockedByIsolation` ([views/BedsView.tsx](views/BedsView.tsx)) se desdobló en `{ blockedByIsolation, preventiveContactAdjacent }`. Las camas no aisladas de una habitación con **solo** Contacto preventivo van a `preventiveContactAdjacent` (celda `cyan` + badge ShieldAlert cyan, NO "inhabilitada"); si la habitación tiene algún aislamiento **duro**, las contiguas siguen en `blockedByIsolation` (violeta — el bloqueo duro tiene prioridad). El `cyan` no se solapa con ningún color de estado de cama ni con el violeta del bloqueo. El modal de la cama contigua muestra un aviso cyan "usar con precaución" en lugar del cartel "Bloqueada".
+
+## 48. Paquete de octubre 2026 (2026-10-02)
+
+Cinco mejoras pedidas por Hotelería/Admisión, desarrolladas juntas en `develop`. Comparten migraciones, la Edge Function `notify-push` y `RequestsView`, por eso van en una sola sección. Verificación: `scripts/check-*.mts` (ver §48.6) + una pasada visual con Playwright sobre un harness temporal (no versionado).
+
+### 48.1. Aviso "Por Consolidar" a los 15 minutos
+
+**Qué:** un traslado que lleva 15 min en `Por Consolidar` sin que nadie lo consolide en PROGAL dispara **una sola vez** push + campanita a los roles con el permiso **`notif_por_consolidar`** (se tilda en el ABM de roles, solapa Notificaciones; **ningún rol lo tiene por defecto**).
+
+**Cómo (sin Vercel y sin envs nuevas)** — migración [`20261002130000_por_consolidar_aviso.sql`](../../supabase/migrations/20261002130000_por_consolidar_aviso.sql):
+1. Trigger `traslados_set_por_consolidar_at` (BEFORE INSERT/UPDATE): cuando el traslado **entra** a `Por Consolidar` estampa `por_consolidar_at = now()` y limpia `aviso_consolidar_at` (así un reingreso rearma el aviso). No depende de que el cliente escriba un evento. Un UPDATE que no cambia el estado no mueve la marca.
+2. Función `avisar_por_consolidar(p_minutos int default 15)` (SECURITY DEFINER, sin `EXECUTE` para `anon`/`authenticated`): estampa `aviso_consolidar_at = now()` en los que siguen `Por Consolidar`, tienen `por_consolidar_at` y llevan ≥ N min, y todavía no tienen aviso.
+3. `pg_cron` job **`traslados-aviso-por-consolidar`** (`* * * * *`) que llama a la función. Índice parcial `traslados_por_consolidar_pend_idx` para que la consulta por minuto sea trivial.
+4. Ese UPDATE dispara el webhook existente (`notify_push_traslados` → Edge Function). En `notify-push` el caso va **antes** del `no status change` ([index.ts:154](../../supabase/functions/notify-push/index.ts#L154)): `status = 'Por Consolidar'` y `old.aviso_consolidar_at` null → `record.aviso_consolidar_at` con fecha ⇒ tipo `POR_CONSOLIDAR`, título "Pendiente de consolidar" ("Urgencia pendiente de consolidar" si `urgencia`), `excludeUserId = null`, cuerpo `paciente: origen → destino · hace N min sin consolidar en PROGAL`.
+
+**Detalles que importan:**
+- Las filas que ya estaban en `Por Consolidar` antes de aplicar la migración **no tienen `por_consolidar_at`** → nunca se avisan (no hay "aluvión" al aplicar).
+- El UPDATE del cron toca `updated_at` (trigger `set_updated_at`) y dispara un refetch Realtime en los clientes: una vez por traslado, inocuo.
+- Mapas de permiso → tipo: `lib/permissions.ts` (`POR_CONSOLIDAR`; **sin esa entrada el cliente descarta la notificación** por tipo desconocido), `api/push-utils.ts`, `supabase/functions/notify-push/index.ts`. Campanita/toast: ícono de reloj ámbar.
+- **Estado al 2026-10-02:** la **Edge Function v17 está desplegada** (rama dormida: sin `aviso_consolidar_at` no se activa) y la migración `20261002120000` (columnas de §48.4/§48.5) **está aplicada**; la migración **`20261002130000` (trigger + función + cron) NO está aplicada** — quedó pendiente de aprobación del equipo. Hasta aplicarla el aviso no funciona. Para aplicarla: ejecutar el archivo tal cual (o `apply_migration`); para apagarlo: `select cron.unschedule('traslados-aviso-por-consolidar');`. El proyecto Supabase es **compartido TESTING/PRODUCTIVO**: el cron recorre ambos entornos, cada uno con sus propios destinatarios (`push_subscriptions.entorno`).
+
+### 48.2. Botonera de estados en Operativa
+
+Un chip por estado (con contador) sobre la grilla de traslados; **multi-selección**, sin nada elegido se ve todo; "Todos"/"Limpiar" resetea. Lógica pura en [`lib/ticketFilters.ts`](../../lib/ticketFilters.ts) (`visibleStatusChips`, `countByStatus`, `applyStatusFilter`, `toggleStatus`), UI en [`components/TicketStatusFilter.tsx`](../../components/TicketStatusFilter.tsx), integración en `views/RequestsView.tsx` (el `useMemo` se partió en `scopedTickets` —alcance por rol— y `sortedTickets` —filtro + orden + pin de pre-tickets—).
+
+| Usuario | Chips |
+|---|---|
+| Admisión / Admin | Presolicitud (si ve pre-tickets), Esperando Habitación, Habitación Lista, En Traslado, Por Consolidar |
+| Azafata / quien filtra por pisos | Esperando Habitación, Habitación Lista, En Traslado, Cancelado (recientes < 1 h) — **nunca** Por Consolidar ni Presolicitud |
+| Coordinación (filtra por pisos + `crear_pre_ticket`) | los de la azafata **+ Por Consolidar** (sólo contiene sus urgencias, §48.4) |
+
+- Los **contadores salen del alcance del rol, antes del filtro de estado**, así que siguen siendo verdad con otro estado filtrado; si hay búsqueda, reflejan los resultados de la búsqueda.
+- **Mobile:** los chips colapsan detrás de un botón "Filtrar por estado" (con la cantidad de estados activos y "Limpiar") para no tapar la lista. Desktop: siempre visibles.
+- El filtro **no se persiste** a propósito (un filtro viejo escondiendo traslados al día siguiente parecería "no hay nada").
+- El orden por defecto sigue siendo `createdAt desc` (lo más nuevo arriba) con los pre-tickets pineados; no cambió.
+- Si cambia la regla de visibilidad de `scopedTickets`, hay que cambiar `visibleStatusChips` (hoy están espejadas a mano).
+
+### 48.3. Sin advertencia de mezcla de sexos en UTI/UCO
+
+`roomSexConflict` ([lib/utils.ts:250](../../lib/utils.ts#L250)) devuelve `null` si la cama destino está en un **box individual**. La lista `INDIVIDUAL_BOX_AREAS` (`HUC` UCO, `HUT` UTI, `HIT` ITR, `HRA` Sala de Espera; tolerante a variantes de string vía `isHitArea`/`isHraArea`) es la **fuente única**: antes vivía en `BedsView` como `CRITICAL_AREAS_NO_BLOCK` (bloqueo por aislamiento y tag de sexo sugerido) y se movió a [lib/utils.ts:236](../../lib/utils.ts#L236); `sharedRoomOccupiedNeighbors` (§48.5) la usa también. **`HUQ` (recuperación postquirúrgica) NO está en la lista** (no se pidió; agregarla si sus camas también son boxes). Los pisos comunes siguen avisando.
+
+### 48.4. Urgencia / ingreso directo
+
+**Problema:** el paciente de una urgencia va **directo a la cama**, sin pasar por Admisión, y casi siempre todavía no está internado en PROGAL. Si el ticket quedara con un nombre libre, su trayectoria "flotaría" sin identidad.
+
+**Flujo:**
+1. **Coordinación** (`crear_pre_ticket`) abre "Pre-ticket" y tilda **"Urgencia / ingreso directo"**: carga *nombre y apellido* (texto libre, ≥ 3 letras) y *destino* (Disponible/En preparación; nunca ITR ni Sala de Espera). Sin movimiento ni requisitos ([components/modals/PreTicketModal.tsx](../../components/modals/PreTicketModal.tsx); alta en `createUrgenciaTicket`, [useHospitalState.ts:3011](../../hooks/useHospitalState.ts#L3011)).
+2. El ticket **nace `Por Consolidar`** (no hay circuito de azafata ni "Configurar destino") con `urgencia=true`, `paciente_declarado` = lo tipeado, `cama_origen = ORIGEN_URGENCIA` ("Urgencia / Ingreso directo", sentinela en `types.ts`), `motivo_cambio = MOVIMIENTO_URGENCIA`, `workflow = PRE_TICKET`, **sin `codigo_paciente`**.
+3. **Aviso:** el INSERT con `urgencia` emite `PRE_TICKET` ("Ingreso por urgencia", permiso `notif_pre_ticket`, o sea Admisión) y **no** el `NEW_TICKET` a los pisos ([notify-push:134](../../supabase/functions/notify-push/index.ts#L134)). Después aplica el recordatorio de 15 min (§48.1).
+4. **Grilla:** tag rojo "Urgencia" + "Sin vincular" mientras no tenga código; botón **"Vincular y consolidar"** (permiso `consolidar`) en lugar de "Consolidar PROGAL"; **no tiene "Editar"** (editar el destino lo recalcularía como traslado normal; si hay un error se cancela y se recarga). Cancelan `cancelar_ticket` **o** `cancelar_pre_ticket`.
+5. **Vincular:** [`ConsolidarUrgenciaModal`](../../components/modals/ConsolidarUrgenciaModal.tsx) lista los pacientes con cama OCUPADA y código en el mapa, y **sugiere** el ocupante de la cama destino si PROGAL ya lo internó ahí; avisa (sin bloquear) si el elegido está en otra cama. Al confirmar, `handleConsolidate(id, link)` ([useHospitalState.ts:3286](../../hooks/useHospitalState.ts#L3286)) graba `patientName` real, `patientCode` y `eventoInternacion` (`bedEventKey`: `EVE_ORIGEN-EVE_NUMERO`), **no** toca `originBedStatus` (no hay origen) y registra el evento "Paciente vinculado…" en la trayectoria. El nombre tipeado queda en `paciente_declarado`.
+6. **Gate real en el servidor:** `PATCH → Consolidado` de una urgencia sin `codigo_paciente` ⇒ **422** ([api/tickets.ts:329](../../api/tickets.ts#L329)); `urgencia`/`paciente_declarado` no se pueden pisar por PATCH. La UI y el servidor exigen **código de paciente**; el `evento_internacion` se guarda cuando la cama lo trae (no se exige, para no trabar la consolidación si Gamma no lo informa).
+
+**Mapa de camas:** `mergeBeds` en `Por Consolidar` sin cama de origen ([useHospitalState.ts:357](../../hooks/useHospitalState.ts#L357)): la cama destino se ve OCUPADA por el nombre libre **sin código** y sin arrastrar el residual del paciente anterior; apenas PROGAL internó a alguien ahí **manda PROGAL** (nombre y código reales). El flujo normal de `Por Consolidar` no cambia (cubierto por `scripts/check-merge-beds-urgencia.mts`).
+
+**Visibilidad:** quien carga urgencias suele filtrar por pisos (Coordinación), y `Por Consolidar` no se le mostraba → su ticket "se cargaba y desaparecía". `RequestsView` ahora muestra las urgencias a quien tenga `crear_pre_ticket` (`canSeeUrgencias`, [RequestsView.tsx:238](../../views/RequestsView.tsx#L238)). Historial y Auditoría muestran el tag y "declarado vs. vinculado" ([components/AuditModal.tsx](../../components/AuditModal.tsx)).
+
+> **Observación aparte (no se tocó):** la grilla de Operativa oculta los **pre-tickets** (`Presolicitud`) a quien filtra por pisos aunque tenga `crear_pre_ticket` (el rol "Coordinación" del ABM tiene `filter_by_floors=true`), salvo que busque por texto. Es el mismo "se cargó y desapareció" de arriba, pero para pre-tickets; no es parte de este paquete — (verificar con Julieta si es intencional).
+
+### 48.5. "Solicitar limpieza OK": habitaciones compartidas y con requerimientos
+
+**Problema:** una cama en verde (Disponible) en PROGAL no garantiza que la habitación esté armada. En una habitación **compartida con la cama contigua ocupada** la familia usa la cama libre y el hospital la deja a medias (solo el cubrecama) hasta que llega el pedido; con requerimientos especiales (colchón, intento de autólisis) pasa lo mismo. Antes el traslado salía directo a "Habitación Lista" y Coordinación mandaba al paciente a una habitación a medio armar.
+
+**Regla** ([lib/roomCheck.ts](../../lib/roomCheck.ts), pura y testeada): `roomCheckFor(beds, destino, origen, requisitos)` → `required = shared || requisitos reales`.
+- `shared`: hay otra cama **OCUPADA** (`status === OCCUPIED`, no `patientName`: queda residual) en la misma habitación (`roomCode` + `area`), excluyendo la propia cama destino y la **cama de origen** del traslado (un cambio de cama dentro del mismo cuarto no tiene "vecino"). **Sin vecinos en UTI/UCO/ITR/HRA** (`INDIVIDUAL_BOX_AREAS`, §48.3).
+- `requisitos reales`: `requisitos_cama` sin vacíos ni "Sin requerimiento" (`realRequisitos`).
+- `destinationState(rawStatus, check)`: Disponible **y** sin nada que verificar → `IN_TRANSIT` (cama Asignada); En preparación, o Disponible pero `required` → `WAITING_ROOM` (la cama se muestra "En preparación" hasta que la azafata confirme).
+
+**Dónde se aplica** (antes eran 3 copias del ternario `isDestAvailable ? IN_TRANSIT : WAITING_ROOM`): alta (`_createTicket`, [useHospitalState.ts:2925](../../hooks/useHospitalState.ts#L2925)), "Configurar destino" de un pre-ticket (`completePreTicket`, línea 3156) y edición de destino (`handleEditTicket`, línea 3468). El snapshot `habCompartida` (columna `hab_compartida`) se guarda en cada una.
+
+**UI:** Admisión ve un aviso azul ([components/RoomCheckNotice.tsx](../../components/RoomCheckNotice.tsx)) al elegir destino en el alta, "Configurar destino" y edición. La azafata ve, en `Esperando Habitación`, el recuadro "Revisá que esté todo OK antes de marcarla lista" con "Habitación compartida: la otra cama está ocupada" y "Requiere: …" (`renderRoomCheckCallout`, [RequestsView.tsx:179](../../views/RequestsView.tsx#L179)). El push de `NEW_TICKET` suma `· Requiere: … · Hab. compartida: revisar que esté todo OK`.
+
+**Qué NO cambia:** el estado "Esperando Habitación" sigue sin label de push propio (los avisos salen por el `NEW_TICKET` inicial); `handleRoomReady` (la azafata) es el mismo y registra la constancia en el historial de limpiezas. Solo el snapshot al asignar el destino decide: si el vecino se va después, el traslado igual espera la confirmación.
+
+### 48.6. Verificación (scripts offline)
+
+| Script | Qué ejecuta |
+|---|---|
+| `scripts/check-room-sex-conflict.mts` | `roomSexConflict` (incluye UTI/UCO/ITR/HRA sin aviso y piso común que sigue avisando) |
+| `scripts/check-room-check.mts` | `lib/roomCheck` (compartida, requisitos, origen excluido, residual de nombre, boxes) |
+| `scripts/check-ticket-filters.mts` | `lib/ticketFilters` (chips por rol, contadores, filtro, toggle inmutable) |
+| `scripts/check-notify-push.mts` | el **handler real** de `notify-push`, empaquetado con esbuild contra stubs de `web-push` y Supabase: urgencia, aviso de 15 min, no re-aviso, sufijo de requisitos, y regresión de pre-ticket/conversión/recepción |
+| `scripts/check-merge-beds-urgencia.mts` | `mergeBeds` real (bundle con stub del cliente de Supabase): urgencia, residual, PROGAL manda, y regresión del `Por Consolidar` normal |
+
+El SQL de la migración `20261002130000` (trigger + función) se validó en un Postgres local (PGlite) fuera del repo: estampado al entrar, UPDATE neutro, una sola vez, rearme al reingresar, sin aviso a filas previas, permisos. **El `cron.schedule` en sí no se ejecutó** (no existe `pg_cron` fuera de Supabase).

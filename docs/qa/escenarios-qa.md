@@ -108,8 +108,9 @@ cada grupo lleva:
 ### A.9 · Máquina de estados de un traslado (referencia)
 
 ```
-crear ──▶ WAITING_ROOM ('Esperando Habitacion')   [cama destino EN PREPARACIÓN]
-      └▶ IN_TRANSIT   ('Habitacion Lista')         [cama destino DISPONIBLE → salta limpieza]
+crear ──▶ WAITING_ROOM ('Esperando Habitacion')   [cama destino EN PREPARACIÓN, o DISPONIBLE pero con habitación compartida (vecino ocupado) / requisitos reales]
+      └▶ IN_TRANSIT   ('Habitacion Lista')         [cama destino DISPONIBLE sin nada que verificar → salta limpieza]
+urgencia ──▶ WAITING_CONSOLIDATION                 [nace "Por Consolidar" con paciente libre; se consolida VINCULANDO un paciente real]
 
 WAITING_ROOM ──(azafata destino: "Habitación Lista")──▶ IN_TRANSIT
 IN_TRANSIT   ──(azafata origen:  "Iniciar Traslado")──▶ IN_TRANSPORT ('En Traslado')
@@ -128,7 +129,8 @@ pasada manual aparte (no son automatizables por browser/API).
 
 ### Suite P0 — correr primero
 `QA-TRA-01..08`, `QA-TRA-15`, `QA-TRA-19`, `QA-LIM-01`, `QA-LIM-10`, `QA-COM-01`, `QA-COM-09`,
-`QA-ROL-01`, `QA-ROL-10`, `QA-NOT-05`, `QA-NOT-09`, `QA-RT-01`, `QA-INF-01`, `QA-INF-02`.
+`QA-ROL-01`, `QA-ROL-10`, `QA-NOT-05`, `QA-NOT-09`, `QA-RT-01`, `QA-INF-01`, `QA-INF-02`,
+`QA-HAB-01`, `QA-HAB-02`, `QA-URG-01`, `QA-URG-03`, `QA-URG-04`.
 
 ### Cobertura por módulo
 
@@ -144,13 +146,14 @@ pasada manual aparte (no son automatizables por browser/API).
 | Realtime | 8 | `QA-RT-01..05` | FE (🌐 en 05) |
 | Versionado de build | 9 | `QA-VER-01..02` | FE + BE |
 | Infra / RLS / pase | 10 | `QA-INF-01..03` | BE (seguridad, 🧪 en 02) |
+| Paquete de octubre 2026 (limpieza OK, sexos UTI/UCO, botonera, urgencia, aviso 15 min) | 13 | `QA-HAB-01..06`, `QA-SEX-01`, `QA-OPE-01..03`, `QA-URG-01..06`, `QA-NOT-11..13` | FE + BE (422/403/409, 📵🧪 en NOT-11..13) |
 
 ### Casos NO automatizables por browser/API (marcar como manuales)
 
-- 📵 **Push de dispositivo:** `QA-NOT-01..08` (banner nativo) → validar por campanita (`QA-NOT-10`) + DB.
+- 📵 **Push de dispositivo:** `QA-NOT-01..08` y `QA-NOT-11` (banner nativo) → validar por campanita (`QA-NOT-10`) + DB.
 - 🔒 **Geo/ubicación:** `QA-ROL-11` (usar rol con `bypass_location_check` o IP permitida).
 - 🌐 **Dependencia Gamma / stale:** `QA-LIM-12`, `QA-RT-05` (y `QA-COM-07/08` dependen del cross-read a SP).
-- 🧪 **Setup especial:** `QA-NOT-07` (>36h), `QA-NOT-08` (rotar VAPID), `QA-INF-02` (escritura directa a RLS).
+- 🧪 **Setup especial:** `QA-NOT-07` (>36h), `QA-NOT-08` (rotar VAPID), `QA-INF-02` (escritura directa a RLS), `QA-NOT-11..13` (esperar 15 min o retrasar `por_consolidar_at` en la base; requiere la migración del aviso aplicada).
 
 ---
 
@@ -171,7 +174,9 @@ pasada manual aparte (no son automatizables por browser/API).
   - HTTP `POST /api/tickets` → 200/201.
 
 ### QA-TRA-02 · Crear traslado con cama destino DISPONIBLE (salta limpieza → IN_TRANSIT)
-- **Precondición**: Admisión; cama origen Ocupada, cama destino **Disponible**.
+- **Precondición**: Admisión; cama origen Ocupada, cama destino **Disponible** en una habitación **sin
+  otra cama ocupada** y sin requisitos (si es compartida con vecino ocupado o el pedido tiene requisitos
+  reales, el ticket espera la confirmación de la azafata: ver `QA-HAB-01..03`).
 - **Acción**: crear el traslado igual que QA-TRA-01.
 - **Resultado esperado**:
   - El ticket arranca **directo en 'Habitacion Lista'** (IN_TRANSIT): **NO** aparece el botón
@@ -857,6 +862,129 @@ pasada manual aparte (no son automatizables por browser/API).
   eventKey está en `obtenermapacamasocupadas` (QA-LIM-12, mapa).
 - **Comanda de ayer se pisa**: resuelto con columna GENERATED `dia` + reuso/reactivación de pendientes
   (QA-COM-11).
+- **Urgencia "flotando"** (ticket sin identidad real): una urgencia NO se puede consolidar sin paciente
+  vinculado, ni por UI ni por API (QA-URG-03/04).
+- **Cama verde ≠ habitación armada**: en habitación compartida con vecino ocupado o con requisitos, el
+  traslado espera la confirmación de la azafata y no sale directo a "Habitación Lista" (QA-HAB-01/03).
+- **Aviso de 15 min duplicado o a destiempo**: una sola vez por ingreso a "Por Consolidar" y nunca para
+  filas previas a la migración (QA-NOT-11/12).
+
+---
+
+## 13. Paquete de octubre 2026 (limpieza OK, botonera, urgencia, aviso de 15 min)
+
+Diseño en [arquitectura.md §48](../arquitectura/arquitectura.md). **Prerrequisito del aviso de 15 min
+(`QA-NOT-11..13`):** la migración `20261002130000_por_consolidar_aviso.sql` aplicada y el permiso
+`notif_por_consolidar` tildado en el rol de Admisión (ver [troubleshooting](troubleshooting.md)).
+
+### QA-HAB-01 · Habitación compartida con la cama contigua ocupada → "Esperando Habitación" aunque la cama esté verde · P0 · FE+BE
+- **Precondición**: Admisión; habitación de piso con 2 camas (mismo `roomCode`+área): cama A **Ocupada**, cama B **Disponible**; un paciente en otra cama como origen.
+- **Acción**: crear el traslado con destino = cama B.
+- **Resultado esperado**:
+  - Antes de confirmar, el modal muestra el aviso azul "La azafata tiene que confirmar la habitación…" con "Habitación compartida: la cama contigua está ocupada (cama A)".
+  - El ticket arranca en **'Esperando Habitacion'** (NO en 'Habitacion Lista') y la cama B se ve "En preparación" en el mapa. DB: `status='Esperando Habitacion'`, `hab_compartida=true`.
+  - La azafata de destino ve el recuadro "Revisá que esté todo OK antes de marcarla lista — Habitación compartida: la otra cama está ocupada" y el botón "Habitación Lista". Push `NEW_TICKET` con `· Hab. compartida: revisar que esté todo OK` 📵 (verificar por campanita: `public.notificaciones.message`).
+
+### QA-HAB-02 · Habitación individual sin requisitos → sigue saliendo directo a "Habitación Lista" (regresión de QA-TRA-02) · P0 · FE
+- **Precondición**: destino **Disponible**, habitación sin otra cama ocupada (o individual), sin requisitos.
+- **Acción**: crear el traslado.
+- **Resultado esperado**: arranca en **'Habitacion Lista'**, sin recuadro ni aviso azul; `hab_compartida=false`.
+
+### QA-HAB-03 · Pre-ticket con requisito real → "Configurar destino" lo deja esperando la confirmación · P1 · FE+BE
+- **Precondición**: pre-ticket con requisito **"Con colchón"** (o "Intento autólisis"); cama destino **Disponible**.
+- **Acción**: Admisión → "Configurar destino" → elegir esa cama.
+- **Resultado esperado**: aviso azul con "Requiere: Con colchón"; el ticket pasa a **'Esperando Habitacion'**; la azafata ve "Requiere: Con colchón." en el recuadro; el push dice `· Requiere: Con colchón`. Con **"Sin requerimiento"** tildado NO se fuerza la espera (queda 'Habitacion Lista' si no es compartida).
+
+### QA-HAB-04 · La azafata confirma la habitación (WAITING_ROOM → IN_TRANSIT) y el recuadro desaparece · P1 · FE
+- **Precondición**: ticket de QA-HAB-01 o QA-HAB-03.
+- **Acción**: azafata de destino → "Habitación Lista".
+- **Resultado esperado**: pasa a 'Habitacion Lista' (cama "Asignada"), el recuadro desaparece, el evento 'Habitacion Preparada' queda en la trayectoria y se registra la constancia en el historial de limpiezas ("Traslado").
+
+### QA-HAB-05 · Casos que NO cuentan como habitación compartida · P2 · FE
+- **Acción / Resultado esperado**:
+  - Destino en **UTI / UCO / ITR / Sala de Espera** (boxes individuales): nunca aviso ni espera forzada, aunque haya camas ocupadas con el mismo `roomCode`.
+  - **Cambio de cama dentro del mismo cuarto** (origen y destino en la misma habitación): el origen no cuenta como vecino.
+  - Una cama "vecina" con `patientName` residual pero **no Ocupada** no cuenta.
+
+### QA-HAB-06 · Editar el destino recalcula la regla · P2 · FE
+- **Precondición**: ticket sin intervención de azafata con destino individual (Habitación Lista).
+- **Acción**: Admisión edita y elige una cama de habitación compartida con vecino ocupado.
+- **Resultado esperado**: aviso azul en el modal de edición; al guardar el ticket pasa a 'Esperando Habitacion' (`hab_compartida=true`). Volver a una individual lo devuelve a 'Habitacion Lista'.
+
+### QA-SEX-01 · Sin advertencia de sexos en UTI/UCO; los pisos siguen avisando · P1 · FE
+- **Precondición**: paciente masculino como origen; destino en una habitación con un paciente **femenino**.
+- **Acción**: elegir destino en un **piso común**, y luego en **UTI** y en **UCO** (otro par de camas del mismo box).
+- **Resultado esperado**: en el piso aparece el aviso amarillo "Incompatibilidad de sexo… No bloquea"; en UTI/UCO **no aparece** ningún aviso. (El tag de sexo sugerido del mapa tampoco aparece en esas áreas.)
+
+### QA-OPE-01 · Botonera de estados de Operativa (Admisión) · P1 · FE
+- **Precondición**: Admisión con traslados en varios estados (incl. 'Por Consolidar').
+- **Acción**: observar la botonera; clic en "Por Consolidar"; sumar "Esperando Habitación"; clic en "Todos".
+- **Resultado esperado**: chips "Todos N · Presolicitud · Esperando Habitación · Habitación Lista · En Traslado · Por Consolidar" con su contador; con un chip activo la grilla muestra solo esos estados; **multi-selección** suma; "Todos"/"Limpiar" vuelve a ver todo; los contadores de los chips no activos **no cambian** al filtrar. Recargar la página resetea el filtro (no se persiste).
+
+### QA-OPE-02 · La botonera sigue el alcance del rol (azafata / Coordinación) · P1 · FE
+- **Acción**: loguear como **azafata** y como **Coordinación** (filtra por pisos + `crear_pre_ticket`).
+- **Resultado esperado**: la azafata ve solo Esperando Habitación / Habitación Lista / En Traslado / Cancelado (**nunca** Por Consolidar ni Presolicitud); Coordinación suma "Por Consolidar" (solo sus urgencias). Ningún chip ofrece un estado que ese rol no pueda ver.
+
+### QA-OPE-03 · Mobile: la botonera colapsa tras "Filtrar por estado" · P2 · FE
+- **Precondición**: viewport de celular (~390 px).
+- **Acción**: abrir Operativa; tocar "Filtrar por estado"; elegir un estado.
+- **Resultado esperado**: al cargar solo se ve el botón (los chips están colapsados y no tapan la lista); al tocarlo se despliegan; el botón muestra la cantidad de estados activos y aparece "Limpiar".
+
+### QA-URG-01 · Cargar una urgencia (Coordinación) → nace "Por Consolidar" con paciente libre · P0 · FE+BE
+- **Precondición**: usuario con `crear_pre_ticket`; una cama destino Disponible/En preparación.
+- **Acción**: "Pre-ticket" → tildar **"Urgencia / ingreso directo"** → nombre y apellido + destino → "Registrar urgencia".
+- **Resultado esperado**:
+  - El modal oculta Movimiento/Requisitos; el botón se habilita solo con nombre (≥ 3 letras) **y** destino.
+  - Ticket en **'Por Consolidar'** con tag rojo "Urgencia" + "Sin vincular"; origen "Urgencia / Ingreso directo". DB: `urgencia=true`, `codigo_paciente` NULL, `paciente_declarado` = lo tipeado, `workflow='PRE_TICKET'`, `por_consolidar_at` con fecha.
+  - La cama destino se ve **Ocupada** por el nombre tipeado, sin datos clínicos.
+  - **No** hay botón "Editar". Evento 'Ingreso por urgencia' en la trayectoria.
+  - Push/campanita "Ingreso por urgencia" **solo a Admisión** (`notif_pre_ticket`); **ninguna azafata** recibe `NEW_TICKET` 📵.
+  - La Coordinadora **ve su urgencia en la grilla** aunque filtre por pisos.
+
+### QA-URG-02 · Validaciones de la urgencia · P1 · FE+BE
+- **Acción / Resultado esperado**:
+  - Nombre de 1–2 letras → mensaje "Cargá nombre y apellido." y botón deshabilitado.
+  - Sin destino → deshabilitado. El selector **no ofrece** camas Ocupadas, ITR ni Sala de Espera, ni camas ya asignadas a otro traslado activo.
+  - Dos urgencias a **la misma cama destino** → la segunda da **409** ("Cama destino ya asignada…"), con rollback del optimista (sin ticket fantasma).
+  - Dos urgencias a camas distintas **sí** pueden coexistir (el origen sentinela no bloquea).
+  - `POST /api/tickets` con `urgencia:true` sin el permiso `crear_pre_ticket` → **403**; con nombre corto, sin destino o con otro status → **400**.
+
+### QA-URG-03 · Vincular y consolidar: el ticket queda con un paciente real · P0 · FE+BE
+- **Precondición**: urgencia de QA-URG-01; Admisión ya ingresó al paciente en PROGAL (aparece Ocupado, con código, en la cama destino).
+- **Acción**: Admisión → "Vincular y consolidar".
+- **Resultado esperado**:
+  - El modal muestra "Cargado por Coordinación: <nombre tipeado>" y **sugiere** al ocupante de la cama destino; el botón "Vincular y consolidar" está **deshabilitado hasta elegir** paciente. Si el elegido está en otra cama, avisa (sin bloquear).
+  - Al confirmar: 'Consolidado'; DB: `codigo_paciente` y `paciente` = los reales, `evento_internacion` = `EVE_ORIGEN-EVE_NUMERO`, `paciente_declarado` **conservado**.
+  - Trayectoria: 'Paciente vinculado: … (código …, evento …)' + 'Consolidado Progal'. El ticket aparece en la historia del paciente por código.
+  - Historial/Auditoría muestran el tag "Urgencia" y "Declarado por Coordinación … / Vinculado al paciente …".
+
+### QA-URG-04 · El servidor NO deja consolidar una urgencia sin paciente (gate real) · P0 · BE
+- **Acción**: `PATCH /api/tickets` `{ id, status:'Consolidado' }` sobre una urgencia sin `patientCode` (token de Admisión).
+- **Resultado esperado**: **422** ("Una urgencia necesita un paciente vinculado…"); el ticket sigue 'Por Consolidar'. Con `patientCode` en el mismo PATCH → 200. Un PATCH con `urgencia:false` o `pacienteDeclarado` distinto **no** modifica esas columnas.
+
+### QA-URG-05 · Mapa de camas con una urgencia sin vincular · P1 · FE 🌐
+- **Acción**: mirar la cama destino antes y después de que Admisión interne al paciente en PROGAL (poll de camas ≤ 60 s).
+- **Resultado esperado**: antes → Ocupada con el nombre tipeado, **sin código ni residuo** de un paciente anterior; después → manda PROGAL (nombre y datos reales) aunque el ticket siga 'Por Consolidar'. Un traslado normal 'Por Consolidar' no cambia (origen "En preparación", destino con el paciente y su enrich).
+
+### QA-URG-06 · Cancelar una urgencia · P2 · FE
+- **Acción**: con `cancelar_ticket` (Admisión) o solo `cancelar_pre_ticket` (Coordinación) → "Cancelar" con motivo.
+- **Resultado esperado**: pasa a 'Cancelado' liberando la cama; sin el permiso, el botón no aparece.
+
+### QA-NOT-11 · Aviso a los 15 min de "Por Consolidar" (camino feliz) · P1 · BE 📵🧪
+- **Precondición**: migración `20261002130000` aplicada; el rol de Admisión tiene `notif_por_consolidar`; una suscripción fresca del entorno.
+- **Acción**: dejar un traslado en 'Por Consolidar' **15 minutos** sin consolidar (o, en TESTING, retrasar `por_consolidar_at` 16 min en la base).
+- **Resultado esperado**: en el minuto siguiente llega **una** push + una fila de campanita "Pendiente de consolidar — <paciente>: origen → destino · hace N min sin consolidar en PROGAL" a los usuarios con el permiso (no al resto, no a azafatas); DB: `aviso_consolidar_at` con fecha. Pasan más minutos → **no** se repite. Para una urgencia el título es "Urgencia pendiente de consolidar". La campanita lleva ícono de reloj ámbar.
+
+### QA-NOT-12 · El aviso no se manda si el traslado se consolida antes / filas previas / reingreso · P2 · BE 🧪
+- **Acción / Resultado esperado**:
+  - Consolidar a los 10 min → nunca hay aviso (`aviso_consolidar_at` queda NULL).
+  - Un traslado que ya estaba 'Por Consolidar' al aplicar la migración (`por_consolidar_at` NULL) **no** dispara aviso.
+  - Si un traslado sale de 'Por Consolidar' y vuelve, el trigger re-estampa `por_consolidar_at` y rearma el aviso (otro aviso a los 15 min del nuevo ingreso).
+  - Editar observaciones u otros campos de un 'Por Consolidar' **no** mueve `por_consolidar_at`.
+
+### QA-NOT-13 · Sin ningún rol con `notif_por_consolidar` el aviso "se gasta" en silencio · P2 · BE 🧪
+- **Acción**: dejar pasar los 15 min con el permiso sin tildar en todos los roles.
+- **Resultado esperado**: nadie recibe push ni campanita; `aviso_consolidar_at` queda estampado (no se reenvía al tildar el permiso después). Es **esperado**: tildar el permiso antes de probar.
 
 ---
 

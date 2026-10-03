@@ -66,7 +66,34 @@ tildando módulo Operativa + `crear_pre_ticket`.
    transiciona `Presolicitud` → `Habitacion Lista`/`Esperando Habitacion` (según estado de la cama
    destino, misma lógica que un alta normal).
 5. **Se convierte**: al pasar de `Presolicitud` a estado vivo, `notify-push` lo trata como
-   `NEW_TICKET` → notifica a azafatas/limpieza como cualquier traslado nuevo. Sigue el ciclo estándar.
+   `NEW_TICKET` → notifica a azafatas/limpieza como cualquier traslado nuevo. Sigue el ciclo estándar
+   (salvo que tenga requisitos reales o la habitación sea compartida con vecino ocupado: entonces queda en
+   `Esperando Habitación` hasta que la azafata confirme, §48.5).
+
+## Variante: urgencia / ingreso directo (2026-10-02)
+
+El mismo modal tiene un checkbox **"Urgencia / ingreso directo"** para el paciente que va **directo a la
+cama** sin pasar por Admisión y que casi siempre todavía **no está internado en PROGAL** (no hay cama de
+origen que elegir). Diseño y decisiones: [arquitectura.md §48.4](../arquitectura/arquitectura.md) y
+[decisiones.md §29.4](../arquitectura/decisiones.md).
+
+- **Carga (Coordinación, `crear_pre_ticket`):** nombre y apellido (texto libre, ≥ 3 letras) + **destino**
+  (Disponible/En preparación; nunca ITR/Sala de Espera). Sin movimiento ni requisitos.
+- **No pasa por `Presolicitud`:** nace directo en **`Por Consolidar`** con `urgencia=true`,
+  `paciente_declarado`, `cama_origen = 'Urgencia / Ingreso directo'`, `workflow = PRE_TICKET` y sin
+  `codigo_paciente`. No hay circuito de azafata ni "Configurar destino".
+- **Aviso:** `PRE_TICKET` "Ingreso por urgencia" a Admisión (mismo permiso `notif_pre_ticket`); los pisos no
+  reciben `NEW_TICKET`.
+- **Consolidar = vincular:** Admisión usa **"Vincular y consolidar"**, elige al paciente que ya ingresó en
+  PROGAL (se sugiere el ocupante de la cama destino) y el ticket queda con `codigo_paciente` y
+  `evento_internacion` reales; lo tipeado se conserva en `paciente_declarado`. **Sin vínculo no se consolida**
+  (UI + `422` en `api/tickets.ts`).
+- **No se edita** (cancelar y recargar); cancelan `cancelar_ticket` o `cancelar_pre_ticket`.
+- El aviso de 15 min en `Por Consolidar` (§48.1) también le aplica ("Urgencia pendiente de consolidar").
+
+Además, **el pre-ticket con requisitos reales** (colchón, autólisis… no "Sin requerimiento") ya no se
+convierte directo en "Habitación Lista": al "Configurar destino" el traslado queda **`Esperando Habitación`**
+y la azafata lo confirma (§48.5).
 
 ## A verificar / riesgos
 
