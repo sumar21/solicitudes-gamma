@@ -176,21 +176,19 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   // "Solicitar limpieza OK": un traslado "Esperando Habitación" con requisitos de cama o habitación
   // compartida (la otra cama ocupada) NO sale directo: la azafata tiene que revisar que esté todo armado
   // antes de marcarla lista. Este recuadro le dice por qué y qué mirar. Ver lib/roomCheck.ts.
-  const renderRoomCheckCallout = (ticket: Ticket) => {
-    if (ticket.status !== TicketStatus.WAITING_ROOM) return null;
-    const reqs = realRequisitos(ticket.requisitosCama);
-    if (!ticket.habCompartida && reqs.length === 0) return null;
-    return (
-      <div className="flex items-start gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-2 py-1.5 max-w-[270px]">
-        <ClipboardCheck className="w-3 h-3 mt-0.5 shrink-0 text-sky-600" />
-        <div className="text-[10px] leading-tight text-sky-900">
-          <p className="font-black uppercase tracking-tight">Revisá que esté todo OK antes de marcarla lista</p>
-          {ticket.habCompartida && <p className="font-medium text-sky-800 mt-0.5">Habitación compartida: la otra cama está ocupada.</p>}
-          {reqs.length > 0 && <p className="font-medium text-sky-800 mt-0.5">Requiere: {reqs.join(', ')}.</p>}
-        </div>
-      </div>
-    );
-  };
+  // Compacto a propósito: una línea en "Tarea" + la etiqueta "Compartida" bajo la cama destino. Los requisitos
+  // NO se repiten acá: ya están en Observaciones ("Requisitos: …"). Un recuadro en la columna Tarea (angosta)
+  // quedaba altísimo y duplicaba esa info.
+  const needsRoomCheck = (ticket: Ticket) =>
+    ticket.status === TicketStatus.WAITING_ROOM && (!!ticket.habCompartida || realRequisitos(ticket.requisitosCama).length > 0);
+  const renderSharedRoomTag = (ticket: Ticket) => (ticket.status === TicketStatus.WAITING_ROOM && ticket.habCompartida) ? (
+    <span
+      className="inline-flex items-center gap-1 w-fit rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-sky-700"
+      title="La otra cama de la habitación está ocupada: la cama libre puede no estar armada"
+    >
+      <Users className="w-3 h-3" /> Compartida
+    </span>
+  ) : null;
 
   // Urgencia / ingreso directo: tag rojo + aviso mientras el paciente es sólo un nombre libre, sin vincular
   // a un paciente real de PROGAL (se vincula al consolidar). Ver ConsolidarUrgenciaModal.
@@ -481,8 +479,10 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       // Cancelar disponible en cualquier etapa activa (independiente de la intervención).
       const showCancel      = notTerminal && can(currentUser, 'cancelar_ticket') && !!onReject;
       if (!showConsolidate && !showEdit && !showCancel) return null;
+      // Desktop en columna (no fila): Consolidar + Editar + Cancelar en fila medían ~380px y empujaban la columna
+      // de Acciones fuera de pantalla a 1280px.
       return (
-        <div className={cn("flex gap-1.5", isMobile ? "flex-col" : "flex-row")}>
+        <div className={cn("flex flex-col", isMobile ? "gap-1.5" : "gap-1 items-stretch")}>
           {showConsolidate && (
             <Button size={size} className={cn(btnClass, "bg-purple-600 hover:bg-purple-700 text-white")} onClick={() => onConsolidate(ticket.id)}>
               <BedDouble className="w-3.5 h-3.5 mr-2" /> Consolidar PROGAL
@@ -672,7 +672,9 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
               <div className="text-[10px] font-medium text-slate-500 bg-slate-50 px-3 py-2 rounded-lg border border-slate-100 flex items-center gap-2">
                 <Info className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                 <span>
-                  {ticket.status === TicketStatus.WAITING_ROOM && "Esperando que la habitación de destino esté lista."}
+                  {ticket.status === TicketStatus.WAITING_ROOM && (needsRoomCheck(ticket)
+                    ? <span className="font-semibold text-sky-700">Verificar la habitación antes de marcarla lista{ticket.habCompartida ? ' (habitación compartida)' : ''}.</span>
+                    : "Esperando que la habitación de destino esté lista.")}
                   {ticket.status === TicketStatus.IN_TRANSIT && "Habitación lista. Esperando inicio de traslado."}
                   {ticket.status === TicketStatus.IN_TRANSPORT && "Traslado en curso. Esperando confirmación de recepción."}
                   {ticket.status === TicketStatus.WAITING_CONSOLIDATION && (ticket.urgencia
@@ -680,7 +682,6 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                     : "Paciente recibido. Pendiente consolidar en sistema.")}
                 </span>
               </div>
-              {renderRoomCheckCallout(ticket)}
 
               {ticket.rejectionReason && (
                 <div className="p-2.5 bg-red-100/50 border border-red-200 rounded-xl flex items-start gap-2">
@@ -703,12 +704,12 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
             <TableHeader className="bg-slate-50/50 border-b border-slate-200">
               <TableRow>
                 <SortHeader label="Estado" sortKey="status" />
-                <TableHead className="min-w-[170px]">Tarea</TableHead>
+                <TableHead className="min-w-[150px]">Tarea</TableHead>
                 <SortHeader label="Paciente" sortKey="patientName" />
                 <SortHeader label="Origen" sortKey="origin" />
                 <TableHead className="min-w-[110px] whitespace-nowrap">Destino</TableHead>
-                <TableHead className="min-w-[120px] whitespace-nowrap">Estado Destino</TableHead>
-                <TableHead className="min-w-[200px]">Observaciones</TableHead>
+                <TableHead className="whitespace-nowrap">Estado Destino</TableHead>
+                <TableHead className="min-w-[170px]">Observaciones</TableHead>
                 <TableHead className="text-right whitespace-nowrap">Acciones</TableHead>
               </TableRow>
             </TableHeader>
@@ -737,14 +738,15 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                           {WORKFLOW_LABEL_BADGE[ticket.workflow] ?? 'Interno'}
                         </Badge>
                         <div className="text-[10px] text-slate-500 mt-1">
-                          {ticket.status === TicketStatus.WAITING_ROOM && "Esperando habitación lista."}
+                          {ticket.status === TicketStatus.WAITING_ROOM && (needsRoomCheck(ticket)
+                            ? <span className="font-semibold text-sky-700">Verificar la habitación antes de marcarla lista.</span>
+                            : "Esperando habitación lista.")}
                           {ticket.status === TicketStatus.IN_TRANSIT && "Esperando inicio de traslado."}
                           {ticket.status === TicketStatus.IN_TRANSPORT && "Esperando confirmación de recepción."}
                           {ticket.status === TicketStatus.WAITING_CONSOLIDATION && (ticket.urgencia
                             ? "Ingresar al paciente en PROGAL y vincularlo."
                             : "Pendiente consolidar en PROGAL.")}
                         </div>
-                        {renderRoomCheckCallout(ticket)}
                         {ticket.changeReason && (
                           <div className="flex items-center gap-1.5 text-[9px] font-black text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200/50 uppercase mt-1">
                             <Info className="w-3 h-3" /> {ticket.changeReason}
@@ -774,7 +776,10 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                     </TableCell>
                     <TableCell>
                       {ticket.destination ? (
-                        <div className="text-slate-800 text-sm font-black uppercase tracking-tight whitespace-nowrap">{formatBedName(ticket.destination)}</div>
+                        <div className="flex flex-col gap-1">
+                          <div className="text-slate-800 text-sm font-black uppercase tracking-tight whitespace-nowrap">{formatBedName(ticket.destination)}</div>
+                          {renderSharedRoomTag(ticket)}
+                        </div>
                       ) : (
                         <span className="text-xs text-slate-400 italic">-</span>
                       )}
@@ -817,20 +822,11 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                       </div>
                     </TableCell>
                     <TableCell className="text-right pr-6">
-                      {/* Admin/Admisión suman un 3er botón (Observaciones) que ensancha la
-                          columna y achata la grilla → los apilamos en 2 filas. La Azafata
-                          tiene menos botones, así que se queda en una sola fila. */}
-                      {/* Pre-tickets y urgencias llevan 2 acciones anchas + Observaciones: van SIEMPRE en columna
-                          (mismo ancho), cualquiera sea el rol — antes, fuera de Admin/Admisión iban en una fila de
-                          ~470px y la columna de Acciones quedaba fuera de pantalla. */}
-                      <div className={cn(
-                        "flex",
-                        (ticket.status === TicketStatus.PRESOLICITUD || ticket.urgencia)
-                          ? "flex-col items-stretch gap-1 w-max ml-auto"
-                          : (activeRole === Role.ADMIN || activeRole === Role.ADMISSION)
-                            ? "flex-col items-end gap-1.5"
-                            : "justify-end gap-2"
-                      )}>
+                      {/* Acciones SIEMPRE en columna, del ancho del botón más ancho (w-max) y alineadas a la derecha.
+                          En fila (2-3 botones + Observaciones) la columna llegaba a 300-470px y empujaba la tabla
+                          fuera de pantalla a 1280px; estirados al ancho de la celda, en pantallas anchas quedaban
+                          botones de ~360px. */}
+                      <div className="flex flex-col items-stretch gap-1 w-max ml-auto">
                         {renderActionButtons(ticket)}
                         {renderObsButton(ticket)}
                       </div>
