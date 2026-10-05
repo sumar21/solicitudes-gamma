@@ -204,17 +204,17 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
 
           {/* Precarga desde el paciente: obra social + origen (la Coordinadora no los carga). */}
           {selectedBed && (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3">
               <div className="grid gap-1">
                 <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Obra Social</Label>
-                <div className="h-10 px-3 flex items-center rounded-xl bg-slate-50 text-slate-700 text-sm truncate">
-                  {selectedBed.institution || '—'}
+                <div className="h-10 px-3 flex items-center rounded-xl bg-slate-50 text-slate-700 text-sm min-w-0" title={selectedBed.institution || ''}>
+                  <span className="truncate">{selectedBed.institution || '—'}</span>
                 </div>
               </div>
               <div className="grid gap-1">
                 <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Origen</Label>
-                <div className="h-10 px-3 flex items-center rounded-xl bg-slate-50 text-slate-700 text-sm truncate">
-                  {formatBedName(selectedBed.label)}
+                <div className="h-10 px-3 flex items-center rounded-xl bg-slate-50 text-slate-700 text-sm min-w-0" title={formatBedName(selectedBed.label)}>
+                  <span className="truncate">{formatBedName(selectedBed.label)}</span>
                 </div>
               </div>
             </div>

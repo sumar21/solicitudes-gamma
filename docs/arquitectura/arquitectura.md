@@ -1645,3 +1645,11 @@ La solapa **Comandas → Cambios de dieta** ahora también lista los **"Iniciar 
 - La **urgencia conserva los requisitos de cama** (colchón, autólisis…): se guardan en `requisitos_cama` y en la observación, como en un pre-ticket.
 - Acciones de **pre-tickets y urgencias apiladas en columna** en la grilla de Operativa para cualquier rol (antes, fuera de Admin/Admisión iban en fila y se salían de pantalla).
 - Encabezado del sidebar con alto flexible: la sede sale de `Sede_U` de SharePoint y puede ser larga ("IG - Instituto Gamma S.A."); con alto fijo desbordaba y cortaba el logo.
+
+### 48.9. Hallazgos de QA en localhost (2026-10-05)
+
+- **La grilla de Operativa entra a 1280px con el sidebar abierto** (~1020px útiles): celdas a 12px por lado (`[&_th]:px-3 [&_td]:px-3` en la `<Table>` de `views/RequestsView.tsx`), Destino y "Estado Destino" pueden partirse en líneas (antes un destino de UTI con `nowrap` estiraba la columna a ~340px) y mínimos más chicos en Tarea/Observaciones. Si aun así hace falta scroll (pantallas más angostas), la columna **Acciones queda fija a la derecha** (`sticky right-0`). Medido en la app real: 1022/1022 a 1280, sin desborde a 1440 y 2000.
+- **Búsqueda por ID** ("TSL-…"): el filtro del hook (`filteredTickets`) no miraba el `id` y corre antes que el de la vista, así que buscar por ID nunca encontraba nada. Con búsqueda sin resultados se muestra "Sin resultados" (antes "Cargando...").
+- **Pestaña por defecto**: si el rol guardado en sesión no es una pestaña visible (roles custom que `mapRole` tipa como `READ_ONLY`), la vista elige la primera (Admin si tiene `abm_usuarios`, si no Admisión); antes no había ninguna marcada y faltaban las acciones de Admisión.
+- **Mobile**: los botones "Pre-ticket"/"Solicitud" muestran el texto; la ayuda de estado de cada tarjeta tiene texto para Presolicitud y no se dibuja vacía.
+- **Comandas → Cambios de dieta**: la píldora "Iniciar dieta" no se parte y la Ubicación puede ir en dos líneas. En el pre-ticket, Obra Social/Origen largos se cortan con "…" (con `title` completo).

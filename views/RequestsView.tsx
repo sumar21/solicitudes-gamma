@@ -107,6 +107,15 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   const openObs  = (ticket: Ticket) => { setObsTicket(ticket); setObsText(''); setObsError(''); };
   const closeObs = () => { if (!obsSaving) { setObsTicket(null); setObsList([]); setObsText(''); setObsError(''); } };
 
+  // Pestaña por defecto: activeRole arranca del rol guardado en la sesión, que para roles custom
+  // (p. ej. "sumar.ai" → READ_ONLY) no es ninguna pestaña → no se veía ninguna marcada y tampoco
+  // las acciones de Admisión/Admin. Si el rol actual no es una pestaña visible, elegimos la primera.
+  useEffect(() => {
+    if (!can(currentUser, 'crear_ticket')) return;
+    const tabs = can(currentUser, 'abm_usuarios') ? [Role.ADMIN, Role.ADMISSION, Role.HOSTESS] : [Role.ADMISSION, Role.HOSTESS];
+    if (!tabs.includes(activeRole)) setActiveRole(tabs[0]);
+  }, [currentUser, activeRole, setActiveRole]);
+
   // Trae el hilo al abrir el modal.
   useEffect(() => {
     if (!obsTicket) { setObsList([]); return; }
@@ -566,15 +575,15 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
             {searchTerm && <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="w-3.5 h-3.5" /></button>}
           </div>
           {can(currentUser, 'crear_pre_ticket') && onNewPreTicket && (
-            <Button onClick={onNewPreTicket} variant="outline" className="h-10 border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-xl px-4 flex items-center gap-2 shrink-0">
+            <Button onClick={onNewPreTicket} variant="outline" className="h-10 border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-xl px-3 sm:px-4 flex items-center gap-1.5 sm:gap-2 shrink-0">
               <Plus className="w-4 h-4" />
-              <span className="hidden sm:inline text-xs font-bold">Pre-ticket</span>
+              <span className="text-xs font-bold">Pre-ticket</span>
             </Button>
           )}
           {can(currentUser, 'crear_ticket') && (
-            <Button onClick={onNewRequest} className="h-10 bg-emerald-950 hover:bg-emerald-900 rounded-xl shadow-lg px-4 flex items-center gap-2 shrink-0">
+            <Button onClick={onNewRequest} className="h-10 bg-emerald-950 hover:bg-emerald-900 rounded-xl shadow-lg px-3 sm:px-4 flex items-center gap-1.5 sm:gap-2 shrink-0">
               <Plus className="w-4 h-4 text-white" />
-              <span className="hidden sm:inline text-xs font-bold">Solicitud</span>
+              <span className="text-xs font-bold">Solicitud</span>
             </Button>
           )}
         </div>
@@ -668,10 +677,12 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                 </div>
               )}
 
-              {/* Status Context Helper */}
+              {/* Status Context Helper — solo si el estado tiene algo que decir (antes quedaba un recuadro vacío, p.ej. en Presolicitud) */}
+              {ticket.status !== TicketStatus.COMPLETED && ticket.status !== TicketStatus.REJECTED && (
               <div className="text-[10px] font-medium text-slate-500 bg-slate-50 px-3 py-2 rounded-lg border border-slate-100 flex items-center gap-2">
                 <Info className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                 <span>
+                  {ticket.status === TicketStatus.PRESOLICITUD && "Pre-ticket: falta que Admisión configure el destino."}
                   {ticket.status === TicketStatus.WAITING_ROOM && (needsRoomCheck(ticket)
                     ? <span className="font-semibold text-sky-700">Verificar la habitación antes de marcarla lista{ticket.habCompartida ? ' (habitación compartida)' : ''}.</span>
                     : "Esperando que la habitación de destino esté lista.")}
@@ -682,6 +693,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                     : "Paciente recibido. Pendiente consolidar en sistema.")}
                 </span>
               </div>
+              )}
 
               {ticket.rejectionReason && (
                 <div className="p-2.5 bg-red-100/50 border border-red-200 rounded-xl flex items-start gap-2">
@@ -700,17 +712,18 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       {/* Vista Desktop (Table) */}
       <Card className="hidden md:block shadow-sm border-slate-200 overflow-hidden bg-white rounded-2xl">
         <div className="overflow-x-auto">
-          <Table>
-            <TableHeader className="bg-slate-50/50 border-b border-slate-200">
+          {/* Celdas con 12px por lado (no 16): a 1280 con el sidebar abierto quedan ~1020px y la grilla tiene que entrar entera. */}
+          <Table className="[&_th]:px-3 [&_td]:px-3">
+            <TableHeader className="bg-slate-50 border-b border-slate-200">
               <TableRow>
                 <SortHeader label="Estado" sortKey="status" />
-                <TableHead className="min-w-[150px]">Tarea</TableHead>
+                <TableHead className="min-w-[120px]">Tarea</TableHead>
                 <SortHeader label="Paciente" sortKey="patientName" />
                 <SortHeader label="Origen" sortKey="origin" />
-                <TableHead className="min-w-[110px] whitespace-nowrap">Destino</TableHead>
-                <TableHead className="whitespace-nowrap">Estado Destino</TableHead>
-                <TableHead className="min-w-[170px]">Observaciones</TableHead>
-                <TableHead className="text-right whitespace-nowrap">Acciones</TableHead>
+                <TableHead className="min-w-[90px] whitespace-nowrap">Destino</TableHead>
+                <TableHead className="min-w-[80px] leading-tight">Estado Destino</TableHead>
+                <TableHead className="min-w-[130px]">Observaciones</TableHead>
+                <TableHead className="text-right whitespace-nowrap sticky right-0 z-10 bg-slate-50">Acciones</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -719,7 +732,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                   <TableCell colSpan={8} className="h-48 text-center text-slate-500 bg-white">
                     <div className="flex flex-col items-center justify-center gap-3 opacity-20">
                       <Search className={cn("w-10 h-10", tickets.length === 0 && "animate-pulse")} />
-                      <p className="text-sm font-black uppercase tracking-widest">{tickets.length === 0 ? 'Cargando...' : 'Sin resultados'}</p>
+                      <p className="text-sm font-black uppercase tracking-widest">{tickets.length === 0 && !searchTerm ? 'Cargando...' : 'Sin resultados'}</p>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -777,7 +790,8 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                     <TableCell>
                       {ticket.destination ? (
                         <div className="flex flex-col gap-1">
-                          <div className="text-slate-800 text-sm font-black uppercase tracking-tight whitespace-nowrap">{formatBedName(ticket.destination)}</div>
+                          {/* Sin nowrap: destinos largos ("UNIDAD TERAPIA INTENSIVA HPR - CAMA 02") estiraban la columna a ~340px. */}
+                          <div className="text-slate-800 text-sm font-black uppercase tracking-tight break-words max-w-[150px]">{formatBedName(ticket.destination)}</div>
                           {renderSharedRoomTag(ticket)}
                         </div>
                       ) : (
@@ -787,7 +801,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                     <TableCell>
                       <div className="flex flex-col gap-1">
                         {ticket.targetBedOriginalStatus ? (
-                          <span className="text-[10px] font-bold text-slate-500 uppercase whitespace-nowrap">
+                          <span className="text-[10px] font-bold text-slate-500 uppercase leading-tight">
                             {ticket.targetBedOriginalStatus}
                           </span>
                         ) : (
@@ -821,7 +835,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                         )}
                       </div>
                     </TableCell>
-                    <TableCell className="text-right pr-6">
+                    <TableCell className="text-right pr-4 sticky right-0 z-10 bg-white shadow-[-8px_0_8px_-8px_rgba(15,23,42,0.18)]">
                       {/* Acciones SIEMPRE en columna, del ancho del botón más ancho (w-max) y alineadas a la derecha.
                           En fila (2-3 botones + Observaciones) la columna llegaba a 300-470px y empujaba la tabla
                           fuera de pantalla a 1280px; estirados al ancho de la celda, en pantallas anchas quedaban

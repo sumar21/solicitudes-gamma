@@ -2843,7 +2843,10 @@ export const useHospitalState = () => {
 
     if (requestsSearchTerm) {
       const term = requestsSearchTerm.toLowerCase();
+      // También por ID ("TSL-…"): el buscador de Operativa dice "Paciente o ID" y el filtro de RequestsView
+      // (que sí mira el id) corre DESPUÉS de este, así que sin esto la búsqueda por ID nunca encontraba nada.
       result = result.filter(t =>
+        t.id.toLowerCase().includes(term) ||
         t.patientName.toLowerCase().includes(term) ||
         t.origin.toLowerCase().includes(term) ||
         t.destination?.toLowerCase().includes(term),

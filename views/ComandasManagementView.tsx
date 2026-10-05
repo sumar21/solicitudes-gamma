@@ -418,7 +418,7 @@ const CambiosDietaPanel: React.FC = () => {
                   <th className="px-4 py-3 text-left font-bold">Fecha y hora</th>
                   <th className="px-4 py-3 text-left font-bold">Paciente</th>
                   <th className="px-4 py-3 text-left font-bold">Ubicación</th>
-                  <th className="px-4 py-3 text-left font-bold">Cambio de dieta / evento</th>
+                  <th className="px-4 py-3 text-left font-bold min-w-[260px]">Cambio de dieta / evento</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
@@ -426,11 +426,11 @@ const CambiosDietaPanel: React.FC = () => {
                   <tr key={c.spItemId} className="hover:bg-slate-50/50">
                     <td className="px-4 py-3 text-slate-600 whitespace-nowrap"><span className="flex items-center gap-1"><Clock className="w-3 h-3 text-slate-400" />{fmtWhen(c.changedAt)}</span></td>
                     <td className="px-4 py-3 font-semibold text-slate-800">{c.patientName || '—'}</td>
-                    <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{[c.area, c.roomCode && formatBedName(c.roomCode)].filter(Boolean).join(' · ') || '—'}</td>
+                    <td className="px-4 py-3 text-slate-500 min-w-[160px]">{[c.area, c.roomCode && formatBedName(c.roomCode)].filter(Boolean).join(' · ') || '—'}</td>
                     <td className="px-4 py-3">
                       {kindOf(c) === 'INICIO_DIETA' ? (
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wide border bg-green-100 text-green-800 border-green-300">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wide whitespace-nowrap border bg-green-100 text-green-800 border-green-300">
                             <Utensils className="w-3 h-3" /> Iniciar dieta
                           </span>
                           <span className="text-[11px] text-slate-500">post cirugía — ya puede comer{c.by ? ` · ${c.by}` : ''}</span>
