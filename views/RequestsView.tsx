@@ -334,8 +334,11 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       const canConfig = can(currentUser, 'completar_pre_ticket') && !!onConfigureDestino;
       const canCancelPre = can(currentUser, 'cancelar_pre_ticket') && !!onReject;
       if (!canConfig && !canCancelPre) return null;
+      // Columna (no fila): "Configurar destino" + "Cancelar" + "Observaciones" en una sola fila medían ~470px y
+      // sacaban la columna de Acciones de la pantalla. Apilados, con el mismo ancho, la columna queda en ~200px.
+      // En mobile se conserva el espaciado de siempre (cada botón es un bloque de la card).
       return (
-        <>
+        <div className={cn("flex flex-col", isMobile ? "gap-4" : "gap-1.5 items-stretch")}>
           {canConfig && (
             <Button size={size} onClick={() => onConfigureDestino!(ticket.id)}
               className={cn(btnClass, "bg-emerald-950 hover:bg-emerald-900 text-white rounded-xl px-4")}>
@@ -348,7 +351,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
               <XCircle className="w-3.5 h-3.5 mr-2" /> Cancelar
             </Button>
           )}
-        </>
+        </div>
       );
     }
 
@@ -362,7 +365,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       const canCancelUrg = (can(currentUser, 'cancelar_ticket') || can(currentUser, 'cancelar_pre_ticket')) && !!onReject;
       if (!canLink && !canCancelUrg) return null;
       return (
-        <div className={cn("flex gap-1.5", isMobile ? "flex-col" : "flex-row")}>
+        <div className={cn("flex flex-col gap-1.5", !isMobile && "items-stretch")}>
           {canLink && (
             <Button size={size} className={cn(btnClass, "bg-purple-600 hover:bg-purple-700 text-white")} onClick={() => onConsolidateUrgencia!(ticket.id)}>
               <UserCheck className="w-3.5 h-3.5 mr-2" /> Vincular y consolidar
@@ -808,11 +811,16 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                       {/* Admin/Admisión suman un 3er botón (Observaciones) que ensancha la
                           columna y achata la grilla → los apilamos en 2 filas. La Azafata
                           tiene menos botones, así que se queda en una sola fila. */}
+                      {/* Pre-tickets y urgencias llevan 2 acciones anchas + Observaciones: van SIEMPRE en columna
+                          (mismo ancho), cualquiera sea el rol — antes, fuera de Admin/Admisión iban en una fila de
+                          ~470px y la columna de Acciones quedaba fuera de pantalla. */}
                       <div className={cn(
                         "flex",
-                        (activeRole === Role.ADMIN || activeRole === Role.ADMISSION)
-                          ? "flex-col items-end gap-1.5"
-                          : "justify-end gap-2"
+                        (ticket.status === TicketStatus.PRESOLICITUD || ticket.urgencia)
+                          ? "flex-col items-stretch gap-1.5"
+                          : (activeRole === Role.ADMIN || activeRole === Role.ADMISSION)
+                            ? "flex-col items-end gap-1.5"
+                            : "justify-end gap-2"
                       )}>
                         {renderActionButtons(ticket)}
                         {renderObsButton(ticket)}
