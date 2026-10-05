@@ -115,7 +115,7 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
     if (!canSubmit) return;
     if (urgencia) {
       onCreate({
-        originBedLabel: '', movimiento: '', requisitos: [],
+        originBedLabel: '', movimiento: '', requisitos,
         observations: observations.trim() !== '' ? observations : undefined,
         urgencia: true,
         pacienteNombre: pacienteNombre.trim().replace(/\s+/g, ' '),
@@ -231,6 +231,10 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
             />
           </div>
 
+          </>
+          )}
+
+          {/* Requisitos: también en una urgencia (el paciente puede necesitar colchón, autólisis…). */}
           <div className="grid gap-2">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Requisitos de la nueva cama</Label>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -260,9 +264,6 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
               })}
             </div>
           </div>
-
-          </>
-          )}
 
           <div className="grid gap-2">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Observación (Opcional)</Label>

@@ -3015,7 +3015,7 @@ export const useHospitalState = () => {
   // Consolidar" (Admisión tiene que ingresarlo en PROGAL) con el flag `urgencia`, SIN código de paciente.
   // Para consolidar, Admisión lo VINCULA a un paciente real (handleConsolidate + gate del servidor): sino la
   // trayectoria quedaría flotando, asociada a un nombre libre.
-  const createUrgenciaTicket = async (data: { pacienteNombre?: string; destinoBedLabel?: string; observations?: string }) => {
+  const createUrgenciaTicket = async (data: { pacienteNombre?: string; destinoBedLabel?: string; observations?: string; requisitos?: string[] }) => {
     const nombre = (data.pacienteNombre ?? '').trim().replace(/\s+/g, ' ');
     if (nombre.length < 3) { alert('Cargá nombre y apellido del paciente.'); return; }
     const targetBed = beds.find(b => b.label === data.destinoBedLabel);
@@ -3053,7 +3053,9 @@ export const useHospitalState = () => {
       createdBy:               currentUser?.name,
       createdById:             currentUser?.id,
       changeReason:            MOVIMIENTO_URGENCIA,
-      observations:            data.observations?.trim() || undefined,
+      // Los requisitos se guardan igual que en un pre-ticket (texto para Admisión + snapshot estructurado).
+      observations:            composeRequisitosObs(data.requisitos ?? [], data.observations) || undefined,
+      requisitosCama:          (data.requisitos ?? []).filter(Boolean),
       urgencia:                true,
       pacienteDeclarado:       nombre,
       intervenedByHostess:     'NO',
