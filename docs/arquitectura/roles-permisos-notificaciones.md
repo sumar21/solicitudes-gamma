@@ -92,7 +92,7 @@ una notificación. Agrupados como en el ABM (`RoleManagementView.tsx:47-106`).
 
 | Permiso | Qué habilita | Dónde se gatea |
 |---------|--------------|----------------|
-| `crear_pre_ticket` | Botón "Pre-ticket" → crear un pre-ticket **o una urgencia / ingreso directo** (checkbox del modal). Quien lo tiene **ve las urgencias en su grilla aunque filtre por pisos** | UI + server (`authzPreTicket` en `POST /api/tickets` de un pre-ticket **y de una urgencia**) |
+| `crear_pre_ticket` | Botón "Pre-ticket" → crear un pre-ticket **o una urgencia / ingreso directo** (checkbox del modal). Quien lo tiene **no se recorta por estado aunque filtre por pisos** y **ve siempre lo que creó** (incluidas sus urgencias) | UI + server (`authzPreTicket` en `POST /api/tickets` de un pre-ticket **y de una urgencia**) |
 | `completar_pre_ticket` | "Configurar destino" de un pre-ticket (Admisión) | UI + server (`PATCH` que convierte una `Presolicitud`) |
 | `cancelar_pre_ticket` | Cancelar un pre-ticket en `Presolicitud` **y una urgencia** | UI (+ server para `Presolicitud`) |
 
@@ -316,7 +316,7 @@ Vista `views/RoleManagementView.tsx`. Requiere módulo `Configuracion` + permiso
 | VAPID rotado / mismatch | Sub vieja da 403 (no se borra); self-heal re-suscribe en la próxima apertura. Si las 3 puntas de VAPID no coinciden → nadie recibe push (403 silencioso) | Rotar VAPID |
 | Entorno cruzado | Solo se disparan subs del `ENTORNO` actual (default `TESTING`) → TESTING↔PRODUCTIVO no se cruzan | Suscribir en PRODUCTIVO, evento TESTING no llega |
 | Recordatorio de 15 min sin ningún rol con `notif_por_consolidar` | El `pg_cron` igual estampa `aviso_consolidar_at` (queda "gastado" para ese traslado) pero nadie recibe push ni campanita: **tildar el permiso ANTES** de esperar el aviso; no se re-envía retroactivamente | Tildar `notif_por_consolidar` en Admisión y dejar un traslado 15 min en Por Consolidar |
-| Urgencia con rol que filtra por pisos (Coordinación) | La ve en su grilla (`canSeeUrgencias`) aunque `Por Consolidar` no sea un estado de azafata; **no** recibe `NEW_TICKET` (la azafata de piso tampoco: el aviso va a Admisión por `notif_pre_ticket`) | Cargar una urgencia como Coordinación y como Azafata |
+| Urgencia con rol que filtra por pisos (Coordinación) | La ve en su grilla (quien crea tickets no se recorta por estado y ve siempre lo que creó) aunque `Por Consolidar` no sea un estado de azafata; **no** recibe `NEW_TICKET` (la azafata de piso tampoco: el aviso va a Admisión por `notif_pre_ticket`) | Cargar una urgencia como Coordinación y como Azafata |
 | Consolidar una urgencia sin vincular paciente | UI: botón deshabilitado hasta elegir paciente. Servidor: `PATCH` → **422** aunque se saltee la UI | `PATCH /api/tickets` con `status:'Consolidado'` sobre una urgencia sin `patientCode` |
 | Permiso de comandas granular | `cargar_comanda_almuerzo` NO habilita cargar cena; la UI esconde los turnos no permitidos y el server bloquea con 403. Se resuelve por user-id del JWT (token viejo con permisos de más no sirve) | Dar solo un turno |
 

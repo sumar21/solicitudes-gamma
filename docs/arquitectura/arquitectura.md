@@ -472,7 +472,7 @@ Catálogo **cerrado** (`as const`). `can(user, perm)` gatea botones/mutaciones (
 | Grupo | Permisos |
 |---|---|
 | Traslados | `crear_ticket`, `editar_ticket`, `cancelar_ticket`, `asignar_cama` (**legacy**, no-op), `confirmar_limpieza`, `iniciar_traslado`, `confirmar_recepcion`, `consolidar` |
-| Pre-ticket / urgencia | `crear_pre_ticket` (crea pre-ticket **y urgencias**; ve las urgencias aunque filtre por pisos), `completar_pre_ticket`, `cancelar_pre_ticket` (también cancela una urgencia) |
+| Pre-ticket / urgencia | `crear_pre_ticket` (crea pre-ticket **y urgencias**; quien crea tickets no se recorta por estado aunque filtre por pisos y ve siempre lo que creó), `completar_pre_ticket`, `cancelar_pre_ticket` (también cancela una urgencia) |
 | Cirugía | `cirugia_listo`, `cirugia_buscar`, `cirugia_entregar`, `cirugia_operar`, `cirugia_devolver`, `cirugia_tolerancia`, `cirugia_cancelar`, `cirugia_marcar` |
 | Limpiezas | `consolidar_limpieza`, `limpieza_rutina` |
 | Comandas | `cargar_dieta` (todos los turnos), `cargar_comanda_{desayuno,almuerzo,merienda,cena}` (granular, derivados de `MEAL_SLOTS`), `ver_dieta`, `ver_planificacion`, `abm_planificacion` |
@@ -1574,7 +1574,7 @@ Un chip por estado (con contador) sobre la grilla de traslados; **multi-selecci�
 |---|---|
 | Admisión / Admin | Presolicitud (si ve pre-tickets), Esperando Habitación, Habitación Lista, En Traslado, Por Consolidar |
 | Azafata / quien filtra por pisos | Esperando Habitación, Habitación Lista, En Traslado, Cancelado (recientes < 1 h) — **nunca** Por Consolidar ni Presolicitud |
-| Coordinación (filtra por pisos + `crear_pre_ticket`) | los de la azafata **+ Por Consolidar** (sólo contiene sus urgencias, §48.4) |
+| Coordinación (filtra por pisos **pero crea tickets**: `crear_pre_ticket`/`crear_ticket`) | el ciclo completo de sus sectores: Presolicitud (si ve pre-tickets), Esperando Habitación, Habitación Lista, En Traslado, **Por Consolidar** y Cancelado (§48.4) — no se recorta por estado |
 
 - Los **contadores salen del alcance del rol, antes del filtro de estado**, así que siguen siendo verdad con otro estado filtrado; si hay búsqueda, reflejan los resultados de la búsqueda.
 - **Mobile:** los chips colapsan detrás de un botón "Filtrar por estado" (con la cantidad de estados activos y "Limpiar") para no tapar la lista. Desktop: siempre visibles.
@@ -1600,11 +1600,11 @@ Un chip por estado (con contador) sobre la grilla de traslados; **multi-selecci�
 
 **Mapa de camas:** `mergeBeds` en `Por Consolidar` sin cama de origen ([useHospitalState.ts:357](../../hooks/useHospitalState.ts#L357)): la cama destino se ve OCUPADA por el nombre libre **sin código** y sin arrastrar el residual del paciente anterior; apenas PROGAL internó a alguien ahí **manda PROGAL** (nombre y código reales). El flujo normal de `Por Consolidar` no cambia (cubierto por `scripts/check-merge-beds-urgencia.mts`).
 
-**Visibilidad:** quien carga urgencias suele filtrar por pisos (Coordinación), y `Por Consolidar` no se le mostraba → su ticket "se cargaba y desaparecía". Hay **dos filtros** y ambos tienen la excepción para quien tenga `crear_pre_ticket`: el de estados de `RequestsView` (`canSeeUrgencias`, [RequestsView.tsx:238](../../views/RequestsView.tsx#L238)) y el recorte por **sectores asignados** de `scopeTickets` en el hook (una urgencia no tiene origen, decide solo el destino, y Coordinación pide camas de cualquier sector). Historial y Auditoría muestran el tag y "declarado vs. vinculado" ([components/AuditModal.tsx](../../components/AuditModal.tsx)).
+**Visibilidad:** quien carga urgencias suele filtrar por pisos (Coordinación), y `Por Consolidar` no se le mostraba → su ticket "se cargaba y desaparecía". Lo resuelven dos reglas que ya traía `develop` (commits `ba2f6ae` y `da18162`, build `v20260916_1.9.2`) y que las urgencias aprovechan sin excepción propia: (a) en `RequestsView`, **quien puede crear tickets** (`crear_pre_ticket` o `crear_ticket`; `canCreateTickets`) **no se recorta por estado** aunque filtre por pisos, así que ve también `Presolicitud` y `Por Consolidar` de sus sectores; (b) en `scopeTickets` (hook) **"lo que el usuario creó no lo pierde nunca"** (`createdById` = usuario), caiga el destino donde caiga: una urgencia no tiene origen —decide solo el destino— y Coordinación puede pedir camas de cualquier sector, así que **quien la cargó la ve siempre**. Otra persona de Coordinación con sectores distintos no la ve si el destino cae fuera de los suyos (igual que un pre-ticket). Historial y Auditoría muestran el tag y "declarado vs. vinculado" ([components/AuditModal.tsx](../../components/AuditModal.tsx)). *(Antes del merge con `origin/develop` el 2026-10-05 este paquete tenía una excepción propia, `canSeeUrgencias`; se retiró por redundante.)*
 
 **Avisos y métricas:** las urgencias no pasan por el circuito de azafata, así que (a) sus cambios de estado (`Consolidado`/`Cancelado`) **no** llegan a los roles que filtran por pisos (la Edge Function no pasa áreas para esos `STATUS_UPDATE`, y la detección local de toasts las saltea para esos usuarios); el aviso inicial a Admisión no cambia; (b) quedan **fuera de los KPI de espera** (`App.avgWaitTime`, `DashboardView.computeStats`): su "ciclo" es hasta que Admisión las vincula, no un traslado.
 
-> **Observación aparte (no se tocó):** la grilla de Operativa oculta los **pre-tickets** (`Presolicitud`) a quien filtra por pisos aunque tenga `crear_pre_ticket` (el rol "Coordinación" del ABM tiene `filter_by_floors=true`), salvo que busque por texto. Es el mismo "se cargó y desapareció" de arriba, pero para pre-tickets; no es parte de este paquete — (verificar con Julieta si es intencional).
+> **Nota:** la observación que se había levantado durante el desarrollo (los pre-tickets comunes quedaban ocultos para quien filtra por pisos) ya estaba resuelta en `origin/develop` (regla (a)/(b) de arriba); el merge del 2026-10-05 la incorporó.
 
 ### 48.5. "Solicitar limpieza OK": habitaciones compartidas y con requerimientos
 

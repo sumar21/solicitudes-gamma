@@ -923,7 +923,7 @@ Diseño en [arquitectura.md §48](../arquitectura/arquitectura.md). **Prerrequis
 
 ### QA-OPE-02 · La botonera sigue el alcance del rol (azafata / Coordinación) · P1 · FE
 - **Acción**: loguear como **azafata** y como **Coordinación** (filtra por pisos + `crear_pre_ticket`).
-- **Resultado esperado**: la azafata ve solo Esperando Habitación / Habitación Lista / En Traslado / Cancelado (**nunca** Por Consolidar ni Presolicitud); Coordinación suma "Por Consolidar" (solo sus urgencias). Ningún chip ofrece un estado que ese rol no pueda ver.
+- **Resultado esperado**: la azafata ve solo Esperando Habitación / Habitación Lista / En Traslado / Cancelado (**nunca** Por Consolidar ni Presolicitud); Coordinación (que crea tickets) ve el ciclo completo de sus sectores: suma "Presolicitud" y "Por Consolidar". Ningún chip ofrece un estado que ese rol no pueda ver.
 
 ### QA-OPE-03 · Mobile: la botonera colapsa tras "Filtrar por estado" · P2 · FE
 - **Precondición**: viewport de celular (~390 px).
@@ -939,7 +939,7 @@ Diseño en [arquitectura.md §48](../arquitectura/arquitectura.md). **Prerrequis
   - La cama destino se ve **Ocupada** por el nombre tipeado, sin datos clínicos.
   - **No** hay botón "Editar". Evento 'Ingreso por urgencia' en la trayectoria.
   - Push/campanita "Ingreso por urgencia" **solo a Admisión** (`notif_pre_ticket`); **ninguna azafata** recibe `NEW_TICKET` 📵.
-  - La Coordinadora **ve su urgencia en la grilla** aunque filtre por pisos **y aunque la cama destino esté en un sector que no tiene asignado**.
+  - La Coordinadora **ve su urgencia en la grilla** aunque filtre por pisos **y aunque la cama destino esté en un sector que no tiene asignado** (lo que uno creó no se pierde). Otra persona de Coordinación con sectores distintos NO la ve si el destino cae fuera de los suyos.
 
 ### QA-URG-02 · Validaciones de la urgencia · P1 · FE+BE
 - **Acción / Resultado esperado**:

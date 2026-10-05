@@ -1558,7 +1558,7 @@ Diseño y archivos en [arquitectura.md §48](arquitectura.md). Acá, el *por qu�
 
 **Por qué el aviso reusa `PRE_TICKET` / `notif_pre_ticket`:** el público es el mismo (Admisión, quien arma los pedidos de cama) y evita obligar a re-configurar un permiso nuevo en el ABM para algo que se pide hoy. **Alternativa descartada:** tipo y permiso propios (`URGENCIA`/`notif_urgencia`) — más fino pero exige configuración previa en producción para no perder el aviso.
 
-**Pendiente conocido (no se tocó):** la grilla oculta los pre-tickets comunes a quien filtra por pisos aunque tenga `crear_pre_ticket`; para las urgencias se abrió una excepción (`canSeeUrgencias`), no para los pre-tickets.
+**Visibilidad:** las urgencias no necesitan una excepción propia: las reglas que ya tiene `develop` ("lo que el usuario creó no se pierde" en `scopeTickets`, y "quien puede crear tickets no se recorta por estado" en `RequestsView`) las cubren. En el desarrollo había una excepción propia (`canSeeUrgencias`); se retiró al integrar `origin/develop` (2026-10-05) para no tener dos reglas de visibilidad que diverjan.
 
 ### 29.5. La botonera de estados no persiste y se deriva del alcance del rol
 

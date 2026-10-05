@@ -2803,7 +2803,7 @@ Cuando una columna es una regla de integridad (`urgencia`, `paciente_declarado`)
 
 ### Permisos de visibilidad que cuelgan de otro permiso
 
-La visibilidad de las urgencias en la grilla no es un permiso nuevo: se deriva de `crear_pre_ticket` (`canSeeUrgencias` en `RequestsView`). Si una pantalla recorta por estado/pisos, preguntarse siempre **quién carga el dato y si lo vería después de cargarlo** (el bug "se cargó y desapareció"). Un chip o botón solo se ofrece si el rol puede ver el estado detrás (`visibleStatusChips`).
+La visibilidad de las urgencias en la grilla no es un permiso nuevo: se deriva de las reglas generales de visibilidad de quien crea tickets (`canCreateTickets` en `RequestsView` y la regla "lo que creó no se pierde" de `scopeTickets`), sin excepción propia. Si una pantalla recorta por estado/pisos, preguntarse siempre **quién carga el dato y si lo vería después de cargarlo** (el bug "se cargó y desapareció"). Un chip o botón solo se ofrece si el rol puede ver el estado detrás (`visibleStatusChips`).
 
 ### Editar archivos del repo: respetar los finales de línea (CRLF mezclados)
 
