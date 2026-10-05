@@ -934,7 +934,7 @@ Diseño en [arquitectura.md §48](../arquitectura/arquitectura.md). **Prerrequis
 - **Precondición**: usuario con `crear_pre_ticket`; una cama destino Disponible/En preparación.
 - **Acción**: "Pre-ticket" → tildar **"Urgencia / ingreso directo"** → nombre y apellido + destino → "Registrar urgencia".
 - **Resultado esperado**:
-  - El modal oculta Movimiento/Requisitos; el botón se habilita solo con nombre (≥ 3 letras) **y** destino.
+  - El modal oculta Movimiento pero **conserva los Requisitos** (quedan en `requisitos_cama` y en la observación); el botón se habilita solo con nombre (≥ 3 letras) **y** destino.
   - Ticket en **'Por Consolidar'** con tag rojo "Urgencia" + "Sin vincular"; origen "Urgencia / Ingreso directo". DB: `urgencia=true`, `codigo_paciente` NULL, `paciente_declarado` = lo tipeado, `workflow='PRE_TICKET'`, `por_consolidar_at` con fecha.
   - La cama destino se ve **Ocupada** por el nombre tipeado, sin datos clínicos.
   - **No** hay botón "Editar". Evento 'Ingreso por urgencia' en la trayectoria.

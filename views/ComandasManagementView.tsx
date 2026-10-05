@@ -297,10 +297,15 @@ interface Props {
 // ── Apartado "Cambios de dieta" ─────────────────────────────────────────────
 // Historial (append-only) de cada cambio de dieta que detecta el cron (de X → a Y). Fuente:
 // /api/dieta-cambios (Supabase public.dieta_cambios). Independiente de la campanita/push.
+// `kind`: CAMBIO = la dieta cambió en PROGAL (de X → a Y); INICIO_DIETA = Enfermería dio "Iniciar dieta"
+// al cerrar una cirugía (el paciente ya puede comer). Filas viejas sin `kind` = CAMBIO.
 interface DietaCambio {
+  kind?: 'CAMBIO' | 'INICIO_DIETA';
   spItemId: string; patientCode: string; patientName: string; area: string;
   roomCode: string; eventKey: string; tagsPrev: string; tagsNew: string; changedAt: string;
+  by?: string;
 }
+type FiltroTipo = 'todos' | 'CAMBIO' | 'INICIO_DIETA';
 
 const TagList: React.FC<{ tags: string[]; tone: 'prev' | 'new' }> = ({ tags, tone }) => {
   if (!tags.length) return <span className={cn('text-[11px] italic', tone === 'prev' ? 'text-slate-400' : 'text-slate-500')}>sin dieta especial</span>;
@@ -324,6 +329,7 @@ const CambiosDietaPanel: React.FC = () => {
   const [rows, setRows] = useState<DietaCambio[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
+  const [tipo, setTipo] = useState<FiltroTipo>('todos');
   const [openFrom, setOpenFrom] = useState(false);
   const [openTo, setOpenTo]     = useState(false);
 
@@ -339,14 +345,18 @@ const CambiosDietaPanel: React.FC = () => {
 
   useEffect(() => { fetchCambios(); }, [fetchCambios]);
 
+  const kindOf = (c: DietaCambio) => c.kind ?? 'CAMBIO';
   const filtered = useMemo(() => {
     const terms = normalizeText(search).split(' ').filter(Boolean);
-    if (!terms.length) return rows;
     return rows.filter(c => {
-      const hay = normalizeText([c.patientName, c.area, c.roomCode, formatBedName(c.roomCode), c.tagsPrev, c.tagsNew].join(' '));
+      if (tipo !== 'todos' && kindOf(c) !== tipo) return false;
+      if (!terms.length) return true;
+      const extra = kindOf(c) === 'INICIO_DIETA' ? 'iniciar dieta cirugia post quirurgico' : '';
+      const hay = normalizeText([c.patientName, c.area, c.roomCode, formatBedName(c.roomCode), c.tagsPrev, c.tagsNew, extra].join(' '));
       return terms.every(t => hay.includes(t));
     });
-  }, [rows, search]);
+  }, [rows, search, tipo]);
+  const nInicio = useMemo(() => rows.filter(c => kindOf(c) === 'INICIO_DIETA').length, [rows]);
 
   const tagChips = (s: string) => (s || '').split(';').map(t => t.trim()).filter(Boolean);
 
@@ -379,7 +389,16 @@ const CambiosDietaPanel: React.FC = () => {
             className="pl-9 pr-8 h-9 text-xs rounded-xl border-slate-200" />
           {search && <button onClick={() => setSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>}
         </div>
-        <p className="text-xs text-slate-500 font-medium ml-auto self-center">{filtered.length} {filtered.length === 1 ? 'cambio' : 'cambios'}</p>
+        <div className="flex items-center bg-white border border-slate-200 rounded-xl p-0.5 h-9">
+          {([['todos', 'Todos'], ['CAMBIO', 'Cambios de dieta'], ['INICIO_DIETA', `Iniciar dieta (cirugía)${nInicio ? ` · ${nInicio}` : ''}`]] as [FiltroTipo, string][]).map(([k, label]) => (
+            <button key={k} type="button" onClick={() => setTipo(k)} aria-pressed={tipo === k}
+              className={cn('px-2.5 h-full rounded-lg text-[11px] font-bold whitespace-nowrap transition-colors',
+                tipo === k ? 'bg-emerald-950 text-white' : 'text-slate-500 hover:bg-slate-50')}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-slate-500 font-medium ml-auto self-center">{filtered.length} {filtered.length === 1 ? 'registro' : 'registros'}</p>
       </div>
 
       {loading ? (
@@ -387,8 +406,8 @@ const CambiosDietaPanel: React.FC = () => {
       ) : filtered.length === 0 ? (
         <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400">
           <Utensils className="w-10 h-10 mx-auto mb-3 text-slate-300" />
-          <p className="font-bold text-sm text-slate-500">Sin cambios de dieta en el período</p>
-          <p className="text-xs">Cada vez que Progal cambia la dieta de un paciente internado, queda registrado acá.</p>
+          <p className="font-bold text-sm text-slate-500">Sin registros en el período</p>
+          <p className="text-xs">Cada vez que Progal cambia la dieta de un paciente internado, o Enfermería da "Iniciar dieta" al cerrar una cirugía, queda registrado acá.</p>
         </div>
       ) : (
         <Card className="overflow-hidden border-slate-200">
@@ -399,7 +418,7 @@ const CambiosDietaPanel: React.FC = () => {
                   <th className="px-4 py-3 text-left font-bold">Fecha y hora</th>
                   <th className="px-4 py-3 text-left font-bold">Paciente</th>
                   <th className="px-4 py-3 text-left font-bold">Ubicación</th>
-                  <th className="px-4 py-3 text-left font-bold">Cambio de dieta</th>
+                  <th className="px-4 py-3 text-left font-bold">Cambio de dieta / evento</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
@@ -409,11 +428,20 @@ const CambiosDietaPanel: React.FC = () => {
                     <td className="px-4 py-3 font-semibold text-slate-800">{c.patientName || '—'}</td>
                     <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{[c.area, c.roomCode && formatBedName(c.roomCode)].filter(Boolean).join(' · ') || '—'}</td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <TagList tags={tagChips(c.tagsPrev)} tone="prev" />
-                        <span className="text-slate-400 font-bold">→</span>
-                        <TagList tags={tagChips(c.tagsNew)} tone="new" />
-                      </div>
+                      {kindOf(c) === 'INICIO_DIETA' ? (
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wide border bg-green-100 text-green-800 border-green-300">
+                            <Utensils className="w-3 h-3" /> Iniciar dieta
+                          </span>
+                          <span className="text-[11px] text-slate-500">post cirugía — ya puede comer{c.by ? ` · ${c.by}` : ''}</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <TagList tags={tagChips(c.tagsPrev)} tone="prev" />
+                          <span className="text-slate-400 font-bold">→</span>
+                          <TagList tags={tagChips(c.tagsNew)} tone="new" />
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}

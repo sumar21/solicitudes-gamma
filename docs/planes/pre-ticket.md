@@ -78,7 +78,7 @@ origen que elegir). Diseño y decisiones: [arquitectura.md §48.4](../arquitectu
 [decisiones.md §29.4](../arquitectura/decisiones.md).
 
 - **Carga (Coordinación, `crear_pre_ticket`):** nombre y apellido (texto libre, ≥ 3 letras) + **destino**
-  (Disponible/En preparación; nunca ITR/Sala de Espera). Sin movimiento ni requisitos.
+  (Disponible/En preparación; nunca ITR/Sala de Espera) + **requisitos de cama** (opcionales, igual que un pre-ticket). Sin movimiento.
 - **No pasa por `Presolicitud`:** nace directo en **`Por Consolidar`** con `urgencia=true`,
   `paciente_declarado`, `cama_origen = 'Urgencia / Ingreso directo'`, `workflow = PRE_TICKET` y sin
   `codigo_paciente`. No hay circuito de azafata ni "Configurar destino".

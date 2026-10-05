@@ -1591,7 +1591,7 @@ Un chip por estado (con contador) sobre la grilla de traslados; **multi-selecci�
 **Problema:** el paciente de una urgencia va **directo a la cama**, sin pasar por Admisión, y casi siempre todavía no está internado en PROGAL. Si el ticket quedara con un nombre libre, su trayectoria "flotaría" sin identidad.
 
 **Flujo:**
-1. **Coordinación** (`crear_pre_ticket`) abre "Pre-ticket" y tilda **"Urgencia / ingreso directo"**: carga *nombre y apellido* (texto libre, ≥ 3 letras) y *destino* (Disponible/En preparación; nunca ITR ni Sala de Espera). Sin movimiento ni requisitos ([components/modals/PreTicketModal.tsx](../../components/modals/PreTicketModal.tsx); alta en `createUrgenciaTicket`, [useHospitalState.ts:3011](../../hooks/useHospitalState.ts#L3011)).
+1. **Coordinación** (`crear_pre_ticket`) abre "Pre-ticket" y tilda **"Urgencia / ingreso directo"**: carga *nombre y apellido* (texto libre, ≥ 3 letras) y *destino* (Disponible/En preparación; nunca ITR ni Sala de Espera). Sin movimiento; **con requisitos de cama** opcionales (se guardan igual que en un pre-ticket) ([components/modals/PreTicketModal.tsx](../../components/modals/PreTicketModal.tsx); alta en `createUrgenciaTicket`, [useHospitalState.ts:3011](../../hooks/useHospitalState.ts#L3011)).
 2. El ticket **nace `Por Consolidar`** (no hay circuito de azafata ni "Configurar destino") con `urgencia=true`, `paciente_declarado` = lo tipeado, `cama_origen = ORIGEN_URGENCIA` ("Urgencia / Ingreso directo", sentinela en `types.ts`), `motivo_cambio = MOVIMIENTO_URGENCIA`, `workflow = PRE_TICKET`, **sin `codigo_paciente`**.
 3. **Aviso:** el INSERT con `urgencia` emite `PRE_TICKET` ("Ingreso por urgencia", permiso `notif_pre_ticket`, o sea Admisión) y **no** el `NEW_TICKET` a los pisos ([notify-push:134](../../supabase/functions/notify-push/index.ts#L134)). Después aplica el recordatorio de 15 min (§48.1).
 4. **Grilla:** tag rojo "Urgencia" + "Sin vincular" mientras no tenga código; botón **"Vincular y consolidar"** (permiso `consolidar`) en lugar de "Consolidar PROGAL"; **no tiene "Editar"** (editar el destino lo recalcularía como traslado normal; si hay un error se cancela y se recarga). Cancelan `cancelar_ticket` **o** `cancelar_pre_ticket`.
@@ -1633,3 +1633,15 @@ Un chip por estado (con contador) sobre la grilla de traslados; **multi-selecci�
 | `scripts/check-tickets-api-urgencia.mts` | el **handler real** de `api/tickets.ts` (bundle con stubs de jwt / Supabase / caches de rol): 403 sin permiso, 400 de validaciones, campos forzados, **422** al consolidar sin paciente, coerción de `urgencia`, inmutabilidad por PATCH y regresión de traslados comunes |
 
 El SQL de la migración `20261002130000` (trigger + función) se validó en un Postgres local (PGlite) fuera del repo: estampado al entrar, UPDATE neutro, una sola vez, rearme al reingresar, sin aviso a filas previas, permisos. **El `cron.schedule` en sí no se ejecutó** (no existe `pg_cron` fuera de Supabase).
+
+### 48.7. Comandas: "Iniciar dieta" de cirugía en el historial de cambios de dieta (2026-10-05)
+
+La solapa **Comandas → Cambios de dieta** ahora también lista los **"Iniciar dieta" post cirugía** (paso final de la operatoria, `cirugia_eventos.tipo = TOLERANCIA_EVALUADA`), con paciente, ubicación (la cama de regreso si cambió de cama, sino la de origen) y quién lo marcó, mezclados por fecha con los cambios de dieta y con un filtro por tipo (Todos / Cambios de dieta / Iniciar dieta). El push a Catering no cambia; el historial existe para que no dependa de que el aviso haya llegado.
+- Sin tabla nueva: [api/dieta-cambios.ts](../../api/dieta-cambios.ts) agrega filas `kind: 'INICIO_DIETA'` leyendo `cirugia_eventos` + `cirugia_traslados` (fail-soft: si esa parte falla, se devuelven igual los cambios de dieta). Las filas de cambios llevan `kind: 'CAMBIO'`.
+- Verificación: `scripts/check-dieta-cambios-inicio.mts` (handler real: mezcla y orden, cama de regreso vs. origen, filtro por paciente, fail-soft).
+
+### 48.8. Ajustes posteriores (2026-10-05)
+
+- La **urgencia conserva los requisitos de cama** (colchón, autólisis…): se guardan en `requisitos_cama` y en la observación, como en un pre-ticket.
+- Acciones de **pre-tickets y urgencias apiladas en columna** en la grilla de Operativa para cualquier rol (antes, fuera de Admin/Admisión iban en fila y se salían de pantalla).
+- Encabezado del sidebar con alto flexible: la sede sale de `Sede_U` de SharePoint y puede ser larga ("IG - Instituto Gamma S.A."); con alto fijo desbordaba y cortaba el logo.
