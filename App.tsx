@@ -875,6 +875,7 @@ export default function App() {
         onOpenChange={setIsPreTicketOpen}
         onCreate={actions.createPreTicket}
         beds={state.beds}
+        assignedAreas={state.currentUser?.filterByFloors ? state.currentUser.assignedAreas : undefined}
         activeTransferDestinations={new Set(
           state.tickets
             .filter(t => t.status !== 'Consolidado' && t.status !== 'Cancelado' && t.destination)

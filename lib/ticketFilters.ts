@@ -13,15 +13,21 @@ import { TicketStatus } from '../types';
 export function visibleStatusChips(opts: {
   filterByFloors: boolean;
   canSeePreTickets: boolean;
-  /** Quien carga urgencias ve "Por Consolidar" aunque filtre por pisos (sólo las urgencias, ver RequestsView). */
-  canSeeUrgencias?: boolean;
+  /**
+   * Quien puede crear (pre-)tickets (`crear_pre_ticket` / `crear_ticket`) NO se recorta por estado aunque filtre
+   * por pisos (RequestsView): ve todos los estados de sus sectores, incluidos Presolicitud y Por Consolidar.
+   */
+  canCreateTickets?: boolean;
 }): TicketStatus[] {
   if (opts.filterByFloors) {
     // Azafata / Catering (filtran por pisos): estados operativos + cancelados recientes (< 1h).
-    // Coordinación (carga urgencias): además "Por Consolidar", que para ella sólo contiene urgencias.
+    if (!opts.canCreateTickets) {
+      return [TicketStatus.WAITING_ROOM, TicketStatus.IN_TRANSIT, TicketStatus.IN_TRANSPORT, TicketStatus.REJECTED];
+    }
+    // Coordinación (filtra por pisos pero crea tickets): el ciclo completo de sus sectores + cancelados recientes.
     return [
-      TicketStatus.WAITING_ROOM, TicketStatus.IN_TRANSIT, TicketStatus.IN_TRANSPORT,
-      ...(opts.canSeeUrgencias ? [TicketStatus.WAITING_CONSOLIDATION] : []),
+      ...(opts.canSeePreTickets ? [TicketStatus.PRESOLICITUD] : []),
+      TicketStatus.WAITING_ROOM, TicketStatus.IN_TRANSIT, TicketStatus.IN_TRANSPORT, TicketStatus.WAITING_CONSOLIDATION,
       TicketStatus.REJECTED,
     ];
   }

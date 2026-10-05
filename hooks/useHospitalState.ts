@@ -2812,10 +2812,11 @@ export const useHospitalState = () => {
         for (const b of beds) if (b.area) areaByLabel.set(b.label, b.area);
 
         result = result.filter(t => {
-          // Una URGENCIA no tiene cama de origen (decide sólo el destino) y quien la carga —Coordinación— pide
-          // camas de CUALQUIER sector: si su destino cae fuera de sus sectores asignados, el ticket "se cargaba
-          // y desaparecía" de su grilla y no podía ni cancelarlo. Quien tiene crear_pre_ticket la ve siempre.
-          if (t.urgencia && can(currentUser, 'crear_pre_ticket')) return true;
+          // Lo que el usuario CREÓ no lo pierde nunca, caiga donde caiga el traslado. Sin esto,
+          // un pre-ticket de Coordinación desaparecía de su grilla apenas Admisión le configuraba
+          // un destino fuera de sus pisos (y con origen en Sala de Espera, el remapeo de HRA de
+          // abajo lo mandaba al piso destino). Ver docs/planes/pre-ticket.md.
+          if (t.createdById && String(t.createdById) === String(currentUser?.id)) return true;
           // Try matching by label first, then by area prefix in the ticket origin/destination
           const rawOriginArea = areaByLabel.get(t.origin) ?? beds.find(b => t.origin?.includes(b.area))?.area;
           const rawDestArea   = t.destination ? (areaByLabel.get(t.destination) ?? beds.find(b => t.destination?.includes(b.area))?.area) : undefined;

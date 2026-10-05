@@ -232,10 +232,9 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   // Pre-tickets (Presolicitud): solo los ven Admisión (completar_pre_ticket) y la Coordinadora
   // (crear_pre_ticket). El resto no los ve hasta que se convierten en traslado vivo.
   const canSeePreTickets = can(currentUser, 'completar_pre_ticket') || can(currentUser, 'crear_pre_ticket');
-  // Quien carga urgencias (Coordinación, que suele filtrar por pisos) tiene que ver la que acaba de cargar:
-  // nace "Por Consolidar", un estado que a quien filtra por pisos normalmente no se le muestra, y sin esto
-  // el ticket "se carga y desaparece" de su grilla (y no podría ni cancelarlo si se equivocó).
-  const canSeeUrgencias = can(currentUser, 'crear_pre_ticket');
+  // Quien puede CREAR (pre-)tickets no se recorta por estado aunque filtre por pisos (ver el filtro de abajo):
+  // eso incluye a Coordinación, que carga las urgencias —nacen "Por Consolidar"— y tiene que verlas.
+  const canCreateTickets = can(currentUser, 'crear_pre_ticket') || can(currentUser, 'crear_ticket');
 
   // Lo que ESTE usuario puede ver (rol, pisos, búsqueda) ANTES del filtro por estado y del orden. De acá
   // salen los contadores de la botonera: así "Por Consolidar (3)" siempre dice cuántos hay, aunque haya
@@ -265,16 +264,20 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       // Si el user no filtra por pisos (Admin/Admision/Direccion/etc.), ve todos
       // los tickets activos sin importar el tab activo (el tab solo gobierna
       // qué botones de acción aparecen para "actuar como" otro rol).
-      // Si filtra por pisos (Azafata, Catering, futuros roles), aplica filtro de área
-      // limitado a estados operativos.
+      // Si filtra por pisos (Azafata, Catering, futuros roles), aplica filtro de área.
+      // Quien puede CREAR (pre-)tickets (Coordinación, y cualquier rol al que el ABM le dé
+      // crear_ticket/crear_pre_ticket) NO se recorta por estado: ve todos los activos de sus pisos,
+      // incluidos los Presolicitud y los que ya se convirtieron. El recorte por estado es para las
+      // azafatas, que solo actúan sobre traslados operativos.
       filtered = filtered.filter(t => {
         if (!currentUser?.filterByFloors) return true;
-        const validStatus = t.status === TicketStatus.WAITING_ROOM ||
-          t.status === TicketStatus.IN_TRANSIT ||
-          t.status === TicketStatus.IN_TRANSPORT ||
-          isRecentCancelado(t) || // cancelado reciente también pasa (respeta el filtro de área de abajo)
-          (canSeeUrgencias && !!t.urgencia && t.status === TicketStatus.WAITING_CONSOLIDATION);
-        if (!validStatus) return false;
+        if (!canCreateTickets) {
+          const validStatus = t.status === TicketStatus.WAITING_ROOM ||
+            t.status === TicketStatus.IN_TRANSIT ||
+            t.status === TicketStatus.IN_TRANSPORT ||
+            isRecentCancelado(t); // cancelado reciente también pasa (respeta el filtro de área de abajo)
+          if (!validStatus) return false;
+        }
         if (currentUser.assignedAreas?.length && beds.length > 0) {
           const allAreas = Object.values(Area);
           if (currentUser.assignedAreas.length < allAreas.length - 1) {
@@ -287,16 +290,16 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                    (!!destArea && currentUser.assignedAreas.includes(destArea));
           }
         }
-        return validStatus;
+        return true;
       });
     }
 
     return filtered;
-  }, [tickets, searchTerm, beds, currentUser, canSeePreTickets, canSeeUrgencias]);
+  }, [tickets, searchTerm, beds, currentUser, canSeePreTickets, canCreateTickets]);
 
   const statusChips = useMemo(
-    () => visibleStatusChips({ filterByFloors: !!currentUser?.filterByFloors, canSeePreTickets, canSeeUrgencias }),
-    [currentUser?.filterByFloors, canSeePreTickets, canSeeUrgencias],
+    () => visibleStatusChips({ filterByFloors: !!currentUser?.filterByFloors, canSeePreTickets, canCreateTickets }),
+    [currentUser?.filterByFloors, canSeePreTickets, canCreateTickets],
   );
   const statusCounts = useMemo(() => countByStatus(scopedTickets), [scopedTickets]);
 

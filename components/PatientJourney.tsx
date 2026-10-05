@@ -7,7 +7,7 @@ import {
 import { MessageSquare } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
 import { Badge } from './ui/badge';
-import { cn, formatDateTime, formatTime, formatBedName, formatDateReadable } from '../lib/utils';
+import { cn, formatDateTime, formatTime, formatBedName, formatDateReadable, formatTicketDestination } from '../lib/utils';
 import { eventConfigFor, parseModification } from '../lib/ticketEvents';
 import { CIRUGIA_ESTADO_LABEL, CIRUGIA_PILL_CLASS } from '../lib/constants';
 
@@ -34,6 +34,8 @@ const ACTIVE_STATUSES = new Set<TicketStatus>([
   TicketStatus.IN_TRANSIT,
   TicketStatus.IN_TRANSPORT,
   TicketStatus.WAITING_CONSOLIDATION,
+  // Un pre-ticket está VIVO: sin esto el journey lo pintaba verde con el badge 'Consolidado'.
+  TicketStatus.PRESOLICITUD,
 ]);
 
 const isActive = (t: Ticket) => ACTIVE_STATUSES.has(t.status);
@@ -334,7 +336,7 @@ export const PatientJourney: React.FC<PatientJourneyProps> = ({
                   <React.Fragment key={t.id}>
                     <MoveRight className="w-3.5 h-3.5 text-slate-300 shrink-0" />
                     <PathStop
-                      label={t.destination ? formatBedName(t.destination) : 'Anulado'}
+                      label={formatTicketDestination(t)}
                       tone={
                         t.status === TicketStatus.REJECTED ? 'cancelled'
                         : isActive(t) ? 'live'
@@ -457,7 +459,7 @@ const EpisodeCard: React.FC<{
             <span className="truncate text-slate-500">{formatBedName(ticket.origin)}</span>
             <ArrowRightLeft className="w-3 h-3 text-slate-300 shrink-0" />
             <span className={cn("truncate", isRejected ? "text-red-500" : "text-slate-900")}>
-              {ticket.destination ? formatBedName(ticket.destination) : 'Anulado'}
+              {formatTicketDestination(ticket)}
             </span>
           </div>
         </div>
