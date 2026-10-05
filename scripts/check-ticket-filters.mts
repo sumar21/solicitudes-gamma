@@ -27,6 +27,9 @@ assert.deepEqual(visibleStatusChips({ filterByFloors: true, canSeePreTickets: tr
   [S.PRESOLICITUD, S.WAITING_ROOM, S.IN_TRANSIT, S.IN_TRANSPORT, S.WAITING_CONSOLIDATION, S.REJECTED], 'coordinación: ciclo completo');
 // Un rol que filtra por pisos, crea tickets pero NO ve pre-tickets: sin chip de Presolicitud.
 assert(!visibleStatusChips({ filterByFloors: true, canSeePreTickets: false, canCreateTickets: true }).includes(S.PRESOLICITUD), 'sin pre-tickets no hay chip Presolicitud');
+// Admin/Admisión en la pestaña "Azafata": solo operativos (sin Presolicitud ni Por Consolidar), aunque pueda crear.
+assert.deepEqual(visibleStatusChips({ filterByFloors: false, canSeePreTickets: true, canCreateTickets: true, actingAsHostess: true }),
+  [S.WAITING_ROOM, S.IN_TRANSIT, S.IN_TRANSPORT], 'pestaña azafata: solo operativos');
 // Consolidado nunca es un chip (la grilla de Operativa no lo muestra).
 for (const o of [{ filterByFloors: true, canSeePreTickets: true }, { filterByFloors: false, canSeePreTickets: true }]) {
   assert(!visibleStatusChips(o).includes(S.COMPLETED), 'Consolidado nunca es chip');

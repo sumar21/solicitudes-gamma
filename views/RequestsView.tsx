@@ -159,7 +159,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     const size = isMobile ? 'default' : 'sm';
     const btnClass = isMobile
       ? 'w-full h-11 text-xs font-black uppercase tracking-widest rounded-xl'
-      : 'h-8 text-[10px] uppercase font-bold tracking-tight';
+      : 'h-7 px-2.5 text-[10px] uppercase font-bold tracking-tight';
 
     return (
       <Button
@@ -235,6 +235,11 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   // Quien puede CREAR (pre-)tickets no se recorta por estado aunque filtre por pisos (ver el filtro de abajo):
   // eso incluye a Coordinación, que carga las urgencias —nacen "Por Consolidar"— y tiene que verlas.
   const canCreateTickets = can(currentUser, 'crear_pre_ticket') || can(currentUser, 'crear_ticket');
+  // Pestaña "Azafata" de Admin/Admisión (quien tiene pestañas = crear_ticket): la grilla se ve COMO LA VE UNA
+  // AZAFATA — solo estados operativos (sin Presolicitud, sin Por Consolidar, sin urgencias). Antes la pestaña
+  // solo cambiaba los botones y se veían pre-tickets con "Configurar destino" en modo azafata. Coordinación no
+  // tiene pestañas (no tiene crear_ticket), así que esto no le toca.
+  const actingAsHostess = can(currentUser, 'crear_ticket') && activeRole === Role.HOSTESS;
 
   // Lo que ESTE usuario puede ver (rol, pisos, búsqueda) ANTES del filtro por estado y del orden. De acá
   // salen los contadores de la botonera: así "Por Consolidar (3)" siempre dice cuántos hay, aunque haya
@@ -294,12 +299,16 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       });
     }
 
+    if (actingAsHostess) {
+      filtered = filtered.filter(t =>
+        t.status === TicketStatus.WAITING_ROOM || t.status === TicketStatus.IN_TRANSIT || t.status === TicketStatus.IN_TRANSPORT);
+    }
     return filtered;
-  }, [tickets, searchTerm, beds, currentUser, canSeePreTickets, canCreateTickets]);
+  }, [tickets, searchTerm, beds, currentUser, canSeePreTickets, canCreateTickets, actingAsHostess]);
 
   const statusChips = useMemo(
-    () => visibleStatusChips({ filterByFloors: !!currentUser?.filterByFloors, canSeePreTickets, canCreateTickets }),
-    [currentUser?.filterByFloors, canSeePreTickets, canCreateTickets],
+    () => visibleStatusChips({ filterByFloors: !!currentUser?.filterByFloors, canSeePreTickets, canCreateTickets, actingAsHostess }),
+    [currentUser?.filterByFloors, canSeePreTickets, canCreateTickets, actingAsHostess],
   );
   const statusCounts = useMemo(() => countByStatus(scopedTickets), [scopedTickets]);
 
@@ -324,7 +333,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
 
   const renderActionButtons = (ticket: Ticket, isMobile = false) => {
     const size = isMobile ? "default" : "sm";
-    const btnClass = isMobile ? "w-full h-11 text-xs font-black uppercase tracking-widest rounded-xl" : "h-8 text-[10px] uppercase font-bold tracking-tight";
+    const btnClass = isMobile ? "w-full h-11 text-xs font-black uppercase tracking-widest rounded-xl" : "h-7 px-2.5 text-[10px] uppercase font-bold tracking-tight";
 
     // ── Pre-ticket (Presolicitud): Admisión configura el destino + (si el rol lo tiene) Cancelar ──
     // No aplican las acciones de azafata/admisión de un traslado normal (todavía no tiene destino).
@@ -338,7 +347,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       // sacaban la columna de Acciones de la pantalla. Apilados, con el mismo ancho, la columna queda en ~200px.
       // En mobile se conserva el espaciado de siempre (cada botón es un bloque de la card).
       return (
-        <div className={cn("flex flex-col", isMobile ? "gap-4" : "gap-1.5 items-stretch")}>
+        <div className={cn("flex flex-col", isMobile ? "gap-4" : "gap-1 items-stretch")}>
           {canConfig && (
             <Button size={size} onClick={() => onConfigureDestino!(ticket.id)}
               className={cn(btnClass, "bg-emerald-950 hover:bg-emerald-900 text-white rounded-xl px-4")}>
@@ -365,7 +374,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       const canCancelUrg = (can(currentUser, 'cancelar_ticket') || can(currentUser, 'cancelar_pre_ticket')) && !!onReject;
       if (!canLink && !canCancelUrg) return null;
       return (
-        <div className={cn("flex flex-col gap-1.5", !isMobile && "items-stretch")}>
+        <div className={cn("flex flex-col", isMobile ? "gap-1.5" : "gap-1 items-stretch")}>
           {canLink && (
             <Button size={size} className={cn(btnClass, "bg-purple-600 hover:bg-purple-700 text-white")} onClick={() => onConsolidateUrgencia!(ticket.id)}>
               <UserCheck className="w-3.5 h-3.5 mr-2" /> Vincular y consolidar
@@ -817,7 +826,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                       <div className={cn(
                         "flex",
                         (ticket.status === TicketStatus.PRESOLICITUD || ticket.urgencia)
-                          ? "flex-col items-stretch gap-1.5"
+                          ? "flex-col items-stretch gap-1 w-max ml-auto"
                           : (activeRole === Role.ADMIN || activeRole === Role.ADMISSION)
                             ? "flex-col items-end gap-1.5"
                             : "justify-end gap-2"

@@ -18,7 +18,12 @@ export function visibleStatusChips(opts: {
    * por pisos (RequestsView): ve todos los estados de sus sectores, incluidos Presolicitud y Por Consolidar.
    */
   canCreateTickets?: boolean;
+  /** Admin/Admisión en la pestaña "Azafata": ve solo los estados operativos (sin cancelados: esos son de quien filtra por pisos). */
+  actingAsHostess?: boolean;
 }): TicketStatus[] {
+  if (opts.actingAsHostess) {
+    return [TicketStatus.WAITING_ROOM, TicketStatus.IN_TRANSIT, TicketStatus.IN_TRANSPORT];
+  }
   if (opts.filterByFloors) {
     // Azafata / Catering (filtran por pisos): estados operativos + cancelados recientes (< 1h).
     if (!opts.canCreateTickets) {
