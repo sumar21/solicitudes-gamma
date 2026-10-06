@@ -278,8 +278,11 @@ Deno.serve(async (req: Request) => {
 
   const body = notifType === 'PRE_TICKET'
     ? (record.urgencia === true
-      // Urgencia: el paciente ya va a la cama → paciente + destino + qué hacer.
-      ? `${paciente} → ${record.cama_destino ?? '?'} · ingresarlo en PROGAL y consolidar`
+      // Urgencia: el paciente ya va a la cama → paciente + destino + qué hacer. Si ya estaba internado
+      // (viene con código y cama de origen real) no hay que ingresarlo: sólo registrar el movimiento.
+      ? (record.codigo_paciente
+        ? `${paciente}: ${record.cama_origen ?? '?'} → ${record.cama_destino ?? '?'} · registrar el movimiento en PROGAL y consolidar`
+        : `${paciente} → ${record.cama_destino ?? '?'} · ingresarlo en PROGAL y consolidar`)
       // Un pre-ticket no tiene destino todavía → mostramos paciente + movimiento (motivo_cambio).
       : `${paciente} — ${record.motivo_cambio ?? 'pedido de cama'}`)
     : notifType === 'POR_CONSOLIDAR'

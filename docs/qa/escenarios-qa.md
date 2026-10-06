@@ -925,14 +925,19 @@ Diseño en [arquitectura.md §48](../arquitectura/arquitectura.md). **Prerrequis
 - **Acción**: loguear como **azafata** y como **Coordinación** (filtra por pisos + `crear_pre_ticket`).
 - **Resultado esperado**: la azafata ve solo Esperando Habitación / Habitación Lista / En Traslado / Cancelado (**nunca** Por Consolidar ni Presolicitud); Coordinación (que crea tickets) ve el ciclo completo de sus sectores: suma "Presolicitud" y "Por Consolidar". Ningún chip ofrece un estado que ese rol no pueda ver.
 
-### QA-OPE-03 · Mobile: la botonera colapsa tras "Filtrar por estado" · P2 · FE
+### QA-OPE-03 · Mobile: la botonera colapsa tras "Filtrar" · P2 · FE
 - **Precondición**: viewport de celular (~390 px).
 - **Acción**: abrir Operativa; tocar "Filtrar por estado"; elegir un estado.
 - **Resultado esperado**: al cargar solo se ve el botón (los chips están colapsados y no tapan la lista); al tocarlo se despliegan; el botón muestra la cantidad de estados activos y aparece "Limpiar".
 
+### QA-OPE-04 · Chip "Urgencias" en la botonera · P1 · FE
+- **Precondición**: Admisión/Admin (o Coordinación) con al menos una urgencia en la grilla.
+- **Acción**: tocar el chip rojo **"Urgencias"**; después prender también "Por Consolidar"; después "Todos".
+- **Resultado esperado**: el chip muestra la cantidad de urgencias; prendido, la grilla muestra **solo urgencias** (de internados y no internados); se combina con los de estado (Y lógico); "Todos"/"Limpiar filtro" lo apaga. Una azafata (o la pestaña "Azafata") **no ve el chip**. En mobile aparece dentro de "Filtrar".
+
 ### QA-URG-01 · Cargar una urgencia (Coordinación) → nace "Por Consolidar" con paciente libre · P0 · FE+BE
 - **Precondición**: usuario con `crear_pre_ticket`; una cama destino Disponible/En preparación.
-- **Acción**: "Pre-ticket" → tildar **"Urgencia / ingreso directo"** → nombre y apellido + destino → "Registrar urgencia".
+- **Acción**: "Pre-ticket" → tildar **"Urgencia / ingreso directo"** → dejar **"No internado"** (opción por defecto) → nombre y apellido + destino → "Registrar urgencia".
 - **Resultado esperado**:
   - El modal oculta Movimiento pero **conserva los Requisitos** (quedan en `requisitos_cama` y en la observación); el botón se habilita solo con nombre (≥ 3 letras) **y** destino.
   - Ticket en **'Por Consolidar'** con tag rojo "Urgencia" + "Sin vincular"; origen "Urgencia / Ingreso directo". DB: `urgencia=true`, `codigo_paciente` NULL, `paciente_declarado` = lo tipeado, `workflow='PRE_TICKET'`, `por_consolidar_at` con fecha.
@@ -970,6 +975,17 @@ Diseño en [arquitectura.md §48](../arquitectura/arquitectura.md). **Prerrequis
 ### QA-URG-06 · Cancelar una urgencia · P2 · FE
 - **Acción**: con `cancelar_ticket` (Admisión) o solo `cancelar_pre_ticket` (Coordinación) → "Cancelar" con motivo.
 - **Resultado esperado**: pasa a 'Cancelado' liberando la cama; sin el permiso, el botón no aparece.
+
+### QA-URG-07 · Urgencia de un paciente YA internado · P0 · FE+BE
+- **Precondición**: usuario con `crear_pre_ticket`; un paciente internado (cama Ocupada en el mapa) sin traslado activo; una cama destino Disponible/En preparación.
+- **Acción**: "Pre-ticket" → tildar "Urgencia / ingreso directo" → elegir **"Internado"** → elegir al paciente del desplegable (muestra obra social y cama actual) + destino → "Registrar urgencia". Después, Admisión → **"Consolidar PROGAL"**.
+- **Resultado esperado**:
+  - Con "Internado" no se pide nombre libre; el botón se habilita con paciente **y** destino. Si el paciente ya tiene un traslado/pre-ticket activo → alerta y no se crea.
+  - Ticket 'Por Consolidar' con tag "Urgencia" pero **sin** "Sin vincular"; origen = la cama real del paciente. DB: `urgencia=true`, `cama_origen` real, `codigo_paciente` y `evento_internacion` del paciente, `paciente_declarado` NULL.
+  - En el mapa: el paciente (con sus datos clínicos) se ve en la cama destino y su cama de origen queda **En preparación** (igual que un traslado "Por Consolidar").
+  - El botón es **"Consolidar PROGAL"** directo (no abre el modal de vincular); al consolidar, el origen queda En preparación como en un traslado normal.
+  - Push "Ingreso por urgencia" solo a Admisión, con "origen → destino · registrar el movimiento en PROGAL y consolidar" 📵 (requiere notify-push desplegada con este cambio).
+  - Auditoría: "Paciente ya internado (elegido del mapa de camas)" en lugar de "Declarado por Coordinación".
 
 ### QA-NOT-11 · Aviso a los 15 min de "Por Consolidar" (camino feliz) · P1 · BE 📵🧪
 - **Precondición**: migración `20261002130000` aplicada; el rol de Admisión tiene `notif_por_consolidar`; una suscripción fresca del entorno.

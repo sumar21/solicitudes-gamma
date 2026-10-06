@@ -16,7 +16,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '.
 import { Dialog, DialogContent, DialogTitle, DialogHeader, DialogFooter } from '../components/ui/dialog';
 import { StatusBadge } from '../components/StatusBadge';
 import { TicketStatusFilter } from '../components/TicketStatusFilter';
-import { visibleStatusChips, countByStatus, applyStatusFilter, toggleStatus } from '../lib/ticketFilters';
+import { visibleStatusChips, countByStatus, applyStatusFilter, toggleStatus, showUrgenciasChip, applyUrgenciaFilter } from '../lib/ticketFilters';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { cn, formatBedName, formatDateTime, effectiveHostessAreas } from '../lib/utils';
 import { realRequisitos } from '../lib/roomCheck';
@@ -92,6 +92,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   // Filtro por estado (botonera). Vacío = se ve todo. Es de la sesión de pantalla: NO se persiste a
   // propósito — un filtro viejo escondiendo traslados al día siguiente parecería que "no hay nada".
   const [statusFilter, setStatusFilter] = useState<Set<TicketStatus>>(new Set());
+  const [onlyUrgencias, setOnlyUrgencias] = useState(false);
 
   // Observaciones por traslado: UN solo modal (hilo + redactor). Todos los roles ven el
   // historial y pueden cargar una nota nueva en el mismo lugar. La nota queda ligada al
@@ -318,9 +319,12 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     [currentUser?.filterByFloors, canSeePreTickets, canCreateTickets, actingAsHostess],
   );
   const statusCounts = useMemo(() => countByStatus(scopedTickets), [scopedTickets]);
+  const urgenciasChip = showUrgenciasChip(statusChips);
+  const urgenciasCount = useMemo(() => scopedTickets.filter(t => t.urgencia).length, [scopedTickets]);
+  const urgenciaFilterOn = urgenciasChip && onlyUrgencias; // si el rol cambia (pestaña Azafata) el chip desaparece y deja de filtrar
 
   const sortedTickets = useMemo(() => {
-    const sortableItems = applyStatusFilter(scopedTickets, statusFilter);
+    const sortableItems = applyUrgenciaFilter(applyStatusFilter(scopedTickets, statusFilter), urgenciaFilterOn);
     sortableItems.sort((a, b) => {
       const aVal = a[sortConfig.key] || '';
       const bVal = b[sortConfig.key] || '';
@@ -336,7 +340,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       return ap - bp;
     });
     return sortableItems;
-  }, [scopedTickets, statusFilter, sortConfig]);
+  }, [scopedTickets, statusFilter, urgenciaFilterOn, sortConfig]);
 
   const renderActionButtons = (ticket: Ticket, isMobile = false) => {
     const size = isMobile ? "default" : "sm";
@@ -377,15 +381,24 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     // y es quien se da cuenta del error).
     if (ticket.urgencia && ticket.status === TicketStatus.WAITING_CONSOLIDATION) {
       if (can(currentUser, 'crear_ticket') && activeRole === Role.HOSTESS) return null; // admin "actuando como" azafata
-      const canLink = can(currentUser, 'consolidar') && !!onConsolidateUrgencia;
+      // Urgencia de un paciente INTERNADO: ya viene con el paciente real de su cama → "Consolidar" directo,
+      // como un traslado normal. Sólo la de un NO internado abre el modal de vinculación.
+      const yaVinculada = !!ticket.patientCode;
+      const canLink = can(currentUser, 'consolidar') && (yaVinculada ? !!onConsolidate : !!onConsolidateUrgencia);
       const canCancelUrg = (can(currentUser, 'cancelar_ticket') || can(currentUser, 'cancelar_pre_ticket')) && !!onReject;
       if (!canLink && !canCancelUrg) return null;
       return (
         <div className={cn("flex flex-col", isMobile ? "gap-1.5" : "gap-1 items-stretch")}>
           {canLink && (
-            <Button size={size} className={cn(btnClass, "bg-purple-600 hover:bg-purple-700 text-white")} onClick={() => onConsolidateUrgencia!(ticket.id)}>
-              <UserCheck className="w-3.5 h-3.5 mr-2" /> Vincular y consolidar
-            </Button>
+            yaVinculada ? (
+              <Button size={size} className={cn(btnClass, "bg-purple-600 hover:bg-purple-700 text-white")} onClick={() => onConsolidate(ticket.id)}>
+                <BedDouble className="w-3.5 h-3.5 mr-2" /> Consolidar PROGAL
+              </Button>
+            ) : (
+              <Button size={size} className={cn(btnClass, "bg-purple-600 hover:bg-purple-700 text-white")} onClick={() => onConsolidateUrgencia!(ticket.id)}>
+                <UserCheck className="w-3.5 h-3.5 mr-2" /> Vincular y consolidar
+              </Button>
+            )
           )}
           {canCancelUrg && (
             <Button size={size} variant="outline" className={cn(btnClass, "border-red-200 text-red-600 hover:bg-red-50")} onClick={() => onReject!(ticket.id)}>
@@ -596,7 +609,8 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
         total={scopedTickets.length}
         selected={statusFilter}
         onToggle={(s) => setStatusFilter(prev => toggleStatus(prev, s))}
-        onClear={() => setStatusFilter(new Set())}
+        onClear={() => { setStatusFilter(new Set()); setOnlyUrgencias(false); }}
+        urgencias={urgenciasChip ? { count: urgenciasCount, on: onlyUrgencias, onToggle: () => setOnlyUrgencias(v => !v) } : undefined}
       />
 
       {/* Vista Mobile (Cards) */}
@@ -689,7 +703,9 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                   {ticket.status === TicketStatus.IN_TRANSIT && "Habitación lista. Esperando inicio de traslado."}
                   {ticket.status === TicketStatus.IN_TRANSPORT && "Traslado en curso. Esperando confirmación de recepción."}
                   {ticket.status === TicketStatus.WAITING_CONSOLIDATION && (ticket.urgencia
-                    ? "Urgencia: ingresar al paciente en PROGAL y vincularlo para consolidar."
+                    ? (ticket.patientCode
+                      ? "Urgencia de un paciente internado: registrar el movimiento en PROGAL y consolidar."
+                      : "Urgencia: ingresar al paciente en PROGAL y vincularlo para consolidar.")
                     : "Paciente recibido. Pendiente consolidar en sistema.")}
                 </span>
               </div>
@@ -756,7 +772,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                             : "Esperando habitación lista.")}
                           {ticket.status === TicketStatus.IN_TRANSIT && "Esperando inicio de traslado."}
                           {ticket.status === TicketStatus.IN_TRANSPORT && "Esperando confirmación de recepción."}
-                          {ticket.status === TicketStatus.WAITING_CONSOLIDATION && (ticket.urgencia
+                          {ticket.status === TicketStatus.WAITING_CONSOLIDATION && (ticket.urgencia && !ticket.patientCode
                             ? "Ingresar al paciente en PROGAL y vincularlo."
                             : "Pendiente consolidar en PROGAL.")}
                         </div>

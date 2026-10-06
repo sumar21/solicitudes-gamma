@@ -250,6 +250,9 @@ async function handler(req: any, res: any) {
       // nace en "Por Consolidar", con nombre libre y SIN código de paciente (se vincula al consolidar).
       // Se exige el mismo permiso que el pre-ticket (la Coordinadora) y se fuerzan los campos que el
       // cliente no debería poder elegir (origen sentinela, sin código, workflow PRE_TICKET).
+      // Variante INTERNADO (06/10/2026): el paciente ya está en una cama del mapa → viene con cama de origen
+      // REAL + código de PROGAL y se conservan (se consolida como un traslado normal). Sin las dos cosas,
+      // es un NO internado y se fuerza el camino de siempre.
       if (row.urgencia === true) {
         const denied = await authzPreTicket(req, 'crear_pre_ticket');
         if (denied) return res.status(denied.status).json({ error: denied.error });
@@ -260,11 +263,21 @@ async function handler(req: any, res: any) {
           return res.status(400).json({ error: 'La urgencia debe crearse "Por Consolidar".' });
         }
         row.paciente = nombre;
-        row.paciente_declarado = nombre;
-        row.codigo_paciente = null;
-        row.evento_internacion = null;
-        row.cama_origen = ORIGEN_URGENCIA;
-        row.cama_origen_codigo = null;
+        const origenReal = String(row.cama_origen ?? '').trim();
+        const codigo = String(row.codigo_paciente ?? '').trim();
+        const internado = !!origenReal && origenReal !== ORIGEN_URGENCIA && !!codigo;
+        if (internado) {
+          row.cama_origen = origenReal;
+          row.codigo_paciente = codigo;
+          row.paciente_declarado = null;
+          if (origenReal === String(row.cama_destino)) return res.status(400).json({ error: 'La cama destino no puede ser la misma en la que está el paciente.' });
+        } else {
+          row.paciente_declarado = nombre;
+          row.codigo_paciente = null;
+          row.evento_internacion = null;
+          row.cama_origen = ORIGEN_URGENCIA;
+          row.cama_origen_codigo = null;
+        }
         row.workflow = WorkflowType.PRE_TICKET;
         if (!row.motivo_cambio) row.motivo_cambio = MOVIMIENTO_URGENCIA;
       }

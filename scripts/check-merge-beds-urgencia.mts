@@ -21,7 +21,7 @@ await build({
     setup(b) { b.onResolve({ filter: /(^|\/)lib\/supabase$/ }, () => ({ path: join(tmp, 'supabase-stub.mjs') })); },
   }],
 });
-const { mergeBeds } = await import(pathToFileURL(out).href) as { mergeBeds: (b: any[], t: any[]) => any[] };
+const { mergeBeds, isUrgenciaSinOrigen } = await import(pathToFileURL(out).href) as { mergeBeds: (b: any[], t: any[]) => any[]; isUrgenciaSinOrigen: (t: any) => boolean };
 
 const OCC = 'Ocupada', AV = 'Disponible', PREP = 'En preparación', POR_CONSOLIDAR = 'Por Consolidar';
 const mk = (o: any) => ({ id: o.label, area: 'Internacion 4° Piso HPR', status: AV, ...o });
@@ -67,5 +67,20 @@ assert(o6.status === PREP && !o6.patientName, 'normal: el origen queda En prepar
 const legacy = { ...normal }; delete (legacy as any).urgencia;
 r = mergeBeds([mk({ label: 'H301-1', status: OCC, patientCode: '55', patientName: 'PEREZ JUAN' }), mk({ label: 'H405-1' })], [legacy]);
 assert(find(r, 'H405-1').patientCode === '55' && find(r, 'H301-1').status === PREP, 'ticket viejo sin flag: igual que antes');
+
+// 8) Urgencia de un paciente INTERNADO (06/10/2026): sale de su cama real → igual que un "Por Consolidar"
+//    normal: paciente (con enrich) en el destino y su cama de origen En preparación.
+const intern = urgencia({ origin: 'H301-1', patientName: 'PEREZ JUAN', patientCode: '55' });
+r = mergeBeds([
+  mk({ label: 'H301-1', status: OCC, patientCode: '55', patientName: 'PEREZ JUAN', dni: '222' }),
+  mk({ label: 'H405-1' }),
+], [intern]);
+assert(find(r, 'H405-1').patientCode === '55' && find(r, 'H405-1').dni === '222', 'internado: el paciente real pasa al destino');
+assert(find(r, 'H301-1').status === PREP && !find(r, 'H301-1').patientName, 'internado: su cama queda En preparación');
+
+// 9) isUrgenciaSinOrigen distingue los dos casos (decide la rama de handleConsolidate).
+assert.equal(isUrgenciaSinOrigen(urgencia()), true, 'no internado → sin origen');
+assert.equal(isUrgenciaSinOrigen(intern), false, 'internado → tiene origen');
+assert.equal(isUrgenciaSinOrigen({ urgencia: false, origin: 'Urgencia / Ingreso directo' }), false, 'sin flag → no es urgencia');
 
 console.log('OK — mergeBeds urgencia');

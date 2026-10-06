@@ -30,16 +30,21 @@ const sortByAreaThenLabel = (a: Bed, b: Bed) => {
 // Pre-ticket: la Coordinadora pide una cama. Carga lo mínimo (paciente + movimiento + requisitos);
 // Admisión configura el destino después. Ver docs/planes/pre-ticket.md.
 //
-// URGENCIA / INGRESO DIRECTO: el paciente va directo a la cama, sin pasar por Admisión, y por lo general
-// todavía no está internado en PROGAL → no hay cama de origen que elegir. Coordinación tipea nombre y
-// apellido (campo libre) y elige el destino; el ticket nace "Por Consolidar" y Admisión lo vincula a un
-// paciente real al consolidar.
+// URGENCIA / INGRESO DIRECTO: el paciente va directo a la cama, sin pasar por Admisión; el ticket nace
+// "Por Consolidar". Dos casos (pedido de Gamma, 06/10/2026):
+//  - NO internado (viene de guardia/afuera): no hay cama de origen. Coordinación tipea nombre y apellido
+//    (campo libre) y Admisión lo vincula a un paciente real de PROGAL al consolidar.
+//  - YA internado (está en el mapa de camas): se elige del desplegable de internados, igual que un
+//    pre-ticket. Sale de su cama real con código y evento → se consolida como un traslado normal.
+export type UrgenciaPaciente = 'NO_INTERNADO' | 'INTERNADO';
 export interface PreTicketCreateData {
   originBedLabel: string;
   movimiento: string;
   requisitos: string[];
   observations?: string;
   urgencia?: boolean;
+  /** Sólo con urgencia: 'INTERNADO' → originBedLabel es la cama real del paciente; 'NO_INTERNADO' → pacienteNombre. */
+  urgenciaPaciente?: UrgenciaPaciente;
   pacienteNombre?: string;
   destinoBedLabel?: string;
 }
@@ -65,6 +70,7 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
   const [requisitos, setRequisitos] = useState<string[]>([]);
   const [observations, setObservations] = useState('');
   const [urgencia, setUrgencia] = useState(false);
+  const [urgenciaPaciente, setUrgenciaPaciente] = useState<UrgenciaPaciente>('NO_INTERNADO');
   const [pacienteNombre, setPacienteNombre] = useState('');
   const [destinoBedLabel, setDestinoBedLabel] = useState('');
 
@@ -75,6 +81,7 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
       setRequisitos([]);
       setObservations('');
       setUrgencia(false);
+      setUrgenciaPaciente('NO_INTERNADO');
       setPacienteNombre('');
       setDestinoBedLabel('');
     }
@@ -89,7 +96,10 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
     .map(b => ({ label: `${b.label} (${b.status})`, value: b.label }));
 
   const nombreOk = pacienteNombre.trim().length >= MIN_NOMBRE_URGENCIA;
-  const canSubmit = urgencia ? (nombreOk && !!destinoBedLabel) : (!!originBedLabel && !!movimiento);
+  const internado = urgencia && urgenciaPaciente === 'INTERNADO';
+  const canSubmit = urgencia
+    ? (!!destinoBedLabel && (internado ? !!originBedLabel : nombreOk))
+    : (!!originBedLabel && !!movimiento);
 
   // Camas ocupadas con paciente → el paciente va en primer plano (así busca la Coordinadora),
   // la cama es el dato secundario y la clave real (de ahí salen obra social + origen).
@@ -115,10 +125,11 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
     if (!canSubmit) return;
     if (urgencia) {
       onCreate({
-        originBedLabel: '', movimiento: '', requisitos,
+        originBedLabel: internado ? originBedLabel : '', movimiento: '', requisitos,
         observations: observations.trim() !== '' ? observations : undefined,
         urgencia: true,
-        pacienteNombre: pacienteNombre.trim().replace(/\s+/g, ' '),
+        urgenciaPaciente,
+        pacienteNombre: internado ? undefined : pacienteNombre.trim().replace(/\s+/g, ' '),
         destinoBedLabel,
       });
     } else {
@@ -157,13 +168,75 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
                 <Siren className="h-3.5 w-3.5" /> Urgencia / ingreso directo
               </span>
               <span className={cn('text-xs leading-snug', urgencia ? 'text-red-700' : 'text-slate-500')}>
-                El paciente va directo a la cama y todavía no está internado. Admisión lo ingresa en PROGAL y lo vincula al consolidar.
+                El paciente va directo a la cama, sin pasar por la azafata. El ticket queda "Por Consolidar" para Admisión.
               </span>
             </span>
           </label>
 
           {urgencia ? (
             <>
+              <div className="grid gap-2">
+                <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">¿El paciente ya está internado? <span className="text-red-500">*</span></Label>
+                <div role="radiogroup" aria-label="¿El paciente ya está internado?" className="grid grid-cols-2 gap-2">
+                  {([
+                    ['NO_INTERNADO', 'No internado', 'Viene de guardia / afuera'],
+                    ['INTERNADO', 'Internado', 'Ya está en el mapa de camas'],
+                  ] as const).map(([v, label, hint]) => {
+                    const on = urgenciaPaciente === v;
+                    return (
+                      <button
+                        key={v}
+                        type="button"
+                        role="radio"
+                        aria-checked={on}
+                        onClick={() => { setUrgenciaPaciente(v); setOriginBedLabel(''); setPacienteNombre(''); }}
+                        className={cn(
+                          'flex flex-col items-start gap-0.5 rounded-xl border px-3 py-2 text-left transition-colors',
+                          on ? 'border-red-300 bg-red-50 text-red-900' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+                        )}
+                      >
+                        <span className="flex items-center gap-2 text-sm font-bold">
+                          <span className={cn('flex h-4 w-4 shrink-0 items-center justify-center rounded-full border', on ? 'border-red-600' : 'border-slate-300')}>
+                            {on && <span className="h-2 w-2 rounded-full bg-red-600" />}
+                          </span>
+                          {label}
+                        </span>
+                        <span className={cn('pl-6 text-[11px] leading-snug', on ? 'text-red-700' : 'text-slate-400')}>{hint}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              {internado ? (
+                <>
+                  <div className="grid gap-2">
+                    <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Paciente internado <span className="text-red-500">*</span></Label>
+                    <SearchableSelect
+                      value={originBedLabel}
+                      onValueChange={setOriginBedLabel}
+                      options={patientOptions}
+                      placeholder="Seleccionar paciente"
+                      searchPlaceholder="Buscar por paciente o cama..."
+                    />
+                  </div>
+                  {selectedBed && (
+                    <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3">
+                      <div className="grid gap-1">
+                        <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Obra Social</Label>
+                        <div className="h-10 px-3 flex items-center rounded-xl bg-slate-50 text-slate-700 text-sm min-w-0" title={selectedBed.institution || ''}>
+                          <span className="truncate">{selectedBed.institution || '—'}</span>
+                        </div>
+                      </div>
+                      <div className="grid gap-1">
+                        <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Cama actual</Label>
+                        <div className="h-10 px-3 flex items-center rounded-xl bg-slate-50 text-slate-700 text-sm min-w-0" title={formatBedName(selectedBed.label)}>
+                          <span className="truncate">{formatBedName(selectedBed.label)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
               <div className="grid gap-2">
                 <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Nombre y apellido del paciente <span className="text-red-500">*</span></Label>
                 <Input
@@ -177,7 +250,9 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
                 {pacienteNombre.trim().length > 0 && !nombreOk && (
                   <p className="text-[11px] text-red-600">Cargá nombre y apellido.</p>
                 )}
+                <p className="text-[11px] text-slate-400">Admisión lo ingresa en PROGAL y lo vincula al paciente real al consolidar.</p>
               </div>
+              )}
               <div className="grid gap-2">
                 <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Destino (Disponible/Prep) <span className="text-red-500">*</span></Label>
                 <SearchableSelect

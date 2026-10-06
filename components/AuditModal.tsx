@@ -290,7 +290,9 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                     <p className="text-[9px] uppercase font-black text-red-600 tracking-widest mb-1.5 flex items-center gap-1">
                       <Siren className="w-3 h-3" /> Ingreso por urgencia
                     </p>
-                    <p className="text-xs text-red-900 leading-relaxed">Declarado por Coordinación: <b>{ticket.pacienteDeclarado || '—'}</b></p>
+                    {ticket.pacienteDeclarado
+                      ? <p className="text-xs text-red-900 leading-relaxed">Declarado por Coordinación: <b>{ticket.pacienteDeclarado}</b></p>
+                      : <p className="text-xs text-red-900 leading-relaxed">Paciente ya internado (elegido del mapa de camas)</p>}
                     <p className="text-xs text-red-900 leading-relaxed">
                       {ticket.patientCode
                         ? `Vinculado al paciente ${ticket.patientCode}${ticket.eventoInternacion ? ` · evento ${ticket.eventoInternacion}` : ''}`

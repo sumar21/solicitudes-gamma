@@ -56,6 +56,20 @@ export function applyStatusFilter<T extends { status: TicketStatus }>(
   return selected.size === 0 ? [...tickets] : tickets.filter(t => selected.has(t.status));
 }
 
+/**
+ * Chip "Urgencias" (pedido de Gamma, 06/10/2026). La urgencia no es un estado sino un flag del ticket (nace
+ * "Por Consolidar"), así que va como chip aparte y se COMBINA con los de estado (Y lógico): prendido solo,
+ * muestra todas las urgencias; con "Por Consolidar" también prendido, las urgencias por consolidar.
+ * Se ofrece sólo a quien ve "Por Consolidar" (una azafata nunca ve urgencias → sería un chip que da cero).
+ */
+export function showUrgenciasChip(statuses: readonly TicketStatus[]): boolean {
+  return statuses.includes(TicketStatus.WAITING_CONSOLIDATION);
+}
+
+export function applyUrgenciaFilter<T extends { urgencia?: boolean }>(tickets: readonly T[], onlyUrgencias: boolean): T[] {
+  return onlyUrgencias ? tickets.filter(t => t.urgencia === true) : [...tickets];
+}
+
 /** Prende/apaga un estado (multi-selección). Devuelve un Set NUEVO (inmutable para React). */
 export function toggleStatus(selected: ReadonlySet<TicketStatus>, status: TicketStatus): Set<TicketStatus> {
   const next = new Set(selected);

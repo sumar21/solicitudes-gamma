@@ -1653,3 +1653,14 @@ La solapa **Comandas → Cambios de dieta** ahora también lista los **"Iniciar 
 - **Pestaña por defecto**: si el rol guardado en sesión no es una pestaña visible (roles custom que `mapRole` tipa como `READ_ONLY`), la vista elige la primera (Admin si tiene `abm_usuarios`, si no Admisión); antes no había ninguna marcada y faltaban las acciones de Admisión.
 - **Mobile**: los botones "Pre-ticket"/"Solicitud" muestran el texto; la ayuda de estado de cada tarjeta tiene texto para Presolicitud y no se dibuja vacía.
 - **Comandas → Cambios de dieta**: la píldora "Iniciar dieta" no se parte y la Ubicación puede ir en dos líneas. En el pre-ticket, Obra Social/Origen largos se cortan con "…" (con `title` completo).
+
+### 48.10. Urgencias: chip en la botonera y paciente ya internado (2026-10-06)
+
+Pedido de Gamma tras probar el paquete en TESTING.
+
+- **Chip "Urgencias"** en la botonera de Operativa (`components/TicketStatusFilter.tsx`, prop `urgencias`). La urgencia no es un estado sino un flag, así que el chip va aparte y se combina con los de estado (Y lógico): `applyUrgenciaFilter` + `showUrgenciasChip` en `lib/ticketFilters.ts`. Solo se ofrece a quien ve "Por Consolidar" (una azafata nunca ve urgencias). En mobile el botón pasó a decir "Filtrar".
+- **Urgencia de un paciente ya internado**: en el modal (`components/modals/PreTicketModal.tsx`) se elige **No internado** (por defecto: nombre libre, como antes) o **Internado** (desplegable de camas ocupadas, el mismo del pre-ticket). Con "Internado" el ticket sale de la cama real con `codigo_paciente`, `evento_internacion` (`bedEventKey`) y obra social, sin `paciente_declarado` (`createUrgenciaTicket` en `hooks/useHospitalState.ts`).
+  - Servidor (`api/tickets.ts`, POST urgencia): si llegan cama de origen real (≠ sentinela) **y** código de paciente, se conservan; sin las dos cosas se fuerza el camino de "no internado" de siempre (sentinela, sin código). Destino = origen → 400.
+  - `isUrgenciaSinOrigen(ticket)` (hook) distingue los dos casos: `mergeBeds` ya trataba un ticket con origen real como un "Por Consolidar" normal (paciente al destino, origen En preparación) y `handleConsolidate` solo usa la rama "sin origen" para la de no internado. En la grilla, la de internado muestra **"Consolidar PROGAL"** directo; solo la de no internado abre el modal de vincular.
+  - Edge Function `notify-push`: el cuerpo del push de una urgencia con `codigo_paciente` dice "origen → destino · registrar el movimiento en PROGAL y consolidar" (en vez de "ingresarlo en PROGAL"). Requiere redeploy de la función (verificar versión desplegada).
+- Tests: `scripts/check-ticket-filters.mts`, `check-merge-beds-urgencia.mts` (casos 8–9), `check-tickets-api-urgencia.mts` (internado / código sin origen) y `check-notify-push.mts` (A2).

@@ -1,7 +1,7 @@
 // Self-check del filtro por estado de Operativa (lib/ticketFilters).
 // Correr:  npx tsx scripts/check-ticket-filters.mts
 import assert from 'node:assert';
-import { applyStatusFilter, countByStatus, toggleStatus, visibleStatusChips } from '../lib/ticketFilters';
+import { applyStatusFilter, countByStatus, toggleStatus, visibleStatusChips, showUrgenciasChip, applyUrgenciaFilter } from '../lib/ticketFilters';
 import { TicketStatus as S } from '../types';
 
 const t = (id: string, status: S) => ({ id, status });
@@ -62,5 +62,15 @@ const s2 = toggleStatus(s1, S.IN_TRANSIT);
 assert(s2.size === 2, 'multi-selección');
 const s3 = toggleStatus(s2, S.WAITING_ROOM);
 assert(!s3.has(S.WAITING_ROOM) && s3.has(S.IN_TRANSIT) && s2.has(S.WAITING_ROOM), 'apaga uno sin mutar');
+
+// ── Chip "Urgencias" (flag, no estado) ───────────────────────────────────────
+assert.equal(showUrgenciasChip(visibleStatusChips({ filterByFloors: false, canSeePreTickets: true })), true, 'Admisión ve el chip');
+assert.equal(showUrgenciasChip(visibleStatusChips({ filterByFloors: true, canSeePreTickets: false })), false, 'azafata no (nunca ve urgencias)');
+assert.equal(showUrgenciasChip(visibleStatusChips({ filterByFloors: false, canSeePreTickets: true, actingAsHostess: true })), false, 'pestaña Azafata tampoco');
+const conUrg = [{ id: 'u1', status: S.WAITING_CONSOLIDATION, urgencia: true }, { id: 'n1', status: S.WAITING_CONSOLIDATION }, { id: 'n2', status: S.WAITING_ROOM, urgencia: false }];
+assert.deepEqual(applyUrgenciaFilter(conUrg, true).map(x => x.id), ['u1'], 'prendido: sólo urgencias');
+assert.equal(applyUrgenciaFilter(conUrg, false).length, 3, 'apagado: todo');
+assert.notStrictEqual(applyUrgenciaFilter(conUrg, false), conUrg, 'apagado devuelve copia');
+assert.deepEqual(applyUrgenciaFilter(applyStatusFilter(conUrg, new Set([S.WAITING_ROOM])), true), [], 'se combina con estados (Y lógico)');
 
 console.log('OK — ticketFilters');

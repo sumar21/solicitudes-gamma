@@ -84,6 +84,12 @@ assert(r.payloads[0].title === 'Ingreso por urgencia' && r.payloads[0].type === 
 assert(/Hab 405 - Cama 1/.test(r.payloads[0].body) && /ingresarlo en PROGAL/.test(r.payloads[0].body), 'cuerpo: destino + qué hacer');
 assert(r.json.main.type === 'PRE_TICKET', 'despacho PRE_TICKET');
 
+// A2) URGENCIA de un paciente INTERNADO (cama real + código): mismo público, sin "ingresarlo".
+r = await fire({ type: 'INSERT', record: base({ urgencia: true, status: 'Por Consolidar', workflow: 'PRE_TICKET', codigo_paciente: '4471' }) });
+assert.deepEqual(r.to, ['e-adm'], 'urgencia de internado: también SOLO Admisión (no a la azafata del piso de origen)');
+assert(/Hab 301 - Cama 1 → Hab 405 - Cama 1/.test(r.payloads[0].body) && /registrar el movimiento en PROGAL/.test(r.payloads[0].body) && !/ingresarlo/.test(r.payloads[0].body),
+  'cuerpo: origen → destino + registrar el movimiento');
+
 // B) AVISO 15 min: UPDATE sin cambio de estado, aviso_consolidar_at null → fecha. Sólo Admisión (notif_por_consolidar).
 const porConsolidarAt = new Date(Date.now() - 16 * 60_000).toISOString();
 const rec = base({ status: 'Por Consolidar', por_consolidar_at: porConsolidarAt, aviso_consolidar_at: new Date().toISOString() });

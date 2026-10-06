@@ -70,9 +70,10 @@ async function call(method: string, body: any, { perms = [], cur = null }: { per
   return { code: res.code as number, body: res.body, ops: g.__ops as any[] };
 }
 
+// NO internado: sin código de paciente. Lo que mande como origen se pisa con el sentinela.
 const urgBody = (o: any = {}) => ({
   id: 'TSL-U1', patientName: 'Pérez Juan', origin: 'LO QUE MANDE EL CLIENTE', destination: 'Hab 405 - Cama 1',
-  status: 'Por Consolidar', workflow: 'INTERNAL', urgencia: true, patientCode: 'HACK-1', ...o,
+  status: 'Por Consolidar', workflow: 'INTERNAL', urgencia: true, ...o,
 });
 
 // ── POST urgencia ────────────────────────────────────────────────────────────
@@ -87,11 +88,36 @@ assert.equal(r.code, 201, 'urgencia con permiso → 201');
 const row = r.ops[0].row;
 assert.equal(row.urgencia, true);
 assert.equal(row.cama_origen, 'Urgencia / Ingreso directo', 'origen = sentinela, no lo que mandó el cliente');
-assert.equal(row.codigo_paciente, null, 'sin código de paciente al nacer (aunque el cliente lo mande)');
+assert.equal(row.codigo_paciente, null, 'sin código de paciente al nacer');
 assert.equal(row.workflow, 'PRE_TICKET', 'workflow forzado');
 assert.equal(row.paciente_declarado, 'Pérez Juan', 'queda constancia de lo declarado');
 assert.equal(row.evento_internacion, null);
 assert.equal(row.motivo_cambio, 'Ingreso por urgencia', 'motivo por defecto');
+
+// código sin cama de origen real (origen vacío o sentinela) → sigue siendo NO internado: el código se descarta
+for (const origin of ['', 'Urgencia / Ingreso directo', null]) {
+  r = await call('POST', urgBody({ origin, patientCode: 'HACK-1', eventoInternacion: 'X-1' }), { perms: ['crear_pre_ticket'] });
+  assert.equal(r.code, 201);
+  assert.equal(r.ops[0].row.codigo_paciente, null, `origen ${JSON.stringify(origin)} + código → código descartado`);
+  assert.equal(r.ops[0].row.evento_internacion, null);
+  assert.equal(r.ops[0].row.cama_origen, 'Urgencia / Ingreso directo');
+}
+
+// INTERNADO (06/10/2026): cama de origen real + código → se conservan; sin nombre declarado
+r = await call('POST', urgBody({ patientName: 'GOMEZ ANA', origin: 'Habitación 512 HPR - Cama 01', patientCode: '4471', eventoInternacion: 'HIN-77' }), { perms: ['crear_pre_ticket'] });
+assert.equal(r.code, 201, 'urgencia de internado → 201');
+const ri = r.ops[0].row;
+assert.equal(ri.cama_origen, 'Habitación 512 HPR - Cama 01', 'conserva la cama real');
+assert.equal(ri.codigo_paciente, '4471', 'conserva el código');
+assert.equal(ri.evento_internacion, 'HIN-77', 'conserva el evento');
+assert.equal(ri.paciente_declarado, null, 'no hay nombre "declarado": viene del mapa');
+assert.equal(ri.status, 'Por Consolidar'); assert.equal(ri.workflow, 'PRE_TICKET'); assert.equal(ri.urgencia, true);
+// internado sin permiso → 403 igual
+r = await call('POST', urgBody({ origin: 'Habitación 512 HPR - Cama 01', patientCode: '4471' }), { perms: ['crear_ticket'] });
+assert.equal(r.code, 403, 'internado sin crear_pre_ticket → 403');
+// destino = su propia cama → 400
+r = await call('POST', urgBody({ origin: 'Hab 405 - Cama 1', patientCode: '4471' }), { perms: ['crear_pre_ticket'] });
+assert.equal(r.code, 400, 'destino igual al origen → 400'); assert.equal(r.ops.length, 0);
 
 // validaciones → 400
 for (const [label, b] of [

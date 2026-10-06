@@ -304,6 +304,10 @@ export function cleaningAutoCloseReason(
 /** Paciente REAL al que Admisión vincula una urgencia al consolidarla (ver handleConsolidate). */
 export interface UrgenciaLink { patientCode: string; patientName: string; eventKey?: string }
 
+/** Urgencia de un paciente NO internado: sin cama de origen (origen sentinela). La de un internado tiene cama real. */
+export const isUrgenciaSinOrigen = (t: Pick<Ticket, 'urgencia' | 'origin'>): boolean =>
+  !!t.urgencia && t.origin === ORIGEN_URGENCIA;
+
 // Exportada para poder testear los escenarios de overlay (limpieza/tickets) contra la
 // función REAL y no contra una réplica.
 export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?: Map<string, CleaningInfo>, meals?: Map<string, MealsInfo>, cirugias?: Map<string, BedCirugiaOverlay>): Bed[] {
@@ -3018,9 +3022,25 @@ export const useHospitalState = () => {
   // Consolidar" (Admisión tiene que ingresarlo en PROGAL) con el flag `urgencia`, SIN código de paciente.
   // Para consolidar, Admisión lo VINCULA a un paciente real (handleConsolidate + gate del servidor): sino la
   // trayectoria quedaría flotando, asociada a un nombre libre.
-  const createUrgenciaTicket = async (data: { pacienteNombre?: string; destinoBedLabel?: string; observations?: string; requisitos?: string[] }) => {
-    const nombre = (data.pacienteNombre ?? '').trim().replace(/\s+/g, ' ');
-    if (nombre.length < 3) { alert('Cargá nombre y apellido del paciente.'); return; }
+  // Variante INTERNADO (06/10/2026): el paciente ya está en el mapa (p. ej. se descompensa en el piso y va a
+  // UTI). Se elige su cama → el ticket sale de esa cama con código + evento reales, sin nombre declarado;
+  // en el mapa y al consolidar se comporta como un traslado normal "Por Consolidar" (el origen pasa a
+  // En preparación). Ver isUrgenciaSinOrigen.
+  const createUrgenciaTicket = async (data: { urgenciaPaciente?: 'INTERNADO' | 'NO_INTERNADO'; originBedLabel?: string; pacienteNombre?: string; destinoBedLabel?: string; observations?: string; requisitos?: string[] }) => {
+    const internado = data.urgenciaPaciente === 'INTERNADO';
+    const sourceBed = internado ? beds.find(b => b.label === data.originBedLabel) : undefined;
+    if (internado) {
+      if (!sourceBed || sourceBed.status !== BedStatus.OCCUPIED || !sourceBed.patientName) {
+        alert('Seleccioná un paciente internado.'); return;
+      }
+      // Un solo traslado/pre-ticket activo por cama de origen (mismo criterio que el pre-ticket).
+      const existingActive = tickets.find(t =>
+        t.origin === sourceBed.label && t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED,
+      );
+      if (existingActive) { alert(`Ya existe un traslado o pre-ticket activo para esta cama (${existingActive.id}).`); return; }
+    }
+    const nombre = internado ? (sourceBed!.patientName || '') : (data.pacienteNombre ?? '').trim().replace(/\s+/g, ' ');
+    if (!internado && nombre.length < 3) { alert('Cargá nombre y apellido del paciente.'); return; }
     const targetBed = beds.find(b => b.label === data.destinoBedLabel);
     if (!targetBed || (targetBed.status !== BedStatus.AVAILABLE && targetBed.status !== BedStatus.PREPARATION)) {
       alert('La cama destino debe estar DISPONIBLE o EN PREPARACIÓN.'); return;
@@ -3040,9 +3060,13 @@ export const useHospitalState = () => {
       id:                      ticketId,
       sede:                    currentUser?.sede || SedeType.HPR,
       patientName:             nombre,
-      patientCode:             undefined, // se vincula al consolidar
-      origin:                  ORIGEN_URGENCIA,
-      originBedStatus:         undefined,
+      // No internado: se vincula al consolidar. Internado: ya viene con el paciente real de su cama.
+      patientCode:             sourceBed?.patientCode,
+      origin:                  sourceBed ? sourceBed.label : ORIGEN_URGENCIA,
+      originBedCode:           sourceBed?.bedCode,
+      originBedStatus:         sourceBed ? BedStatus.OCCUPIED : undefined,
+      financier:               sourceBed?.institution,
+      eventoInternacion:       sourceBed ? (bedEventKey(sourceBed) || undefined) : undefined,
       destination:             targetBed.label,
       destinationBedCode:      targetBed.bedCode,
       destinationBedStatus:    BedStatus.OCCUPIED,
@@ -3060,7 +3084,7 @@ export const useHospitalState = () => {
       observations:            composeRequisitosObs(data.requisitos ?? [], data.observations) || undefined,
       requisitosCama:          (data.requisitos ?? []).filter(Boolean),
       urgencia:                true,
-      pacienteDeclarado:       nombre,
+      pacienteDeclarado:       sourceBed ? undefined : nombre,
       intervenedByHostess:     'NO',
     };
 
@@ -3074,7 +3098,7 @@ export const useHospitalState = () => {
         return;
       }
       setTickets(prev => prev.map(t => t.id === newTicket.id ? { ...t, spItemId } : t));
-      spLogEvent(newTicket.id, 'Ingreso por urgencia');
+      spLogEvent(newTicket.id, sourceBed ? `Ingreso por urgencia (paciente internado en ${sourceBed.label})` : 'Ingreso por urgencia');
     } finally {
       setTimeout(async () => { writingRef.current = false; ticketsEtagRef.current = null; await fetchTickets(); setTicketActionLoading(false); }, 1000);
       setTimeout(() => { ticketsEtagRef.current = null; fetchTickets(); }, 4500);
@@ -3086,7 +3110,7 @@ export const useHospitalState = () => {
   // después ("Configurar destino") y lo convierte en un traslado vivo.
   const createPreTicket = async (data: {
     originBedLabel: string; movimiento: string; requisitos: string[]; observations?: string;
-    urgencia?: boolean; pacienteNombre?: string; destinoBedLabel?: string;
+    urgencia?: boolean; urgenciaPaciente?: 'INTERNADO' | 'NO_INTERNADO'; pacienteNombre?: string; destinoBedLabel?: string;
   }) => {
     if (!can(currentUser, 'crear_pre_ticket')) { alert('Tu rol no tiene permiso para crear pre-tickets.'); return; }
     if (data.urgencia) { await createUrgenciaTicket(data); return; }
@@ -3301,13 +3325,15 @@ export const useHospitalState = () => {
     }
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket || ticket.status === TicketStatus.COMPLETED) return;
+    const urgSinOrigen = isUrgenciaSinOrigen(ticket);
     if (ticket.urgencia && !link?.patientCode && !ticket.patientCode) {
       alert('Una urgencia necesita un paciente vinculado de PROGAL para consolidarse.'); return;
     }
     writingRef.current = true; // block polls durante la escritura a SP (mismo ciclo que create/edit)
     try {
-      const updates: Partial<Ticket> = ticket.urgencia
-        // Urgencia: no hay cama de origen que pasar a "En preparación"; se graba el paciente real.
+      const updates: Partial<Ticket> = urgSinOrigen
+        // Urgencia de un NO internado: no hay cama de origen que pasar a "En preparación"; se graba el paciente
+        // real. La de un internado sale de su cama → se consolida como un traslado normal (rama de abajo).
         ? {
             status: TicketStatus.COMPLETED, completedAt: new Date().toISOString(),
             ...(link ? { patientName: link.patientName, patientCode: link.patientCode, eventoInternacion: link.eventKey || undefined } : {}),

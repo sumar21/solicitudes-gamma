@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { TicketStatus } from '../types';
 import { Filter, ChevronDown, X } from './Icons';
+import { Siren } from 'lucide-react';
 import { statusLabel } from './StatusBadge';
 import { cn } from '../lib/utils';
 
@@ -30,11 +31,13 @@ interface Props {
   selected: ReadonlySet<TicketStatus>;
   onToggle: (status: TicketStatus) => void;
   onClear: () => void;
+  /** Chip "Urgencias" (flag, no estado): se combina con los de estado. Sin esto no se muestra. */
+  urgencias?: { count: number; on: boolean; onToggle: () => void };
 }
 
-export const TicketStatusFilter: React.FC<Props> = ({ statuses, counts, total, selected, onToggle, onClear }) => {
+export const TicketStatusFilter: React.FC<Props> = ({ statuses, counts, total, selected, onToggle, onClear, urgencias }) => {
   const [open, setOpen] = useState(false); // sólo afecta a mobile
-  const active = selected.size;
+  const active = selected.size + (urgencias?.on ? 1 : 0);
 
   const chipBase = 'inline-flex items-center gap-1.5 h-9 md:h-8 pl-2.5 pr-2 rounded-full border text-[11px] font-bold transition-colors whitespace-nowrap';
   const chipOff = 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50';
@@ -54,7 +57,7 @@ export const TicketStatusFilter: React.FC<Props> = ({ statuses, counts, total, s
           )}
         >
           <Filter className="w-3.5 h-3.5" />
-          Filtrar por estado
+          Filtrar
           {active > 0 && (
             <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-white text-emerald-950 text-[10px] font-black flex items-center justify-center tabular-nums">
               {active}
@@ -100,6 +103,19 @@ export const TicketStatusFilter: React.FC<Props> = ({ statuses, counts, total, s
             </button>
           );
         })}
+        {urgencias && (
+          <button
+            type="button"
+            aria-pressed={urgencias.on}
+            onClick={urgencias.onToggle}
+            title="Urgencias / ingresos directos (se combina con los estados)"
+            className={cn(chipBase, urgencias.on ? 'bg-red-100 border-red-300 text-red-800' : chipOff)}
+          >
+            <Siren className="w-3 h-3 text-red-600 shrink-0" strokeWidth={2.5} />
+            Urgencias
+            <span className={cn('tabular-nums rounded-full px-1.5 text-[10px]', urgencias.on ? 'bg-white/70' : 'bg-slate-100 text-slate-500', urgencias.count === 0 && 'opacity-50')}>{urgencias.count}</span>
+          </button>
+        )}
         {active > 0 && (
           <button type="button" onClick={onClear} className="hidden md:inline-flex items-center gap-1 h-8 px-2 text-[11px] font-bold text-slate-500 hover:text-slate-700">
             <X className="w-3 h-3" /> Limpiar filtro
