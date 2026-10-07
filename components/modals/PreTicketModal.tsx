@@ -146,7 +146,7 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[550px] rounded-3xl max-h-[92vh] overflow-y-auto">
-        <DialogHeader><DialogTitle className="text-xl pr-6">{urgencia ? 'Ingreso por urgencia' : 'Nuevo Pre-ticket de Traslado'}</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle className="text-xl pr-6">{urgencia ? 'Traslado directo por urgencia' : 'Nuevo Pre-ticket de Traslado'}</DialogTitle></DialogHeader>
         <form id="create-pre-ticket-form" onSubmit={handleSubmit} className="grid gap-4 py-2">
 
           {/* Urgencia / ingreso directo: el paciente va directo a la cama y todavía no está internado. */}

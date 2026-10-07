@@ -6,6 +6,7 @@
  * auditar por qué se demoró cada paso.
  *
  * GET  ?ticketId=<id>                                  → observaciones del ticket, cronológico
+ * GET  ?countsFor=<id1>,<id2>,…                        → { counts: { <id>: n } } (indicador de la grilla)
  * POST { ticketId, status, texto, usuario, usuarioId } → crea una observación
  */
 import { requireAuth } from './jwt.js';
@@ -13,6 +14,7 @@ import { getSupabaseAdmin } from './supabase-admin.js';
 
 const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 const MAX_TEXT = 500; // mismo límite que motivos de cancelación / cambio en tickets
+const MAX_COUNT_IDS = 300; // la grilla de activos nunca llega a tanto; tope para que la consulta no crezca sin control
 
 async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -28,6 +30,18 @@ async function handler(req: any, res: any) {
   try {
     // ── GET ────────────────────────────────────────────────────────────────
     if (req.method === 'GET') {
+      // Cantidades por lote para el indicador rojo del botón "Observaciones" de la grilla (pedido de
+      // Julián, 07/10/2026): UNA llamada para todos los traslados visibles, no una por fila.
+      if (req.query?.countsFor != null) {
+        const ids = [...new Set(String(req.query.countsFor).split(',').map(s => s.trim()).filter(Boolean))].slice(0, MAX_COUNT_IDS);
+        if (ids.length === 0) return res.status(200).json({ counts: {} });
+        const { data, error } = await supa.from('traslado_obs')
+          .select('traslado_id').in('traslado_id', ids).eq('entorno', ENTORNO);
+        if (error) throw new Error(`Supabase GET counts failed: ${error.message}`);
+        const counts: Record<string, number> = {};
+        for (const r of data ?? []) { const k = String((r as any).traslado_id); counts[k] = (counts[k] ?? 0) + 1; }
+        return res.status(200).json({ counts });
+      }
       const ticketId = req.query?.ticketId;
       if (!ticketId) return res.status(400).json({ error: 'ticketId query param required' });
 

@@ -103,6 +103,9 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   const [obsText, setObsText]       = useState('');
   const [obsSaving, setObsSaving]   = useState(false);
   const [obsError, setObsError]     = useState('');
+  // Cantidad de observaciones por traslado → circulito rojo en el botón "Observaciones" (pedido de Julián,
+  // 07/10/2026: que se vea de un vistazo qué traslados tienen algo cargado). Una sola llamada por lote.
+  const [obsCounts, setObsCounts]   = useState<Record<string, number>>({});
   const obsThreadRef = useRef<HTMLDivElement>(null);
 
   const openObs  = (ticket: Ticket) => { setObsTicket(ticket); setObsText(''); setObsError(''); };
@@ -130,6 +133,30 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       .finally(() => setObsLoading(false));
   }, [obsTicket]);
 
+  // Ids de los traslados activos (los únicos con botón "Observaciones"). Ordenados → la clave solo cambia
+  // cuando entra o sale un traslado, no en cada refetch de la grilla.
+  const activeIdsKey = useMemo(() => tickets
+    .filter(t => t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED)
+    .map(t => t.id).sort().join(','), [tickets]);
+  // Depende de un BOOLEANO, no de la función: handleAddObservation se recrea en cada render del hook y
+  // como dependencia re-dispararía la consulta en cada refresco de la grilla.
+  const obsEnabled = !!onAddObservation;
+  useEffect(() => {
+    if (!activeIdsKey || !obsEnabled) { setObsCounts({}); return; }
+    let cancelled = false;
+    const load = () => {
+      const token = localStorage.getItem('mediflow_token');
+      fetch(`/api/ticket-observations?countsFor=${encodeURIComponent(activeIdsKey)}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+        .then(r => (r.ok ? r.json() : null))
+        .then(data => { if (!cancelled && data?.counts) setObsCounts(data.counts); })
+        .catch(() => { /* fail-soft: sin indicador, el botón sigue funcionando */ });
+    };
+    load();
+    // Las observaciones de OTROS usuarios no tocan la fila del traslado (no llega Realtime): refresco cada minuto.
+    const id = setInterval(load, 60_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [activeIdsKey, obsEnabled]);
+
   // Mantiene el scroll del hilo al final (lo más nuevo, pegado al redactor).
   useEffect(() => {
     const el = obsThreadRef.current;
@@ -154,6 +181,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
         fecha:   new Date().toISOString(),
       };
       setObsList(prev => [...prev, optimistic]);
+      setObsCounts(prev => ({ ...prev, [obsTicket.id]: (prev[obsTicket.id] ?? 0) + 1 }));
       setObsText('');
     } else {
       setObsError('No se pudo guardar. Reintentá.');
@@ -169,16 +197,26 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     const size = isMobile ? 'default' : 'sm';
     const btnClass = isMobile
       ? 'w-full h-11 text-xs font-black uppercase tracking-widest rounded-xl'
-      : 'h-7 px-2.5 text-[10px] uppercase font-bold tracking-tight';
+      : 'h-7 px-2 text-[10px] uppercase font-bold tracking-tight [&>svg]:mr-1.5';
 
+    const n = obsCounts[ticket.id] ?? 0;
     return (
       <Button
         size={size}
         variant="outline"
-        className={cn(btnClass, 'border-slate-200 text-slate-600 hover:bg-slate-50')}
+        className={cn(btnClass, 'relative border-slate-200 text-slate-600 hover:bg-slate-50', n > 0 && 'border-red-200')}
         onClick={() => openObs(ticket)}
+        title={n > 0 ? `${n} observación${n === 1 ? '' : 'es'} cargada${n === 1 ? '' : 's'}` : undefined}
       >
         <MessageSquare className="w-3.5 h-3.5 mr-2" /> Observaciones
+        {n > 0 && (
+          <span
+            aria-label={`${n} observaciones`}
+            className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black leading-[18px] text-center tabular-nums shadow ring-2 ring-white"
+          >
+            {n > 9 ? '9+' : n}
+          </span>
+        )}
       </Button>
     );
   };
@@ -344,7 +382,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
 
   const renderActionButtons = (ticket: Ticket, isMobile = false) => {
     const size = isMobile ? "default" : "sm";
-    const btnClass = isMobile ? "w-full h-11 text-xs font-black uppercase tracking-widest rounded-xl" : "h-7 px-2.5 text-[10px] uppercase font-bold tracking-tight";
+    const btnClass = isMobile ? "w-full h-11 text-xs font-black uppercase tracking-widest rounded-xl" : "h-7 px-2 text-[10px] uppercase font-bold tracking-tight [&>svg]:mr-1.5";
 
     // ── Pre-ticket (Presolicitud): Admisión configura el destino + (si el rol lo tiene) Cancelar ──
     // No aplican las acciones de azafata/admisión de un traslado normal (todavía no tiene destino).
@@ -542,8 +580,9 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     );
   };
 
+  // 24px de margen hasta 1536px (no 32): a 1280 con el sidebar abierto cada píxel cuenta para que la grilla entre.
   return (
-    <div className="p-4 md:p-8 animate-in slide-in-from-right-4 duration-300 max-w-full space-y-4 md:space-y-6">
+    <div className="p-4 md:p-6 2xl:p-8 animate-in slide-in-from-right-4 duration-300 max-w-full space-y-4 md:space-y-6">
       <div className="flex flex-col lg:flex-row items-center justify-between gap-4">
         <div className="flex flex-col sm:flex-row items-center gap-3 w-full lg:w-auto">
           {/* Tab switcher para "actuar como" otro rol. Visible solo si el user puede
@@ -738,7 +777,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                 <SortHeader label="Origen" sortKey="origin" />
                 <TableHead className="min-w-[90px] whitespace-nowrap">Destino</TableHead>
                 <TableHead className="min-w-[80px] leading-tight">Estado Destino</TableHead>
-                <TableHead className="min-w-[130px]">Observaciones</TableHead>
+                <TableHead className="min-w-[100px]">Observaciones</TableHead>
                 <TableHead className="text-right whitespace-nowrap sticky right-0 z-10 bg-slate-50">Acciones</TableHead>
               </TableRow>
             </TableHeader>
@@ -755,8 +794,8 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
               ) : (
                 sortedTickets.map((ticket) => (
                   <TableRow key={ticket.id} className={cn("group hover:bg-slate-50/60 transition-colors", ticket.status === TicketStatus.REJECTED && "bg-red-50/40")}>
-                    <TableCell>
-                      <StatusBadge status={ticket.status} />
+                    <TableCell className="max-w-[130px]">
+                      <StatusBadge status={ticket.status} wrap />
                       <div className="flex items-center gap-1.5 text-slate-400 text-[10px] font-bold tabular-nums mt-2">
                         <Clock className="w-3 h-3 opacity-50" /> {formatDateTime(ticket.createdAt)}
                       </div>

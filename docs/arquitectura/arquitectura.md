@@ -345,7 +345,7 @@ Verifica que el usuario acceda desde una ubicación autorizada:
 |----------|----------|---------|
 | `api/tickets.ts` | **Supabase** `traslados` | CRUD de traslados (service_role) — ver §4.3 |
 | `api/ticket-events.ts` | **Supabase** `traslado_eventos` | Timeline append-only (trayectoria) |
-| `api/ticket-observations.ts` | **Supabase** `traslado_obs` | Observaciones por traslado, snapshotean el status |
+| `api/ticket-observations.ts` | **Supabase** `traslado_obs` | Observaciones por traslado, snapshotean el status. `GET ?countsFor=id1,id2,…` → `{ counts }` para el indicador de la grilla (§48.11) |
 | `api/limpiezas.ts` | **Supabase** `limpiezas` | GET activas / POST marcar limpia (upsert) / PATCH cerrar (`ANULADA`\|`TICKET`\|`GAMMA`\|`CONSOLIDADO`) |
 | `api/dietas.ts` | **Supabase** `comandas` (+ SP `12.EnrichCamas` para `sin_dieta`) | CRUD de comandas por turno/acompañante + reubicar al trasladar |
 | `api/carga-menu.ts` | **Supabase** `carga_menu` | CRUD de planificación de menú (rango sin solapamiento) |
@@ -1664,3 +1664,11 @@ Pedido de Gamma tras probar el paquete en TESTING.
   - `isUrgenciaSinOrigen(ticket)` (hook) distingue los dos casos: `mergeBeds` ya trataba un ticket con origen real como un "Por Consolidar" normal (paciente al destino, origen En preparación) y `handleConsolidate` solo usa la rama "sin origen" para la de no internado. En la grilla, la de internado muestra **"Consolidar PROGAL"** directo; solo la de no internado abre el modal de vincular.
   - Edge Function `notify-push`: el cuerpo del push de una urgencia con `codigo_paciente` dice "origen → destino · registrar el movimiento en PROGAL y consolidar" (en vez de "ingresarlo en PROGAL"). Requiere redeploy de la función (verificar versión desplegada).
 - Tests: `scripts/check-ticket-filters.mts`, `check-merge-beds-urgencia.mts` (casos 8–9), `check-tickets-api-urgencia.mts` (internado / código sin origen) y `check-notify-push.mts` (A2).
+
+### 48.11. Indicador de observaciones y título de la urgencia (2026-10-07)
+
+- **Circulito rojo en "Observaciones"** (pedido de Julián): el botón de cada traslado activo en Operativa muestra la cantidad de observaciones cargadas (`9+` desde 10). Las cantidades salen de UNA llamada por lote, `GET /api/ticket-observations?countsFor=<ids>` (tope 300 ids), que `views/RequestsView.tsx` repite cuando entra/sale un traslado de la grilla y cada 60 s: una observación de otro usuario no toca la fila de `traslados`, así que no llega por Realtime. Al cargar una observación propia el contador sube al instante. Fail-soft: si la consulta falla, el botón sigue funcionando sin indicador. Solo cuenta observaciones del hilo (`traslado_obs`), no ediciones del traslado.
+- El efecto depende de un booleano (`obsEnabled`), no de `onAddObservation`: `handleAddObservation` se recrea en cada render del hook y como dependencia re-disparaba la consulta en cada refresco.
+- **Título del pop-up de urgencia**: "Traslado directo por urgencia" (antes "Ingreso por urgencia"). El texto del push y el evento de la trayectoria no cambiaron.
+- **Ancho a 1280 (otra vez)**: con filas "Esperando Habitación" el badge de estado (sin cortes) llevaba la columna Estado a 176px y la tabla a 1107/1022. Ahora el badge puede partirse en la grilla (`StatusBadge wrap`), Observaciones tiene mínimo 100px, los botones de acción son más compactos y el margen de la vista es 24px hasta 1536px (`md:p-6 2xl:p-8`). Medido con los datos de TESTING: 1038/1038 a 1280 (Admin y pestaña Azafata), sin desborde a 1440 y 2000.
+

@@ -935,6 +935,11 @@ Diseño en [arquitectura.md §48](../arquitectura/arquitectura.md). **Prerrequis
 - **Acción**: tocar el chip rojo **"Urgencias"**; después prender también "Por Consolidar"; después "Todos".
 - **Resultado esperado**: el chip muestra la cantidad de urgencias; prendido, la grilla muestra **solo urgencias** (de internados y no internados); se combina con los de estado (Y lógico); "Todos"/"Limpiar filtro" lo apaga. Una azafata (o la pestaña "Azafata") **no ve el chip**. En mobile aparece dentro de "Filtrar".
 
+### QA-OPE-05 · Indicador rojo de observaciones · P2 · FE+BE
+- **Precondición**: un traslado activo sin observaciones y otro con observaciones cargadas.
+- **Acción**: mirar el botón "Observaciones" de cada uno; cargar una observación en el primero; desde otra sesión, cargar una observación en otro traslado y esperar ~1 min.
+- **Resultado esperado**: el botón muestra un circulito rojo con la cantidad (9+ desde 10) solo donde hay observaciones; al cargar una, aparece/sube al instante; la de otra sesión aparece en ≤ 1 min sin recargar. Igual en mobile. A 1280 con el sidebar abierto la grilla entra sin scroll.
+
 ### QA-URG-01 · Cargar una urgencia (Coordinación) → nace "Por Consolidar" con paciente libre · P0 · FE+BE
 - **Precondición**: usuario con `crear_pre_ticket`; una cama destino Disponible/En preparación.
 - **Acción**: "Pre-ticket" → tildar **"Urgencia / ingreso directo"** → dejar **"No internado"** (opción por defecto) → nombre y apellido + destino → "Registrar urgencia".
