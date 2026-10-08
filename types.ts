@@ -443,6 +443,10 @@ export const PERMISSIONS = [
   // Ingreso QUIRÚRGICO desde Sala de Espera (workflow ITR_TO_FLOOR + internación 'Q') → solo Enfermería,
   // para que se entere de esos ingresos de su interés sin recibir todos los traslados.
   'notif_ingreso_quirurgico',
+  // Recordatorio a Admisión: un traslado lleva 15 min "Por Consolidar" sin que nadie lo consolide en
+  // PROGAL. Lo dispara un pg_cron sobre public.traslados (ver migración *_por_consolidar_aviso). Sin
+  // este permiso en el ABM el aviso no le llega a nadie.
+  'notif_por_consolidar',
 ] as const;
 export type Permission = typeof PERMISSIONS[number];
 
@@ -484,6 +488,7 @@ export enum NotificationType {
   DIET_CHANGE = 'DIET_CHANGE',
   FASTING_CHANGE = 'FASTING_CHANGE',
   ROOM_CLEANED = 'ROOM_CLEANED', // azafata marcó limpia una habitación desde el mapa
+  POR_CONSOLIDAR = 'POR_CONSOLIDAR', // un traslado lleva 15 min "Por Consolidar" → recordatorio a Admisión
   ROLE_CHANGE = 'ROLE_CHANGE',  // no usado hoy, backwards-compat
   SYSTEM = 'SYSTEM',            // no usado hoy, backwards-compat
 }
@@ -513,6 +518,13 @@ export enum TicketStatus {
   COMPLETED = 'Consolidado',
   REJECTED = 'Cancelado',
 }
+
+/** Origen que lleva un ticket de urgencia: el paciente no sale de una cama del mapa (viene de guardia
+ *  / ingreso directo), pero `cama_origen` es NOT NULL y varias pantallas lo muestran como texto. Un solo
+ *  valor, compartido front/server, para poder reconocerlo. NUNCA coincide con el label de una cama. */
+export const ORIGEN_URGENCIA = 'Urgencia / Ingreso directo';
+/** Motivo (`motivo_cambio`) que se graba en un ticket de urgencia. */
+export const MOVIMIENTO_URGENCIA = 'Ingreso por urgencia';
 
 export interface Ticket {
   id: string;
@@ -554,6 +566,22 @@ export interface Ticket {
   // de admissionTypeCode/PROGAL). Lo usa notify-push para el aviso de ingreso quirúrgico a Enfermería.
   // Columna `tipo_internacion` en public.traslados.
   tipoInternacion?: string;
+  // "Solicitar limpieza OK": la habitación destino es compartida y la cama contigua estaba OCUPADA al
+  // asignar el destino (snapshot). Junto con los requisitos de cama fuerza "Esperando Habitación" y le
+  // muestra a la azafata el aviso "revisá que esté todo OK". Columna `hab_compartida` en public.traslados.
+  // Ver lib/roomCheck.ts.
+  habCompartida?: boolean;
+  // ── Urgencia / ingreso directo ───────────────────────────────────────────────
+  // El paciente de una urgencia va DIRECTO a la cama, sin pasar por Admisión, y por lo general todavía
+  // no está internado en PROGAL. Coordinación carga nombre libre + destino; el ticket nace en "Por
+  // Consolidar" y, para consolidar, Admisión tiene que VINCULARLO a un paciente real (código + evento de
+  // internación), sino la trayectoria queda flotando. Columnas urgencia / paciente_declarado /
+  // evento_internacion en public.traslados.
+  urgencia?: boolean;
+  pacienteDeclarado?: string;   // nombre y apellido que tipeó Coordinación (se conserva tras vincular)
+  eventoInternacion?: string;   // `${EVE_ORIGEN}-${EVE_NUMERO}` del paciente vinculado al consolidar
+  // Cuándo pasó a "Por Consolidar" (lo setea un trigger de la base). Base del aviso de los 15 min.
+  porConsolidarAt?: string;
   canCancel?: boolean;          // true while no hostess action has touched this ticket
   intervenedByHostess?: 'SI' | 'NO'; // IntervinoAzafata_T in SP — "NO" at creation, "SI" after first hostess action
 }

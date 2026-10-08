@@ -40,10 +40,10 @@ Cada caso sigue este formato:
 
 | Estado (enum) | Value persistido | Qué significa | Quién lo dispara |
 |---|---|---|---|
-| `WAITING_ROOM` | `Esperando Habitacion` | Cama destino en preparación, esperando confirmación de limpieza. **No dispara push.** | Admisión (al crear, si destino estaba EN PREPARACIÓN) |
-| `IN_TRANSIT` | `Habitacion Lista` | Habitación lista, esperando inicio del traslado. | Azafata de **destino** (o al crear si destino estaba DISPONIBLE — salta limpieza) |
+| `WAITING_ROOM` | `Esperando Habitacion` | Cama destino en preparación, **o Disponible pero con habitación compartida (vecino ocupado) / requisitos reales**: esperando que la azafata confirme que está armada. **No tiene push propio** (el aviso sale por el `NEW_TICKET` inicial). | Admisión (al crear, si destino estaba EN PREPARACIÓN o hay que verificar la habitación) |
+| `IN_TRANSIT` | `Habitacion Lista` | Habitación lista, esperando inicio del traslado. | Azafata de **destino** (o al crear si destino estaba DISPONIBLE **y no hay nada que verificar** — salta limpieza) |
 | `IN_TRANSPORT` | `En Traslado` | Paciente en camino. | Azafata de **origen** |
-| `WAITING_CONSOLIDATION` | `Por Consolidar` | Paciente recibido, falta reflejarlo en PROGAL. | Azafata de **destino** |
+| `WAITING_CONSOLIDATION` | `Por Consolidar` | Paciente recibido, falta reflejarlo en PROGAL. A los **15 min** sin consolidar avisa a los roles con `notif_por_consolidar`. Una **urgencia** nace directo acá (con paciente libre). | Azafata de **destino** (o Coordinación, al cargar una urgencia) |
 | `COMPLETED` | `Consolidado` | Terminal. Reflejado en PROGAL. | Admisión / Admin |
 | `REJECTED` | `Cancelado` | Terminal. Cancelado con motivo. | Admisión / Admin |
 
@@ -68,8 +68,9 @@ Lógica en `hooks/useHospitalState.ts`, UI en `views/RequestsView.tsx` y `compon
   5. Escribir el **motivo** (obligatorio en Traslado Interno).
   6. Confirmar.
 - **Resultado esperado:**
-  - Si la cama destino estaba **Disponible** → el ticket arranca en **`Habitacion Lista`** (`IN_TRANSIT`, **salta el paso de limpieza**).
+  - Si la cama destino estaba **Disponible** → el ticket arranca en **`Habitacion Lista`** (`IN_TRANSIT`, **salta el paso de limpieza**) — **salvo** que la habitación sea **compartida con la cama contigua ocupada** (el modal avisa en azul): ahí arranca en `Esperando Habitacion` igual (ver CU-AZA-08).
   - Si estaba **En preparación** → arranca en **`Esperando Habitacion`** (`WAITING_ROOM`).
+  - Destino en UTI/UCO/ITR: **no** aparece la advertencia de incompatibilidad de sexos (boxes individuales); en pisos sí.
   - Se registra el evento **`Solicitud Creada`** en la trayectoria; `intervino_azafata='NO'` (aún editable/cancelable).
   - Las azafatas del piso destino con `notif_new_ticket` reciben push **"Nueva Solicitud de Traslado"** (el creador **no** se autonotifica).
   - En el mapa, la cama destino refleja el overlay del ticket.
@@ -156,6 +157,42 @@ Lógica en `hooks/useHospitalState.ts`, UI en `views/RequestsView.tsx` y `compon
 - **Pasos:** en el ticket activo → cargar observación → se guarda (POST `/api/ticket-observations`), snapshoteando el status del momento.
 - **Resultado esperado:** la observación queda en `traslado_obs`. La **azafata deja de poder cargar** al llegar a `Por Consolidar`; Admisión/Admin sí pueden seguir. Sobre tickets ya cerrados se anota desde **Historial → Auditar**, no desde Operativa.
 - **Archivo:** `handleAddObservation`; `api/ticket-observations.ts`.
+
+### CU-ADM-08 — Vincular y consolidar una urgencia (ingreso directo)
+
+- **Actor:** Admisión / Admin
+- **Objetivo:** regularizar en PROGAL a un paciente de urgencia que ya está en la cama y asociarlo al ticket con identidad real.
+- **Precondiciones:** ticket de urgencia en **`Por Consolidar`** (tag rojo **Urgencia** + "Sin vincular"); rol con `consolidar`; el paciente ya fue ingresado en PROGAL (aparece Ocupado, con código, en el mapa; puede tardar hasta ~60 s).
+- **Pasos:**
+  1. Operativa → sobre la urgencia aparece **Vincular y consolidar** (no "Consolidar PROGAL").
+  2. En el modal, ver "Cargado por Coordinación: …" y elegir al **paciente de PROGAL** (se sugiere el ocupante de la cama destino).
+  3. **Vincular y consolidar**.
+- **Resultado esperado:**
+  - status → **`Consolidado`**; el ticket pasa a llevar el **nombre y código reales** y el **evento de internación**; lo tipeado queda como `paciente_declarado`.
+  - Trayectoria: **`Paciente vinculado: … (código …, evento …)`** + **`Consolidado Progal`**. No se toca ninguna cama de origen (no hay).
+  - Sin paciente elegido el botón queda deshabilitado; por API sin código → **422**.
+- **Permiso / gating:** `consolidar` + gate server-side (`api/tickets.ts`).
+- **Archivo:** `components/modals/ConsolidarUrgenciaModal.tsx`; `handleConsolidate(id, link)` en `hooks/useHospitalState.ts`.
+
+### CU-ADM-09 — Filtrar la grilla de Operativa por estado
+
+- **Actor:** Admisión / Admin (o cualquier rol con Operativa)
+- **Objetivo:** ver rápido solo los traslados de un estado (p. ej. los "Por Consolidar").
+- **Precondiciones:** módulo Operativa.
+- **Pasos:** tocar uno o varios chips de estado sobre la grilla (en celular, primero **Filtrar por estado**); **Todos** / **Limpiar** para volver.
+- **Resultado esperado:** la grilla muestra solo los estados elegidos; cada chip trae su contador (que no cambia al filtrar); solo se ofrecen los estados que el rol puede ver (la azafata no tiene "Por Consolidar"); el filtro no se recuerda al recargar.
+- **Permiso / gating:** ninguno propio (respeta el alcance del rol).
+- **Archivo:** `lib/ticketFilters.ts`, `components/TicketStatusFilter.tsx`, `views/RequestsView.tsx`.
+
+### CU-COO-01 — Cargar una urgencia / ingreso directo (Coordinación)
+
+- **Actor:** Coordinación (`crear_pre_ticket`)
+- **Objetivo:** registrar a un paciente que va directo a la cama y todavía no está internado.
+- **Precondiciones:** una cama destino Disponible o En preparación.
+- **Pasos:** Operativa → **Pre-ticket** → tildar **Urgencia / ingreso directo** → nombre y apellido + destino → **Registrar urgencia**.
+- **Resultado esperado:** ticket **`Por Consolidar`** con tag **Urgencia / Sin vincular**; la cama destino se ve Ocupada por el nombre cargado; push **"Ingreso por urgencia"** a Admisión (`notif_pre_ticket`) y **no** a las azafatas; el propio usuario **ve su urgencia** aunque filtre por pisos; no se edita (se cancela y se recarga).
+- **Permiso / gating:** `crear_pre_ticket` (UI + `POST /api/tickets`).
+- **Archivo:** `components/modals/PreTicketModal.tsx`; `createUrgenciaTicket` en `hooks/useHospitalState.ts`.
 
 ---
 
@@ -246,6 +283,16 @@ Enforcement de piso también **server-side** en `api/tickets.ts` (403 si actúa 
 - **Objetivo (negativo/seguridad):** verificar que el servidor rechaza aunque la UI lo permitiera.
 - **Resultado esperado:** PATCH `/api/tickets` devuelve **403** "No autorizado: el traslado no pertenece a tus pisos asignados". Regla HRA: si el extremo requerido es la Sala de Espera (Recepción Admisión), se remapea al **piso real del otro extremo** (`effectiveAreaNames`). Roles con **≥9 de 10 áreas** = full access (bypass del filtro).
 - **Archivo:** `api/tickets.ts` (PATCH).
+
+### CU-AZA-08 — Confirmar una habitación con requerimientos o compartida (azafata de DESTINO)
+
+- **Actor:** Azafata cuyo piso asignado = área de la **cama destino**
+- **Objetivo:** verificar que la habitación esté realmente armada antes de que Coordinación mande al paciente (una cama en verde no lo garantiza).
+- **Precondiciones:** ticket en **`Esperando Habitacion`** con recuadro azul **"Revisá que esté todo OK antes de marcarla lista"**: la habitación es **compartida y la otra cama está ocupada**, y/o el pedido **requiere** algo (colchón, intento de autólisis…).
+- **Pasos:** revisar el recuadro y la habitación (armar la cama, colchón, etc.) → botón azul **Habitación Lista**.
+- **Resultado esperado:** igual que CU-AZA-01 (`Habitacion Lista`, cama Asignada, evento `Habitacion Preparada`, constancia en limpiezas, push "Habitación Lista"); el recuadro desaparece. El push inicial de la solicitud ya traía `· Requiere: … · Hab. compartida: revisar que esté todo OK`.
+- **Permiso / gating:** `confirmar_limpieza` + piso (igual que CU-AZA-01).
+- **Archivo:** `renderRoomCheckCallout` en `views/RequestsView.tsx`; regla en `lib/roomCheck.ts`.
 
 ---
 

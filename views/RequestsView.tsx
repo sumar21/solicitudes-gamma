@@ -4,9 +4,9 @@ import { Ticket, Role, TicketStatus, SortConfig, SortKey, WorkflowType, User, Be
 import { can } from '../lib/permissions';
 import {
   Search, Plus, Timer, Clock, ArrowRightLeft,
-  ChevronUp, ChevronDown, CheckCircle2, BedDouble, Users, ClipboardCheck, AlertCircle, X, XCircle, Info, MapPin, Pencil
+  ChevronUp, ChevronDown, CheckCircle2, BedDouble, Users, ClipboardCheck, AlertCircle, X, XCircle, Info, MapPin, Pencil, UserCheck
 } from '../components/Icons';
-import { ShieldAlert, MessageSquare } from 'lucide-react';
+import { ShieldAlert, MessageSquare, Siren } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Card } from '../components/ui/card';
@@ -15,8 +15,11 @@ import { Badge } from '../components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table';
 import { Dialog, DialogContent, DialogTitle, DialogHeader, DialogFooter } from '../components/ui/dialog';
 import { StatusBadge } from '../components/StatusBadge';
+import { TicketStatusFilter } from '../components/TicketStatusFilter';
+import { visibleStatusChips, countByStatus, applyStatusFilter, toggleStatus, showUrgenciasChip, applyUrgenciaFilter } from '../lib/ticketFilters';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { cn, formatBedName, formatDateTime, effectiveHostessAreas } from '../lib/utils';
+import { realRequisitos } from '../lib/roomCheck';
 
 interface RequestsViewProps {
   tickets: Ticket[];
@@ -38,6 +41,8 @@ interface RequestsViewProps {
   onRoomReady: (id: string) => void;
   onConfirmReception: (id: string) => void;
   onConsolidate: (id: string) => void;
+  /** Urgencia / ingreso directo: abre el modal para VINCULAR un paciente real antes de consolidar. */
+  onConsolidateUrgencia?: (id: string) => void;
   onReject?: (id: string) => void;
   onEdit?: (id: string) => void;
   onAddObservation?: (id: string, texto: string) => Promise<boolean>;
@@ -81,8 +86,13 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   searchTerm, setSearchTerm, sortConfig, onSort,
   onNewRequest, onNewPreTicket, onConfigureDestino, onValidateReason, onAssignBed,
   onHousekeepingAction, onStartTransport, onCompleteTransport,
-  onRoomReady, onConfirmReception, onConsolidate, onReject, onEdit, onAddObservation, currentUser, beds
+  onRoomReady, onConfirmReception, onConsolidate, onConsolidateUrgencia, onReject, onEdit, onAddObservation, currentUser, beds
 }) => {
+
+  // Filtro por estado (botonera). Vacío = se ve todo. Es de la sesión de pantalla: NO se persiste a
+  // propósito — un filtro viejo escondiendo traslados al día siguiente parecería que "no hay nada".
+  const [statusFilter, setStatusFilter] = useState<Set<TicketStatus>>(new Set());
+  const [onlyUrgencias, setOnlyUrgencias] = useState(false);
 
   // Observaciones por traslado: UN solo modal (hilo + redactor). Todos los roles ven el
   // historial y pueden cargar una nota nueva en el mismo lugar. La nota queda ligada al
@@ -93,10 +103,22 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   const [obsText, setObsText]       = useState('');
   const [obsSaving, setObsSaving]   = useState(false);
   const [obsError, setObsError]     = useState('');
+  // Cantidad de observaciones por traslado → circulito rojo en el botón "Observaciones" (pedido de Julián,
+  // 07/10/2026: que se vea de un vistazo qué traslados tienen algo cargado). Una sola llamada por lote.
+  const [obsCounts, setObsCounts]   = useState<Record<string, number>>({});
   const obsThreadRef = useRef<HTMLDivElement>(null);
 
   const openObs  = (ticket: Ticket) => { setObsTicket(ticket); setObsText(''); setObsError(''); };
   const closeObs = () => { if (!obsSaving) { setObsTicket(null); setObsList([]); setObsText(''); setObsError(''); } };
+
+  // Pestaña por defecto: activeRole arranca del rol guardado en la sesión, que para roles custom
+  // (p. ej. "sumar.ai" → READ_ONLY) no es ninguna pestaña → no se veía ninguna marcada y tampoco
+  // las acciones de Admisión/Admin. Si el rol actual no es una pestaña visible, elegimos la primera.
+  useEffect(() => {
+    if (!can(currentUser, 'crear_ticket')) return;
+    const tabs = can(currentUser, 'abm_usuarios') ? [Role.ADMIN, Role.ADMISSION, Role.HOSTESS] : [Role.ADMISSION, Role.HOSTESS];
+    if (!tabs.includes(activeRole)) setActiveRole(tabs[0]);
+  }, [currentUser, activeRole, setActiveRole]);
 
   // Trae el hilo al abrir el modal.
   useEffect(() => {
@@ -110,6 +132,30 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       .catch(() => setObsList([]))
       .finally(() => setObsLoading(false));
   }, [obsTicket]);
+
+  // Ids de los traslados activos (los únicos con botón "Observaciones"). Ordenados → la clave solo cambia
+  // cuando entra o sale un traslado, no en cada refetch de la grilla.
+  const activeIdsKey = useMemo(() => tickets
+    .filter(t => t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED)
+    .map(t => t.id).sort().join(','), [tickets]);
+  // Depende de un BOOLEANO, no de la función: handleAddObservation se recrea en cada render del hook y
+  // como dependencia re-dispararía la consulta en cada refresco de la grilla.
+  const obsEnabled = !!onAddObservation;
+  useEffect(() => {
+    if (!activeIdsKey || !obsEnabled) { setObsCounts({}); return; }
+    let cancelled = false;
+    const load = () => {
+      const token = localStorage.getItem('mediflow_token');
+      fetch(`/api/ticket-observations?countsFor=${encodeURIComponent(activeIdsKey)}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+        .then(r => (r.ok ? r.json() : null))
+        .then(data => { if (!cancelled && data?.counts) setObsCounts(data.counts); })
+        .catch(() => { /* fail-soft: sin indicador, el botón sigue funcionando */ });
+    };
+    load();
+    // Las observaciones de OTROS usuarios no tocan la fila del traslado (no llega Realtime): refresco cada minuto.
+    const id = setInterval(load, 60_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [activeIdsKey, obsEnabled]);
 
   // Mantiene el scroll del hilo al final (lo más nuevo, pegado al redactor).
   useEffect(() => {
@@ -135,6 +181,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
         fecha:   new Date().toISOString(),
       };
       setObsList(prev => [...prev, optimistic]);
+      setObsCounts(prev => ({ ...prev, [obsTicket.id]: (prev[obsTicket.id] ?? 0) + 1 }));
       setObsText('');
     } else {
       setObsError('No se pudo guardar. Reintentá.');
@@ -150,17 +197,69 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     const size = isMobile ? 'default' : 'sm';
     const btnClass = isMobile
       ? 'w-full h-11 text-xs font-black uppercase tracking-widest rounded-xl'
-      : 'h-8 text-[10px] uppercase font-bold tracking-tight';
+      : 'h-7 px-2 text-[10px] uppercase font-bold tracking-tight [&>svg]:mr-1.5';
 
+    const n = obsCounts[ticket.id] ?? 0;
     return (
       <Button
         size={size}
         variant="outline"
-        className={cn(btnClass, 'border-slate-200 text-slate-600 hover:bg-slate-50')}
+        className={cn(btnClass, 'relative border-slate-200 text-slate-600 hover:bg-slate-50', n > 0 && 'border-red-200')}
         onClick={() => openObs(ticket)}
+        title={n > 0 ? `${n} observación${n === 1 ? '' : 'es'} cargada${n === 1 ? '' : 's'}` : undefined}
       >
         <MessageSquare className="w-3.5 h-3.5 mr-2" /> Observaciones
+        {n > 0 && (
+          <span
+            aria-label={`${n} observaciones`}
+            className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black leading-[18px] text-center tabular-nums shadow ring-2 ring-white"
+          >
+            {n > 9 ? '9+' : n}
+          </span>
+        )}
       </Button>
+    );
+  };
+
+  // "Solicitar limpieza OK": un traslado "Esperando Habitación" con requisitos de cama o habitación
+  // compartida (la otra cama ocupada) NO sale directo: la azafata tiene que revisar que esté todo armado
+  // antes de marcarla lista. Este recuadro le dice por qué y qué mirar. Ver lib/roomCheck.ts.
+  // Compacto a propósito: una línea en "Tarea" + la etiqueta "Compartida" bajo la cama destino. Los requisitos
+  // NO se repiten acá: ya están en Observaciones ("Requisitos: …"). Un recuadro en la columna Tarea (angosta)
+  // quedaba altísimo y duplicaba esa info.
+  const needsRoomCheck = (ticket: Ticket) =>
+    ticket.status === TicketStatus.WAITING_ROOM && (!!ticket.habCompartida || realRequisitos(ticket.requisitosCama).length > 0);
+  const renderSharedRoomTag = (ticket: Ticket) => (ticket.status === TicketStatus.WAITING_ROOM && ticket.habCompartida) ? (
+    <span
+      className="inline-flex items-center gap-1 w-fit rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-sky-700"
+      title="La otra cama de la habitación está ocupada: la cama libre puede no estar armada"
+    >
+      <Users className="w-3 h-3" /> Compartida
+    </span>
+  ) : null;
+
+  // Urgencia / ingreso directo: tag rojo + aviso mientras el paciente es sólo un nombre libre, sin vincular
+  // a un paciente real de PROGAL (se vincula al consolidar). Ver ConsolidarUrgenciaModal.
+  const renderUrgenciaTags = (ticket: Ticket) => {
+    if (!ticket.urgencia) return null;
+    return (
+      <>
+        <span
+          className="inline-flex items-center gap-1 rounded-full bg-red-600 px-1.5 py-0.5 text-white shrink-0"
+          title="Ingreso por urgencia / ingreso directo"
+        >
+          <Siren className="w-3 h-3" strokeWidth={3} />
+          <span className="text-[9px] font-black uppercase tracking-wide leading-none">Urgencia</span>
+        </span>
+        {!ticket.patientCode && (
+          <span
+            className="inline-flex items-center rounded-full border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-amber-800 shrink-0"
+            title="Todavía no está vinculado a un paciente de PROGAL: se vincula al consolidar"
+          >
+            <span className="text-[9px] font-black uppercase tracking-wide leading-none">Sin vincular</span>
+          </span>
+        )}
+      </>
     );
   };
 
@@ -176,7 +275,22 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     return [];
   };
 
-  const sortedTickets = useMemo(() => {
+  // Pre-tickets (Presolicitud): solo los ven Admisión (completar_pre_ticket) y la Coordinadora
+  // (crear_pre_ticket). El resto no los ve hasta que se convierten en traslado vivo.
+  const canSeePreTickets = can(currentUser, 'completar_pre_ticket') || can(currentUser, 'crear_pre_ticket');
+  // Quien puede CREAR (pre-)tickets no se recorta por estado aunque filtre por pisos (ver el filtro de abajo):
+  // eso incluye a Coordinación, que carga las urgencias —nacen "Por Consolidar"— y tiene que verlas.
+  const canCreateTickets = can(currentUser, 'crear_pre_ticket') || can(currentUser, 'crear_ticket');
+  // Pestaña "Azafata" de Admin/Admisión (quien tiene pestañas = crear_ticket): la grilla se ve COMO LA VE UNA
+  // AZAFATA — solo estados operativos (sin Presolicitud, sin Por Consolidar, sin urgencias). Antes la pestaña
+  // solo cambiaba los botones y se veían pre-tickets con "Configurar destino" en modo azafata. Coordinación no
+  // tiene pestañas (no tiene crear_ticket), así que esto no le toca.
+  const actingAsHostess = can(currentUser, 'crear_ticket') && activeRole === Role.HOSTESS;
+
+  // Lo que ESTE usuario puede ver (rol, pisos, búsqueda) ANTES del filtro por estado y del orden. De acá
+  // salen los contadores de la botonera: así "Por Consolidar (3)" siempre dice cuántos hay, aunque haya
+  // otro estado filtrado.
+  const scopedTickets = useMemo(() => {
     // Azafatas (filterByFloors) ven los cancelados recientes (< 1h) para no creer que un traslado
     // "se borró" cuando admisión lo cargó y canceló. El resto de los roles NO los ve.
     const CANCEL_WINDOW_MS = 60 * 60 * 1000;
@@ -189,9 +303,6 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       return true;
     });
 
-    // Pre-tickets (Presolicitud): solo los ven Admisión (completar_pre_ticket) y la Coordinadora
-    // (crear_pre_ticket). El resto no los ve hasta que se convierten en traslado vivo.
-    const canSeePreTickets = can(currentUser, 'completar_pre_ticket') || can(currentUser, 'crear_pre_ticket');
     filtered = filtered.filter(t => t.status !== TicketStatus.PRESOLICITUD || canSeePreTickets);
 
     if (searchTerm) {
@@ -209,7 +320,6 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       // crear_ticket/crear_pre_ticket) NO se recorta por estado: ve todos los activos de sus pisos,
       // incluidos los Presolicitud y los que ya se convirtieron. El recorte por estado es para las
       // azafatas, que solo actúan sobre traslados operativos.
-      const canCreateTickets = can(currentUser, 'crear_pre_ticket') || can(currentUser, 'crear_ticket');
       filtered = filtered.filter(t => {
         if (!currentUser?.filterByFloors) return true;
         if (!canCreateTickets) {
@@ -235,7 +345,24 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       });
     }
 
-    const sortableItems = [...filtered];
+    if (actingAsHostess) {
+      filtered = filtered.filter(t =>
+        t.status === TicketStatus.WAITING_ROOM || t.status === TicketStatus.IN_TRANSIT || t.status === TicketStatus.IN_TRANSPORT);
+    }
+    return filtered;
+  }, [tickets, searchTerm, beds, currentUser, canSeePreTickets, canCreateTickets, actingAsHostess]);
+
+  const statusChips = useMemo(
+    () => visibleStatusChips({ filterByFloors: !!currentUser?.filterByFloors, canSeePreTickets, canCreateTickets, actingAsHostess }),
+    [currentUser?.filterByFloors, canSeePreTickets, canCreateTickets, actingAsHostess],
+  );
+  const statusCounts = useMemo(() => countByStatus(scopedTickets), [scopedTickets]);
+  const urgenciasChip = showUrgenciasChip(statusChips);
+  const urgenciasCount = useMemo(() => scopedTickets.filter(t => t.urgencia).length, [scopedTickets]);
+  const urgenciaFilterOn = urgenciasChip && onlyUrgencias; // si el rol cambia (pestaña Azafata) el chip desaparece y deja de filtrar
+
+  const sortedTickets = useMemo(() => {
+    const sortableItems = applyUrgenciaFilter(applyStatusFilter(scopedTickets, statusFilter), urgenciaFilterOn);
     sortableItems.sort((a, b) => {
       const aVal = a[sortConfig.key] || '';
       const bVal = b[sortConfig.key] || '';
@@ -251,11 +378,11 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       return ap - bp;
     });
     return sortableItems;
-  }, [tickets, activeRole, sortConfig, searchTerm, beds, currentUser]);
+  }, [scopedTickets, statusFilter, urgenciaFilterOn, sortConfig]);
 
   const renderActionButtons = (ticket: Ticket, isMobile = false) => {
     const size = isMobile ? "default" : "sm";
-    const btnClass = isMobile ? "w-full h-11 text-xs font-black uppercase tracking-widest rounded-xl" : "h-8 text-[10px] uppercase font-bold tracking-tight";
+    const btnClass = isMobile ? "w-full h-11 text-xs font-black uppercase tracking-widest rounded-xl" : "h-7 px-2 text-[10px] uppercase font-bold tracking-tight [&>svg]:mr-1.5";
 
     // ── Pre-ticket (Presolicitud): Admisión configura el destino + (si el rol lo tiene) Cancelar ──
     // No aplican las acciones de azafata/admisión de un traslado normal (todavía no tiene destino).
@@ -265,8 +392,11 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       const canConfig = can(currentUser, 'completar_pre_ticket') && !!onConfigureDestino;
       const canCancelPre = can(currentUser, 'cancelar_pre_ticket') && !!onReject;
       if (!canConfig && !canCancelPre) return null;
+      // Columna (no fila): "Configurar destino" + "Cancelar" + "Observaciones" en una sola fila medían ~470px y
+      // sacaban la columna de Acciones de la pantalla. Apilados, con el mismo ancho, la columna queda en ~200px.
+      // En mobile se conserva el espaciado de siempre (cada botón es un bloque de la card).
       return (
-        <>
+        <div className={cn("flex flex-col", isMobile ? "gap-4" : "gap-1 items-stretch")}>
           {canConfig && (
             <Button size={size} onClick={() => onConfigureDestino!(ticket.id)}
               className={cn(btnClass, "bg-emerald-950 hover:bg-emerald-900 text-white rounded-xl px-4")}>
@@ -279,7 +409,41 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
               <XCircle className="w-3.5 h-3.5 mr-2" /> Cancelar
             </Button>
           )}
-        </>
+        </div>
+      );
+    }
+
+    // ── Urgencia / ingreso directo (nace "Por Consolidar"): no hay circuito de azafata. Admisión VINCULA al
+    // paciente real y consolida; no se edita (editar el destino la recalcularía como traslado normal).
+    // Cancelar lo puede quien cancela traslados o quien cancela pre-tickets (Coordinación cargó la urgencia
+    // y es quien se da cuenta del error).
+    if (ticket.urgencia && ticket.status === TicketStatus.WAITING_CONSOLIDATION) {
+      if (can(currentUser, 'crear_ticket') && activeRole === Role.HOSTESS) return null; // admin "actuando como" azafata
+      // Urgencia de un paciente INTERNADO: ya viene con el paciente real de su cama → "Consolidar" directo,
+      // como un traslado normal. Sólo la de un NO internado abre el modal de vinculación.
+      const yaVinculada = !!ticket.patientCode;
+      const canLink = can(currentUser, 'consolidar') && (yaVinculada ? !!onConsolidate : !!onConsolidateUrgencia);
+      const canCancelUrg = (can(currentUser, 'cancelar_ticket') || can(currentUser, 'cancelar_pre_ticket')) && !!onReject;
+      if (!canLink && !canCancelUrg) return null;
+      return (
+        <div className={cn("flex flex-col", isMobile ? "gap-1.5" : "gap-1 items-stretch")}>
+          {canLink && (
+            yaVinculada ? (
+              <Button size={size} className={cn(btnClass, "bg-purple-600 hover:bg-purple-700 text-white")} onClick={() => onConsolidate(ticket.id)}>
+                <BedDouble className="w-3.5 h-3.5 mr-2" /> Consolidar PROGAL
+              </Button>
+            ) : (
+              <Button size={size} className={cn(btnClass, "bg-purple-600 hover:bg-purple-700 text-white")} onClick={() => onConsolidateUrgencia!(ticket.id)}>
+                <UserCheck className="w-3.5 h-3.5 mr-2" /> Vincular y consolidar
+              </Button>
+            )
+          )}
+          {canCancelUrg && (
+            <Button size={size} variant="outline" className={cn(btnClass, "border-red-200 text-red-600 hover:bg-red-50")} onClick={() => onReject!(ticket.id)}>
+              <XCircle className="w-3.5 h-3.5 mr-2" /> Cancelar
+            </Button>
+          )}
+        </div>
       );
     }
 
@@ -375,8 +539,10 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       // Cancelar disponible en cualquier etapa activa (independiente de la intervención).
       const showCancel      = notTerminal && can(currentUser, 'cancelar_ticket') && !!onReject;
       if (!showConsolidate && !showEdit && !showCancel) return null;
+      // Desktop en columna (no fila): Consolidar + Editar + Cancelar en fila medían ~380px y empujaban la columna
+      // de Acciones fuera de pantalla a 1280px.
       return (
-        <div className={cn("flex gap-1.5", isMobile ? "flex-col" : "flex-row")}>
+        <div className={cn("flex flex-col", isMobile ? "gap-1.5" : "gap-1 items-stretch")}>
           {showConsolidate && (
             <Button size={size} className={cn(btnClass, "bg-purple-600 hover:bg-purple-700 text-white")} onClick={() => onConsolidate(ticket.id)}>
               <BedDouble className="w-3.5 h-3.5 mr-2" /> Consolidar PROGAL
@@ -414,8 +580,9 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     );
   };
 
+  // 24px de margen hasta 1536px (no 32): a 1280 con el sidebar abierto cada píxel cuenta para que la grilla entre.
   return (
-    <div className="p-4 md:p-8 animate-in slide-in-from-right-4 duration-300 max-w-full space-y-4 md:space-y-6">
+    <div className="p-4 md:p-6 2xl:p-8 animate-in slide-in-from-right-4 duration-300 max-w-full space-y-4 md:space-y-6">
       <div className="flex flex-col lg:flex-row items-center justify-between gap-4">
         <div className="flex flex-col sm:flex-row items-center gap-3 w-full lg:w-auto">
           {/* Tab switcher para "actuar como" otro rol. Visible solo si el user puede
@@ -460,19 +627,30 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
             {searchTerm && <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="w-3.5 h-3.5" /></button>}
           </div>
           {can(currentUser, 'crear_pre_ticket') && onNewPreTicket && (
-            <Button onClick={onNewPreTicket} variant="outline" className="h-10 border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-xl px-4 flex items-center gap-2 shrink-0">
+            <Button onClick={onNewPreTicket} variant="outline" className="h-10 border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-xl px-3 sm:px-4 flex items-center gap-1.5 sm:gap-2 shrink-0">
               <Plus className="w-4 h-4" />
-              <span className="hidden sm:inline text-xs font-bold">Pre-ticket</span>
+              <span className="text-xs font-bold">Pre-ticket</span>
             </Button>
           )}
           {can(currentUser, 'crear_ticket') && (
-            <Button onClick={onNewRequest} className="h-10 bg-emerald-950 hover:bg-emerald-900 rounded-xl shadow-lg px-4 flex items-center gap-2 shrink-0">
+            <Button onClick={onNewRequest} className="h-10 bg-emerald-950 hover:bg-emerald-900 rounded-xl shadow-lg px-3 sm:px-4 flex items-center gap-1.5 sm:gap-2 shrink-0">
               <Plus className="w-4 h-4 text-white" />
-              <span className="hidden sm:inline text-xs font-bold">Solicitud</span>
+              <span className="text-xs font-bold">Solicitud</span>
             </Button>
           )}
         </div>
       </div>
+
+      {/* Botonera de estados: un chip por estado visible para el rol (colapsada tras "Filtrar" en mobile) */}
+      <TicketStatusFilter
+        statuses={statusChips}
+        counts={statusCounts}
+        total={scopedTickets.length}
+        selected={statusFilter}
+        onToggle={(s) => setStatusFilter(prev => toggleStatus(prev, s))}
+        onClear={() => { setStatusFilter(new Set()); setOnlyUrgencias(false); }}
+        urgencias={urgenciasChip ? { count: urgenciasCount, on: onlyUrgencias, onToggle: () => setOnlyUrgencias(v => !v) } : undefined}
+      />
 
       {/* Vista Mobile (Cards) */}
       <div className="grid grid-cols-1 gap-3 md:hidden">
@@ -492,6 +670,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                   </div>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <h3 className="font-black text-slate-950 text-base leading-tight tracking-tight uppercase">{ticket.patientName}</h3>
+                    {renderUrgenciaTags(ticket)}
                     {getTicketIsolationTypes(ticket).map((iso: IsolationEntry, i: number) => (
                       <span
                         key={`${iso.name}-${i}`}
@@ -551,16 +730,25 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                 </div>
               )}
 
-              {/* Status Context Helper */}
+              {/* Status Context Helper — solo si el estado tiene algo que decir (antes quedaba un recuadro vacío, p.ej. en Presolicitud) */}
+              {ticket.status !== TicketStatus.COMPLETED && ticket.status !== TicketStatus.REJECTED && (
               <div className="text-[10px] font-medium text-slate-500 bg-slate-50 px-3 py-2 rounded-lg border border-slate-100 flex items-center gap-2">
                 <Info className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                 <span>
-                  {ticket.status === TicketStatus.WAITING_ROOM && "Esperando que la habitación de destino esté lista."}
+                  {ticket.status === TicketStatus.PRESOLICITUD && "Pre-ticket: falta que Admisión configure el destino."}
+                  {ticket.status === TicketStatus.WAITING_ROOM && (needsRoomCheck(ticket)
+                    ? <span className="font-semibold text-sky-700">Verificar la habitación antes de marcarla lista{ticket.habCompartida ? ' (habitación compartida)' : ''}.</span>
+                    : "Esperando que la habitación de destino esté lista.")}
                   {ticket.status === TicketStatus.IN_TRANSIT && "Habitación lista. Esperando inicio de traslado."}
                   {ticket.status === TicketStatus.IN_TRANSPORT && "Traslado en curso. Esperando confirmación de recepción."}
-                  {ticket.status === TicketStatus.WAITING_CONSOLIDATION && "Paciente recibido. Pendiente consolidar en sistema."}
+                  {ticket.status === TicketStatus.WAITING_CONSOLIDATION && (ticket.urgencia
+                    ? (ticket.patientCode
+                      ? "Urgencia de un paciente internado: registrar el movimiento en PROGAL y consolidar."
+                      : "Urgencia: ingresar al paciente en PROGAL y vincularlo para consolidar.")
+                    : "Paciente recibido. Pendiente consolidar en sistema.")}
                 </span>
               </div>
+              )}
 
               {ticket.rejectionReason && (
                 <div className="p-2.5 bg-red-100/50 border border-red-200 rounded-xl flex items-start gap-2">
@@ -579,17 +767,18 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       {/* Vista Desktop (Table) */}
       <Card className="hidden md:block shadow-sm border-slate-200 overflow-hidden bg-white rounded-2xl">
         <div className="overflow-x-auto">
-          <Table>
-            <TableHeader className="bg-slate-50/50 border-b border-slate-200">
+          {/* Celdas con 12px por lado (no 16): a 1280 con el sidebar abierto quedan ~1020px y la grilla tiene que entrar entera. */}
+          <Table className="[&_th]:px-3 [&_td]:px-3">
+            <TableHeader className="bg-slate-50 border-b border-slate-200">
               <TableRow>
                 <SortHeader label="Estado" sortKey="status" />
-                <TableHead className="min-w-[170px]">Tarea</TableHead>
+                <TableHead className="min-w-[120px]">Tarea</TableHead>
                 <SortHeader label="Paciente" sortKey="patientName" />
                 <SortHeader label="Origen" sortKey="origin" />
-                <TableHead className="min-w-[110px] whitespace-nowrap">Destino</TableHead>
-                <TableHead className="min-w-[120px] whitespace-nowrap">Estado Destino</TableHead>
-                <TableHead className="min-w-[200px]">Observaciones</TableHead>
-                <TableHead className="text-right whitespace-nowrap">Acciones</TableHead>
+                <TableHead className="min-w-[90px] whitespace-nowrap">Destino</TableHead>
+                <TableHead className="min-w-[80px] leading-tight">Estado Destino</TableHead>
+                <TableHead className="min-w-[100px]">Observaciones</TableHead>
+                <TableHead className="text-right whitespace-nowrap sticky right-0 z-10 bg-slate-50">Acciones</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -598,15 +787,15 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                   <TableCell colSpan={8} className="h-48 text-center text-slate-500 bg-white">
                     <div className="flex flex-col items-center justify-center gap-3 opacity-20">
                       <Search className={cn("w-10 h-10", tickets.length === 0 && "animate-pulse")} />
-                      <p className="text-sm font-black uppercase tracking-widest">{tickets.length === 0 ? 'Cargando...' : 'Sin resultados'}</p>
+                      <p className="text-sm font-black uppercase tracking-widest">{tickets.length === 0 && !searchTerm ? 'Cargando...' : 'Sin resultados'}</p>
                     </div>
                   </TableCell>
                 </TableRow>
               ) : (
                 sortedTickets.map((ticket) => (
                   <TableRow key={ticket.id} className={cn("group hover:bg-slate-50/60 transition-colors", ticket.status === TicketStatus.REJECTED && "bg-red-50/40")}>
-                    <TableCell>
-                      <StatusBadge status={ticket.status} />
+                    <TableCell className="max-w-[130px]">
+                      <StatusBadge status={ticket.status} wrap />
                       <div className="flex items-center gap-1.5 text-slate-400 text-[10px] font-bold tabular-nums mt-2">
                         <Clock className="w-3 h-3 opacity-50" /> {formatDateTime(ticket.createdAt)}
                       </div>
@@ -617,10 +806,14 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                           {WORKFLOW_LABEL_BADGE[ticket.workflow] ?? 'Interno'}
                         </Badge>
                         <div className="text-[10px] text-slate-500 mt-1">
-                          {ticket.status === TicketStatus.WAITING_ROOM && "Esperando habitación lista."}
+                          {ticket.status === TicketStatus.WAITING_ROOM && (needsRoomCheck(ticket)
+                            ? <span className="font-semibold text-sky-700">Verificar la habitación antes de marcarla lista.</span>
+                            : "Esperando habitación lista.")}
                           {ticket.status === TicketStatus.IN_TRANSIT && "Esperando inicio de traslado."}
                           {ticket.status === TicketStatus.IN_TRANSPORT && "Esperando confirmación de recepción."}
-                          {ticket.status === TicketStatus.WAITING_CONSOLIDATION && "Pendiente consolidar en PROGAL."}
+                          {ticket.status === TicketStatus.WAITING_CONSOLIDATION && (ticket.urgencia && !ticket.patientCode
+                            ? "Ingresar al paciente en PROGAL y vincularlo."
+                            : "Pendiente consolidar en PROGAL.")}
                         </div>
                         {ticket.changeReason && (
                           <div className="flex items-center gap-1.5 text-[9px] font-black text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200/50 uppercase mt-1">
@@ -632,6 +825,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                     <TableCell>
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="font-black text-slate-950 text-base uppercase tracking-tight">{ticket.patientName}</span>
+                        {renderUrgenciaTags(ticket)}
                         {getTicketIsolationTypes(ticket).map((iso: IsolationEntry, i: number) => (
                           <span
                             key={`${iso.name}-${i}`}
@@ -650,7 +844,11 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                     </TableCell>
                     <TableCell>
                       {ticket.destination ? (
-                        <div className="text-slate-800 text-sm font-black uppercase tracking-tight whitespace-nowrap">{formatBedName(ticket.destination)}</div>
+                        <div className="flex flex-col gap-1">
+                          {/* Sin nowrap: destinos largos ("UNIDAD TERAPIA INTENSIVA HPR - CAMA 02") estiraban la columna a ~340px. */}
+                          <div className="text-slate-800 text-sm font-black uppercase tracking-tight break-words max-w-[150px]">{formatBedName(ticket.destination)}</div>
+                          {renderSharedRoomTag(ticket)}
+                        </div>
                       ) : (
                         <span className="text-xs text-slate-400 italic">-</span>
                       )}
@@ -658,7 +856,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                     <TableCell>
                       <div className="flex flex-col gap-1">
                         {ticket.targetBedOriginalStatus ? (
-                          <span className="text-[10px] font-bold text-slate-500 uppercase whitespace-nowrap">
+                          <span className="text-[10px] font-bold text-slate-500 uppercase leading-tight">
                             {ticket.targetBedOriginalStatus}
                           </span>
                         ) : (
@@ -692,16 +890,12 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                         )}
                       </div>
                     </TableCell>
-                    <TableCell className="text-right pr-6">
-                      {/* Admin/Admisión suman un 3er botón (Observaciones) que ensancha la
-                          columna y achata la grilla → los apilamos en 2 filas. La Azafata
-                          tiene menos botones, así que se queda en una sola fila. */}
-                      <div className={cn(
-                        "flex",
-                        (activeRole === Role.ADMIN || activeRole === Role.ADMISSION)
-                          ? "flex-col items-end gap-1.5"
-                          : "justify-end gap-2"
-                      )}>
+                    <TableCell className="text-right pr-4 sticky right-0 z-10 bg-white shadow-[-8px_0_8px_-8px_rgba(15,23,42,0.18)]">
+                      {/* Acciones SIEMPRE en columna, del ancho del botón más ancho (w-max) y alineadas a la derecha.
+                          En fila (2-3 botones + Observaciones) la columna llegaba a 300-470px y empujaba la tabla
+                          fuera de pantalla a 1280px; estirados al ancho de la celda, en pantallas anchas quedaban
+                          botones de ~360px. */}
+                      <div className="flex flex-col items-stretch gap-1 w-max ml-auto">
                         {renderActionButtons(ticket)}
                         {renderObsButton(ticket)}
                       </div>

@@ -1500,3 +1500,68 @@ Alternativa a revertir del todo: **blindar** el canal de página en vez de elimi
 - En cirugía la cama **no se libera** (el paciente vuelve): la semántica correcta es un **overlay sobre la cama** (símil ayuno/dieta, pill `Cx`), no un ticket con ciclo de vida de traslado.
 
 **Impacto (cuando se construya):** máquina de estados propia, `api/cirugia.ts` moldeado sobre `api/limpiezas.ts` (índice "una viva por cama", RLS por entorno, Realtime `cirugia-live`, grants), y vista "Gestión de Cirugías". **Mencionar como upcoming; no documentar como existente.**
+
+---
+
+## 29. Paquete de octubre 2026 (2026-10-02)
+
+Diseño y archivos en [arquitectura.md §48](arquitectura.md). Acá, el *por qué*.
+
+### 29.1. Aviso de los 15 min: trigger + `pg_cron` + webhook existente (no un cron de Vercel)
+
+**Qué:** el recordatorio de "Por Consolidar" se resuelve **dentro de Postgres**: un trigger estampa `por_consolidar_at` al entrar al estado, un `pg_cron` por minuto llama a `avisar_por_consolidar()` que estampa `aviso_consolidar_at`, y ese UPDATE dispara el webhook que ya existe (`notify_push_traslados` → `notify-push`), que emite el tipo `POR_CONSOLIDAR`.
+
+**Por qué:**
+- La **marca de tiempo la pone la base**, no el cliente: "desde cuándo está Por Consolidar" no puede depender de que la PWA de la azafata escriba un evento `Paciente Recibido` (se pierde si falla la red o si lo hace otro cliente). `traslado_eventos` queda como auditoría, no como fuente de la regla.
+- **Reusa el pipeline de push de traslados** (permiso por tipo, `filter_by_floors`, idempotencia por `push_dispatch_log`, campanita) en vez de duplicarlo en un cron de Vercel con `push-utils`. El UPDATE null → fecha es "un cambio de fila commiteado", exactamente lo que el webhook sabe observar (§28.8).
+- **Sin envs nuevas ni deploy de Vercel**: el cron corre en Supabase (ya hay `pg_cron` instalado, lo usan otros jobs del proyecto).
+- **Una sola vez por ingreso**: `aviso_consolidar_at` es el candado, y el trigger lo rearma si el traslado vuelve a entrar al estado.
+
+**Alternativas descartadas:**
+- **Vercel Cron + `push-utils`** (como dieta/ayuno): otro emisor de push para el mismo dominio (justo lo que §28.8 intentó evitar), con idempotencia in-memory por lambda → riesgo de duplicados, y la marca de tiempo tendría que salir de `traslado_eventos` o de `updated_at` (que cambia con cualquier edición).
+- **Calcular en el cliente** ("si pasaron 15 min, mostrar alerta"): solo avisa a quien tiene la pantalla abierta; no hay push.
+- **`updated_at` como "desde cuándo"**: se mueve con cada observación/edición → el aviso se postergaría solo.
+
+**Impacto / trampas:** (1) las filas que ya estaban `Por Consolidar` al aplicar la migración **no avisan** (sin `por_consolidar_at`), a propósito, para no inundar; (2) si **ningún rol** tiene `notif_por_consolidar` cuando vence, el aviso queda estampado y se pierde (no se reenvía al tildar el permiso después) — por eso el permiso no viene asignado "por las dudas" pero hay que tildarlo antes de esperar el aviso; (3) el UPDATE del cron toca `updated_at` y dispara un refetch Realtime una vez por traslado; (4) proyecto compartido: el cron recorre TESTING y PRODUCTIVO, cada uno con sus propios destinatarios; (5) **al 2026-10-02 la migración quedó sin aplicar** (la Edge Function v17 ya está desplegada y la rama de aviso está dormida hasta que exista `aviso_consolidar_at`).
+
+### 29.2. Una sola lista de "boxes individuales" para sexos, aislamiento y habitación compartida
+
+**Qué:** `INDIVIDUAL_BOX_AREAS` (UCO, UTI, ITR, Sala de Espera) en [lib/utils.ts](../../lib/utils.ts) es la fuente única de "acá no se comparte habitación". La usan el bloqueo por aislamiento y el tag de sexo sugerido del mapa (antes `CRITICAL_AREAS_NO_BLOCK` local de `BedsView`), `roomSexConflict` y `sharedRoomOccupiedNeighbors`.
+
+**Por qué:** el pedido ("sacar la advertencia de mezcla de sexos en UTI/UCO, son boxes individuales") era la **misma regla física** que ya estaba escrita para el aislamiento y el tag del mapa, pero en otro archivo. Arreglar solo `roomSexConflict` habría dejado tres criterios que divergen con el tiempo. **Alternativa descartada:** `if (area === HUT || area === HUC) return null` puntual — resuelve el síntoma y deja la duplicación. **Ojo:** `HUQ` (recuperación postquirúrgica) no está en la lista: no se pidió y no se sabe si sus camas son boxes.
+
+### 29.3. "Solicitar limpieza OK": una regla (`lib/roomCheck.ts`) que fuerza "Esperando Habitación"
+
+**Qué:** el estado inicial de un traslado ya no depende solo de `cama DISPONIBLE ? IN_TRANSIT : WAITING_ROOM` (que estaba copiado en tres lugares: alta, configurar destino y edición). Ahora es `destinationState(estadoCama, roomCheckFor(...))`: si la habitación es **compartida con la cama contigua ocupada** o el pedido tiene **requisitos reales**, el traslado queda en `WAITING_ROOM` aunque la cama esté verde y la azafata lo libera con "Habitación Lista".
+
+**Por qué reutilizar `WAITING_ROOM` y no inventar un estado nuevo ("Habitación Limpia" antes de "Lista", sugerido en la tarjeta de Trello "Propuestas de mejora y optimización de flujos", pendiente de confirmación de Julieta):** ya existe el circuito completo — botón de la azafata de destino con `confirmar_limpieza`, enforcement de piso server-side, constancia en el historial de limpiezas, estado visible en la grilla y el mapa — y la Edge Function no necesita saber nada. Un estado nuevo habría tocado `TicketStatus`, `STATUS_LABELS`, `StatusBadge`, los índices parciales, la botonera, el Monitor y el historial. Se resolvió con **cero estados nuevos** y un recuadro informativo para la azafata. Si igual se quiere el matiz "Limpia vs. Lista" como estado propio, es una decisión aparte (la propuesta sigue abierta en esa tarjeta).
+
+**Por qué la regla mira `status === OCCUPIED` del vecino y excluye la cama de origen:** `patientName` queda residual en camas ya liberadas (mismo motivo que `suggestedRoomSex`), y un cambio de cama dentro del mismo cuarto no tiene "vecino que moleste".
+
+**Por qué un snapshot (`hab_compartida`) y no recalcular siempre:** la decisión se toma al asignar el destino y alimenta el push (que se arma en la Edge Function, que no ve el mapa de camas). Si el vecino se va después, el traslado igual espera la confirmación — es el comportamiento seguro (no se manda a un paciente a una habitación a medio armar por una lectura posterior del mapa).
+
+**Impacto:** más traslados pasan por "Esperando Habitación" (a propósito) y suma una acción a la azafata; el push de `NEW_TICKET` lo dice. El estado "Esperando Habitación" sigue sin label de push propio.
+
+### 29.4. Urgencia / ingreso directo: nace "Por Consolidar" y la identidad se exige en el servidor
+
+**Qué:** una urgencia es un traslado con `urgencia=true` que **nace directo en `Por Consolidar`** con nombre libre y sin código de paciente; para consolidarlo Admisión tiene que **vincular un paciente real** (código + evento de internación) elegido de PROGAL. El servidor devuelve **422** si se intenta consolidar sin código.
+
+**Por qué nace "Por Consolidar" (y no pasa por `WAITING_ROOM`/`IN_TRANSIT`):** el paciente de una urgencia ya va a la cama sin esperar el circuito de limpieza/transporte (que es el que le da sentido a esos estados) y lo único que falta es el trámite administrativo: ingresarlo en PROGAL. Pasarlo por esos estados solo habría mandado avisos de preparación a las azafatas por un paciente que ya está en camino.
+
+**Por qué el gate vive en el servidor y no solo en el modal:** la regla de negocio es "un traslado consolidado tiene que apuntar a una persona real"; con solo el modal, un `PATCH` directo (o una versión vieja del cliente) la saltea. Mismo criterio que el gate de consentimiento de cirugía (`api/cirugia.ts`). `urgencia` y `paciente_declarado` son **inmutables** por PATCH para que el flag no se pueda apagar en el mismo request que consolida.
+
+**Por qué se exige solo el código (no el evento) y por qué no se valida que exista:** `patientCode` es la identidad; `evento_internacion` viaja con la cama y se guarda cuando existe. Exigir también el evento trabaría la consolidación si Gamma no lo informa en esa cama, un modo de falla peor que el que se quiere evitar. Tampoco se contrasta el código contra PROGAL en el servidor: el mapa de camas vive en Gamma/SharePoint, no en Supabase, y llamarlo desde `PATCH /api/tickets` sumaría una dependencia inestable (regla "API Gamma inestable" de CLAUDE.md) al camino crítico de consolidar. El gate garantiza "no hay consolidación sin código"; que sea el correcto lo asegura el modal, que solo ofrece pacientes del mapa. Si alguna vez se necesita más, la opción a evaluar es validar contra la tabla `public.enrich_camas` (existe en Supabase; **(verificar)** si ya es la fuente del enrich en el entorno) y no contra Gamma en vivo.
+
+**Por qué columnas en `traslados` y no una tabla aparte:** una urgencia **es** un traslado (misma grilla, Realtime, trayectoria, historial, cancelación). `cama_origen` es NOT NULL y varias pantallas lo muestran como texto, así que se usa un valor sentinela (`ORIGEN_URGENCIA`) en vez de relajar la columna. **Costo asumido:** `origin` ya no siempre es una cama del mapa; las pantallas que lo buscan en `beds` deben tolerar que no aparezca (`mergeBeds`, `RequestsView.getTicketIsolationTypes` ya lo hacen).
+
+**Por qué no se edita:** `handleEditTicket` recalcula el estado al cambiar el destino (`IN_TRANSIT`/`WAITING_ROOM`), lo que sacaría a la urgencia de su circuito; cancelar y recargar es más simple y deja constancia.
+
+**Por qué el aviso reusa `PRE_TICKET` / `notif_pre_ticket`:** el público es el mismo (Admisión, quien arma los pedidos de cama) y evita obligar a re-configurar un permiso nuevo en el ABM para algo que se pide hoy. **Alternativa descartada:** tipo y permiso propios (`URGENCIA`/`notif_urgencia`) — más fino pero exige configuración previa en producción para no perder el aviso.
+
+**Visibilidad:** las urgencias no necesitan una excepción propia: las reglas que ya tiene `develop` ("lo que el usuario creó no se pierde" en `scopeTickets`, y "quien puede crear tickets no se recorta por estado" en `RequestsView`) las cubren. En el desarrollo había una excepción propia (`canSeeUrgencias`); se retiró al integrar `origin/develop` (2026-10-05) para no tener dos reglas de visibilidad que diverjan.
+
+### 29.5. La botonera de estados no persiste y se deriva del alcance del rol
+
+**Qué:** la botonera de Operativa ofrece **solo los estados que el rol puede ver** (`visibleStatusChips`) con contadores que salen **antes** del filtro de estado, y el filtro vive en estado local (no se guarda en `localStorage`).
+
+**Por qué:** un chip de un estado que el rol nunca ve (p. ej. "Por Consolidar" para una azafata) sería un botón que siempre da cero. Persistir el filtro tiene un riesgo operativo concreto: al día siguiente la grilla aparece "vacía" por un filtro olvidado y se interpreta como que no hay traslados. **Costo asumido:** la regla de visibilidad está espejada a mano entre `RequestsView.scopedTickets` y `ticketFilters.visibleStatusChips`; el script `scripts/check-ticket-filters.mts` fija el contrato por rol.

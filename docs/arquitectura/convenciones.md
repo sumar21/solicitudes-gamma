@@ -2776,3 +2776,35 @@ if (isIngresoItrFlow) return isHitArea(b.area) && normEventOrigin(b.eventOrigin)
 ```
 
 `eventOrigin` viene de `origen_evento` de `obtenermapacamasocupadas` (presente en toda cama ocupada). Mantener el filtro **dentro** de su rama para no tocar los otros flujos.
+
+## Nuevos patrones (paquete de octubre 2026, 2026-10-02)
+
+Contexto: [arquitectura.md §48](arquitectura.md) y [decisiones.md §29](decisiones.md).
+
+### Una regla de negocio que se repetía en varios lugares → módulo puro en `lib/` + script `check-*.mts`
+
+El ternario `isDestAvailable ? IN_TRANSIT : WAITING_ROOM` estaba copiado en alta, "Configurar destino" y edición; agregar una condición hubiera exigido editar los tres sin que `tsc` avisara si se olvidaba uno. Patrón: sacar la regla a una función **pura** (sin React ni red) en [lib/roomCheck.ts](../../lib/roomCheck.ts) (`roomCheckFor`, `destinationState`) y llamarla desde los tres. Lo mismo con el filtro de estados ([lib/ticketFilters.ts](../../lib/ticketFilters.ts)) y la lista de boxes ([`INDIVIDUAL_BOX_AREAS`](../../lib/utils.ts)). Cada módulo puro lleva su `scripts/check-<tema>.mts` (`assert` de `node:assert`, se corre con `npx tsx scripts/check-<tema>.mts`, imprime `OK — …`); ver los existentes como molde.
+
+### Testear el código REAL aunque dependa de Deno o de `import.meta.env`: bundle con esbuild + stubs
+
+Dos piezas no se pueden importar tal cual desde `tsx`: la Edge Function `notify-push` (usa `Deno.serve`, `npm:` specifiers) y `hooks/useHospitalState.ts` (su cliente de Supabase lee `import.meta.env`). En vez de **replicar** la lógica en el test (se desincroniza), se **empaqueta el archivo real con esbuild** y se stubea solo el borde:
+- [scripts/check-notify-push.mts](../../scripts/check-notify-push.mts): `alias` de `npm:web-push` y `npm:@supabase/supabase-js` a stubs que **capturan** lo que se enviaría, `globalThis.Deno` mínimo, y se le tiran payloads de webhook sintéticos al handler.
+- [scripts/check-merge-beds-urgencia.mts](../../scripts/check-merge-beds-urgencia.mts): plugin de esbuild que resuelve `lib/supabase` a un stub y `define: { 'import.meta.env': '{}' }`; se llama a `mergeBeds` real.
+
+Antes de confiar en un test así: **mutar** una línea del código (p. ej. cambiar el permiso de un tipo) y verificar que el test falla; restaurar. Un test que nunca falló no demuestra nada.
+
+### Migraciones sobre el proyecto Supabase compartido: aditivas, con default, y la lógica "dormida" hasta que haya datos
+
+El proyecto es compartido TESTING/PRODUCTIVO y el front se despliega **después** que la base. Reglas: columnas `add column if not exists … default …` (el código viejo las ignora); triggers/funciones `create or replace` + `drop trigger if exists`; todo idempotente. La Edge Function nueva debe seguir comportándose igual con filas sin las columnas nuevas (rama activada solo por `record.urgencia === true` o por `aviso_consolidar_at` null → fecha). Orden de aplicación: columnas → Edge Function → trigger/cron. Un job de `pg_cron` es **efecto sobre todos los entornos**: aplicarlo es una decisión del equipo, no un paso automático (ver §48.1).
+
+### Un flag que no se puede apagar por PATCH
+
+Cuando una columna es una regla de integridad (`urgencia`, `paciente_declarado`), `api/tickets.ts` la **borra de los `fields` del PATCH** (`delete fields.urgencia`) y el gate que depende de ella lee el valor **de la base** (`select urgencia, codigo_paciente`) antes de aplicar el update. Si no, un solo request podría apagar el flag y consolidar en el mismo golpe.
+
+### Permisos de visibilidad que cuelgan de otro permiso
+
+La visibilidad de las urgencias en la grilla no es un permiso nuevo: se deriva de las reglas generales de visibilidad de quien crea tickets (`canCreateTickets` en `RequestsView` y la regla "lo que creó no se pierde" de `scopeTickets`), sin excepción propia. Si una pantalla recorta por estado/pisos, preguntarse siempre **quién carga el dato y si lo vería después de cargarlo** (el bug "se cargó y desapareció"). Un chip o botón solo se ofrece si el rol puede ver el estado detrás (`visibleStatusChips`).
+
+### Editar archivos del repo: respetar los finales de línea (CRLF mezclados)
+
+Varios archivos del repo tienen **CRLF** (por ejemplo `App.tsx`, `views/RequestsView.tsx`, `lib/constants.ts`, `components/modals/NewRequestModal.tsx`) y `lib/utils.ts` tiene líneas **mezcladas**; los `docs/` y el resto son LF. Un editor o script que normalice los finales reescribe el archivo entero en el diff (651 líneas "cambiadas" por 20 reales). Verificar con `git diff --stat` antes de commitear y, si se edita con scripts, preservar el estilo de la línea que se toca (leer/escribir con `newline=''`). No "arreglar" los finales de línea de archivos ajenos en el mismo commit.

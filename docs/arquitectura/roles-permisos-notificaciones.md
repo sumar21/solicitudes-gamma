@@ -75,18 +75,26 @@ una notificación. Agrupados como en el ABM (`RoleManagementView.tsx:47-106`).
 |---------|--------------|----------------|
 | `crear_ticket` | Botón "Nueva Solicitud" → crear traslado | UI (`RequestsView` / `NewRequestModal`) |
 | `editar_ticket` | Botón "Editar" (solo si la azafata NO intervino) | UI (`EditRequestModal`) |
-| `cancelar_ticket` | Botón "Cancelar" (exige motivo) | UI + **hardcode extra**: `handleRejectTicket` pide rol `ADMISSION`/`ADMIN` (ver §9) |
+| `cancelar_ticket` | Botón "Cancelar" (exige motivo). También cancela una **urgencia** quien tenga `cancelar_pre_ticket` | UI + `handleRejectTicket` (gatea por **permiso**, no por rol fijo) |
 | `asignar_cama` | **LEGACY** — `handleAssignBedAction` es no-op (la cama se asigna al crear) | — |
 | `confirmar_limpieza` | Botón "Habitación Lista" (azafata destino) **y** botón "Marcar limpia / Deshacer" en el Mapa | UI + **enforcement de piso server-side** (`api/tickets.ts`, extremo `dest`) |
 | `iniciar_traslado` | Botón "Iniciar Traslado" (azafata origen) | UI + enforcement de piso (`api/tickets.ts`, extremo `origin`) |
 | `confirmar_recepcion` | Botón "Recepción OK" (azafata destino) | UI + enforcement de piso (`api/tickets.ts`, extremo `dest`) |
-| `consolidar` | Botón "Consolidar PROGAL" (Admisión/Admin) | UI |
+| `consolidar` | Botón "Consolidar PROGAL" (Admisión/Admin). En una **urgencia** el botón es "Vincular y consolidar" (hay que elegir un paciente real) | UI + **gate server-side** para urgencias (`api/tickets.ts`, 422 sin `codigo_paciente`) |
 | `consolidar_limpieza` | Botón "Consolidado PROGAL" en la vista de supervisión de limpieza | UI (`CleaningManagementView`) |
 
 > **Trampa de QA (ABM):** `consolidar_limpieza` se renderiza en el grupo **Operativa**, no en
 > "Operativa · Limpiezas" (`RoleManagementView.tsx:62`). Se movió a propósito: como un grupo solo
 > aparece si su módulo está tildado, antes era imposible darle ese permiso a un rol con Operativa pero
 > sin el módulo `Gestion Limpieza`.
+
+#### Pre-ticket y urgencia (pertenecen a Operativa)
+
+| Permiso | Qué habilita | Dónde se gatea |
+|---------|--------------|----------------|
+| `crear_pre_ticket` | Botón "Pre-ticket" → crear un pre-ticket **o una urgencia / ingreso directo** (checkbox del modal). Quien lo tiene **no se recorta por estado aunque filtre por pisos** y **ve siempre lo que creó** (incluidas sus urgencias) | UI + server (`authzPreTicket` en `POST /api/tickets` de un pre-ticket **y de una urgencia**) |
+| `completar_pre_ticket` | "Configurar destino" de un pre-ticket (Admisión) | UI + server (`PATCH` que convierte una `Presolicitud`) |
+| `cancelar_pre_ticket` | Cancelar un pre-ticket en `Presolicitud` **y una urgencia** | UI (+ server para `Presolicitud`) |
 
 ### 3.2. Mapa de Camas — comandas
 
@@ -124,8 +132,11 @@ Una por tipo. Gobiernan que el usuario **reciba push + campanita** de ese tipo. 
 | Permiso | Tipo de notif | Camino de push |
 |---------|---------------|----------------|
 | `notif_new_ticket` | `NEW_TICKET` | Edge Function `notify-push` (traslados) |
+| `notif_pre_ticket` | `PRE_TICKET` — pre-ticket nuevo ("Nueva Solicitud de Cama") **e ingreso por urgencia** ("Ingreso por urgencia") | Edge Function `notify-push` (traslados) |
+| `notif_ingreso_quirurgico` | `SURGICAL_ADMISSION` — ingreso quirúrgico desde Sala de Espera (Enfermería) | Edge Function `notify-push` (traslados) |
 | `notif_status_update` | `STATUS_UPDATE` | Edge Function `notify-push` (traslados) |
 | `notif_reception_confirmed` | `RECEPTION_CONFIRMED` | Edge Function `notify-push` (traslados) |
+| `notif_por_consolidar` | `POR_CONSOLIDAR` — recordatorio: 15 min "Por Consolidar" sin consolidar (**ningún rol lo trae tildado**: se asigna en el ABM, pensado para Admisión) | Edge Function `notify-push` (la origina un `pg_cron`, `arquitectura.md` §48.1) |
 | `notif_diet_change` | `DIET_CHANGE` | `api/push-utils.ts` (Vercel, cron dieta) |
 | `notif_fasting_change` | `FASTING_CHANGE` | `api/push-utils.ts` (Vercel, cron ayuno) |
 | `notif_habitacion_limpia` | `ROOM_CLEANED` | `api/push-utils.ts` (Vercel, al marcar limpia) |
@@ -138,7 +149,7 @@ Una por tipo. Gobiernan que el usuario **reciba push + campanita** de ese tipo. 
 
 | Camino | Corre en | Tipos | Disparo | Idempotencia |
 |--------|----------|-------|---------|--------------|
-| **Traslados** — `supabase/functions/notify-push/index.ts` | Supabase (Edge Function, Deno) | `NEW_TICKET`, `STATUS_UPDATE`, `RECEPTION_CONFIRMED` | Database Webhook (pg_net) sobre INSERT/UPDATE de `public.traslados` | `push_dispatch_log` (key `id_univoco:status:updated_at`) — mató el "TIN TIN TIN" |
+| **Traslados** — `supabase/functions/notify-push/index.ts` | Supabase (Edge Function, Deno) | `NEW_TICKET`, `PRE_TICKET`, `SURGICAL_ADMISSION`, `STATUS_UPDATE`, `RECEPTION_CONFIRMED`, `POR_CONSOLIDAR` | Database Webhook (pg_net) sobre INSERT/UPDATE de `public.traslados` | `push_dispatch_log` (key `id_univoco:status:updated_at`) — mató el "TIN TIN TIN" |
 | **Dieta / Ayuno / Limpieza** — `api/push-utils.ts` | Vercel (`web-push`) | `DIET_CHANGE`, `FASTING_CHANGE`, `ROOM_CLEANED` | crons (`cron-diet-changes`) y acción de azafata (`api/limpiezas.ts`) | guard in-memory 60 s (por instancia de lambda) |
 
 > **Comandas NO emite push** (módulo silencioso). Y `notificaciones` la campanita = una fila por
@@ -150,7 +161,10 @@ Mapeo en la Edge Function (`STATUS_LABELS`, `notify-push/index.ts:34-46`):
 
 | Estado que se escribe | Tipo | Título de la notif |
 |-----------------------|------|--------------------|
-| INSERT (creación) | `NEW_TICKET` | "Nueva Solicitud de Traslado" |
+| INSERT (creación) | `NEW_TICKET` | "Nueva Solicitud de Traslado" ("Nueva Solicitud de Ingreso" si el workflow es `ITR_TO_FLOOR`). Si quedó esperando que la azafata confirme la habitación, el cuerpo suma `· Requiere: … · Hab. compartida: revisar que esté todo OK` |
+| INSERT con status `Presolicitud` | `PRE_TICKET` | "Nueva Solicitud de Cama" (a Admisión; no a pisos) |
+| INSERT con **`urgencia=true`** (nace `Por Consolidar`) | `PRE_TICKET` | "Ingreso por urgencia" (a Admisión; **no** sale `NEW_TICKET` a los pisos) |
+| UPDATE con `aviso_consolidar_at` null → fecha (estado `Por Consolidar`, lo estampa el cron cada minuto a los 15 min) | `POR_CONSOLIDAR` | "Pendiente de consolidar" / "Urgencia pendiente de consolidar" (**una sola vez**; sin `excludeUser`) |
 | `Habitacion Lista` (IN_TRANSIT) | `STATUS_UPDATE` | "Habitación Lista" |
 | `En Traslado` (IN_TRANSPORT) | `STATUS_UPDATE` | "Traslado en Curso" |
 | `Por Consolidar` (WAITING_CONSOLIDATION) | `RECEPTION_CONFIRMED` | "Recepción Confirmada" (override CATERING, ver 4.4) |
@@ -175,6 +189,8 @@ NO garantizada por código). `●` = suele recibir; `○` = filtrado por piso (s
 | `DIET_CHANGE` (`notif_diet_change`) | — | — | — | ● | (config) | — | (config) |
 | `FASTING_CHANGE` (`notif_fasting_change`) | — | — | — | ● | (config) | — | (config) |
 | `ROOM_CLEANED` (`notif_habitacion_limpia`) | ● | — | — | — | — | — | (config) |
+| `PRE_TICKET` (`notif_pre_ticket`) — pre-ticket e ingreso por urgencia | ● | — | — | — | — | — | (config) |
+| `POR_CONSOLIDAR` (`notif_por_consolidar`) — **no viene tildado por defecto** | (config: pensado para Admisión) | — | — | — | — | — | (config) |
 
 Notas:
 - **Azafata** (`○`): recibe traslados **solo de sus áreas asignadas** (filtro `subAreaMatches`, §5).
@@ -299,6 +315,9 @@ Vista `views/RoleManagementView.tsx`. Requiere módulo `Configuracion` + permiso
 | CATERING vs resto en RECEPTION_CONFIRMED | Catering ve "Traslado concretado" (texto custom); el resto ve "Recepción Confirmada" | Comparar el push de ambos para el mismo evento |
 | VAPID rotado / mismatch | Sub vieja da 403 (no se borra); self-heal re-suscribe en la próxima apertura. Si las 3 puntas de VAPID no coinciden → nadie recibe push (403 silencioso) | Rotar VAPID |
 | Entorno cruzado | Solo se disparan subs del `ENTORNO` actual (default `TESTING`) → TESTING↔PRODUCTIVO no se cruzan | Suscribir en PRODUCTIVO, evento TESTING no llega |
+| Recordatorio de 15 min sin ningún rol con `notif_por_consolidar` | El `pg_cron` igual estampa `aviso_consolidar_at` (queda "gastado" para ese traslado) pero nadie recibe push ni campanita: **tildar el permiso ANTES** de esperar el aviso; no se re-envía retroactivamente | Tildar `notif_por_consolidar` en Admisión y dejar un traslado 15 min en Por Consolidar |
+| Urgencia con rol que filtra por pisos (Coordinación) | La ve en su grilla (quien crea tickets no se recorta por estado y ve siempre lo que creó) aunque `Por Consolidar` no sea un estado de azafata; **no** recibe `NEW_TICKET` (la azafata de piso tampoco: el aviso va a Admisión por `notif_pre_ticket`) | Cargar una urgencia como Coordinación y como Azafata |
+| Consolidar una urgencia sin vincular paciente | UI: botón deshabilitado hasta elegir paciente. Servidor: `PATCH` → **422** aunque se saltee la UI | `PATCH /api/tickets` con `status:'Consolidado'` sobre una urgencia sin `patientCode` |
 | Permiso de comandas granular | `cargar_comanda_almuerzo` NO habilita cargar cena; la UI esconde los turnos no permitidos y el server bloquea con 403. Se resuelve por user-id del JWT (token viejo con permisos de más no sirve) | Dar solo un turno |
 
 ---

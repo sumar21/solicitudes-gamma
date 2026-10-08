@@ -65,7 +65,9 @@ function computeStats(subset: Ticket[]) {
   );
   const completed = subset.filter(t => t.status === TicketStatus.COMPLETED);
 
-  const completedWithTime = completed.filter(t => t.createdAt && t.completedAt);
+  // Una urgencia mide "hasta que Admisión la vincula y consolida", no un ciclo de traslado (no tiene tramos de
+  // azafata): mezclarla en el promedio distorsiona la espera de los traslados normales.
+  const completedWithTime = completed.filter(t => t.createdAt && t.completedAt && !t.urgencia);
   const totalCycleTime = completedWithTime.reduce(
     (acc, t) => acc + calculateTicketMetrics(t).totalCycleTime,
     0,

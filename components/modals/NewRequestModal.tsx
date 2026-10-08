@@ -9,6 +9,8 @@ import { SearchableSelect } from '../ui/searchable-select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { ITR_SOURCES, ROOM_CHANGE_REASONS } from '../../lib/constants';
 import { isHitArea, isHraArea, roomSexConflict } from '../../lib/utils';
+import { roomCheckFor } from '../../lib/roomCheck';
+import { RoomCheckNotice } from '../RoomCheckNotice';
 import { splitDestinationsByIsolation } from '../../lib/isolations';
 
 // Same ordering used in BedsView: pre-internación (HRA, HIT) first, then floors, then critical units
@@ -141,6 +143,12 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
     () => (origin && destination ? roomSexConflict(beds, origin, destination) : null),
     [beds, origin, destination],
   );
+  // Aviso (no bloqueante): habitación compartida con vecino ocupado → el traslado queda "Esperando
+  // Habitación" hasta que la azafata la confirme. Ver lib/roomCheck.ts.
+  const roomCheck = React.useMemo(
+    () => (destination ? roomCheckFor(beds, destination, origin) : null),
+    [beds, origin, destination],
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -243,6 +251,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
                 </p>
               </div>
             )}
+            <RoomCheckNotice check={roomCheck} />
           </div>
 
           {workflow === WorkflowType.INTERNAL && (

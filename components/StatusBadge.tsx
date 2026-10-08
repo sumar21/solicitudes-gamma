@@ -5,6 +5,8 @@ import { Badge } from './ui/badge';
 
 interface Props {
   status: TicketStatus;
+  /** Permite partir el label en dos líneas (grilla de Operativa a 1280px: "Esperando Habitación" ocupaba ~150px). */
+  wrap?: boolean;
 }
 
 const statusConfig: Record<TicketStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "info" | "purple" | "fuchsia" }> = {
@@ -17,10 +19,13 @@ const statusConfig: Record<TicketStatus, { label: string; variant: "default" | "
   [TicketStatus.REJECTED]: { label: 'Cancelado', variant: 'destructive' },
 };
 
-export const StatusBadge: React.FC<Props> = ({ status }) => {
+/** Label legible de un estado (botonera de filtros de Operativa). */
+export const statusLabel = (status: TicketStatus): string => statusConfig[status].label;
+
+export const StatusBadge: React.FC<Props> = ({ status, wrap = false }) => {
   const config = statusConfig[status];
   return (
-    <Badge variant={config.variant} className="whitespace-nowrap shadow-sm">
+    <Badge variant={config.variant} className={wrap ? 'whitespace-normal leading-tight shadow-sm' : 'whitespace-nowrap shadow-sm'}>
       {config.label}
     </Badge>
   );

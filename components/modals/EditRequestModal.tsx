@@ -8,6 +8,8 @@ import { SearchableSelect } from '../ui/searchable-select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { ROOM_CHANGE_REASONS } from '../../lib/constants';
 import { isHitArea, isHraArea } from '../../lib/utils';
+import { roomCheckFor } from '../../lib/roomCheck';
+import { RoomCheckNotice } from '../RoomCheckNotice';
 import { splitDestinationsByIsolation } from '../../lib/isolations';
 
 // Same ordering used elsewhere: pre-internación (HRA, HIT) first, then floors, then critical units
@@ -122,6 +124,10 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
     splitDestinationsByIsolation(beds, ticket.origin, availableDestinations, ticket.destination);
 
   const destinationChanged = destination !== (ticket.destination ?? '');
+  // Si cambia el destino, handleEditTicket recalcula el estado con la misma regla que el alta.
+  const roomCheck = destinationChanged && destination
+    ? roomCheckFor(beds, destination, ticket.origin, ticket.requisitosCama)
+    : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -209,6 +215,7 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
                 </p>
               </div>
             )}
+            <RoomCheckNotice check={roomCheck} />
             {currentDestBed && !destinationChanged && (
               <p className="text-[10px] text-slate-400 px-1">Estado actual: {currentDestBed.status}</p>
             )}

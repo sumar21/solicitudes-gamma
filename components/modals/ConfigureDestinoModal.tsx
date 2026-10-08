@@ -6,6 +6,8 @@ import { Label } from '../ui/label';
 import { SearchableSelect } from '../ui/searchable-select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { isHitArea, isHraArea, roomSexConflict, formatBedName } from '../../lib/utils';
+import { roomCheckFor } from '../../lib/roomCheck';
+import { RoomCheckNotice } from '../RoomCheckNotice';
 import { splitDestinationsByIsolation } from '../../lib/isolations';
 
 // Admisión "Configura destino" de un pre-ticket: elige la cama destino y ajusta la observación.
@@ -45,6 +47,11 @@ export const ConfigureDestinoModal: React.FC<ConfigureDestinoModalProps> = ({
   const sexLabel = (s?: string) => (s === 'M' ? 'Masculino' : s === 'F' ? 'Femenino' : '');
   const sexWarning = React.useMemo(
     () => (ticket?.origin && destination ? roomSexConflict(beds, ticket.origin, destination) : null),
+    [beds, ticket, destination],
+  );
+  // Requisitos del pre-ticket + habitación compartida → el traslado espera la confirmación de la azafata.
+  const roomCheck = React.useMemo(
+    () => (ticket && destination ? roomCheckFor(beds, destination, ticket.origin, ticket.requisitosCama) : null),
     [beds, ticket, destination],
   );
 
@@ -128,6 +135,7 @@ export const ConfigureDestinoModal: React.FC<ConfigureDestinoModalProps> = ({
                 </p>
               </div>
             )}
+            <RoomCheckNotice check={roomCheck} />
           </div>
 
           <div className="grid gap-2">

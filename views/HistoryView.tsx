@@ -7,7 +7,7 @@ import {
   ArrowRightLeft, Settings, X, Filter, AlertCircle, Download,
   History, ClipboardList
 } from '../components/Icons';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, Siren } from 'lucide-react';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -507,7 +507,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
                     )}
                     <span className="text-[10px] font-black font-mono text-slate-400 tabular-nums">{formatDateTime(t.createdAt)}</span>
                   </div>
-                  <h3 className="font-black text-slate-900 text-sm leading-tight uppercase tracking-tight">{t.patientName}</h3>
+                  <h3 className="font-black text-slate-900 text-sm leading-tight uppercase tracking-tight">{t.patientName}{t.urgencia && <> <span className="inline-flex items-center gap-1 rounded-full bg-red-600 px-1.5 py-0.5 text-white shrink-0 align-middle" title="Ingreso por urgencia"><Siren className="w-3 h-3" strokeWidth={3} /><span className="text-[9px] font-black uppercase tracking-wide leading-none">Urgencia</span></span></>}</h3>
                 </div>
                 <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400">
                   <Settings className="w-4 h-4" />
@@ -562,7 +562,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
                       {formatDateTime(t.createdAt)}
                     </TableCell>
                     <TableCell className="py-5">
-                      <div className="font-black text-slate-950 text-base uppercase tracking-tight">{t.patientName}</div>
+                      <div className="font-black text-slate-950 text-base uppercase tracking-tight">{t.patientName}{t.urgencia && <> <span className="inline-flex items-center gap-1 rounded-full bg-red-600 px-1.5 py-0.5 text-white shrink-0 align-middle" title="Ingreso por urgencia"><Siren className="w-3 h-3" strokeWidth={3} /><span className="text-[9px] font-black uppercase tracking-wide leading-none">Urgencia</span></span></>}</div>
                       <div className="text-[11px] text-slate-400 font-mono mt-0.5 font-bold uppercase">{t.id}</div>
                     </TableCell>
                     <TableCell className="py-5">

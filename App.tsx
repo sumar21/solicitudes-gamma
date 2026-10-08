@@ -39,6 +39,7 @@ import { Bell } from './components/Icons';
 import { NewRequestModal } from './components/modals/NewRequestModal';
 import { PreTicketModal } from './components/modals/PreTicketModal';
 import { ConfigureDestinoModal } from './components/modals/ConfigureDestinoModal';
+import { ConsolidarUrgenciaModal } from './components/modals/ConsolidarUrgenciaModal';
 import { EditRequestModal, EditRequestPayload } from './components/modals/EditRequestModal';
 import { AssignBedModal } from './components/modals/AssignBedModal';
 import { AreaSelectionModal } from './components/modals/AreaSelectionModal';
@@ -116,7 +117,8 @@ export default function App() {
   // pasó por esas vistas (p.ej. una azafata en Operativa), promedia solo los cierres recientes
   // del merge vivo, o muestra '--' si no hubo ninguno.
   const avgWaitTime = React.useMemo(() => {
-    const completed = state.historyTickets.filter(t => t.status === TicketStatus.COMPLETED && t.createdAt && t.completedAt);
+    // Sin urgencias: su "ciclo" es hasta que Admisión las vincula, no un traslado (ver DashboardView.computeStats).
+    const completed = state.historyTickets.filter(t => t.status === TicketStatus.COMPLETED && t.createdAt && t.completedAt && !t.urgencia);
     if (completed.length === 0) return '--';
     const total = completed.reduce((acc, t) => acc + calculateTicketMetrics(t).totalCycleTime, 0);
     return Math.round(total / completed.length);
@@ -139,6 +141,7 @@ export default function App() {
   const [isNewRequestOpen, setIsNewRequestOpen] = useState(false);
   const [isPreTicketOpen, setIsPreTicketOpen] = useState(false);
   const [configureDestinoId, setConfigureDestinoId] = useState<string | null>(null);
+  const [consolidarUrgenciaId, setConsolidarUrgenciaId] = useState<string | null>(null);
   const [isAssignBedOpen, setIsAssignBedOpen] = useState(false);
   const [isAreaSelectionOpen, setIsAreaSelectionOpen] = useState(false);
   const [isRejectOpen, setIsRejectOpen] = useState(false);
@@ -439,11 +442,13 @@ export default function App() {
       )}
       {/* Sidebar Desktop */}
       <aside className="hidden md:flex w-48 text-white flex-col shrink-0 z-30" style={{ background: IS_TESTING ? 'linear-gradient(180deg, #1e293b 0%, #475569 100%)' : 'linear-gradient(180deg, #022C22 0%, #034334 100%)' }}>
-        <div className="h-20 flex items-center px-4 border-b border-white/10 shrink-0">
-          <GammaLogo size={22} className={cn("mr-3", IS_TESTING ? "text-slate-300" : "text-emerald-400")} />
-          <div className="flex flex-col">
+        {/* min-h (no h fijo): la sede sale de Sede_U de SharePoint y puede ser larga ("IG - Instituto Gamma S.A."),
+            y en TESTING se suma la etiqueta; con alto fijo el bloque desbordaba y cortaba "Gamma" y el logo. */}
+        <div className="min-h-20 py-3 flex items-center px-4 border-b border-white/10 shrink-0">
+          <GammaLogo size={22} className={cn("mr-3 shrink-0", IS_TESTING ? "text-slate-300" : "text-emerald-400")} />
+          <div className="flex flex-col min-w-0">
             <span className="font-bold text-white tracking-tight leading-none text-lg">Gamma</span>
-            <span className={cn("text-[9px] font-bold uppercase tracking-widest mt-1", IS_TESTING ? "text-slate-300" : "text-emerald-400")}>Sede {state.currentUser.sede}</span>
+            <span className={cn("text-[9px] font-bold uppercase tracking-widest mt-1 leading-snug break-words", IS_TESTING ? "text-slate-300" : "text-emerald-400")}>Sede {state.currentUser.sede}</span>
             {IS_TESTING && (
               <span className="mt-1 inline-flex items-center gap-1 self-start rounded-md bg-slate-600 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-white">
                 <span className="h-1.5 w-1.5 rounded-full bg-slate-300 animate-pulse" />
@@ -559,10 +564,10 @@ export default function App() {
             "fixed inset-y-0 left-0 w-64 text-white flex flex-col z-50 md:hidden transition-transform duration-300 ease-in-out shadow-2xl",
             isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
           )} style={{ background: IS_TESTING ? 'linear-gradient(180deg, #1e293b 0%, #475569 100%)' : 'linear-gradient(180deg, #022C22 0%, #034334 100%)' }}>
-            <div className="h-14 flex items-center justify-between px-4 border-b border-white/10 shrink-0">
-              <div className="flex items-center">
-                <GammaLogo size={22} className={cn("mr-3", IS_TESTING ? "text-slate-300" : "text-emerald-400")} />
-                <div className="flex flex-col">
+            <div className="min-h-14 py-2 flex items-center justify-between px-4 border-b border-white/10 shrink-0">
+              <div className="flex items-center min-w-0">
+                <GammaLogo size={22} className={cn("mr-3 shrink-0", IS_TESTING ? "text-slate-300" : "text-emerald-400")} />
+                <div className="flex flex-col min-w-0">
                   <span className="font-bold text-white tracking-tight leading-none text-lg">Gamma</span>
                   {IS_TESTING ? (
                     <span className="inline-flex items-center gap-1 self-start rounded bg-slate-600 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-white mt-0.5">
@@ -570,7 +575,7 @@ export default function App() {
                       Entorno de prueba
                     </span>
                   ) : (
-                    <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest mt-1">Sede {state.currentUser.sede}</span>
+                    <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest mt-1 leading-snug break-words">Sede {state.currentUser.sede}</span>
                   )}
                 </div>
               </div>
@@ -831,6 +836,7 @@ export default function App() {
                 onRoomReady={actions.handleRoomReady}
                 onConfirmReception={actions.handleConfirmReception}
                 onConsolidate={actions.handleConsolidate}
+                onConsolidateUrgencia={(id) => setConsolidarUrgenciaId(id)}
                 onReject={(id) => { setRejectTicketId(id); setIsRejectOpen(true); }}
                 onEdit={(id) => setEditTicketId(id)}
                 onAddObservation={actions.handleAddObservation}
@@ -872,6 +878,18 @@ export default function App() {
         onCreate={actions.createPreTicket}
         beds={state.beds}
         assignedAreas={state.currentUser?.filterByFloors ? state.currentUser.assignedAreas : undefined}
+        activeTransferDestinations={new Set(
+          state.tickets
+            .filter(t => t.status !== 'Consolidado' && t.status !== 'Cancelado' && t.destination)
+            .map(t => t.destination as string)
+        )}
+      />
+      <ConsolidarUrgenciaModal
+        open={!!consolidarUrgenciaId}
+        onOpenChange={(open) => { if (!open) setConsolidarUrgenciaId(null); }}
+        ticket={consolidarUrgenciaId ? (state.tickets.find(t => t.id === consolidarUrgenciaId) ?? null) : null}
+        beds={state.beds}
+        onConfirm={(id, link) => actions.handleConsolidate(id, link)}
       />
       <ConfigureDestinoModal
         open={!!configureDestinoId}
