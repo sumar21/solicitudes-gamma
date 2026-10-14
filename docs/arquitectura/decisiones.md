@@ -1565,3 +1565,58 @@ Diseño y archivos en [arquitectura.md §48](arquitectura.md). Acá, el *por qu�
 **Qué:** la botonera de Operativa ofrece **solo los estados que el rol puede ver** (`visibleStatusChips`) con contadores que salen **antes** del filtro de estado, y el filtro vive en estado local (no se guarda en `localStorage`).
 
 **Por qué:** un chip de un estado que el rol nunca ve (p. ej. "Por Consolidar" para una azafata) sería un botón que siempre da cero. Persistir el filtro tiene un riesgo operativo concreto: al día siguiente la grilla aparece "vacía" por un filtro olvidado y se interpreta como que no hay traslados. **Costo asumido:** la regla de visibilidad está espejada a mano entre `RequestsView.scopedTickets` y `ticketFilters.visibleStatusChips`; el script `scripts/check-ticket-filters.mts` fija el contrato por rol.
+
+---
+
+## 30. Avisos propios en vez de diálogos nativos del navegador (2026-10-14)
+
+### 30.1. `appAlert()` reemplaza a todos los `alert()`; un guardián en el build impide volver atrás
+
+**Qué:** los ~45 `alert()` del frontend (casi todos en `useHospitalState`) pasan a `appAlert()` ([lib/appDialog.ts](../../lib/appDialog.ts)), un aviso con el diseño de la app que muestra [components/AppAlertHost.tsx](../../components/AppAlertHost.tsx), montado en `index.tsx`. El script [scripts/check-no-native-dialogs.mjs](../../scripts/check-no-native-dialogs.mjs) corre en `npm run build` y en `npm run lint`, y hace fallar el deploy si alguien vuelve a escribir `alert(` / `confirm(` / `prompt(`. La regla de uso está en [convenciones.md §4.5](convenciones.md).
+
+**Por qué:** el 14/10/2026 Coordinación reportó como falla un cartel de Chrome ("mediflow.sumar.dev dice: Ya existe un traslado o pre-ticket activo para esta cama…"). El bloqueo era correcto, pero el cartel nativo parecía un error del navegador, no un mensaje de MediFlow. Además bloquea la pestaña y en la PWA se ve fuera de lugar. Ya en §11.4 se había sacado un `alert()` por feo; esta vez se sacan todos y se automatiza el control, porque una regla que solo está en un doc se vuelve a romper.
+
+**Alternativas descartadas:**
+- *Avisos inline en cada modal*: es la mejor opción cuando el problema se puede ver antes de enviar (§11.4), pero la mayoría de estos avisos salen recién al guardar (409 del servidor, permisos, validaciones de último momento) y desde el hook, no desde el modal. Inline donde se pueda; `appAlert` para el resto.
+- *Toast que se cierra solo*: estos mensajes explican por qué **no** se hizo algo y a veces qué hacer; un toast de 8 s se pierde. El aviso queda abierto hasta que la persona toca "Aceptar".
+- *Una librería (sonner, radix alert-dialog)*: suma una dependencia para ~80 líneas propias, y el `Dialog` del proyecto es casero (no Radix), así que igual había que resolver a mano el Escape que se propagaba al modal de abajo.
+- *Guardián solo en `lint`*: no hay CI y nadie corre `lint` antes de pushear; el único paso que corre siempre es el `build` de Vercel.
+
+**Impacto:** sin cambios de lógica, solo cambia cómo se muestran los avisos. Diferencia con `alert()`: el aviso **no bloquea** el hilo. Ningún caller dependía de eso (todos hacen `alert(); return;`), pero el modal que llamó la acción ahora se cierra enseguida, sin esperar a que se toque "Aceptar". De paso, el aviso de cama de origen ocupada nombra al paciente del ticket que bloquea y, si es **otro paciente** que el que hoy ocupa la cama, dice que el ticket quedó huérfano y que hay que cancelarlo desde Operativa (ver [troubleshooting.md](../qa/troubleshooting.md), sección "no me deja cargar" por la cama de origen, y §30.2).
+
+### 30.2. Ticket huérfano en la cama de origen: avisar antes y marcarlo, sin cambiar la regla
+
+**Qué:** el bloqueo "un solo traslado/pre-ticket activo por cama de origen" **sigue comparando la cama**. Lo que cambió: (a) los modales de alta avisan **antes de enviar** de quién es el ticket que bloquea y dónde está ese paciente hoy, y deshabilitan el botón; (b) Operativa marca "Ya no está en la cama" en los tickets cuyo paciente ya no ocupa su cama de origen según PROGAL, con "Ahora en Cama 05" si figura en otra cama. Diseño en [arquitectura.md §49](arquitectura.md).
+
+**Por qué:** caso real del 14/10/2026: a una paciente la pasaron de ITR Cama 03 a Cama 05 por PROGAL; su pre-ticket siguió en la 03 y trabó al nuevo ocupante. El cartel decía solo "ya existe un traslado (TSL-…)", y ni Coordinación ni soporte entendían por qué un ticket de otra paciente frenaba a éste. El problema real no era el bloqueo sino que **nadie veía el ticket colgado** ni sabía qué hacer con él.
+
+**Alternativas descartadas (por ahora):**
+- *Bloquear por paciente en vez de por cama*: destrabaría al nuevo ocupante, pero dejaría el ticket viejo activo y apuntando a una cama equivocada (con Configurar destino, la azafata iría a buscar al paciente a la cama vieja). Mejor que se vea y se corrija.
+- *Corregir solo el origen del ticket a la cama nueva (o cancelarlo solo)*: es lo más cómodo, pero cambia datos de un traslado sin que nadie lo decida y hay casos ambiguos (alta, error de PROGAL). Si la marca muestra que el caso "lo cambiaron de cama" es frecuente, el paso siguiente es un botón "Mover origen a la cama actual" en la fila marcada.
+- *Marcar también cuando la cama de origen está vacía*: falsos positivos con la Sala de Espera y con PROGAL adelantado (por eso existe `keepPatientOnOrigin`). Solo se marca con **otro** ocupante, que es inequívoco.
+
+**Costo asumido:** la marca depende del poll de camas (60 s) y del código de paciente; sin código no se busca al paciente por nombre (homónimos) y el aviso queda genérico. Un ticket En Traslado / Por Consolidar con otro paciente en la cama sigue bloqueando ("traslado sin cerrar"): ahí la solución es consolidarlo, no cancelarlo.
+
+---
+
+## 31. Fallas de carga visibles y que se recuperan solas (incidente del 14/10/2026)
+
+### 31.1. Nunca datos de prueba como estado inicial; reintento + red de seguridad para los traslados
+
+**Qué:** `tickets` arranca vacío (no `MOCK_TICKETS`). Si `GET /api/tickets` falla, se reintenta con espera creciente (5 s, 15 s, 30 s, 60 s…), se avisa en la grilla, y hay una recarga de respaldo cada 5 min. Diseño en [arquitectura.md §50](arquitectura.md).
+
+**Por qué:** el 14/10/2026 un GET fallido dejó a Coordinación ~50 min con la grilla vacía y un "Espera: 82m" inventado. Los traslados se recargan solo por Realtime (decisión de costo de Vercel), así que un fallo sin reintento duraba hasta el próximo cambio de algún traslado. Los mocks hacían el problema invisible (la app "tenía datos") y confundían el diagnóstico.
+
+**Alternativas descartadas:** *volver al poll de 15 s* (era el mayor costo de Vercel; la red de seguridad de 5 min con ETag cuesta ~1/20 de eso y casi siempre es un 304); *solo reintentar sin avisar* (el usuario no puede distinguir "no hay traslados" de "no cargó").
+
+### 31.2. El recorte por sectores falla abierto y vive en un solo lugar
+
+**Qué:** `makeAreaScope` (lib/ticketFilters.ts) es la única regla de visibilidad por sectores; si un ticket no se puede ubicar en el mapa de camas, se muestra.
+
+**Por qué:** había dos filtros (hook y grilla) que no coincidían: la grilla no respetaba "lo que creó no lo pierde". Y con un mapa de camas incompleto el filtro escondía todo: para un hospital, esconder un traslado es peor que mostrar uno de otro sector. **Costo asumido:** si una cama sale del mapa de PROGAL (inactivada) con un traslado activo, ese traslado lo ven todos los que filtran por pisos hasta que se cierre.
+
+### 31.3. Un mapa de camas que se achica mucho es sospechoso
+
+**Qué:** cliente y servidor rechazan un mapa más de un 20% más chico que el último bueno, salvo que se sostenga 3 min.
+
+**Por qué:** el chequeo existente solo cubría el mapa vacío; un mapa parcial pasaba y dejaba camas ocupadas sin paciente, áreas sin camas, etc. El umbral de 3 min evita que una baja real de camas deje el mapa trabado. La regla está en lib/bedsGuard.ts (cliente) y repetida inline en api/beds.ts (api/ no importa de lib/).

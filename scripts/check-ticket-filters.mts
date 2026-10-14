@@ -1,8 +1,8 @@
 // Self-check del filtro por estado de Operativa (lib/ticketFilters).
 // Correr:  npx tsx scripts/check-ticket-filters.mts
 import assert from 'node:assert';
-import { applyStatusFilter, countByStatus, toggleStatus, visibleStatusChips, showUrgenciasChip, applyUrgenciaFilter } from '../lib/ticketFilters';
-import { TicketStatus as S } from '../types';
+import { applyStatusFilter, countByStatus, toggleStatus, visibleStatusChips, showUrgenciasChip, applyUrgenciaFilter, makeAreaScope } from '../lib/ticketFilters';
+import { Area, TicketStatus as S } from '../types';
 
 const t = (id: string, status: S) => ({ id, status });
 const tickets = [
@@ -72,5 +72,45 @@ assert.deepEqual(applyUrgenciaFilter(conUrg, true).map(x => x.id), ['u1'], 'pren
 assert.equal(applyUrgenciaFilter(conUrg, false).length, 3, 'apagado: todo');
 assert.notStrictEqual(applyUrgenciaFilter(conUrg, false), conUrg, 'apagado devuelve copia');
 assert.deepEqual(applyUrgenciaFilter(applyStatusFilter(conUrg, new Set([S.WAITING_ROOM])), true), [], 'se combina con estados (Y lógico)');
+
+// ── Recorte por sectores (makeAreaScope) ─────────────────────────────────────────
+// Coordinación real (14/10/2026): 9 sectores, sin HSS ni HUQ.
+const coord = { id: '92', filterByFloors: true, assignedAreas: [
+  Area.PISO_4, Area.PISO_5, Area.PISO_6, Area.PISO_7, Area.PISO_8, Area.HIT, Area.HRA, Area.HUC, Area.HUT] };
+const azafata4 = { id: '7', filterByFloors: true, assignedAreas: [Area.PISO_4, Area.HRA] };
+const mapa = [
+  { label: 'Internación Transitoria HPR - Cama 03', area: Area.HIT },
+  { label: 'Unidad Coronaria HPR - Cama 02', area: Area.HUC },
+  { label: 'Habitación 401 HPR - Cama 01', area: Area.PISO_4 },
+  { label: 'Habitación 513 HPR - Cama 02', area: Area.PISO_5 },
+  { label: 'Sala de Espera - Sillon 1', area: Area.HRA },
+  { label: 'Servicio de Neurofisiologia (Sueño) HPR - Cama 01', area: Area.HSS },
+];
+const preItr = { origin: 'Internación Transitoria HPR - Cama 03', destination: null, createdById: '91' };
+const hraA5  = { origin: 'Sala de Espera - Sillon 1', destination: 'Habitación 513 HPR - Cama 02', createdById: '50' };
+const hraA4  = { origin: 'Sala de Espera - Sillon 1', destination: 'Habitación 401 HPR - Cama 01', createdById: '50' };
+const deHss  = { origin: 'Servicio de Neurofisiologia (Sueño) HPR - Cama 01', destination: null, createdById: '50' };
+let scope = makeAreaScope(coord, mapa);
+assert(scope(preItr) && scope(hraA5), 'coordinación ve lo de sus sectores');
+assert(!scope(deHss), 'coordinación NO ve un sector que no tiene (HSS)');
+assert(makeAreaScope(coord, mapa)({ ...deHss, createdById: '92' }), 'lo que creó no lo pierde aunque esté fuera de sus sectores');
+assert(scope({ origin: 'Unidad Coronaria HPR - Cama 09', destination: null }), 'cama no listada pero el label contiene el área → se ubica (UCO)');
+// El incidente: mapa de camas PARCIAL (no vacío) → antes se escondía todo. Ahora, si no se ubica ni origen
+// ni destino, se muestra.
+const parcial = [{ label: 'Habitación 401 HPR - Cama 01', area: Area.PISO_4 }];
+scope = makeAreaScope(coord, parcial);
+assert(scope(preItr) && scope(hraA5) && scope(deHss), 'mapa parcial: lo que no se puede ubicar se MUESTRA (falla abierto)');
+assert(makeAreaScope(azafata4, parcial)({ origin: 'Habitación 401 HPR - Cama 01', destination: 'X' }), 'lo ubicable se sigue evaluando');
+assert(!makeAreaScope({ ...azafata4, assignedAreas: [Area.PISO_8] }, parcial)({ origin: 'Habitación 401 HPR - Cama 01', destination: null }),
+  'ubicado fuera de sus sectores → no se ve, aunque el mapa sea parcial');
+// Sala de Espera: se remapea al piso del otro extremo (la azafata del 4° no ve HRA → 5°).
+scope = makeAreaScope(azafata4, mapa);
+assert(scope(hraA4) && !scope(hraA5), 'HRA se remapea al piso destino');
+// Sin filtro: no filtra por pisos, sin sectores, (casi) todos los sectores, o mapa sin cargar.
+assert(makeAreaScope({ id: '1', filterByFloors: false, assignedAreas: [Area.PISO_8] }, mapa)(deHss), 'no filtra por pisos');
+assert(makeAreaScope({ ...azafata4, assignedAreas: [] }, mapa)(deHss), 'sin sectores');
+assert(makeAreaScope({ ...azafata4, assignedAreas: Object.values(Area).slice(1) }, mapa)(deHss), 'todos menos uno = todos');
+assert(makeAreaScope(azafata4, [])(deHss), 'mapa sin cargar → no filtra');
+assert(makeAreaScope(null, mapa)(deHss), 'sin usuario → no filtra');
 
 console.log('OK — ticketFilters');

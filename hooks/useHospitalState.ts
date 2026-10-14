@@ -8,12 +8,15 @@ import {
   CirugiaTraslado, CirugiaEstado, BedCirugiaOverlay, CirugiaMarcaInfo,
   ORIGEN_URGENCIA, MOVIMIENTO_URGENCIA,
 } from '../types';
-import { MOCK_TICKETS } from '../lib/constants';
 import { can, hasModule, canReceiveNotif } from '../lib/permissions';
 import { effectiveHostessAreas, formatDateTime, createActionLock, bedEventKey, isHitArea, isHraArea } from '../lib/utils';
 import { roomCheckFor, destinationState, describeRoomCheck } from '../lib/roomCheck';
 import { supabase, resetSupabasePase } from '../lib/supabase';
 import { APP_VERSION } from '../lib/version';
+import { appAlert } from '../lib/appDialog';
+import { activeTicketsByOrigin, bedHasTicketPatient, describeOriginBedBusy, findOrphanTickets, isActiveTicket } from '../lib/originBed';
+import { makeAreaScope } from '../lib/ticketFilters';
+import { bedsShrinkDecision } from '../lib/bedsGuard';
 
 // ── JWT helpers (client-side, solo lectura — sin verificar firma) ─────────────
 function parseJwtPayload(token: string): Record<string, unknown> | null {
@@ -161,14 +164,9 @@ function keepPatientOnOrigin(origin: Bed | undefined, ticket: Ticket): void {
 // Esto evita el bug donde una cama origen inhabilitada en PROGAL seguía figurando "En
 // preparación" y podía reutilizarse como destino de otro traslado.
 function progalStillHasTicketPatientOnOrigin(origin: Bed, ticket: Ticket): boolean {
-  if (origin.status !== BedStatus.OCCUPIED) return false; // PROGAL ya la cambió (disabled/free/prep)
-  const op = origin.patientCode ? String(origin.patientCode).trim() : '';
-  const tp = ticket.patientCode ? String(ticket.patientCode).trim() : '';
-  if (op && tp) return op === tp; // criterio fuerte: mismo código de paciente
-  // Fallback por nombre solo si falta el código en alguno de los dos lados.
-  const on = (origin.patientName ?? '').trim().toLowerCase();
-  const tn = (ticket.patientName ?? '').trim().toLowerCase();
-  return !!on && on === tn;
+  // Ocupada + mismo código de paciente (o mismo nombre si falta el código). Misma regla que usa la
+  // detección de tickets huérfanos (lib/originBed.ts).
+  return bedHasTicketPatient(origin, ticket);
 }
 
 // Limpieza por azafata: label de cama → datos de quién/cuándo la marcó limpia.
@@ -595,6 +593,10 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
 }
 
 const POLL_BEDS_MS        = 60_000;  // beds: poll every 60s (tickets ahora van por Realtime, ver efecto de polling)
+// Traslados: van por Realtime (sin poll). Red de seguridad: refetch cada 5 min (con ETag casi siempre es un
+// 304 de ~1 KB) por si se perdió un evento, y reintento con espera creciente si el GET falla.
+const POLL_TICKETS_SAFETY_MS = 5 * 60_000;
+const TICKETS_RETRY_MS       = [5_000, 15_000, 30_000, 60_000];
 
 /** Human-readable labels for status transitions (for poll-based notifications) */
 // Título de la notif de traslado NUEVO: "Ingreso" si el paciente entra desde Sala de Espera
@@ -935,7 +937,23 @@ export const useHospitalState = () => {
   // (y por ende el prompt de permiso del browser) en cada poll.
   const geoCacheRef = React.useRef<{ coords: { lat: number; lng: number } | null; ts: number }>({ coords: null, ts: 0 });
   const [rawBeds, setRawBeds]                      = useState<Bed[]>([]);
-  const [tickets, setTickets]                      = useState<Ticket[]>(MOCK_TICKETS);
+  // Espejo síncrono de rawBeds para fetchBeds: es un useCallback con deps [authFetch], así que leer el
+  // estado `rawBeds` adentro veía SIEMPRE el [] inicial (los guards de mapa parcial nunca se activaban).
+  const rawBedsRef = React.useRef<Bed[]>([]);
+  rawBedsRef.current = rawBeds;
+  // Desde cuándo Gamma viene mandando un mapa sospechosamente más chico (ver fetchBeds).
+  const bedsShrinkSinceRef = React.useRef<number | null>(null);
+  // Arranca VACÍO. Antes arrancaba con MOCK_TICKETS (25 traslados de prueba, todos Consolidados): si el
+  // primer GET /api/tickets fallaba, la app se quedaba mostrando esos datos falsos — grilla "Sin resultados"
+  // con un "Espera: 82m" inventado (el promedio de los mocks). Pasó en producción el 14/10/2026.
+  const [tickets, setTickets]                      = useState<Ticket[]>([]);
+  // Estado de la carga de traslados, para que la grilla distinga "cargando" / "no se pudo" / "no hay".
+  const [ticketsLoaded, setTicketsLoaded]          = useState(false);
+  const [ticketsError, setTicketsError]            = useState<string | null>(null);
+  // Reintento con espera creciente cuando falla el GET (los tickets ya no se pollean: sin esto, un fallo
+  // dejaba la grilla vacía hasta el próximo evento de Realtime, que puede tardar una hora).
+  const ticketRetryRef = React.useRef<{ timer: ReturnType<typeof setTimeout> | null; attempt: number }>({ timer: null, attempt: 0 });
+  const fetchTicketsRef = React.useRef<() => void>(() => {});
   // Histórico completo (incluye Consolidados/Cancelados viejos). NO se pollea: lo cargan
   // bajo demanda Monitor e Historial, que son las únicas vistas que lo necesitan.
   // Vacío = "todavía no se pidió"; ver `mergedTickets`.
@@ -1044,6 +1062,13 @@ export const useHospitalState = () => {
     return withEnrich;
   }, [rawBeds, tickets, cleanings, meals, cirugiaByBed, routineCleanings, cirugiaMarcas]);
 
+  // Cama de origen → ticket activo que la bloquea (para avisar en los modales ANTES de enviar), y
+  // tickets huérfanos: su paciente ya no está en la cama de origen según PROGAL (marcados en Operativa).
+  // Los huérfanos se calculan contra las camas CRUDAS: mergeBeds pinta al paciente del ticket sobre el
+  // origen en algunos estados. Ver lib/originBed.ts.
+  const activeTicketByOrigin = useMemo(() => activeTicketsByOrigin(tickets), [tickets]);
+  const orphanTickets = useMemo(() => findOrphanTickets(tickets, rawBeds), [tickets, rawBeds]);
+
   // Derive isolatedBeds (bed labels) directly from the enrich. Los aislamientos vienen
   // de PROGAL en `bed.isolations` y "siguen" al paciente como el resto del enrich
   // (mergeBeds copia/limpia ENRICH_FIELDS al mover de cama), así que basta con marcar
@@ -1072,17 +1097,29 @@ export const useHospitalState = () => {
       if (!r.ok) { setBedsError(`HTTP ${r.status}`); return; } // mantiene data previa
 
       const etag = r.headers.get('etag');
-      if (etag) bedsEtagRef.current = etag;
 
       const data = await r.json();
       if (data.error) { setBedsError(`API: ${String(data.error)}`); return; }
 
       if (Array.isArray(data.beds) && data.beds.length > 0) {
+        const prev = rawBedsRef.current;
         // Skip partial failures (all beds available when we know some are occupied)
         const hasOccupied = data.beds.some((b: any) => b.status === 'Ocupada' || b.status === 'En preparación' || b.status === 'Inhabilitada');
-        if (!hasOccupied && rawBeds.length > 0 && rawBeds.some(b => b.status === BedStatus.OCCUPIED)) {
-          return; // Gamma partial failure — keep previous data
+        if (!hasOccupied && prev.some(b => b.status === BedStatus.OCCUPIED)) {
+          setBedsError('PARCIAL: Progal devolvió todas las camas libres — se mantiene el mapa anterior');
+          return; // Gamma partial failure — keep previous data (sin guardar el ETag: el próximo poll re-pide)
         }
+        // Mapa PARCIAL (no vacío pero incompleto): si se achica más de un 20% contra el anterior, se
+        // mantiene el anterior; si el mapa chico se sostiene 3 min seguidos, se acepta (baja real de
+        // camas). Regla en lib/bedsGuard.ts; /api/beds la aplica inline. El 14/10/2026 un mapa parcial vació la grilla de
+        // Coordinación: sin la cama no se puede ubicar el traslado en un sector.
+        const shrink = bedsShrinkDecision(prev.length, data.beds.length, bedsShrinkSinceRef.current, Date.now());
+        bedsShrinkSinceRef.current = shrink.since;
+        if (!shrink.accept) {
+          setBedsError(`PARCIAL: Progal devolvió ${data.beds.length} de ${prev.length} camas — se mantiene el mapa anterior`);
+          return; // sin guardar el ETag: un 304 dejaría el mapa trabado en el anterior
+        }
+        if (etag) bedsEtagRef.current = etag;
         // Actualizar el snapshot de enrich por paciente: solo donde el server marcó
         // enriched===true (aplicó enrich del cache). Guardamos también valores undefined
         // — sino la cancelación de un ayuno nunca limpiaría la entrada del mapa.
@@ -1092,8 +1129,11 @@ export const useHospitalState = () => {
           }
         }
         setBedsError(null);
+        // La ref se actualiza YA (no en el próximo render): dos fetchBeds en vuelo a la vez (poll + catch-up
+        // de foco) comparaban el segundo mapa contra el [] viejo y un parcial se colaba como "primer load".
+        rawBedsRef.current = data.beds;
         setRawBeds(data.beds);
-      } else if (rawBeds.length === 0) {
+      } else if (rawBedsRef.current.length === 0) {
         // Respuesta OK pero sin camas y no tenemos data previa → Progal no devolvió nada.
         // Sin esto el mapa quedaba en blanco sin explicación (el caso que reportó el cliente).
         setBedsError('SIN_DATOS: Progal no devolvió camas');
@@ -1835,6 +1875,27 @@ export const useHospitalState = () => {
     } catch { return []; }
   }, [authFetch]);
 
+  // Éxito/fallo del GET de traslados. Solo usan refs y setters (estables), así fetchTickets —un
+  // useCallback con deps [authFetch]— puede llamarlos sin closures viejas.
+  const ticketsLoadOk = () => {
+    setTicketsError(null);
+    const rt = ticketRetryRef.current;
+    rt.attempt = 0;
+    if (rt.timer) { clearTimeout(rt.timer); rt.timer = null; }
+  };
+  const ticketsLoadFailed = (reason: string) => {
+    setTicketsError(reason);
+    const rt = ticketRetryRef.current;
+    if (rt.timer) return; // ya hay un reintento agendado
+    const delay = TICKETS_RETRY_MS[Math.min(rt.attempt, TICKETS_RETRY_MS.length - 1)];
+    rt.attempt++;
+    rt.timer = setTimeout(() => {
+      rt.timer = null;
+      ticketsEtagRef.current = null;
+      fetchTicketsRef.current();
+    }, delay);
+  };
+
   const fetchTickets = useCallback(async () => {
     if (writingRef.current) return; // skip poll while writing to SP
     try {
@@ -1848,8 +1909,8 @@ export const useHospitalState = () => {
       // El histórico completo lo cargan Monitor e Historial bajo demanda (fetchAllTickets).
       const r = await authFetch('/api/tickets', { headers });
       if (r.status === 401) { handleLogout(); return; }
-      if (r.status === 304) return; // no changes
-      if (!r.ok) return;
+      if (r.status === 304) { ticketsLoadOk(); return; } // no changes
+      if (!r.ok) { ticketsLoadFailed(`HTTP ${r.status}`); return; }
       const etag = r.headers.get('etag');
       if (etag) ticketsEtagRef.current = etag;
       const data: { tickets: Ticket[] } = await r.json();
@@ -1865,10 +1926,15 @@ export const useHospitalState = () => {
           initialLoadDoneRef.current = true;
         }
         setTickets(tickets);
+        setTicketsLoaded(true);
       }
-    } catch { /* keep mock/current data */ }
+      ticketsLoadOk();
+    } catch (e: any) {
+      ticketsLoadFailed(`NETWORK: ${e?.message ?? 'fallo de red'}`); // mantiene lo que había
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authFetch]);
+  fetchTicketsRef.current = fetchTickets;
 
   // Histórico por RANGO, BAJO DEMANDA. Lo llaman Monitor e Historial al montarse, al cambiar las
   // fechas y el botón "Actualizar". Deliberadamente NO entra al setInterval: se mira de a ratos.
@@ -1952,6 +2018,7 @@ export const useHospitalState = () => {
     fetchRoutineCleanings();
     fetchCirugiaMarcas();
     const bedPoll = setInterval(fetchBeds, POLL_BEDS_MS);
+    const ticketSafetyPoll = setInterval(fetchTickets, POLL_TICKETS_SAFETY_MS);
 
     // Realtime traslados: un cambio → refetch debounced. Reseteamos el ETag antes del refetch
     // para no comernos un 304 justo cuando acabamos de saber que algo cambió.
@@ -2040,6 +2107,9 @@ export const useHospitalState = () => {
 
     return () => {
       clearInterval(bedPoll);
+      clearInterval(ticketSafetyPoll);
+      if (ticketRetryRef.current.timer) { clearTimeout(ticketRetryRef.current.timer); ticketRetryRef.current.timer = null; }
+      ticketRetryRef.current.attempt = 0;
       if (ticketDebounce) clearTimeout(ticketDebounce);
       if (cleaningDebounce) clearTimeout(cleaningDebounce);
       if (mealsDebounce) clearTimeout(mealsDebounce);
@@ -2484,9 +2554,9 @@ export const useHospitalState = () => {
     setTickets(prev => prev.map(t => t.id === ticket.id ? snapshot : t));
     if (conflict) {
       const extra = conflict.conflictingTicketId ? ` (ticket ${conflict.conflictingTicketId})` : '';
-      alert(`${conflict.error}${extra}`);
+      appAlert(`${conflict.error}${extra}`);
     } else {
-      alert(failMsg);
+      appAlert(failMsg);
     }
     return false;
   };
@@ -2724,6 +2794,8 @@ export const useHospitalState = () => {
     // Reset state in-memory para que el próximo login no arranque mostrando
     // dropdown/banner con datos del user anterior por un instante.
     setTickets([]);
+    setTicketsLoaded(false);
+    setTicketsError(null);
     setAllTickets([]);
     setNotifications([]);
     setToasts([]);
@@ -2802,37 +2874,11 @@ export const useHospitalState = () => {
     if (currentUser?.sede !== SedeType.SUMAR)
       result = result.filter(t => t.sede === currentUser?.sede);
 
-    // Si el rol filtra por pisos, restringir tickets a las áreas asignadas
-    // (igual que ya hacía HOSTESS hardcoded). Catering no llega acá porque no
-    // tiene acceso a Operativa (Acceso_RT sin 'Operativa') — pero el filtro queda
-    // genérico por filterByFloors para roles nuevos.
+    // Si el rol filtra por pisos, restringir tickets a sus sectores. La regla (incluido "lo que creó no lo
+    // pierde" y el fallo ABIERTO cuando el mapa de camas no permite ubicar el ticket) vive en
+    // lib/ticketFilters.ts → makeAreaScope, y es la ÚNICA: RequestsView ya no vuelve a filtrar por área.
     if (currentUser?.filterByFloors && currentUser.assignedAreas?.length) {
-      const allAreas = new Set(Object.values(Area) as string[]);
-      const hasAll = currentUser.assignedAreas.length >= allAreas.size - 1; // 9 of 10 = effectively all
-      // Only filter if azafata has a subset of areas AND beds are loaded to resolve areas
-      if (!hasAll && beds.length > 0) {
-        // Build a map from area label → set of bed labels for fast lookup
-        const areaByLabel = new Map<string, Area>();
-        for (const b of beds) if (b.area) areaByLabel.set(b.label, b.area);
-
-        result = result.filter(t => {
-          // Lo que el usuario CREÓ no lo pierde nunca, caiga donde caiga el traslado. Sin esto,
-          // un pre-ticket de Coordinación desaparecía de su grilla apenas Admisión le configuraba
-          // un destino fuera de sus pisos (y con origen en Sala de Espera, el remapeo de HRA de
-          // abajo lo mandaba al piso destino). Ver docs/planes/pre-ticket.md.
-          if (t.createdById && String(t.createdById) === String(currentUser?.id)) return true;
-          // Try matching by label first, then by area prefix in the ticket origin/destination
-          const rawOriginArea = areaByLabel.get(t.origin) ?? beds.find(b => t.origin?.includes(b.area))?.area;
-          const rawDestArea   = t.destination ? (areaByLabel.get(t.destination) ?? beds.find(b => t.destination?.includes(b.area))?.area) : undefined;
-          // Áreas efectivas: HRA (Sala de Espera) se remapea al piso real del otro
-          // extremo, sino la azafata vería traslados desde HRA hacia pisos ajenos.
-          const { origin: originArea, dest: destArea } = effectiveHostessAreas(rawOriginArea, rawDestArea);
-          const originInArea = originArea ? currentUser.assignedAreas?.includes(originArea) : false;
-          const destInArea   = destArea   ? currentUser.assignedAreas?.includes(destArea)   : false;
-          return originInArea || destInArea;
-        });
-      }
-      // If beds not loaded yet OR azafata has all areas → show all tickets (no area filter)
+      result = result.filter(makeAreaScope(currentUser, beds));
     }
     return result;
   }, [currentUser, beds]);
@@ -2878,13 +2924,21 @@ export const useHospitalState = () => {
     }, ...prev]);
   };
 
+  // Aviso del bloqueo "un solo traslado/pre-ticket activo por cama de origen" (texto en lib/originBed.ts).
+  // Nombra al paciente del ticket que bloquea; si es OTRO que el que hoy ocupa la cama, el ticket quedó
+  // huérfano y se indica cancelarlo desde Operativa (caso real 14/10/2026 en ITR).
+  const alertOriginBedBusy = (existing: Ticket) => {
+    const { title, message } = describeOriginBedBusy(existing, rawBeds);
+    appAlert(message, { title });
+  };
+
   const handleCreateTicket = async (data: Partial<Ticket> & { reason?: string }) => {
     if (!can(currentUser, 'crear_ticket')) {
-      alert('Tu rol no tiene permiso para crear solicitudes.'); return;
+      appAlert('Tu rol no tiene permiso para crear solicitudes.'); return;
     }
     // Traslado Interno requiere siempre un motivo (fusión con cambio de habitación).
     if (data.workflow === WorkflowType.INTERNAL && !(data.reason || data.changeReason)) {
-      alert('Debe seleccionar un motivo para el Traslado Interno.'); return;
+      appAlert('Debe seleccionar un motivo para el Traslado Interno.'); return;
     }
     setTicketActionLoading(true);
     writingRef.current = true;
@@ -2911,20 +2965,13 @@ export const useHospitalState = () => {
     if (!can(currentUser, 'crear_ticket')) return;
 
     // Block duplicate: no two active transfers for the same origin bed
-    const existingActive = tickets.find(t =>
-      t.origin === data.origin &&
-      t.status !== TicketStatus.COMPLETED &&
-      t.status !== TicketStatus.REJECTED
-    );
-    if (existingActive) {
-      alert(`Ya existe un traslado activo para esta cama (${existingActive.id}). Debe finalizar o cancelarse antes de crear otro.`);
-      return;
-    }
+    const existingActive = tickets.find(t => t.origin === data.origin && isActiveTicket(t));
+    if (existingActive) { alertOriginBedBusy(existingActive); return; }
 
     const sourceBed = beds.find(b => b.label === data.origin);
     const targetBed = beds.find(b => b.label === data.destination);
-    if (!sourceBed || sourceBed.status !== BedStatus.OCCUPIED) { alert('Error: La cama de origen debe estar OCUPADA.'); return; }
-    if (!targetBed || (targetBed.status !== BedStatus.AVAILABLE && targetBed.status !== BedStatus.PREPARATION)) { alert('Error: La cama de destino debe estar DISPONIBLE o EN PREPARACIÓN.'); return; }
+    if (!sourceBed || sourceBed.status !== BedStatus.OCCUPIED) { appAlert('La cama de origen debe estar OCUPADA.'); return; }
+    if (!targetBed || (targetBed.status !== BedStatus.AVAILABLE && targetBed.status !== BedStatus.PREPARATION)) { appAlert('La cama de destino debe estar DISPONIBLE o EN PREPARACIÓN.'); return; }
 
     // ID format: TSL-(UserID)-ddmmyyyyhhmmss
     const now = new Date();
@@ -2990,7 +3037,7 @@ export const useHospitalState = () => {
       // Rollback the optimistic insert — another admin grabbed the bed first.
       setTickets((prev: Ticket[]) => prev.filter((t: Ticket) => t.id !== newTicket.id));
       const extra = conflict.conflictingTicketId ? ` (ticket ${conflict.conflictingTicketId})` : '';
-      alert(`${conflict.error}${extra}`);
+      appAlert(`${conflict.error}${extra}`);
       return;
     }
     if (!spItemId) {
@@ -2999,7 +3046,7 @@ export const useHospitalState = () => {
       // grilla y el poll de 8s lo borraba SIN avisar → el bug de traslados que
       // "se cargan y desaparecen". Hacemos rollback + aviso para que la usuaria se entere.
       setTickets((prev: Ticket[]) => prev.filter((t: Ticket) => t.id !== newTicket.id));
-      alert('No pudimos confirmar el guardado del traslado. Esperá unos segundos: si aparece en la grilla, ya quedó cargado; si NO aparece, volvé a cargarlo.');
+      appAlert('No pudimos confirmar el guardado del traslado. Esperá unos segundos: si aparece en la grilla, ya quedó cargado; si NO aparece, volvé a cargarlo.');
       return;
     }
     setTickets(prev => prev.map(t => t.id === newTicket.id ? { ...t, spItemId } : t));
@@ -3031,22 +3078,20 @@ export const useHospitalState = () => {
     const sourceBed = internado ? beds.find(b => b.label === data.originBedLabel) : undefined;
     if (internado) {
       if (!sourceBed || sourceBed.status !== BedStatus.OCCUPIED || !sourceBed.patientName) {
-        alert('Seleccioná un paciente internado.'); return;
+        appAlert('Seleccioná un paciente internado.'); return;
       }
       // Un solo traslado/pre-ticket activo por cama de origen (mismo criterio que el pre-ticket).
-      const existingActive = tickets.find(t =>
-        t.origin === sourceBed.label && t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED,
-      );
-      if (existingActive) { alert(`Ya existe un traslado o pre-ticket activo para esta cama (${existingActive.id}).`); return; }
+      const existingActive = tickets.find(t => t.origin === sourceBed.label && isActiveTicket(t));
+      if (existingActive) { alertOriginBedBusy(existingActive); return; }
     }
     const nombre = internado ? (sourceBed!.patientName || '') : (data.pacienteNombre ?? '').trim().replace(/\s+/g, ' ');
-    if (!internado && nombre.length < 3) { alert('Cargá nombre y apellido del paciente.'); return; }
+    if (!internado && nombre.length < 3) { appAlert('Cargá nombre y apellido del paciente.'); return; }
     const targetBed = beds.find(b => b.label === data.destinoBedLabel);
     if (!targetBed || (targetBed.status !== BedStatus.AVAILABLE && targetBed.status !== BedStatus.PREPARATION)) {
-      alert('La cama destino debe estar DISPONIBLE o EN PREPARACIÓN.'); return;
+      appAlert('La cama destino debe estar DISPONIBLE o EN PREPARACIÓN.'); return;
     }
     if (isHitArea(targetBed.area) || isHraArea(targetBed.area)) {
-      alert('La cama destino no puede estar en ITR ni en la Sala de Espera.'); return;
+      appAlert('La cama destino no puede estar en ITR ni en la Sala de Espera.'); return;
     }
 
     setTicketActionLoading(true);
@@ -3094,7 +3139,7 @@ export const useHospitalState = () => {
       const { spItemId, conflict } = await spCreate(newTicket);
       if (conflict || !spItemId) {
         setTickets(prev => prev.filter(t => t.id !== newTicket.id)); // rollback del optimista
-        alert(conflict?.error ?? 'No pudimos confirmar el guardado de la urgencia. Volvé a intentarlo.');
+        appAlert(conflict?.error ?? 'No pudimos confirmar el guardado de la urgencia. Volvé a intentarlo.');
         return;
       }
       setTickets(prev => prev.map(t => t.id === newTicket.id ? { ...t, spItemId } : t));
@@ -3112,17 +3157,15 @@ export const useHospitalState = () => {
     originBedLabel: string; movimiento: string; requisitos: string[]; observations?: string;
     urgencia?: boolean; urgenciaPaciente?: 'INTERNADO' | 'NO_INTERNADO'; pacienteNombre?: string; destinoBedLabel?: string;
   }) => {
-    if (!can(currentUser, 'crear_pre_ticket')) { alert('Tu rol no tiene permiso para crear pre-tickets.'); return; }
+    if (!can(currentUser, 'crear_pre_ticket')) { appAlert('Tu rol no tiene permiso para crear pre-tickets.'); return; }
     if (data.urgencia) { await createUrgenciaTicket(data); return; }
-    if (!data.originBedLabel || !data.movimiento) { alert('Seleccioná el paciente y el movimiento.'); return; }
+    if (!data.originBedLabel || !data.movimiento) { appAlert('Seleccioná el paciente y el movimiento.'); return; }
     const sourceBed = beds.find(b => b.label === data.originBedLabel);
-    if (!sourceBed) { alert('No se encontró la cama del paciente seleccionado.'); return; }
+    if (!sourceBed) { appAlert('No se encontró la cama del paciente seleccionado.'); return; }
 
     // Evitar duplicados: un solo traslado/pre-ticket activo por cama de origen.
-    const existingActive = tickets.find(t =>
-      t.origin === data.originBedLabel && t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED,
-    );
-    if (existingActive) { alert(`Ya existe un traslado o pre-ticket activo para esta cama (${existingActive.id}).`); return; }
+    const existingActive = tickets.find(t => t.origin === data.originBedLabel && isActiveTicket(t));
+    if (existingActive) { alertOriginBedBusy(existingActive); return; }
 
     setTicketActionLoading(true);
     writingRef.current = true;
@@ -3161,7 +3204,7 @@ export const useHospitalState = () => {
       const { spItemId, conflict } = await spCreate(newTicket);
       if (conflict || !spItemId) {
         setTickets(prev => prev.filter(t => t.id !== newTicket.id));
-        alert(conflict?.error ?? 'No pudimos confirmar el guardado del pre-ticket. Volvé a intentarlo.');
+        appAlert(conflict?.error ?? 'No pudimos confirmar el guardado del pre-ticket. Volvé a intentarlo.');
         return;
       }
       setTickets(prev => prev.map(t => t.id === newTicket.id ? { ...t, spItemId } : t));
@@ -3176,13 +3219,13 @@ export const useHospitalState = () => {
   // pre-ticket en traslado vivo. El workflow queda PRE_TICKET (badge "Pre-Ticket"); solo cambia el
   // status (Presolicitud → Habitacion Lista / Esperando Habitacion). Ver docs/planes/pre-ticket.md.
   const completePreTicket = async (ticketId: string, data: { destination: string; observations?: string }) => {
-    if (!can(currentUser, 'completar_pre_ticket')) { alert('Tu rol no tiene permiso para configurar destinos.'); return; }
+    if (!can(currentUser, 'completar_pre_ticket')) { appAlert('Tu rol no tiene permiso para configurar destinos.'); return; }
     const pre = tickets.find(t => t.id === ticketId);
-    if (!pre || pre.status !== TicketStatus.PRESOLICITUD) { alert('El pre-ticket ya no está disponible.'); return; }
-    if (!pre.spItemId) { alert('El pre-ticket todavía no terminó de guardarse. Esperá unos segundos.'); return; }
+    if (!pre || pre.status !== TicketStatus.PRESOLICITUD) { appAlert('El pre-ticket ya no está disponible.'); return; }
+    if (!pre.spItemId) { appAlert('El pre-ticket todavía no terminó de guardarse. Esperá unos segundos.'); return; }
     const targetBed = beds.find(b => b.label === data.destination);
     if (!targetBed || (targetBed.status !== BedStatus.AVAILABLE && targetBed.status !== BedStatus.PREPARATION)) {
-      alert('El destino debe estar DISPONIBLE o EN PREPARACIÓN.'); return;
+      appAlert('El destino debe estar DISPONIBLE o EN PREPARACIÓN.'); return;
     }
 
     setTicketActionLoading(true);
@@ -3206,7 +3249,7 @@ export const useHospitalState = () => {
       if (!ok) {
         setTickets(prev => prev.map(t => t.id === ticketId ? pre : t)); // rollback
         const extra = conflict?.conflictingTicketId ? ` (ticket ${conflict.conflictingTicketId})` : '';
-        alert(`${conflict?.error ?? 'No pudimos configurar el destino. Volvé a intentarlo.'}${extra}`);
+        appAlert(`${conflict?.error ?? 'No pudimos configurar el destino. Volvé a intentarlo.'}${extra}`);
         return;
       }
       spLogEvent(ticketId, 'Destino configurado');
@@ -3321,13 +3364,13 @@ export const useHospitalState = () => {
   // el servidor lo vuelve a exigir (api/tickets.ts → 422), esto es el corte cómodo en la UI.
   const handleConsolidate = (ticketId: string, link?: UrgenciaLink) => runTicketAction(ticketId, async () => {
     if (!can(currentUser, 'consolidar')) {
-      alert('Tu rol no tiene permiso para consolidar.'); return;
+      appAlert('Tu rol no tiene permiso para consolidar.'); return;
     }
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket || ticket.status === TicketStatus.COMPLETED) return;
     const urgSinOrigen = isUrgenciaSinOrigen(ticket);
     if (ticket.urgencia && !link?.patientCode && !ticket.patientCode) {
-      alert('Una urgencia necesita un paciente vinculado de PROGAL para consolidarse.'); return;
+      appAlert('Una urgencia necesita un paciente vinculado de PROGAL para consolidarse.'); return;
     }
     writingRef.current = true; // block polls durante la escritura a SP (mismo ciclo que create/edit)
     try {
@@ -3376,18 +3419,18 @@ export const useHospitalState = () => {
     // rol fijo Admisión/Admin + cancelar_ticket (cinturón de seguridad sobre la config de SP).
     if (isPreTicket) {
       if (!can(currentUser, 'cancelar_pre_ticket')) {
-        alert('Tu rol no tiene permiso para cancelar pre-tickets.'); return;
+        appAlert('Tu rol no tiene permiso para cancelar pre-tickets.'); return;
       }
     } else {
       // Traslado normal: gatea por PERMISO (cancelar_ticket), no por rol fijo — respeta la config del
       // ABM (un rol custom con el permiso puede cancelar; el server igual enforça áreas/authz).
       // Una urgencia también la cancela quien tiene cancelar_pre_ticket (Coordinación la cargó).
       if (!can(currentUser, 'cancelar_ticket') && !(ticket.urgencia && can(currentUser, 'cancelar_pre_ticket'))) {
-        alert('Tu rol no tiene permiso para cancelar traslados.'); return;
+        appAlert('Tu rol no tiene permiso para cancelar traslados.'); return;
       }
     }
     if (!reason || !reason.trim()) {
-      alert('La observación es obligatoria para cancelar.'); return;
+      appAlert('La observación es obligatoria para cancelar.'); return;
     }
     writingRef.current = true; // block polls durante la escritura a SP (mismo ciclo que create/edit)
     try {
@@ -3434,20 +3477,20 @@ export const useHospitalState = () => {
     modificationReason: string;
   }) => {
     if (!can(currentUser, 'editar_ticket')) {
-      alert('Tu rol no tiene permiso para editar traslados.'); return;
+      appAlert('Tu rol no tiene permiso para editar traslados.'); return;
     }
     const ticket = tickets.find((t: Ticket) => t.id === payload.ticketId);
     if (!ticket) return;
     if (ticket.canCancel === false) {
-      alert('No se puede editar: la azafata ya intervino en este traslado.'); return;
+      appAlert('No se puede editar: la azafata ya intervino en este traslado.'); return;
     }
     // Una urgencia nace "Por Consolidar": editar el destino la recalcularía como traslado normal
     // (Esperando Habitación / Habitación Lista) y la sacaría de su circuito. Si hay un error se cancela y se recarga.
     if (ticket.urgencia) {
-      alert('Las urgencias no se editan: cancelá el ticket y volvé a cargarlo.'); return;
+      appAlert('Las urgencias no se editan: cancelá el ticket y volvé a cargarlo.'); return;
     }
     if (!payload.modificationReason.trim()) {
-      alert('El motivo de la modificación es obligatorio.'); return;
+      appAlert('El motivo de la modificación es obligatorio.'); return;
     }
 
     const changes: string[] = [];
@@ -3492,10 +3535,10 @@ export const useHospitalState = () => {
       // Validate against merged beds (excludes beds assigned to other active tickets)
       const newDestBed = beds.find((b: Bed) => b.label === payload.destination);
       if (!newDestBed) {
-        alert(`La cama ${payload.destination} no existe.`); return;
+        appAlert(`La cama ${payload.destination} no existe.`); return;
       }
       if (newDestBed.status !== BedStatus.AVAILABLE && newDestBed.status !== BedStatus.PREPARATION) {
-        alert(`La cama ${payload.destination} ya no está disponible (estado: ${newDestBed.status}).`); return;
+        appAlert(`La cama ${payload.destination} ya no está disponible (estado: ${newDestBed.status}).`); return;
       }
 
       // Gamma-level status (without overlay) drives the new ticket status
@@ -3521,7 +3564,7 @@ export const useHospitalState = () => {
     // ticket solo cambia destino/workflow/observaciones.
 
     if (changes.length === 0) {
-      alert('No hay cambios para guardar.'); return;
+      appAlert('No hay cambios para guardar.'); return;
     }
 
     // ── Optimistic update + persist ─────────────────────────────────────────
@@ -3574,7 +3617,7 @@ export const useHospitalState = () => {
             `${ticketSnapshot.status}|${ticketSnapshot.destination ?? ''}`,
           );
           const extra = result.conflict.conflictingTicketId ? ` (ticket ${result.conflict.conflictingTicketId})` : '';
-          alert(`${result.conflict.error}${extra}`);
+          appAlert(`${result.conflict.error}${extra}`);
           return;
         }
         if (!result.ok) {
@@ -3585,7 +3628,7 @@ export const useHospitalState = () => {
             ticket.id,
             `${ticketSnapshot.status}|${ticketSnapshot.destination ?? ''}`,
           );
-          alert('No se pudo guardar la modificación (error de conexión o del servidor). Revisá la grilla en unos segundos.');
+          appAlert('No se pudo guardar la modificación (error de conexión o del servidor). Revisá la grilla en unos segundos.');
           return;
         }
       } finally {
@@ -3994,6 +4037,8 @@ export const useHospitalState = () => {
       allTicketsLoading,
       historyRange,
       loginEmail, loginPass, loginError, loginLoading, bedsLoading, bedsError, ticketActionLoading, beds,
+      activeTicketByOrigin, orphanTickets,
+      ticketsLoaded, ticketsError,
       tokenExpirySoon, tokenMinutesLeft,
       isolatedBeds,
       unreadSpNotifications,

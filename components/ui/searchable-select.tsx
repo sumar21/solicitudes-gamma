@@ -47,7 +47,7 @@ export function SearchableSelect({
         <button
           type="button"
           className={cn(
-            "flex h-12 w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white placeholder:text-slate-400 focus:outline-none focus:border-slate-400 focus:ring-1 focus:ring-slate-400 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200",
+            "flex h-12 w-full min-w-0 items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white placeholder:text-slate-400 focus:outline-none focus:border-slate-400 focus:ring-1 focus:ring-slate-400 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200",
             className
           )}
         >
@@ -56,7 +56,10 @@ export function SearchableSelect({
               overflow:hidden nunca llega a activarse. Sin esto, una opción larga (p. ej.
               "Internación Transitoria HPR - Cama 08 (Shockroom 2) (APELLIDO NOMBRE)") estira
               el botón, y con él la grilla del form y el ancho del modal entero.
-              `shrink-0` en el chevron para que el texto no se lo coma al achicarse. */}
+              `shrink-0` en el chevron para que el texto no se lo coma al achicarse.
+              El `min-w-0` del BOTÓN también hace falta: sin él, su ancho mínimo intrínseco es el
+              texto entero (truncate = nowrap) y la grilla del form (columna `auto`) lo respeta → el
+              form se salía del modal en Nueva Solicitud con un origen largo (visto el 14/10/2026). */}
           <span className="block flex-1 min-w-0 truncate text-left">
             {selectedOption ? selectedOption.label : placeholder}
           </span>

@@ -34,3 +34,5 @@ La carpeta `docs/` está organizada por propósito: `arquitectura/` (referencia 
 - **Soft-delete** — nunca borrar registros de SP, cambiar `Status` a `'Inactivo'`.
 - **localStorage** para sesión (PWA) — `mediflow_token` y `mediflow_user`.
 - **Imports en api/**: usar extensión `.js` (`import { x } from './file.js'`). Frontend: sin extensión.
+- **Nunca `alert()` / `confirm()` / `prompt()` nativos** — salen como cartel de Chrome ("mediflow.sumar.dev dice…"). Usar `appAlert()` de `lib/appDialog.ts`. El build falla si aparece uno (`scripts/check-no-native-dialogs.mjs`). Ver [convenciones.md §4.5](docs/arquitectura/convenciones.md).
+- **Fallas de carga visibles y con reintento; nunca mocks como estado inicial; los filtros de visibilidad fallan abierto** (incidente 14/10/2026: grilla vacía con datos de prueba). Ver [convenciones.md §4.6](docs/arquitectura/convenciones.md).

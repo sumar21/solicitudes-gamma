@@ -46,6 +46,7 @@ import { AreaSelectionModal } from './components/modals/AreaSelectionModal';
 import { RejectionModal } from './components/modals/RejectionModal';
 import { cn, calculateTicketMetrics } from './lib/utils';
 import { NotificationToasts } from './components/NotificationToast';
+import { appAlert } from './lib/appDialog';
 
 // SVG inline del spray-can (lucide 0.344). Se inlinea porque el componente `SprayCan`
 // del barrel de lucide no renderizaba en el sidebar (mientras los demás iconos, del mismo
@@ -738,12 +739,13 @@ export default function App() {
                 // Con 'denied' el navegador ni siquiera muestra el prompt: hay que explicar el
                 // camino manual, que es el único que existe una vez bloqueado.
                 if (perm === 'denied') {
-                  alert(
+                  appAlert(
                     'El navegador tiene las notificaciones bloqueadas para este sitio.\n\n' +
                     'Para activarlas:\n' +
                     '1. Tocá el candado (o el ícono a la izquierda de la dirección web).\n' +
                     '2. Buscá "Notificaciones" y ponelo en "Permitir".\n' +
                     '3. Recargá la página.',
+                    { tone: 'warning', title: 'Notificaciones bloqueadas' },
                   );
                 }
               }}
@@ -842,6 +844,9 @@ export default function App() {
                 onAddObservation={actions.handleAddObservation}
                 currentUser={state.currentUser}
                 beds={state.beds}
+                orphanTickets={state.orphanTickets}
+                ticketsLoaded={state.ticketsLoaded}
+                ticketsError={state.ticketsError}
               />
                 )
               )}
@@ -865,7 +870,7 @@ export default function App() {
         onOpenChange={setIsNewRequestOpen}
         onCreate={onNewRequestCreated}
         beds={state.beds}
-        activeTransferOrigins={new Set(state.tickets.filter(t => t.status !== 'Consolidado' && t.status !== 'Cancelado').map(t => t.origin))}
+        activeTicketByOrigin={state.activeTicketByOrigin}
         activeTransferDestinations={new Set(
           state.tickets
             .filter(t => t.status !== 'Consolidado' && t.status !== 'Cancelado' && t.destination)
@@ -878,6 +883,7 @@ export default function App() {
         onCreate={actions.createPreTicket}
         beds={state.beds}
         assignedAreas={state.currentUser?.filterByFloors ? state.currentUser.assignedAreas : undefined}
+        activeTicketByOrigin={state.activeTicketByOrigin}
         activeTransferDestinations={new Set(
           state.tickets
             .filter(t => t.status !== 'Consolidado' && t.status !== 'Cancelado' && t.destination)

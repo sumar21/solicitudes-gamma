@@ -302,12 +302,13 @@ pasada manual aparte (no son automatizables por browser/API).
 - **Precondición**: dos sesiones de Admisión, misma cama destino Disponible.
 - **Acción**: ambas confirman "Nueva Solicitud" a esa cama **casi simultáneamente**.
 - **Resultado esperado**: la primera OK; la segunda → `POST /api/tickets` **409** "Cama destino ya
-  asignada… (ticket X)" (índice único parcial `traslados_cama_destino_activa_idx`). Rollback + alert.
+  asignada… (ticket X)" (índice único parcial `traslados_cama_destino_activa_idx`). Rollback + aviso de la app (`appAlert`).
 
 ### QA-TRA-16 · Doble traslado sobre la misma cama origen → bloqueado
 - **Precondición**: ya existe un traslado activo con cierta cama **origen**.
-- **Acción**: intentar crear un segundo traslado con la **misma cama origen**.
-- **Resultado esperado**: bloqueado en cliente ("Ya existe un traslado activo para esta cama").
+- **Acción**: abrir "Nueva Solicitud" (o "Pre-ticket") y elegir esa cama de origen / ese paciente.
+- **Resultado esperado**: **antes de enviar** aparece el aviso dentro del modal y el botón queda deshabilitado. Ámbar "Ya hay un traslado activo para esta cama" si el ticket es del mismo paciente (con paciente, `TSL-…` y fecha de carga). Si de todos modos se llega al guardado, el mismo texto sale como aviso de la app (no como cartel de Chrome).
+- **Regresión a vigilar**: ningún aviso de la app puede salir como diálogo nativo del navegador ("mediflow.sumar.dev dice…"). El build falla si aparece un `alert(`/`confirm(`/`prompt(` en el frontend.
 
 ### QA-TRA-17 · Validaciones de cama al crear
 - **Acción/Resultado**:
@@ -356,6 +357,26 @@ pasada manual aparte (no son automatizables por browser/API).
 - **Precondición**: crear un traslado y reintentar el mismo `POST` (mismo `id_univoco`).
 - **Resultado esperado**: **no duplica** (upsert `onConflict (id_univoco,entorno) ignoreDuplicates`).
 
+### QA-TRA-25 · Ticket de otro paciente en la cama de origen (lo cambiaron de cama por PROGAL)
+- **Precondición**: pre-ticket en Presolicitud del paciente A desde la cama X. En PROGAL, A pasa a la cama Y y el paciente B entra a la cama X (caso real 14/10/2026: ITR Cama 03 → Cama 05).
+- **Acción**: Coordinación abre "Pre-ticket" y elige al paciente B (cama X). Repetir con "Nueva Solicitud" desde la cama X.
+- **Resultado esperado**: aviso **rojo** "La cama tiene un pre-ticket de otro paciente" que nombra a A, su `TSL-…`, que hoy está en la cama Y, y que hay que cancelarlo desde Operativa, recargarlo desde la cama nueva y después cargar el de B. Botón deshabilitado. Variantes: si A no figura en ninguna cama → "…ya no figura en ninguna cama del mapa"; si el ticket de A está En Traslado / Por Consolidar → "La cama tiene un traslado sin cerrar".
+
+### QA-TRA-26 · Marca "Ya no está en la cama" en Operativa
+- **Precondición**: la misma de QA-TRA-25 (y un ticket Esperando Habitación / Habitación Lista en la misma situación).
+- **Acción**: abrir Operativa (Admin, Admisión, Coordinación; Azafata para los que ve) a 2000 / 1440 / 1280 / 390.
+- **Resultado esperado**: en la columna Origen (y en la card mobile) del ticket de A, bloque rojo "Ya no está en la cama" + "Ahora en Cama Y" (o "No figura en el mapa"); el tooltip dice quién ocupa la cama y qué hacer (en mobile se ve "En la cama: B"). **No** se marca: cama de origen vacía, tickets En Traslado / Por Consolidar, ni si el ocupante es el mismo paciente. La grilla no se ensancha a 1280 con sidebar (columna Observaciones visible). Al cancelar el ticket de A, la marca desaparece y B se puede cargar.
+
+
+### QA-TRA-27 · Falla la carga de traslados → aviso y recuperación sola (incidente 14/10/2026)
+- **Precondición**: `GET /api/tickets` devuelve error (simular con DevTools → Network → "Block request URL", o cortando la red).
+- **Acción**: abrir Operativa; después destrabar el request.
+- **Resultado esperado**: cartel rojo "No pudimos cargar los traslados. Reintentamos solos en unos segundos. (HTTP …)" y el vacío dice "No se pudieron cargar los traslados". **Nunca** aparecen datos de prueba ni un "Espera" inventado (antes: "82m"). Al destrabar, en ≤60 s la grilla se completa sola y el cartel desaparece, sin recargar la página.
+
+### QA-TRA-28 · Mapa de camas parcial → la grilla no se vacía
+- **Precondición**: usuario que filtra por sectores (Coordinación / azafata) con traslados activos en sus sectores.
+- **Acción**: `/api/beds` devuelve un mapa incompleto (p. ej. sin ITR ni Coronaria).
+- **Resultado esperado**: si ya había un mapa bueno, se mantiene, y el Mapa de Camas muestra "debug: PARCIAL: Progal devolvió N de M camas". Si el mapa parcial es el primero (recién abierta la app), los traslados que no se pueden ubicar **se muestran igual** (falla abierto) y los botones de azafata siguen disponibles. Lo que creó el usuario se ve siempre.
 ---
 
 ## 4. Limpiezas (Mapa de Camas + overlay "Opción B")
@@ -985,7 +1006,7 @@ Diseño en [arquitectura.md §48](../arquitectura/arquitectura.md). **Prerrequis
 - **Precondición**: usuario con `crear_pre_ticket`; un paciente internado (cama Ocupada en el mapa) sin traslado activo; una cama destino Disponible/En preparación.
 - **Acción**: "Pre-ticket" → tildar "Urgencia / ingreso directo" → elegir **"Internado"** → elegir al paciente del desplegable (muestra obra social y cama actual) + destino → "Registrar urgencia". Después, Admisión → **"Consolidar PROGAL"**.
 - **Resultado esperado**:
-  - Con "Internado" no se pide nombre libre; el botón se habilita con paciente **y** destino. Si el paciente ya tiene un traslado/pre-ticket activo → alerta y no se crea.
+  - Con "Internado" no se pide nombre libre; el botón se habilita con paciente **y** destino. Si el paciente ya tiene un traslado/pre-ticket activo → aviso de la app (QA-TRA-16) y no se crea.
   - Ticket 'Por Consolidar' con tag "Urgencia" pero **sin** "Sin vincular"; origen = la cama real del paciente. DB: `urgencia=true`, `cama_origen` real, `codigo_paciente` y `evento_internacion` del paciente, `paciente_declarado` NULL.
   - En el mapa: el paciente (con sus datos clínicos) se ve en la cama destino y su cama de origen queda **En preparación** (igual que un traslado "Por Consolidar").
   - El botón es **"Consolidar PROGAL"** directo (no abre el modal de vincular); al consolidar, el origen queda En preparación como en un traslado normal.

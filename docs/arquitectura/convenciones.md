@@ -680,6 +680,37 @@ Todo el proyecto usa `catch (err: any)` o `catch (e: any)` para errores. No hay 
 }
 ```
 
+### 4.5. Avisos a la usuaria — `appAlert()`, NUNCA `alert()` / `confirm()` / `prompt()` nativos
+
+**Regla dura.** Los diálogos nativos del navegador están prohibidos en el frontend. Chrome los dibuja con su propio cartel ("mediflow.sumar.dev dice…"), bloquean la pestaña entera, no respetan el diseño de la app y en la PWA se ven como un error del sistema. Pasó en producción el 14/10/2026: el aviso de "ya existe un pre-ticket para esta cama" le salió a Coordinación como cartel de Chrome y lo reportaron como falla.
+
+Para avisar algo se usa **`appAlert()`** de [lib/appDialog.ts](../../lib/appDialog.ts):
+
+```ts
+import { appAlert } from '../lib/appDialog';
+
+appAlert('Seleccioná el paciente y el movimiento.');                 // tono 'error' (default)
+appAlert(texto, { tone: 'warning', title: 'Notificaciones bloqueadas' });
+await appAlert('Listo.', { tone: 'success' });                        // la promesa se resuelve al cerrar
+```
+
+- **Imperativo como `alert`**: se puede llamar desde `useHospitalState` o cualquier handler sin pasar estado. El host [components/AppAlertHost.tsx](../../components/AppAlertHost.tsx) está montado una sola vez en `index.tsx` (fuera de `<App />`: funciona también en el login) y muestra los avisos **de a uno, en orden**.
+- **Tonos**: `error` (default: "No se pudo completar la acción"), `warning`, `info`, `success`. El `title` se puede pisar; el mensaje respeta `\n` (sirve para pasos numerados).
+- **Va por encima de los modales** (`z-[1000]`, sobre los `Dialog` en `z-50` y el overlay "Guardando…" en `z-[100]`). Esc/Enter/click afuera cierran **solo el aviso**: el `keydown` se captura en `window` y se corta la propagación, porque el `DialogContent` casero cierra con Escape escuchando en `document` y, sin eso, un Esc cerraba también el modal de abajo.
+- **Escribir el mensaje para la persona que opera**, no para el desarrollador: qué pasó, de quién es el dato que bloquea y qué hacer. Ejemplo: el bloqueo de cama de origen nombra al paciente del ticket que bloquea, dice dónde está hoy y qué hacer (`describeOriginBedBusy` en [lib/originBed.ts](../../lib/originBed.ts): un solo texto para el aviso inline de los modales y el `appAlert` del hook).
+- **Preferir el aviso inline** cuando se puede detectar antes del submit (ver [decisiones.md §11.4](decisiones.md)): `appAlert` es para lo que solo se sabe al intentar la acción (validaciones de último momento, 409 del servidor, permisos).
+- **No hay `appConfirm` todavía.** Si hace falta una confirmación, se hace un modal con `Dialog` (como `RejectionModal`) o se agrega un `appConfirm` al mismo módulo. Nunca `window.confirm`.
+
+**Guardián automático:** [scripts/check-no-native-dialogs.mjs](../../scripts/check-no-native-dialogs.mjs) corre en `npm run build` (o sea, en **cada deploy de Vercel**) y en `npm run lint`. Si encuentra `alert(` / `confirm(` / `prompt(` (sueltos o `window.*`) en `App.tsx`, `index.tsx`, `components/`, `views/`, `hooks/`, `lib/` o `src-sw/`, **el build falla** y lista `archivo:línea`. Los comentarios no cuentan; métodos propios como `installPrompt.prompt()` tampoco.
+
+### 4.6. Fallas de carga: visibles, con reintento, y nunca datos de prueba
+
+Regla nacida del incidente del 14/10/2026 ([decisiones.md §31](decisiones.md)):
+- **Nunca** inicializar un estado de producción con datos mock (`MOCK_*`): si la carga falla, la app "tiene datos" falsos y el problema queda invisible. Estado inicial = vacío + un flag de "cargado".
+- Un fetch que alimenta una vista principal **no puede fallar en silencio**: guardar el error en el estado, mostrarlo (cartel con el código, p. ej. `HTTP 503`) y **reintentar con espera creciente**. Si la data llega por Realtime, sumar una recarga de respaldo larga (con ETag).
+- El vacío de una grilla dice por qué está vacía: cargando / no se pudo cargar / no hay datos / el filtro no encontró nada.
+- **Los filtros de visibilidad fallan abierto**: si una regla no puede decidir (falta el dato para ubicar el registro), se muestra. Esconder un traslado es peor que mostrar uno de más.
+
 ---
 
 ## 5. Logging
@@ -1256,7 +1287,7 @@ if (result.conflict) {
   // Rollback al snapshot pre-cambio
   setTickets(prev => prev.map(t => t.id === ticket.id ? ticketSnapshot : t));
   prevTicketSnapshotRef.current.set(ticket.id, `${ticketSnapshot.status}|${ticketSnapshot.destination ?? ''}`);
-  alert(`${result.conflict.error}${conflictingTicketId ? ` (ticket ${conflictingTicketId})` : ''}`);
+  appAlert(`${result.conflict.error}${conflictingTicketId ? ` (ticket ${conflictingTicketId})` : ''}`);
   return;
 }
 ```
@@ -1266,7 +1297,7 @@ if (result.conflict) {
 ```ts
 if (conflict) {
   setTickets((prev: Ticket[]) => prev.filter((t: Ticket) => t.id !== newTicket.id));
-  alert(...);
+  appAlert(...);
   return;
 }
 ```

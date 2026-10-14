@@ -210,6 +210,18 @@ async function enrichBedsFromCache(beds: any[], occEventKeys: Set<string>): Prom
 let bedsCache: { beds: any[]; etag: string; timestamp: number } | null = null;
 const BEDS_CACHE_TTL = 45_000; // 45 seconds
 
+// ── Mapa PARCIAL de Gamma ────────────────────────────────────────────────────
+// Gamma a veces devuelve un mapa NO vacío pero incompleto (algunos sectores sí, otros no): pasaba el
+// chequeo de "mapa vacío" y se servía. Con eso la grilla de Coordinación no podía ubicar los traslados y
+// los escondía (14/10/2026). Si el mapa se achica más de un 20% contra el último bueno, se sirve el cache;
+// si el mapa chico se sostiene SHRINK_ACCEPT_MS seguidos, se acepta (una baja real de camas no traba el
+// mapa). Misma regla que lib/bedsGuard.ts (la usa el cliente en fetchBeds, que sí tiene memoria entre
+// polls); acá va inline porque api/ no importa de lib/, y el cache es por instancia (puede no existir).
+const SHRINK_RATIO = 0.8;
+const SHRINK_ACCEPT_MS = 3 * 60_000;
+let shrinkSince: number | null = null;
+const isSuspiciousShrink = (next: number, prev: number) => prev > 0 && next < prev * SHRINK_RATIO;
+
 // ── Handler ──────────────────────────────────────────────────────────────────
 async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -306,6 +318,19 @@ async function handler(req: any, res: any) {
     }
 
     const beds = transformBeds(mapData, occData);
+
+    if (bedsCache && isSuspiciousShrink(beds.length, bedsCache.beds.length)) {
+      const now = Date.now();
+      if (shrinkSince === null) shrinkSince = now;
+      if (now - shrinkSince < SHRINK_ACCEPT_MS) {
+        console.warn(`[api/beds] mapa parcial: ${beds.length} camas vs ${bedsCache.beds.length} del último bueno (${mapData.length} sectores). Serving cache.`);
+        res.setHeader('ETag', bedsCache.etag);
+        res.setHeader('X-Beds-Stale', '1');
+        return res.status(200).json({ beds: bedsCache.beds, stale: true });
+      }
+      console.warn(`[api/beds] el mapa más chico se sostuvo ${Math.round((now - shrinkSince) / 1000)}s: se acepta (${beds.length} camas)`);
+    }
+    shrinkSince = null;
 
     // Set de eventKeys realmente ocupados según obtenermapacamasocupadas (fuente LIVE).
     // Si una cama figura "Ocupada" en obtenermapacamas pero NO está acá, es residual

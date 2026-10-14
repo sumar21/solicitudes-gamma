@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Area, Bed, BedStatus } from '../../types';
+import { Area, Bed, BedStatus, Ticket } from '../../types';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { MOVIMIENTOS_PRETICKET, REQUISITOS_CAMA, REQUISITO_SIN } from '../../lib/constants';
 import { formatBedName, isHitArea, isHraArea, cn } from '../../lib/utils';
 import { Check, Siren } from 'lucide-react';
+import { OriginBedBusyNotice } from '../OriginBedBusyNotice';
 
 // Orden por SECTOR (no por apellido): mismo criterio que NewRequestModal/BedsView —
 // pre-internación (HRA, HIT) primero, después pisos, después unidades críticas; empate por cama.
@@ -56,6 +57,9 @@ interface PreTicketModalProps {
   beds: Bed[];
   /** Camas ya tomadas por otro traslado activo (no se ofrecen como destino de una urgencia). */
   activeTransferDestinations?: Set<string>;
+  /** Cama de origen → ticket activo que sale de ella. Si el paciente elegido está en una de esas camas,
+   *  se avisa ANTES de enviar y se bloquea el botón (antes salía el error recién al guardar). */
+  activeTicketByOrigin?: Map<string, Ticket>;
   /** Sectores del usuario (solo para roles con filterByFloors). Recorta el desplegable de
    *  pacientes a sus pisos: si podía pedir una cama para un paciente de otro sector, el
    *  pre-ticket resultante le quedaba invisible en la grilla (que sí filtra por piso). */
@@ -64,7 +68,7 @@ interface PreTicketModalProps {
 
 export const MIN_NOMBRE_URGENCIA = 3;
 
-export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChange, onCreate, beds, assignedAreas, activeTransferDestinations = new Set() }) => {
+export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChange, onCreate, beds, assignedAreas, activeTransferDestinations = new Set(), activeTicketByOrigin }) => {
   const [originBedLabel, setOriginBedLabel] = useState('');
   const [movimiento, setMovimiento] = useState('');
   const [requisitos, setRequisitos] = useState<string[]>([]);
@@ -97,9 +101,11 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
 
   const nombreOk = pacienteNombre.trim().length >= MIN_NOMBRE_URGENCIA;
   const internado = urgencia && urgenciaPaciente === 'INTERNADO';
-  const canSubmit = urgencia
+  // Un solo traslado/pre-ticket activo por cama de origen (paciente normal o urgencia de un internado).
+  const blockingTicket = originBedLabel && (!urgencia || internado) ? activeTicketByOrigin?.get(originBedLabel) : undefined;
+  const canSubmit = !blockingTicket && (urgencia
     ? (!!destinoBedLabel && (internado ? !!originBedLabel : nombreOk))
-    : (!!originBedLabel && !!movimiento);
+    : (!!originBedLabel && !!movimiento));
 
   // Camas ocupadas con paciente → el paciente va en primer plano (así busca la Coordinadora),
   // la cama es el dato secundario y la clave real (de ahí salen obra social + origen).
@@ -219,6 +225,7 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
                       searchPlaceholder="Buscar por paciente o cama..."
                     />
                   </div>
+                  {blockingTicket && <OriginBedBusyNotice ticket={blockingTicket} beds={beds} />}
                   {selectedBed && (
                     <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3">
                       <div className="grid gap-1">
@@ -276,6 +283,7 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
               searchPlaceholder="Buscar por paciente o cama..."
             />
           </div>
+          {blockingTicket && <OriginBedBusyNotice ticket={blockingTicket} beds={beds} />}
 
           {/* Precarga desde el paciente: obra social + origen (la Coordinadora no los carga). */}
           {selectedBed && (
