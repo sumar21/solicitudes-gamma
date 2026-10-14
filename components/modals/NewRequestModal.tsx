@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { Area, Bed, BedStatus, WorkflowType } from '../../types';
+import { Area, Bed, BedStatus, Ticket, WorkflowType } from '../../types';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { ITR_SOURCES, ROOM_CHANGE_REASONS } from '../../lib/constants';
 import { isHitArea, isHraArea, roomSexConflict } from '../../lib/utils';
 import { roomCheckFor } from '../../lib/roomCheck';
+import { OriginBedBusyNotice } from '../OriginBedBusyNotice';
 import { RoomCheckNotice } from '../RoomCheckNotice';
 import { splitDestinationsByIsolation } from '../../lib/isolations';
 
@@ -35,11 +36,12 @@ interface NewRequestModalProps {
   onOpenChange: (open: boolean) => void;
   onCreate: (data: { patientName: string; origin: string; destination: string; workflow: WorkflowType; reason?: string; itrSource?: string; observations?: string }) => void;
   beds: Bed[];
-  activeTransferOrigins?: Set<string>;
+  /** Cama de origen → ticket activo que sale de ella (bloquea cargar otro; el aviso dice de quién es). */
+  activeTicketByOrigin?: Map<string, Ticket>;
   activeTransferDestinations?: Set<string>;
 }
 
-export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenChange, onCreate, beds, activeTransferOrigins = new Set(), activeTransferDestinations = new Set() }) => {
+export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenChange, onCreate, beds, activeTicketByOrigin = new Map(), activeTransferDestinations = new Set() }) => {
   const [workflow, setWorkflow] = useState<WorkflowType>(WorkflowType.INTERNAL);
   const [patientName, setPatientName] = useState('');
   const [origin, setOrigin] = useState('');
@@ -199,11 +201,8 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
               placeholder="Seleccionar Origen"
               searchPlaceholder="Buscar cama de origen..."
             />
-            {origin && activeTransferOrigins.has(origin) && (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200">
-                <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
-                <p className="text-xs font-medium text-amber-800">Esta cama ya tiene un traslado activo. Debe finalizar o cancelarse antes de crear otro.</p>
-              </div>
+            {origin && activeTicketByOrigin.has(origin) && (
+              <OriginBedBusyNotice ticket={activeTicketByOrigin.get(origin)!} beds={beds} />
             )}
           </div>
 
@@ -296,7 +295,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
               !origin ||
               !destination ||
               (workflow === WorkflowType.INTERNAL && !reason) ||
-              !!(origin && activeTransferOrigins.has(origin))
+              !!(origin && activeTicketByOrigin.has(origin))
             }
             className="bg-emerald-950 text-white rounded-xl h-10 px-8 disabled:opacity-50"
           >

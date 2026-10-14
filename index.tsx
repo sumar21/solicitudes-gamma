@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { registerSW } from 'virtual:pwa-register';
 import App from './App';
+import { AppAlertHost } from './components/AppAlertHost';
 
 // ── PWA auto-update ──────────────────────────────────────────────────────────
 // Registers the service worker and applies any new version automatically.
@@ -36,5 +37,6 @@ const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
     <App />
+    <AppAlertHost />
   </React.StrictMode>
 );

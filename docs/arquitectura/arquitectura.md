@@ -1672,3 +1672,40 @@ Pedido de Gamma tras probar el paquete en TESTING.
 - **Título del pop-up de urgencia**: "Traslado directo por urgencia" (antes "Ingreso por urgencia"). El texto del push y el evento de la trayectoria no cambiaron.
 - **Ancho a 1280 (otra vez)**: con filas "Esperando Habitación" el badge de estado (sin cortes) llevaba la columna Estado a 176px y la tabla a 1107/1022. Ahora el badge puede partirse en la grilla (`StatusBadge wrap`), Observaciones tiene mínimo 100px, los botones de acción son más compactos y el margen de la vista es 24px hasta 1536px (`md:p-6 2xl:p-8`). Medido con los datos de TESTING: 1038/1038 a 1280 (Admin y pestaña Azafata), sin desborde a 1440 y 2000.
 
+
+## 49. Cama de origen ocupada: aviso antes de enviar y tickets huérfanos (2026-10-14)
+
+**Problema (caso real, 14/10/2026):** a una paciente (A) le cargaron un pre-ticket en ITR Cama 03 (13/10 19:14). Después la pasaron a la Cama 05 **directo en PROGAL** y en la 03 entró otro paciente (B). El pre-ticket siguió activo con "origen = Cama 03" (el ticket no sigue al paciente) y trabó el pre-ticket de B. La regla "un solo traslado/pre-ticket activo por cama de origen" compara la **etiqueta de la cama**, no el paciente, y se valida solo en el cliente.
+
+**Qué se hizo** (la regla de bloqueo no cambió, ver [decisiones.md §30.2](decisiones.md)):
+- **Módulo puro [lib/originBed.ts](../../lib/originBed.ts)** (self-check `scripts/check-origin-bed.mts`): `activeTicketsByOrigin`, `bedHasTicketPatient` (mismo paciente: código, o nombre si falta el código; también lo usa `mergeBeds` vía `progalStillHasTicketPatientOnOrigin`), `findPatientBed` (dónde está hoy el paciente, por código), `findOrphanTickets` y `describeOriginBedBusy` (el texto del aviso).
+- **Aviso ANTES de enviar** en `PreTicketModal` (paciente normal y urgencia de internado) y `NewRequestModal`: [components/OriginBedBusyNotice.tsx](../../components/OriginBedBusyNotice.tsx) + botón deshabilitado. Ámbar si el ticket que bloquea es del mismo paciente; rojo si es de otro. El `appAlert` del hook usa el mismo texto (por si se llega igual al submit).
+- **Marca "Ya no está en la cama" en Operativa** (`RequestsView`, columna Origen y card mobile): tickets en Presolicitud / Esperando Habitación / Habitación Lista cuya cama de origen PROGAL ya tiene ocupada por **otro** paciente. Muestra "Ahora en Cama 05" si el paciente figura en otra cama (mismo sector → solo la cama), o "No figura en el mapa"; quién ocupa la cama va en el tooltip (y visible en mobile).
+- Los huérfanos se calculan en `useHospitalState` contra las camas **crudas** de Gamma (`rawBeds`): `mergeBeds` pinta al paciente del ticket sobre un origen vacío (`keepPatientOnOrigin`). El hook expone `state.activeTicketByOrigin` y `state.orphanTickets`.
+
+**Textos según el caso:**
+
+| Ticket que bloquea | Aviso |
+|---|---|
+| Del mismo paciente | "Ya hay un pre-ticket/traslado activo para esta cama": completarlo o cancelarlo |
+| De otro paciente que hoy está en otra cama | "La cama tiene un pre-ticket de otro paciente… hoy está en ITR Cama 05": cancelarlo, recargarlo desde la cama nueva y después cargar el nuevo |
+| De otro paciente que no figura en el mapa | "…ya no figura en ninguna cama del mapa": cancelarlo y cargar el nuevo |
+| En Traslado / Por Consolidar con otro paciente en la cama | "La cama tiene un traslado sin cerrar": se libera al consolidar |
+
+**Qué NO se marca como huérfano:** cama de origen **vacía** (el sillón de Sala de Espera o un PROGAL adelantado la muestran libre con el paciente todavía ahí), tickets En Traslado / Por Consolidar (el paciente ya salió), ni tickets sin cama conocida en el mapa.
+
+**De paso:** `SearchableSelect` ahora lleva `min-w-0` en el botón. Sin eso, un origen largo en Nueva Solicitud ("Habitación 517 HPR - Cama 01 (APELLIDO NOMBRE…)") estiraba el formulario más allá del modal (pasaba antes de este cambio; con el aviso se notaba más).
+
+**Verificación:** `scripts/check-origin-bed.mts` (con mutaciones: incluir En Traslado como huérfano o ignorar el código de paciente → falla); Playwright a 2000/1440/1280/390 con Admin y Azafata: la marca no ensancha ninguna columna (Origen 124px con y sin marcas a 1280) y suma ~22px de alto a la fila a 1280.
+
+## 50. Incidente "Operativa vacía" (14/10/2026): la carga de traslados se recupera sola (v20261014_1.11.1)
+
+**Qué pasó:** entre las 14:00 y las 14:50, en PCs de Coordinación la grilla quedó vacía ("Todos 0", "Sin resultados") con un "Espera: 82m". Supabase, las funciones de Vercel, los webhooks de push y los crons funcionaban. Causa: el primer `GET /api/tickets` de esas PCs falló y **no había reintento** (desde la migración a Realtime los traslados no se pollean: se recargan con un evento de Realtime, al resuscribir o al volver a la pestaña, y en ese rato nadie tocó un traslado). Encima, `tickets` arrancaba con **`MOCK_TICKETS`** (25 traslados de prueba, todos Consolidados): la grilla los ocultaba y el "82m" era su promedio.
+
+**Cambios:**
+- **Carga de traslados** (`fetchTickets` en `useHospitalState`): el estado inicial es `[]` (fuera los mocks). Si el GET falla, reintenta a los 5 s, 15 s, 30 s y después cada 60 s hasta que anda (`TICKETS_RETRY_MS`). Hay una recarga de respaldo cada 5 min (`POLL_TICKETS_SAFETY_MS`; con ETag casi siempre es un 304). El hook expone `ticketsLoaded` / `ticketsError`.
+- **Grilla** (`RequestsView`): cartel rojo "No pudimos cargar / actualizar los traslados. Reintentamos solos…" con el código del error, y el vacío dice por qué ("Cargando…", "No se pudieron cargar los traslados", "Sin traslados activos" o "Sin resultados"). "Espera" muestra `--` sin dato (antes `--m`).
+- **Recorte por sectores en un solo lugar:** `makeAreaScope` en [lib/ticketFilters.ts](../../lib/ticketFilters.ts) (lo usa `scopeTickets`). La grilla tenía un segundo filtro por área **sin** la excepción "lo que creó no lo pierde"; se sacó. La regla **falla abierto**: si con el mapa actual no se puede ubicar ni el origen ni el destino del ticket, se muestra. Lo mismo para los botones de azafata (`unlocated` en `renderActionButtons`).
+- **Mapa de camas parcial:** si Gamma devuelve un mapa más de un 20% más chico que el último bueno, el cliente ([lib/bedsGuard.ts](../../lib/bedsGuard.ts), `fetchBeds`) y `/api/beds` se quedan con el anterior; si el mapa chico se sostiene 3 min, lo aceptan. El cliente no guarda el ETag de un mapa rechazado (un 304 lo dejaría trabado) y el Mapa de Camas muestra "debug: PARCIAL: Progal devolvió N de M camas". Se arregló de paso el guard de "todas libres" de `fetchBeds`, que nunca se activaba (leía `rawBeds` de una closure vieja; ahora usa `rawBedsRef`, que se actualiza en el momento de aceptar un mapa para que dos fetch en vuelo no se pisen).
+
+**Verificación:** `scripts/check-ticket-filters.mts` (recorte por sectores, mapa parcial) y `scripts/check-beds-guard.mts`, con mutaciones. Prueba de punta a punta con la app real (Vite + Playwright interceptando `/api`): con `/api/tickets` devolviendo 503, a los 3 s aparece el cartel y ningún dato de prueba; a los ~21 s se recupera solo con los 4 traslados. Un mapa parcial (6 de 36 camas) se rechaza con el aviso en el Mapa de Camas. Con un mapa parcial desde el arranque, los traslados igual se ven. Capturas a 2000/1440/1280/390 sin desborde.

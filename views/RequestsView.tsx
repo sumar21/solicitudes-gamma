@@ -20,6 +20,7 @@ import { visibleStatusChips, countByStatus, applyStatusFilter, toggleStatus, sho
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { cn, formatBedName, formatDateTime, effectiveHostessAreas } from '../lib/utils';
 import { realRequisitos } from '../lib/roomCheck';
+import type { OrphanTicket } from '../lib/originBed';
 
 interface RequestsViewProps {
   tickets: Ticket[];
@@ -48,6 +49,12 @@ interface RequestsViewProps {
   onAddObservation?: (id: string, texto: string) => Promise<boolean>;
   currentUser: User | null;
   beds: Bed[];
+  /** Tickets cuyo paciente ya no está en la cama de origen según PROGAL (lib/originBed.ts → findOrphanTickets). */
+  orphanTickets?: Map<string, OrphanTicket>;
+  /** Ya llegó al menos una respuesta buena de /api/tickets (distingue "cargando" de "no hay traslados"). */
+  ticketsLoaded?: boolean;
+  /** El último GET de /api/tickets falló (el hook reintenta solo). */
+  ticketsError?: string | null;
 }
 
 // Observación cargada por la azafata, ligada al status del ticket (lista 13.ObservacionesTraslados).
@@ -86,7 +93,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   searchTerm, setSearchTerm, sortConfig, onSort,
   onNewRequest, onNewPreTicket, onConfigureDestino, onValidateReason, onAssignBed,
   onHousekeepingAction, onStartTransport, onCompleteTransport,
-  onRoomReady, onConfirmReception, onConsolidate, onConsolidateUrgencia, onReject, onEdit, onAddObservation, currentUser, beds
+  onRoomReady, onConfirmReception, onConsolidate, onConsolidateUrgencia, onReject, onEdit, onAddObservation, currentUser, beds, orphanTickets, ticketsLoaded = true, ticketsError = null
 }) => {
 
   // Filtro por estado (botonera). Vacío = se ve todo. Es de la sesión de pantalla: NO se persiste a
@@ -238,6 +245,41 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     </span>
   ) : null;
 
+  // Ticket huérfano: todavía no salió de la cama de origen, pero PROGAL ya tiene a OTRO paciente ahí (se
+  // fue sin pasar por MediFlow). Hay que cancelarlo: si no, traba cargar el ticket del nuevo ocupante
+  // (caso real 14/10/2026). Los modales de alta remiten a esta marca. Ver lib/originBed.ts.
+  // Dónde está hoy el paciente: si sigue en el mismo sector que el origen (p. ej. de ITR Cama 03 a ITR
+  // Cama 05) basta "Cama 05"; si no, el nombre corto de la cama.
+  const shortNowAt = (origin: string, nowAt: string) => {
+    const sector = (label: string) => label.split(' - ')[0];
+    return sector(origin) === sector(nowAt) && nowAt.includes(' - ') ? nowAt.split(' - ').slice(1).join(' - ') : formatBedName(nowAt);
+  };
+  // En mobile (sin hover) se muestra también quién ocupa la cama; en desktop va en el tooltip, para no
+  // estirar la fila a 1280.
+  const renderOrphanTag = (ticket: Ticket, mobile = false) => {
+    const orphan = orphanTickets?.get(ticket.id);
+    if (!orphan) return null;
+    const enLaCama = orphan.occupantName ? ` En la cama hoy: ${orphan.occupantName}.` : '';
+    return (
+      // Bloque que se ACOMODA al ancho de la columna (sin nowrap ni max-w): una píldora de una línea
+      // ensanchaba Origen ~55px y a 1280 con sidebar tapaba Observaciones. El min-w evita que en una
+      // columna angosta ("517 - 01") quede una palabra por línea.
+      <div
+        className="mt-1.5 min-w-[96px] rounded-md border border-red-200 bg-red-50 px-1.5 py-1 text-[10px] leading-tight text-red-800 break-words"
+        title={orphan.patientNowAt
+          ? `El paciente hoy está en ${formatBedName(orphan.patientNowAt)}: el ticket quedó apuntando a la cama anterior y traba cargar el del paciente nuevo. Hay que cancelarlo y volver a cargarlo desde la cama nueva.${enLaCama}`
+          : `El paciente ya no figura ${orphan.patientNotInMap ? 'en ninguna cama del mapa' : 'en esta cama'}. Si se fue sin pasar por MediFlow, hay que cancelar este ticket: traba cargar el del paciente nuevo.${enLaCama}`}
+      >
+        <div className="flex items-start gap-1 text-[9px] font-black uppercase tracking-wide text-red-700">
+          <AlertCircle className="w-3 h-3 shrink-0" /> <span>Ya no está en la cama</span>
+        </div>
+        {orphan.patientNowAt && <div className="mt-0.5 font-bold">Ahora en {shortNowAt(ticket.origin, orphan.patientNowAt)}</div>}
+        {orphan.patientNotInMap && <div className="mt-0.5 font-bold">No figura en el mapa</div>}
+        {mobile && orphan.occupantName && <div className="mt-0.5 text-red-700/80">En la cama: {orphan.occupantName}</div>}
+      </div>
+    );
+  };
+
   // Urgencia / ingreso directo: tag rojo + aviso mientras el paciente es sólo un nombre libre, sin vincular
   // a un paciente real de PROGAL (se vincula al consolidar). Ver ConsolidarUrgenciaModal.
   const renderUrgenciaTags = (ticket: Ticket) => {
@@ -315,7 +357,10 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       // Si el user no filtra por pisos (Admin/Admision/Direccion/etc.), ve todos
       // los tickets activos sin importar el tab activo (el tab solo gobierna
       // qué botones de acción aparecen para "actuar como" otro rol).
-      // Si filtra por pisos (Azafata, Catering, futuros roles), aplica filtro de área.
+      // El recorte por SECTORES ya viene hecho del hook (scopeTickets → lib/ticketFilters.ts
+      // makeAreaScope, que falla abierto si el mapa de camas no permite ubicar el ticket). Acá NO se
+      // vuelve a filtrar por área: el filtro duplicado de esta grilla no tenía la excepción "lo que creó
+      // no lo pierde" y con un mapa parcial de Gamma escondía todo (14/10/2026, grilla vacía).
       // Quien puede CREAR (pre-)tickets (Coordinación, y cualquier rol al que el ABM le dé
       // crear_ticket/crear_pre_ticket) NO se recorta por estado: ve todos los activos de sus pisos,
       // incluidos los Presolicitud y los que ya se convirtieron. El recorte por estado es para las
@@ -326,20 +371,8 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
           const validStatus = t.status === TicketStatus.WAITING_ROOM ||
             t.status === TicketStatus.IN_TRANSIT ||
             t.status === TicketStatus.IN_TRANSPORT ||
-            isRecentCancelado(t); // cancelado reciente también pasa (respeta el filtro de área de abajo)
+            isRecentCancelado(t); // cancelado reciente también pasa
           if (!validStatus) return false;
-        }
-        if (currentUser.assignedAreas?.length && beds.length > 0) {
-          const allAreas = Object.values(Area);
-          if (currentUser.assignedAreas.length < allAreas.length - 1) {
-            const originArea = beds.find(b => b.label === t.origin)?.area ?? beds.find(b => t.origin?.includes(b.area))?.area;
-            const destArea = t.destination ? (beds.find(b => b.label === t.destination)?.area ?? beds.find(b => t.destination?.includes(b.area))?.area) : undefined;
-            // Guard explícito en vez de `as string`: `assignedAreas` es `Area[]`, así que el
-            // cast solo silenciaba al compilador. Semánticamente es idéntico —`includes(undefined)`
-            // sobre un array de Area siempre da false— pero ahora el tipo lo dice en vez de taparlo.
-            return (!!originArea && currentUser.assignedAreas.includes(originArea)) ||
-                   (!!destArea && currentUser.assignedAreas.includes(destArea));
-          }
         }
         return true;
       });
@@ -350,7 +383,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
         t.status === TicketStatus.WAITING_ROOM || t.status === TicketStatus.IN_TRANSIT || t.status === TicketStatus.IN_TRANSPORT);
     }
     return filtered;
-  }, [tickets, searchTerm, beds, currentUser, canSeePreTickets, canCreateTickets, actingAsHostess]);
+  }, [tickets, searchTerm, currentUser, canSeePreTickets, canCreateTickets, actingAsHostess]);
 
   const statusChips = useMemo(
     () => visibleStatusChips({ filterByFloors: !!currentUser?.filterByFloors, canSeePreTickets, canCreateTickets, actingAsHostess }),
@@ -379,6 +412,13 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     });
     return sortableItems;
   }, [scopedTickets, statusFilter, urgenciaFilterOn, sortConfig]);
+
+  // Grilla vacía: decir POR QUÉ. Antes "Cargando..." salía siempre que no hubiera tickets (también si
+  // simplemente no había traslados) y nunca se distinguía una carga fallida.
+  const loadingTickets = !ticketsLoaded && !ticketsError;
+  const emptyLabel = !ticketsLoaded
+    ? (ticketsError ? 'No se pudieron cargar los traslados' : 'Cargando...')
+    : (scopedTickets.length === 0 && !searchTerm ? 'Sin traslados activos' : 'Sin resultados');
 
   const renderActionButtons = (ticket: Ticket, isMobile = false) => {
     const size = isMobile ? "default" : "sm";
@@ -477,8 +517,12 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       // demás no ven nada; en Piso→Piso cada una conserva su etapa.
       const { origin: effOriginArea, dest: effDestArea } = effectiveHostessAreas(originBed?.area, destBed?.area);
 
-      const isOriginHostess = hasAllAreas || !!(effOriginArea && currentUser?.assignedAreas?.includes(effOriginArea));
-      const isDestHostess   = hasAllAreas || !!(effDestArea   && currentUser?.assignedAreas?.includes(effDestArea));
+      // Mismo criterio que makeAreaScope (lib/ticketFilters.ts): si con el mapa actual no se puede ubicar
+      // NI el origen NI el destino (mapa de camas parcial de Gamma), no se recorta → la fila no queda sin
+      // botones y se puede seguir operando.
+      const unlocated = !originBed?.area && !destBed?.area;
+      const isOriginHostess = hasAllAreas || unlocated || !!(effOriginArea && currentUser?.assignedAreas?.includes(effOriginArea));
+      const isDestHostess   = hasAllAreas || unlocated || !!(effDestArea   && currentUser?.assignedAreas?.includes(effDestArea));
 
       if (!isOriginHostess && !isDestHostess) return null;
 
@@ -616,7 +660,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
             </div>
             <div className="flex items-baseline gap-2">
               <span className="text-[10px] uppercase font-bold text-emerald-600">Espera:</span>
-              <span className="text-sm font-black text-emerald-900">{averageWaitTime || '--'}m</span>
+              <span className="text-sm font-black text-emerald-900">{typeof averageWaitTime === 'number' && averageWaitTime > 0 ? `${averageWaitTime}m` : '--'}</span>
             </div>
           </div>
         </div>
@@ -641,6 +685,19 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
         </div>
       </div>
 
+      {/* La carga de traslados falló: se avisa en vez de mostrar una grilla vacía (o vieja) sin explicación.
+          El hook reintenta solo con espera creciente. Ver fetchTickets en useHospitalState. */}
+      {ticketsError && (
+        <div role="alert" className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
+          <span>
+            <span className="font-bold">No pudimos {ticketsLoaded ? 'actualizar' : 'cargar'} los traslados.</span>{' '}
+            Reintentamos solos en unos segundos{ticketsLoaded ? '; lo que ves puede estar desactualizado' : ''}.{' '}
+            <span className="font-mono text-[10px] opacity-60">({ticketsError})</span>
+          </span>
+        </div>
+      )}
+
       {/* Botonera de estados: un chip por estado visible para el rol (colapsada tras "Filtrar" en mobile) */}
       <TicketStatusFilter
         statuses={statusChips}
@@ -657,7 +714,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
         {sortedTickets.length === 0 ? (
           <div className="py-20 text-center opacity-30">
             <Search className="w-12 h-12 mx-auto mb-3" />
-            <p className="text-xs font-black uppercase tracking-widest">Sin solicitudes activas</p>
+            <p className="text-xs font-black uppercase tracking-widest">{emptyLabel}</p>
           </div>
         ) : (
           sortedTickets.map((ticket) => (
@@ -700,6 +757,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                     <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                     <p className="text-xs font-bold text-slate-700 break-words leading-tight">{formatBedName(ticket.origin)}</p>
                   </div>
+                  {renderOrphanTag(ticket, true)}
                 </div>
                 
                 <div className="flex flex-col items-center justify-center px-2 shrink-0">
@@ -786,8 +844,8 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                 <TableRow>
                   <TableCell colSpan={8} className="h-48 text-center text-slate-500 bg-white">
                     <div className="flex flex-col items-center justify-center gap-3 opacity-20">
-                      <Search className={cn("w-10 h-10", tickets.length === 0 && "animate-pulse")} />
-                      <p className="text-sm font-black uppercase tracking-widest">{tickets.length === 0 && !searchTerm ? 'Cargando...' : 'Sin resultados'}</p>
+                      <Search className={cn("w-10 h-10", loadingTickets && "animate-pulse")} />
+                      <p className="text-sm font-black uppercase tracking-widest">{emptyLabel}</p>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -841,6 +899,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                     </TableCell>
                     <TableCell>
                       <div className="text-slate-800 text-sm font-black uppercase tracking-tight leading-tight">{formatBedName(ticket.origin)}</div>
+                      {renderOrphanTag(ticket)}
                     </TableCell>
                     <TableCell>
                       {ticket.destination ? (

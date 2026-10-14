@@ -7,9 +7,9 @@
     "dev": "vite",
     "dev:api": "tsx watch dev-server.ts",
     "dev:full": "concurrently -n api,web -c cyan,magenta \"npm:dev:api\" \"npm:dev\"",
-    "build": "vite build",
+    "build": "node scripts/check-no-native-dialogs.mjs && vite build",
     "preview": "vite preview",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit && node scripts/check-no-native-dialogs.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "1.1.1",

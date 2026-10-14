@@ -7,7 +7,8 @@
  * usuario puede llegar a ver, ni uno más: un chip de "Por Consolidar" para una azafata sería un
  * botón que siempre da cero. Si cambia la regla de visibilidad de RequestsView, cambia acá.
  */
-import { TicketStatus } from '../types';
+import { Area, TicketStatus } from '../types';
+import { effectiveHostessAreas } from './utils';
 
 /** Orden de los chips = orden del ciclo de vida del traslado. */
 export function visibleStatusChips(opts: {
@@ -75,4 +76,44 @@ export function toggleStatus(selected: ReadonlySet<TicketStatus>, status: Ticket
   const next = new Set(selected);
   if (next.has(status)) next.delete(status); else next.add(status);
   return next;
+}
+
+/**
+ * Recorte por SECTORES para los roles que filtran por pisos (azafata, Coordinación…). Fuente única: lo usa
+ * `scopeTickets` del hook; la grilla (RequestsView) ya recibe la lista recortada y NO vuelve a filtrar por área.
+ *
+ * Devuelve un predicado (arma el índice cama → área una sola vez). Un ticket se ve si:
+ *   - el usuario no filtra por pisos, tiene (casi) todos los sectores, o el mapa de camas no cargó;
+ *   - lo CREÓ el usuario ("lo que creó no lo pierde", ver docs/planes/pre-ticket.md);
+ *   - su origen o su destino cae en los sectores del usuario (la Sala de Espera se remapea al piso del
+ *     otro extremo, ver effectiveHostessAreas);
+ *   - FALLA ABIERTO: con el mapa actual no se puede ubicar NI el origen NI el destino. Esconder un traslado
+ *     que no sabemos dónde está es peor que mostrar uno de más: el 14/10/2026 un mapa de camas parcial de
+ *     Gamma dejó la grilla de Coordinación vacía ~30 min ("Sin resultados", todo filtrado).
+ */
+export function makeAreaScope(
+  user: { id?: string | number; filterByFloors?: boolean; assignedAreas?: readonly string[] } | null | undefined,
+  beds: readonly { label: string; area?: string }[],
+): (t: { origin?: string | null; destination?: string | null; createdById?: string | number }) => boolean {
+  const areas = user?.assignedAreas ?? [];
+  const allAreas = Object.values(Area) as string[];
+  const hasAll = areas.length >= allAreas.length - 1; // todos menos uno = efectivamente todos
+  if (!user?.filterByFloors || areas.length === 0 || hasAll || beds.length === 0) return () => true;
+
+  const areaByLabel = new Map<string, string>();
+  for (const b of beds) if (b.area) areaByLabel.set(b.label, b.area);
+  const areaOf = (label?: string | null): string | undefined => {
+    if (!label) return undefined;
+    // Por label exacto y, si no, por el nombre del área contenido en el label ("Unidad Coronaria HPR - Cama 02").
+    return areaByLabel.get(label) ?? beds.find(b => b.area && label.includes(b.area))?.area;
+  };
+
+  return t => {
+    if (t.createdById != null && user.id != null && String(t.createdById) === String(user.id)) return true;
+    const rawOrigin = areaOf(t.origin);
+    const rawDest = areaOf(t.destination);
+    if (!rawOrigin && !rawDest) return true; // no se pudo ubicar → se muestra (falla abierto)
+    const { origin, dest } = effectiveHostessAreas(rawOrigin, rawDest);
+    return (!!origin && areas.includes(origin)) || (!!dest && areas.includes(dest));
+  };
 }
