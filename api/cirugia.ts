@@ -240,17 +240,20 @@ async function handler(req: any, res: any) {
     if (deny1 && deny2) return res.status(deny1.status).json({ error: deny1.error });
     const ekeyRaw = eventKey != null ? String(eventKey).trim() : '';
     const ekey = /^[A-Za-z0-9_-]{1,64}$/.test(ekeyRaw) ? ekeyRaw : null;
+    // Sin internación no se registra: una completada con event_key NULL cuenta en TODAS las internaciones
+    // (gate y "Q"), así que un clic le sacaría el auto-Q al paciente para siempre (QA del 20/10, v1.12.1).
+    if (!ekey) return res.status(400).json({ error: 'La cama no tiene la internación (evento) de PROGAL: no se puede registrar la cirugía previa.' });
     try {
       // Idempotente: una sola previa por paciente + internación.
       let ya = supa.from('cirugia_traslados').select('id').eq('entorno', ENTORNO).eq('paciente_codigo', pcode)
         .eq('estado', 'TOLERANCIA_EVALUADA').eq('tipo', TIPO_PREVIA);
-      ya = ekey ? ya.eq('event_key', ekey) : ya.is('event_key', null);
+      ya = ya.eq('event_key', ekey);
       const { data: existente } = await ya.limit(1);
       if (existente?.length) return res.status(200).json({ ok: true, id: String(existente[0].id) });
       const nowIso = new Date().toISOString();
       const { data: created, error } = await supa.from('cirugia_traslados').insert({
         entorno: ENTORNO,
-        id_univoco: `previa:${pcode}:${ekey ?? 'sin-evento'}:${Date.now()}`,
+        id_univoco: `previa:${pcode}:${ekey}:${Date.now()}`,
         paciente_codigo: pcode,
         paciente_nombre: pacienteNombre != null ? String(pacienteNombre) : null,
         cama_origen: String(camaOrigen),
@@ -265,7 +268,7 @@ async function handler(req: any, res: any) {
         version: String(req.body?.version ?? ''),
       }).select('id').single();
       if (error) { console.error('[cirugia] POST previa failed:', error.message); return res.status(500).json({ error: 'No se pudo registrar la cirugía previa.' }); }
-      console.log(`[cirugia] PREVIA registrada paciente=${pcode} evento=${ekey ?? '-'} por ${req.body?.userName ?? userId}`);
+      console.log(`[cirugia] PREVIA registrada paciente=${pcode} evento=${ekey} por ${req.body?.userName ?? userId}`);
       return res.status(200).json({ ok: true, id: String(created.id) });
     } catch (err: any) {
       console.error('[cirugia] POST previa error:', err);
@@ -412,6 +415,17 @@ async function handler(req: any, res: any) {
         .select('estado, cama_origen, cama_destino, area, paciente_codigo, tipo').eq('id', String(id)).eq('entorno', ENTORNO).maybeSingle();
       if (readErr) { console.error('[cirugia] PATCH read failed:', readErr.message); return res.status(500).json({ error: 'Failed to read cirugia' }); }
       if (!cur) return res.status(404).json({ error: 'Cirugia not found' });
+
+      // "Volver un paso" es relativo al estado actual: sin `desde`, un reintento o dos personas a la vez
+      // retrocedían DOS pasos, y uno contra un avance legítimo lo deshacía (QA del 20/10, v1.12.1). El
+      // cliente manda el estado que estaba viendo; si cambió, 409. Sin paso anterior → 409 antes que 403.
+      if (act === 'RETROCEDER') {
+        const desde = req.body?.desde != null ? String(req.body.desde) : '';
+        if (desde && desde !== String(cur.estado)) {
+          return res.status(409).json({ error: 'La cirugía cambió de estado; recargá e intentá de nuevo.' });
+        }
+        if (!ANTERIOR[String(cur.estado)]) return res.status(409).json({ error: 'Este paso no tiene uno anterior al que volver.' });
+      }
 
       // Autorización server-side: permiso de la acción + (si filtra por pisos) sector. La operatoria sigue
       // al PACIENTE: vale el sector de origen O el sector donde ESTÁ hoy (PROGAL pudo moverlo: de ITR a la

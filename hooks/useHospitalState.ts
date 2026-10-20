@@ -977,9 +977,10 @@ export const useHospitalState = () => {
   // estado `rawBeds` adentro veía SIEMPRE el [] inicial (los guards de mapa parcial nunca se activaban).
   const rawBedsRef = React.useRef<Bed[]>([]);
   rawBedsRef.current = rawBeds;
-  // Desde cuándo vale el mapa de PROGAL que tenemos (ms, reloj local). /api/beds cachea 45s, así que una
-  // respuesta fresca (o un 304) garantiza un mapa de hace ≤45s; el cache "stale" no actualiza esto. Lo usa
-  // el origen automático para no reubicar pedidos con un mapa viejo.
+  // Desde cuándo vale el mapa de PROGAL que tenemos (ms, reloj local; 0 = no sabemos). /api/beds cachea 45s
+  // y la llamada a Gamma puede tardar hasta 30s, así que una respuesta fresca (o un 304) es un mapa de hace
+  // ≤90s. Una respuesta del cache "stale" (Gamma caído; puede tener minutos) lo pone en 0. Lo usa el origen
+  // automático para no reubicar pedidos con un mapa viejo (hallazgo de QA del 20/10, v1.12.1).
   const rawBedsAtRef = React.useRef(0);
   // Desde cuándo Gamma viene mandando un mapa sospechosamente más chico (ver fetchBeds).
   const bedsShrinkSinceRef = React.useRef<number | null>(null);
@@ -1125,7 +1126,7 @@ export const useHospitalState = () => {
 
       const r = await authFetch('/api/beds', { headers });
       if (r.status === 401) { handleLogout(); return; }
-      if (r.status === 304) { setBedsError(null); rawBedsAtRef.current = Date.now() - 45_000; return; } // sin cambios = saludable
+      if (r.status === 304) { setBedsError(null); rawBedsAtRef.current = Date.now() - 90_000; return; } // sin cambios = saludable
       if (!r.ok) { setBedsError(`HTTP ${r.status}`); return; } // mantiene data previa
 
       const etag = r.headers.get('etag');
@@ -1164,7 +1165,7 @@ export const useHospitalState = () => {
         // La ref se actualiza YA (no en el próximo render): dos fetchBeds en vuelo a la vez (poll + catch-up
         // de foco) comparaban el segundo mapa contra el [] viejo y un parcial se colaba como "primer load".
         rawBedsRef.current = data.beds;
-        if (!data.stale && r.headers.get('X-Beds-Stale') !== '1') rawBedsAtRef.current = Date.now() - 45_000;
+        rawBedsAtRef.current = data.stale || r.headers.get('X-Beds-Stale') === '1' ? 0 : Date.now() - 90_000;
         setRawBeds(data.beds);
       } else if (rawBedsRef.current.length === 0) {
         // Respuesta OK pero sin camas y no tenemos data previa → Progal no devolvió nada.
@@ -1833,6 +1834,8 @@ export const useHospitalState = () => {
         method: 'PATCH',
         body: JSON.stringify({
           id, action,
+          // "Volver un paso" es relativo: el server lo rechaza si la cirugía ya no está en este estado.
+          desde: action === 'RETROCEDER' ? curCirugia?.estado : undefined,
           motivoCancelacion: extra?.motivoCancelacion,
           // Sector de la cama donde ESTÁ hoy el paciente (mapa de Gamma): la operatoria sigue al paciente,
           // así que el server lo acepta además del sector de origen (p. ej. ITR → 817, o piso → UTI).
@@ -2526,14 +2529,18 @@ export const useHospitalState = () => {
     }
 
     if (newNotifs.length > 0) {
-      setNotifications(n => [...newNotifs, ...n]);
+      // La nueva reemplaza a una vieja con el mismo id (p. ej. un pre-ticket que se restableció y se volvió a
+      // configurar repite NOTIF-POLL-<id>-CONV): sin esto quedaban keys de React duplicadas.
+      const nuevosIds = new Set(newNotifs.map(x => x.id));
+      setNotifications(n => [...newNotifs, ...n.filter(x => !nuevosIds.has(x.id))]);
 
       // Create toasts only for relevant notifications (filtered por permiso + área)
       const relevantToasts = newNotifs
         .filter(n => isRelevant(n))
         .map(n => ({ id: `TOAST-${n.id}`, notification: n }));
       if (relevantToasts.length > 0) {
-        setToasts(prev => [...relevantToasts, ...prev].slice(0, 5)); // max 5 toasts
+        const toastIds = new Set(relevantToasts.map(x => x.id));
+        setToasts(prev => [...relevantToasts, ...prev.filter(x => !toastIds.has(x.id))].slice(0, 5)); // max 5 toasts
         // Play sound once, with cooldown to avoid spam on reload
         if (!soundCooldownRef.current) {
           playNotificationSound();
@@ -2590,11 +2597,12 @@ export const useHospitalState = () => {
       // Catering-specific message (room + floor).
       const originArea      = ticket?.origin      ? rawBeds.find((b: Bed) => b.label === ticket.origin)?.area      : undefined;
       const destinationArea = ticket?.destination ? rawBeds.find((b: Bed) => b.label === ticket.destination)?.area : undefined;
+      // SIN origin/destination: el servidor los escribía tal cual en cama_origen/cama_destino, y un
+      // dispositivo con la lista atrasada devolvía el origen que el origen automático acababa de corregir
+      // (QA del 20/10, v1.12.1). Cuando cambian, vienen en `updates`.
       const context = ticket ? {
         id: ticket.id,
         patientName: ticket.patientName,
-        origin: ticket.origin,
-        destination: ticket.destination,
         originArea,
         destinationArea,
         sede: ticket.sede,
@@ -3362,7 +3370,8 @@ export const useHospitalState = () => {
     try {
       const r = await authFetch('/api/tickets', {
         method: 'PATCH',
-        body: JSON.stringify({ id: t.id, restablecerDestino: true, operador: getOperador(), version: APP_VERSION }),
+        body: JSON.stringify({ id: t.id, restablecerDestino: true, motivo: (motivo ?? '').trim(),
+          usuario: currentUser?.name ?? '', usuarioId: currentUser?.id ?? '', operador: getOperador(), version: APP_VERSION }),
       });
       if (!r.ok) {
         const err = await r.json().catch(() => ({} as any));
@@ -3371,11 +3380,10 @@ export const useHospitalState = () => {
         appAlert(err?.error ?? 'No se pudo restablecer el destino. Volvé a intentarlo.');
         return false;
       }
-      const m = (motivo ?? '').trim();
-      spLogEvent(t.id, `Modificacion - Destino: ${t.destination} → (sin destino) - Motivo: Destino restablecido${m ? ` — ${m}` : ''}`);
-      return true;
+      return true; // el evento de la trayectoria lo deja el servidor
     } catch {
       setTickets(prev => prev.map(x => x.id === t.id ? t : x));
+      prevTicketSnapshotRef.current.set(t.id, `${t.status}|${t.destination ?? ''}`);
       appAlert('No se pudo restablecer el destino (sin conexión).');
       return false;
     } finally {

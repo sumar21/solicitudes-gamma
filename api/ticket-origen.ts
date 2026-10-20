@@ -25,6 +25,9 @@ export interface TrasladoRowLite {
 // ok=false trae status + error (forma plana: el proyecto compila sin strictNullChecks y no estrecha uniones).
 export interface Veredicto { ok: boolean; noop?: boolean; status?: number; error?: string }
 
+// Un mapa de PROGAL más viejo que esto no sirve para reubicar (el cliente manda ≥90s aun recién pedido).
+export const MAPA_EDAD_MAX_MS = 180_000;
+
 // El paciente todavía no salió de la cama de origen (mismo criterio que STILL_ON_ORIGIN de lib/originBed.ts).
 export const SIN_SALIR: string[] = [TicketStatus.PRESOLICITUD, TicketStatus.WAITING_ROOM, TicketStatus.IN_TRANSIT];
 
@@ -60,6 +63,7 @@ export function validarReubicarOrigen(
   const edad = Number(req.mapaEdadMs);
   const updatedMs = Date.parse(String(cur.updated_at ?? ''));
   if (!Number.isFinite(edad) || edad < 0) return { ok: false, status: 400, error: 'Falta la antigüedad del mapa.' };
+  if (edad > MAPA_EDAD_MAX_MS) return { ok: false, status: 409, error: 'El mapa de camas es demasiado viejo.' };
   if (Number.isFinite(updatedMs) && updatedMs > nowMs - edad) {
     return { ok: false, status: 409, error: 'El mapa de camas es anterior al último cambio del traslado.' };
   }

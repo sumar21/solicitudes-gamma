@@ -106,10 +106,12 @@ assert(r.code === 200 && r.body.unchanged === true && r.ops.length === 0, 'ya re
 // Mapa anterior al último cambio de la fila → 409 sin escribir.
 r = await patch(ro({ mapaEdadMs: 120_000 }), { perms: ['completar_pre_ticket'], cur: curRo });
 assert(r.code === 409 && r.ops.length === 0, 'mapa viejo → 409');
+r = await patch(ro({ mapaEdadMs: 200_000 }), { perms: ['completar_pre_ticket'], cur: { ...curRo, updated_at: hace(3_600_000) } });
+assert(r.code === 409 && r.ops.length === 0, 'mapa de más de 3 min (cache stale) → 409');
 
 // ── Restablecer destino ──────────────────────────────────────────────────────
-const rd = { id: 'TSL-2', restablecerDestino: true, version: 'v1', destination: 'NO DEBE USARSE', status: 'Consolidado' };
-const curRd = { status: 'Habitacion Lista', workflow: 'PRE_TICKET', intervino_azafata: 'NO', urgencia: false };
+const rd = { id: 'TSL-2', restablecerDestino: true, version: 'v1', destination: 'NO DEBE USARSE', status: 'Consolidado', motivo: 'Cama para urgencia', usuario: 'Admisión 1', usuarioId: '7' };
+const curRd = { status: 'Habitacion Lista', workflow: 'PRE_TICKET', intervino_azafata: 'NO', urgencia: false, cama_destino: 'Habitacion 501 HPR - Cama 01' };
 
 r = await patch(rd, { perms: ['editar_ticket'], cur: curRd });
 assert.equal(r.code, 403, 'sin completar_pre_ticket → 403');
@@ -123,9 +125,27 @@ assert.deepEqual(
   'los campos los fija el servidor (ignora destination/status del body)');
 assert(u2.filters.some((x: any[]) => x[0] === 'eq' && x[1] === 'status' && x[2] === 'Habitacion Lista'), 'CAS por estado');
 assert(u2.filters.some((x: any[]) => x[0] === 'or' && /intervino_azafata\.neq\.SI/.test(x[1])), 'CAS: sin intervención de azafata');
+// El evento de la trayectoria lo deja el servidor, una sola vez y solo si ganó el CAS (QA v1.12.1).
+const ev2 = r.ops.filter(o => o.op === 'insert' && o.table === 'traslado_eventos');
+assert(ev2.length === 1 && ev2[0].payload.tipo === 'Modificacion - Destino: Habitacion 501 HPR - Cama 01 → (sin destino) - Motivo: Destino restablecido — Cama para urgencia', 'evento del servidor con el motivo');
 r = await patch(rd, { perms: ['completar_pre_ticket'], cur: { ...curRd, intervino_azafata: 'SI' } });
 assert(r.code === 409 && r.ops.length === 0, 'azafata ya intervino → 409');
 r = await patch(rd, { perms: ['completar_pre_ticket'], cur: curRd, updRows: 0 });
-assert.equal(r.code, 409, 'la azafata marcó justo antes (CAS) → 409');
+assert(r.code === 409 && !r.ops.some(o => o.op === 'insert'), 'la azafata marcó justo antes (CAS) → 409 sin evento');
+r = await patch(rd, { perms: ['completar_pre_ticket'], cur: { ...curRd, status: 'Presolicitud' } });
+assert(r.code === 200 && r.body.unchanged && r.ops.length === 0, 'ya en Presolicitud → noop sin evento');
+
+// ── Acción de azafata sobre un pedido fuera de circuito (QA v1.12.1) ─────────
+// Con la lista atrasada, "Habitación lista" sobre un pre-ticket al que le restablecieron el destino lo revivía.
+const habLista = { id: 'TSL-2', status: 'Habitacion Lista', intervenedByHostess: 'SI', destinationBedStatus: 'Asignada' };
+r = await patch(habLista, { perms: [], updRows: 0 });
+assert.equal(r.code, 409, 'el UPDATE no aplicó (Presolicitud/cerrado) → 409');
+const u3 = r.ops.find(o => o.op === 'update');
+assert(u3.filters.some((x: any[]) => x[0] === 'not' && x[1] === 'status' && x[2] === 'in' && /Presolicitud/.test(x[3]) && /Cancelado/.test(x[3]) && /Consolidado/.test(x[3])), 'filtro: fuera de Presolicitud/cerrados');
+r = await patch(habLista, { perms: [], updRows: 1 });
+assert.equal(r.code, 200, 'en circuito → 200');
+// Una acción de Admisión (sin intervenedByHostess) no lleva ese filtro.
+r = await patch({ id: 'TSL-2', observations: 'x' }, { perms: [], updRows: 0 });
+assert(r.code === 200 && !r.ops.find(o => o.op === 'update').filters.some((x: any[]) => x[0] === 'not'), 'edición de Admisión: sin filtro de azafata');
 
 console.log('OK — api/tickets: origen automático + restablecer destino');

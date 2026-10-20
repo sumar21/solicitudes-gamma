@@ -101,9 +101,13 @@ export interface OriginMove {
  * cama (p. ej. lo pasaron de la 407.1 a la 407.2). El pedido se reubica a la cama nueva para que la vieja
  * quede libre para otro paciente. Conservador, porque escribe solo:
  *   - solo con código de paciente (sin código no se lo busca por nombre: homónimos);
- *   - la cama vieja está en el mapa y NO tiene al paciente (si figura en las dos, PROGAL está a mitad);
- *   - el paciente figura en UNA sola cama nueva, y no es el destino del pedido (PROGAL adelantado: ya lo
- *     consolidaron allá y el paciente sigue en la de origen hasta que lo trasladen);
+ *   - la cama vieja ya tiene a OTRO paciente: es la prueba de que se fue (dos pacientes no comparten
+ *     cama) y es justo cuando el pedido traba a alguien. Una cama vieja VACÍA no alcanza: PROGAL
+ *     adelantado (lo internaron o consolidaron en otra cama antes del movimiento físico) la muestra libre
+ *     con el paciente todavía ahí (hallazgo de QA del 20/10, v1.12.1);
+ *   - la cama nueva es del MISMO sector (ITR 03 → 05, 407.1 → 407.2). Entre sectores (ITR → piso,
+ *     piso → UTI) suele ser un cambio de plan: queda la marca "Ya no está en la cama" y lo decide Admisión;
+ *   - el paciente figura en UNA sola cama nueva, y no es el destino del pedido;
  *   - ningún otro pedido activo sale de la cama nueva.
  * `rawBeds` = camas CRUDAS de Gamma. Del lado del servidor, validarReubicarOrigen (api/ticket-origen.ts).
  */
@@ -116,12 +120,12 @@ export function findOriginMoves(tickets: Ticket[], rawBeds: Bed[]): OriginMove[]
     const pc = String(t.patientCode ?? '').trim();
     if (!STILL_ON_ORIGIN.has(t.status) || !pc || t.urgencia) continue;
     const old = byLabel.get(t.origin);
-    if (!old || bedHasTicketPatient(old, t)) continue;
+    if (!old || !bedHasOtherPatient(old, t)) continue;
     const nuevas = rawBeds.filter(b => b.label !== t.origin && b.status === BedStatus.OCCUPIED
       && String(b.patientCode ?? '').trim() === pc);
     if (nuevas.length !== 1) continue;
     const now = nuevas[0];
-    if (now.label === t.destination) continue;
+    if (now.label === t.destination || now.area !== old.area) continue;
     const otro = byOrigin.get(now.label);
     if (otro && otro.id !== t.id) continue;
     out.push({ ticketId: t.id, from: t.origin, to: now.label, toCode: now.bedCode, toArea: now.area, patientCode: pc });

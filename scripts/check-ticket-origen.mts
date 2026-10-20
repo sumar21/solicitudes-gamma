@@ -14,39 +14,47 @@ const ticket = (p: Partial<Ticket>): Ticket => ({
   date: '2026-10-20', isBedClean: false, isReasonValidated: true, ...p,
 } as Ticket);
 
-// Caso del pedido de Gamma (anonimizado): pre-ticket del paciente A desde la 407.1; por PROGAL lo pasan a la 407.2.
+// Caso del pedido de Gamma (anonimizado): pre-ticket del paciente A desde la 407.1; por PROGAL lo pasan a la
+// 407.2 y en la 407.1 entra el paciente B (recién ahí el pedido traba a alguien).
 const aEn4072 = bed({ label: H4072, patientName: 'PACIENTE A', patientCode: '1001', bedCode: 'C4072', area: Area.PISO_4 });
+const bEn4071 = bed({ label: H4071, patientName: 'PACIENTE B', patientCode: '2000' });
 const vacia4071 = bed({ label: H4071, status: BedStatus.AVAILABLE });
 const pre = ticket({});
 
 // ── findOriginMoves ──────────────────────────────────────────────────────────
-let mv = findOriginMoves([pre], [vacia4071, aEn4072]);
-assert.deepEqual(mv, [{ ticketId: 'TSL-1', from: H4071, to: H4072, toCode: 'C4072', toArea: Area.PISO_4, patientCode: '1001' }], 'cama vieja vacía + paciente en la nueva → reubicar');
-// La cama vieja con OTRO paciente (el caso huérfano del 14/10) también.
-mv = findOriginMoves([pre], [bed({ label: H4071, patientCode: '2000', patientName: 'PACIENTE B' }), aEn4072]);
-assert(mv.length === 1 && mv[0].to === H4072, 'cama vieja ocupada por otro → reubicar');
+let mv = findOriginMoves([pre], [bEn4071, aEn4072]);
+assert.deepEqual(mv, [{ ticketId: 'TSL-1', from: H4071, to: H4072, toCode: 'C4072', toArea: Area.PISO_4, patientCode: '1001' }], 'cama vieja con otro paciente + A en la nueva (mismo sector) → reubicar');
+// Cama vieja VACÍA: PROGAL adelantado (lo internaron/consolidaron en otra cama antes de moverlo) → no (QA v1.12.1).
+assert(findOriginMoves([pre], [vacia4071, aEn4072]).length === 0, 'cama vieja vacía → no');
+// Otro sector (ITR 03 → 605-01 con la ITR 03 reocupada): cambio de plan → no, queda la marca de huérfano.
+const H605 = 'Habitacion 605 HPR - Cama 01';
+assert(findOriginMoves([pre], [bEn4071, bed({ label: H605, area: Area.PISO_6, patientCode: '1001' })]).length === 0, 'otro sector → no');
+// El caso real del 14/10 (ITR 03 → ITR 05, la 03 reocupada): mismo sector → sí.
+const ITR3 = 'Internación Transitoria HPR - Cama 03', ITR5 = 'Internación Transitoria HPR - Cama 05';
+mv = findOriginMoves([ticket({ origin: ITR3 })], [bed({ label: ITR3, area: Area.HIT, patientCode: '2000' }), bed({ label: ITR5, area: Area.HIT, patientCode: '1001' })]);
+assert(mv.length === 1 && mv[0].to === ITR5, 'ITR 03 → ITR 05 (caso 14/10)');
 // Traslado configurado (Esperando Habitación / Habitación Lista) también; ya en traslado, no.
-assert(findOriginMoves([ticket({ status: TicketStatus.WAITING_ROOM, destination: H501 })], [vacia4071, aEn4072]).length === 1, 'Esperando Habitación');
-assert(findOriginMoves([ticket({ status: TicketStatus.IN_TRANSIT, destination: H501 })], [vacia4071, aEn4072]).length === 1, 'Habitación Lista');
-assert(findOriginMoves([ticket({ status: TicketStatus.IN_TRANSPORT, destination: H501 })], [vacia4071, aEn4072]).length === 0, 'En Traslado: ya salió');
-assert(findOriginMoves([ticket({ status: TicketStatus.WAITING_CONSOLIDATION, destination: H501 })], [vacia4071, aEn4072]).length === 0, 'Por Consolidar: ya salió');
+assert(findOriginMoves([ticket({ status: TicketStatus.WAITING_ROOM, destination: H501 })], [bEn4071, aEn4072]).length === 1, 'Esperando Habitación');
+assert(findOriginMoves([ticket({ status: TicketStatus.IN_TRANSIT, destination: H501 })], [bEn4071, aEn4072]).length === 1, 'Habitación Lista');
+assert(findOriginMoves([ticket({ status: TicketStatus.IN_TRANSPORT, destination: H501 })], [bEn4071, aEn4072]).length === 0, 'En Traslado: ya salió');
+assert(findOriginMoves([ticket({ status: TicketStatus.WAITING_CONSOLIDATION, destination: H501 })], [bEn4071, aEn4072]).length === 0, 'Por Consolidar: ya salió');
 // PROGAL adelantado: el paciente figura en el DESTINO del traslado → no se toca el origen.
-assert(findOriginMoves([ticket({ status: TicketStatus.WAITING_ROOM, destination: H4072 })], [vacia4071, aEn4072]).length === 0, 'paciente en el destino → no');
+assert(findOriginMoves([ticket({ status: TicketStatus.WAITING_ROOM, destination: H4072 })], [bEn4071, aEn4072]).length === 0, 'paciente en el destino → no');
 // El paciente sigue en la vieja (aunque figure también en otra): PROGAL a mitad de camino → no.
 assert(findOriginMoves([pre], [bed({ label: H4071, patientCode: '1001' }), aEn4072]).length === 0, 'sigue en la vieja');
 // Figura en dos camas nuevas: ambiguo → no.
-assert(findOriginMoves([pre], [vacia4071, aEn4072, bed({ label: H501, patientCode: '1001' })]).length === 0, 'dos camas nuevas');
+assert(findOriginMoves([pre], [bEn4071, aEn4072, bed({ label: H501, patientCode: '1001' })]).length === 0, 'dos camas nuevas');
 // Sin código: no se busca por nombre (homónimos).
-assert(findOriginMoves([ticket({ patientCode: undefined })], [vacia4071, bed({ label: H4072, patientName: 'PACIENTE A' })]).length === 0, 'sin código');
+assert(findOriginMoves([ticket({ patientCode: undefined })], [bEn4071, bed({ label: H4072, patientName: 'PACIENTE A' })]).length === 0, 'sin código');
 // Origen fuera del mapa (mapa parcial o sentinela) → no; mapa vacío → no.
 assert(findOriginMoves([pre], [aEn4072]).length === 0, 'origen fuera del mapa');
 assert(findOriginMoves([pre], []).length === 0, 'mapa vacío');
 // Urgencias no (tienen su propio circuito).
-assert(findOriginMoves([ticket({ urgencia: true })], [vacia4071, aEn4072]).length === 0, 'urgencia');
+assert(findOriginMoves([ticket({ urgencia: true })], [bEn4071, aEn4072]).length === 0, 'urgencia');
 // Otro pedido activo ya sale de la cama nueva → no (quedarían dos pedidos desde la misma cama).
-assert(findOriginMoves([pre, ticket({ id: 'TSL-2', origin: H4072, patientCode: '3000' })], [vacia4071, aEn4072]).length === 0, 'cama nueva con otro pedido');
+assert(findOriginMoves([pre, ticket({ id: 'TSL-2', origin: H4072, patientCode: '3000' })], [bEn4071, aEn4072]).length === 0, 'cama nueva con otro pedido');
 // Terminales no.
-assert(findOriginMoves([ticket({ status: TicketStatus.REJECTED })], [vacia4071, aEn4072]).length === 0, 'cancelado');
+assert(findOriginMoves([ticket({ status: TicketStatus.REJECTED })], [bEn4071, aEn4072]).length === 0, 'cancelado');
 
 // ── validarReubicarOrigen (servidor) ─────────────────────────────────────────
 const NOW = Date.parse('2026-10-20T12:00:00Z');
@@ -65,6 +73,9 @@ assert.equal(validarReubicarOrigen(row, { ...body, mapaEdadMs: undefined }, NOW)
 // Mapa viejo: la fila cambió (11:59:50) DESPUÉS del mapa (11:59:30) → 409; un mapa más nuevo pasa.
 assert.equal(validarReubicarOrigen({ ...row, updated_at: '2026-10-20T11:59:50Z' }, body, NOW).status, 409, 'mapa anterior al último cambio');
 assert.deepEqual(validarReubicarOrigen({ ...row, updated_at: '2026-10-20T11:59:50Z' }, { ...body, mapaEdadMs: 5_000 }, NOW), { ok: true }, 'mapa posterior');
+// Tope de antigüedad: un mapa de más de 3 min (cache "stale" de /api/beds) no sirve aunque la fila sea vieja (QA v1.12.1).
+assert.equal(validarReubicarOrigen({ ...row, updated_at: '2026-10-01T00:00:00Z' }, { ...body, mapaEdadMs: 181_000 }, NOW).status, 409, 'mapa > 3 min → 409');
+assert.deepEqual(validarReubicarOrigen({ ...row, updated_at: '2026-10-01T00:00:00Z' }, { ...body, mapaEdadMs: 179_000 }, NOW), { ok: true }, 'mapa < 3 min → ok');
 
 // ── Restablecer destino ──────────────────────────────────────────────────────
 const conf = ticket({ status: TicketStatus.IN_TRANSIT, destination: H501, intervenedByHostess: 'NO', canCancel: true });

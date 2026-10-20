@@ -65,6 +65,10 @@ const fmtWhen = (iso?: string) => {
   return isNaN(d.getTime()) ? String(iso) : d.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
 };
 
+// "803 - 01" sin cortarse en dos líneas (espacios duros alrededor del guion). Con whitespace-nowrap, un
+// label que formatBedName no acorta ("Unidad Terapia Intensiva HPR - Cama 10") desbordaba la columna.
+const camaCorta = (label: string) => formatBedName(label).replace(/ - /g, '\u00a0-\u00a0');
+
 // Columnas de HORA por paso en la grilla Activas: cada una muestra cuándo se alcanzó ese estado
 // (de c.pasos, poblado por el backend). El label es el pedido por negocio, no el técnico.
 // TOLERANCIA_EVALUADA NO va acá: al evaluarse cierra la operatoria y la saca de Activas → esa
@@ -435,10 +439,10 @@ export const CirugiasView: React.FC<Props> = ({
         {/* Cama (origen → destino si cambió) */}
         <td className="px-4 py-3">
           <div className="flex items-center gap-1.5 text-[12px] font-bold text-slate-700 flex-wrap">
-            <span className="whitespace-nowrap">{formatBedName(c.camaOrigen)}</span>
+            <span>{camaCorta(c.camaOrigen)}</span>
             {camaChange && (<>
               <ArrowRight className="w-3 h-3 text-violet-500 shrink-0" />
-              <span className="text-violet-700 whitespace-nowrap">{formatBedName(c.camaDestino!)}</span>
+              <span className="text-violet-700">{camaCorta(c.camaDestino!)}</span>
             </>)}
           </div>
           {camaChange && (

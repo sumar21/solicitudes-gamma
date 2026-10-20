@@ -199,7 +199,7 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
       {
         permission: "*",
         title: "El origen se actualiza solo si PROGAL cambia de cama al paciente",
-        description: "Si al paciente de un pre-ticket o traslado que todavía no salió lo cambian de cama en PROGAL (por ejemplo de la 407.1 a la 407.2), MediFlow pasa el pedido a la cama nueva y la vieja queda libre para otro paciente. Queda en la trayectoria como modificación automática. No pasa si el paciente aparece en la cama destino del pedido.",
+        description: "Si al paciente de un pre-ticket o traslado que todavía no salió lo cambian de cama en PROGAL dentro del mismo sector (por ejemplo de la 407.1 a la 407.2) y en la cama vieja ya hay otro paciente, MediFlow pasa el pedido a la cama nueva para que se pueda cargar el del paciente nuevo. Queda en la trayectoria como modificación automática. Si lo pasaron a otro sector, el pedido queda marcado 'Ya no está en la cama' y lo decide Admisión.",
         uiLocation: "Operativa → Traslados → columna Origen",
       },
       {

@@ -1662,6 +1662,8 @@ Diseño y archivos en [arquitectura.md §48](arquitectura.md). Acá, el *por qu�
 - *Columna nueva en el enrich:* sería otra fuente más para la "Q".
 - *Reubicar el origen en el cron:* robusto aunque nadie tenga la app abierta, pero suma carga a Gamma. Queda como mejora si hiciera falta.
 
+**Ajuste v1.12.1 (QA):** el origen automático solo actúa cuando la cama vieja la ocupa **otro** paciente y la nueva es del **mismo sector**. Una cama vieja vacía no prueba el movimiento (PROGAL adelantado), y entre sectores suele haber un cambio de plan que conviene que decida Admisión. Es justo el caso que trababa camas (14/10).
+
 **Costo asumido:**
 - El origen automático depende de que alguien con permiso de traslados tenga MediFlow abierto (en la práctica, Admisión 24/7). Hasta entonces sigue la marca "Ya no está en la cama".
 - Restablecer destino no avisa a la azafata del destino: el pedido simplemente deja de figurar en su grilla.
