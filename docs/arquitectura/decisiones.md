@@ -1634,3 +1634,11 @@ Diseño y archivos en [arquitectura.md §48](arquitectura.md). Acá, el *por qu�
 - *Cerrar sola la operatoria vieja al marcar la nueva:* marcaría "Iniciar dieta" sin que nadie lo confirme y le avisaría a Catering una dieta que no empezó.
 
 **Costo asumido:** una cama puede acumular operatorias en "Regreso" de pacientes anteriores hasta que alguien toque "Iniciar dieta". El mapa las muestra como aviso informativo y siguen en Operativa → Cirugías. La migración se aplica a mano en el proyecto compartido TESTING/PRODUCTIVO. El código funciona con el índice viejo (responde 409 con el motivo) y con el nuevo.
+
+### 33. Cirugía: el candado es por paciente (no por cama) y "Iniciar dieta" se autoriza donde está el paciente (2026-10-20)
+
+**Qué:** un paciente no puede tener dos operatorias en curso (`cirugia_viva_paciente_uidx`); la cama no interviene, salvo como respaldo para operatorias sin código de paciente. "Iniciar dieta" se autoriza por el sector de origen **o** el sector actual del paciente según el mapa. Reemplaza lo de §32 sobre el índice por cama (allí se había descartado el candado por paciente; el equipo decidió lo contrario).
+
+**Por qué:** "las cosas tienen que estar atadas al paciente, no a la cama", definición del equipo. El paciente se mueve: va a cirugía, vuelve a otra cama o pasa a UTI. Todo lo demás de cirugía ya lo seguía (pill, marca, consentimiento). El candado por cama y la autorización por el sector de origen eran lo único atado a la cama, y fueron justo los dos bugs del 20/10 (825-01 y la vuelta a UTI).
+
+**Costo asumido:** dos operatorias de pacientes distintos pueden tener la misma cama de origen; el overlay por cama prioriza la en curso y la pill sigue a cada paciente. `areaActual` lo informa el cliente: un usuario con `cirugia_tolerancia` podría forzarlo, pero el permiso sigue siendo obligatorio y el sector es un recorte operativo, no una barrera de seguridad.

@@ -41,5 +41,11 @@ assert(ch.kind === 'conflicto' && ch.live.id === 'cx-a2', 'se informa la EN CURS
 // Índice viejo todavía (solo hay "Regreso"): 409 aunque sea el MISMO paciente — nunca un ok sin crear nada.
 ch = resolveAltaChoque([vivaA], { pacienteCodigo: '1001' });
 assert(ch.kind === 'conflicto' && ch.live.id === 'cx-a', 'solo Regreso → 409 (no idempotente)');
+// 4) Candado POR PACIENTE (migración 20261020140000): entre las candidatas (las del paciente + las de la
+//    cama) manda la EN CURSO del propio paciente aunque la cama tenga otra de otro paciente.
+const enCursoC: LiveCirugiaRow = { ...vivaA, id: 'cx-c', paciente_codigo: '3000', paciente_nombre: 'PACIENTE C', estado: 'EN_CIRUGIA' };
+const propiaB: LiveCirugiaRow = { ...vivaA, id: 'cx-b', paciente_codigo: '1002', paciente_nombre: 'PACIENTE B', estado: 'LISTO_PARA_CIRUGIA', cama_origen: 'Habitación 815 HPR - Cama 01' };
+assert.deepEqual(resolveAltaChoque([enCursoC, propiaB], B), { kind: 'idempotente', id: 'cx-b' }, 'el paciente ya tiene una en curso (en otra cama) → esa');
+assert.deepEqual(resolveAltaChoque([vivaA, propiaB], B), { kind: 'idempotente', id: 'cx-b' }, 'una Regreso ajena en la cama no interfiere');
 
 console.log('OK — cirugia-conflict');

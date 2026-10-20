@@ -14,10 +14,13 @@
 import { getRoleByName } from './role-cache.js';
 import { getUserAreasById } from './user-cache.js';
 
+// `area`: el sector (o los sectores) desde los que se puede hacer la acción; alcanza con tener UNO.
+// "Iniciar dieta" se hace donde ESTÁ el paciente, que puede no ser el piso de origen (vuelve de cirugía a
+// UTI): ahí se pasa [sector de origen, sector actual] (20/10/2026).
 export async function authzCirugia(
   req: any,
   permiso: string,
-  area?: string | null,
+  area?: string | null | (string | null | undefined)[],
 ): Promise<{ status: number; error: string } | null> {
   const userId = String(req?.user?.id ?? '');
   const userAreas = await getUserAreasById(userId);
@@ -28,12 +31,22 @@ export async function authzCirugia(
     return { status: 403, error: `No tenés permiso para esta acción (${permiso}).` };
   }
 
-  // Área: solo para roles que filtran por pisos y no son full-access (>= 9 áreas = sin restricción).
-  const areas = userAreas?.assignedAreas ?? [];
-  const hasAll = areas.length >= 9; // mismo criterio "full access" que tickets.ts / push-utils
-  if (roleCfg?.filterByFloors && areas.length && !hasAll && area && !areas.includes(String(area))) {
+  if (!sectorAutorizado(!!roleCfg?.filterByFloors, userAreas?.assignedAreas ?? [], area)) {
     return { status: 403, error: 'No autorizado: la cirugía no pertenece a tus pisos asignados.' };
   }
-
   return null;
+}
+
+/** Regla de sector (pura, testeable: scripts/check-cirugia-authz.mts). Solo restringe a roles que filtran
+ *  por pisos y no son full-access (>= 9 áreas). Pasa si el usuario tiene ALGUNO de los sectores candidatos;
+ *  sin sector conocido no se bloquea (fail-open, como el resto de la app). */
+export function sectorAutorizado(
+  filterByFloors: boolean,
+  userAreas: readonly string[],
+  area?: string | null | (string | null | undefined)[],
+): boolean {
+  const hasAll = userAreas.length >= 9; // mismo criterio "full access" que tickets.ts / push-utils
+  const candidatas = (Array.isArray(area) ? area : [area]).filter((a): a is string => !!a && !!String(a).trim()).map(String);
+  if (!filterByFloors || !userAreas.length || hasAll || !candidatas.length) return true;
+  return candidatas.some(a => userAreas.includes(a));
 }
