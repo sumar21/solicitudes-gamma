@@ -1620,3 +1620,17 @@ Diseño y archivos en [arquitectura.md §48](arquitectura.md). Acá, el *por qu�
 **Qué:** cliente y servidor rechazan un mapa más de un 20% más chico que el último bueno, salvo que se sostenga 3 min.
 
 **Por qué:** el chequeo existente solo cubría el mapa vacío; un mapa parcial pasaba y dejaba camas ocupadas sin paciente, áreas sin camas, etc. El umbral de 3 min evita que una baja real de camas deje el mapa trabado. La regla está en lib/bedsGuard.ts (cliente) y repetida inline en api/beds.ts (api/ no importa de lib/).
+
+---
+
+## 32. Cirugía: "Regreso de cirugía" no toma la cama; el choque con otro paciente se informa (2026-10-20)
+
+**Qué:** el candado "una operatoria viva por cama" (`cirugia_viva_uidx`) cubre solo los estados en curso. "Regreso de cirugía" queda afuera. Un alta que choca con la operatoria de **otro** paciente devuelve 409 con el motivo, en vez de un 200 idempotente. Diseño en [arquitectura.md §51](arquitectura.md).
+
+**Por qué:** "Iniciar dieta" es "el paciente ya volvió a comer". No tiene nada que ver con que la cama esté libre (definición del equipo, 20/10/2026). Mientras el candado lo contaba, una vuelta nocturna sin "Iniciar dieta" bloqueaba la cama para el paciente siguiente, y lo hacía en silencio: el 200 idempotente hacía creer a Enfermería que había marcado.
+
+**Alternativas descartadas:**
+- *Candado por paciente en vez de por cama:* también resolvía el caso, pero cambia más semántica (un paciente sin código no tendría candado) y el problema real era solo `EN_DEVOLUCION`.
+- *Cerrar sola la operatoria vieja al marcar la nueva:* marcaría "Iniciar dieta" sin que nadie lo confirme y le avisaría a Catering una dieta que no empezó.
+
+**Costo asumido:** una cama puede acumular operatorias en "Regreso" de pacientes anteriores hasta que alguien toque "Iniciar dieta". El mapa las muestra como aviso informativo y siguen en Operativa → Cirugías. La migración se aplica a mano en el proyecto compartido TESTING/PRODUCTIVO. El código funciona con el índice viejo (responde 409 con el motivo) y con el nuevo.

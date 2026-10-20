@@ -308,6 +308,37 @@ export const isUrgenciaSinOrigen = (t: Pick<Ticket, 'urgencia' | 'origin'>): boo
 
 // Exportada para poder testear los escenarios de overlay (limpieza/tickets) contra la
 // función REAL y no contra una réplica.
+// Overlay de cirugía POR CAMA para mergeBeds: cama_origen → overlay (role 'origin'); si al volver cambió
+// de cama, además cama_destino → overlay (role 'destino'). Las terminales no entran.
+// Una cama puede tener una operatoria EN CURSO y, además, operatorias en "Regreso de cirugía" esperando
+// "Iniciar dieta" (ya no toman la cama: migración 20261020120000). En la clave de la cama manda la EN
+// CURSO; las desplazadas quedan bajo una clave secundaria (`label#id`) para que el paso "la pill sigue al
+// paciente" de mergeBeds las siga encontrando. Antes la segunda pisaba a la primera.
+export function buildCirugiaByBed(cirugias: Iterable<CirugiaTraslado>): Map<string, BedCirugiaOverlay> {
+  const m = new Map<string, BedCirugiaOverlay>();
+  for (const c of cirugias) {
+    if (c.estado === 'TOLERANCIA_EVALUADA' || c.estado === 'CANCELADO') continue;
+    const base: BedCirugiaOverlay = {
+      id: c.id, estado: c.estado, camaOrigen: c.camaOrigen, camaDestino: c.camaDestino,
+      pacienteNombre: c.pacienteNombre, pacienteCodigo: c.pacienteCodigo, area: c.area, role: 'origin',
+      updatedAt: c.updatedAt,   // corte de operatoria abandonada (ver cirugiaOverlayStale)
+    };
+    const prev = m.get(c.camaOrigen);
+    if (!prev) {
+      m.set(c.camaOrigen, base);
+    } else if (prev.estado === 'EN_DEVOLUCION' && c.estado !== 'EN_DEVOLUCION') {
+      m.set(`${c.camaOrigen}#${prev.id}`, prev);  // la EN CURSO se queda con la cama
+      m.set(c.camaOrigen, base);
+    } else {
+      m.set(`${c.camaOrigen}#${c.id}`, base);
+    }
+    if (c.estado === 'EN_DEVOLUCION' && c.camaDestino && c.camaDestino !== c.camaOrigen) {
+      m.set(c.camaDestino, { ...base, role: 'destino' });
+    }
+  }
+  return m;
+}
+
 export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?: Map<string, CleaningInfo>, meals?: Map<string, MealsInfo>, cirugias?: Map<string, BedCirugiaOverlay>): Bed[] {
   const result = gammaBeds.map(b => ({ ...b }));
   // Ver bedsInUseByTickets: destinos + orígenes aún ocupados. El overlay del ticket tiene
@@ -540,8 +571,11 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
       // Sin código de paciente en la operatoria no hay con qué discriminar → comportamiento previo.
       if (!cxCode) { bed.cirugia = info; continue; }
       if (bedCode) {
-        if (bedCode === cxCode) bed.cirugia = info;   // su paciente sigue acá → pill correcta
-        continue;                                     // la ocupa OTRO → no es su cama
+        if (bedCode === cxCode) { bed.cirugia = info; continue; } // su paciente sigue acá → pill correcta
+        // La ocupa OTRO → no es su cama (sin pill). Pero si la operatoria SALIÓ de esta cama, la sigue
+        // bloqueando para un alta nueva (una viva por cama_origen): se marca para que BedsView lo avise.
+        if (info.role === 'origin' && info.camaOrigen === bed.label) bed.cirugiaBloqueante = info;
+        continue;
       }
       // Cama SIN ocupante. Puede ser el paciente en quirófano (Gamma liberó la cama) o una
       // operatoria zombi. Se sostiene sólo si el paciente no aparece en otra cama y la operatoria
@@ -1010,22 +1044,7 @@ export const useHospitalState = () => {
   // De cada operatoria NO terminal: cama_origen → overlay (role 'origin'); si el cron ya detectó un
   // destino distinto (cama_destino), además cama_destino → overlay (role 'destino'). Las terminales
   // (TOLERANCIA_EVALUADA/CANCELADO) no entran (fetchCirugias solo trae las vivas).
-  const cirugiaByBed = useMemo(() => {
-    const m = new Map<string, BedCirugiaOverlay>();
-    for (const c of cirugias.values()) {
-      if (c.estado === 'TOLERANCIA_EVALUADA' || c.estado === 'CANCELADO') continue;
-      const base: BedCirugiaOverlay = {
-        id: c.id, estado: c.estado, camaOrigen: c.camaOrigen, camaDestino: c.camaDestino,
-        pacienteNombre: c.pacienteNombre, pacienteCodigo: c.pacienteCodigo, area: c.area, role: 'origin',
-        updatedAt: c.updatedAt,   // corte de operatoria abandonada (ver cirugiaOverlayStale)
-      };
-      m.set(c.camaOrigen, base);
-      if (c.estado === 'EN_DEVOLUCION' && c.camaDestino && c.camaDestino !== c.camaOrigen) {
-        m.set(c.camaDestino, { ...base, role: 'destino' });
-      }
-    }
-    return m;
-  }, [cirugias]);
+  const cirugiaByBed = useMemo(() => buildCirugiaByBed(cirugias.values()), [cirugias]);
 
   const beds = useMemo(() => {
     const active = tickets.filter(t => t.status !== TicketStatus.COMPLETED && t.status !== TicketStatus.REJECTED);
@@ -1707,11 +1726,11 @@ export const useHospitalState = () => {
     const now            = stampDate.toISOString();
     cirugiasWritingRef.current += 1;
     setCirugias(prev => {
-      // No pisar si ya hay una operatoria viva para esa cama (idempotencia del lado cliente).
-      // Terminales (no bloquean un alta nueva): TOLERANCIA_EVALUADA y CANCELADO. RECIBIDA ya NO es
-      // terminal (espera la tolerancia) → una cama con una RECIBIDA sigue teniendo operatoria activa.
+      // No pisar si ya hay una operatoria EN CURSO para esa cama (idempotencia del lado cliente; el
+      // server decide si es un reintento o un 409). No cuentan las terminales (TOLERANCIA_EVALUADA,
+      // CANCELADO) ni "Regreso de cirugía": solo espera "Iniciar dieta" y ya no toma la cama.
       for (const c of prev.values()) {
-        if (c.camaOrigen === camaOrigen && !['TOLERANCIA_EVALUADA', 'CANCELADO'].includes(c.estado)) return prev;
+        if (c.camaOrigen === camaOrigen && !['TOLERANCIA_EVALUADA', 'CANCELADO', 'EN_DEVOLUCION'].includes(c.estado)) return prev;
       }
       const n = new Map(prev);
       n.set(tempId, {
