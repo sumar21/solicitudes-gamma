@@ -1756,6 +1756,7 @@ Gamma empezó a usar el módulo de cirugía con pacientes que ya se habían oper
 
 - **Botón en el detalle de la cama** (`CirugiaBedBlock`), solo para el quirúrgico auto-habilitado (la "Q"). Pide confirmación inline. Lo ven quienes tienen `cirugia_listo` (Enfermería) o `cirugia_marcar` (Admisión).
 - **Qué graba:** `POST /api/cirugia` con `previa: true` inserta en `cirugia_traslados` una cirugía **completada** (`estado = 'TOLERANCIA_EVALUADA'`, `tipo = 'PREVIA_EXTERNA'`, `event_key` de la internación, `fecha_cierre = now`). No registra eventos, así que no dispara el push de "Iniciar dieta" ni aparece en el historial de dietas. Es idempotente por paciente + internación.
+- **Exige la internación** (`event_key` de PROGAL): sin ella, el botón no aparece y el servidor responde 400. Una completada sin `event_key` contaría en todas las internaciones y le sacaría el auto-Q al paciente para siempre.
 - **Lo respetan solos**, sin reglas nuevas: el gate de consentimiento del POST (una 2da cirugía necesita la marca de Admisión, "Va a cirugía"), la "Q" del mapa (`completadas`) y el detalle de la cama. Queda fuera del histórico de Operativa → Cirugías (métricas). En la trayectoria del paciente figura como "Cirugía previa (fuera de MediFlow)".
 - **Deshacer:** el detalle muestra "Cirugía previa registrada (fuera de MediFlow) el dd/mm" con un link "Deshacer". Hace `PATCH action: 'ANULAR_PREVIA'`: la fila pasa a `CANCELADO` con motivo "Cirugía previa anulada (registrada por error)". Solo aplica a filas `PREVIA_EXTERNA`; una cirugía real de MediFlow no se anula por acá.
 - **Depurar por base** (muchos pacientes de una vez): insertar filas con el mismo formato. El SQL está en [troubleshooting.md](../qa/troubleshooting.md) (sección de cirugía).
@@ -1767,6 +1768,7 @@ Corrige un paso marcado por error (p. ej. "En traslado a cirugía" que al final 
 - **Regla** ([api/cirugia-pasos.ts](../../api/cirugia-pasos.ts) → `ANTERIOR`, espejado en `CIRUGIA_ANTERIOR`): Búsqueda → Listo, En traslado → Búsqueda, En cirugía → En traslado, Regreso → En cirugía. Listo no vuelve (se cancela) y las terminales tampoco.
 - **Permiso:** el del paso que se deshace (`CIRUGIA_PERMISO_DEL_PASO`: deshacer "En traslado" pide `cirugia_entregar`). Sector: el de origen o el actual del paciente, como toda transición (§52).
 - **Auditoría:** evento propio `RETROCESO` con `meta: { de, a }`. Así se puede contar cuántas veces se marca un paso por error. notify-change solo avisa los tipos de `CX_STEP_CONFIG`, así que no hay push. La línea de tiempo lo muestra en ámbar: "Volvió un paso: En traslado a cirugía → Búsqueda para cirugía". Las horas de la grilla (`pasosDesdeEventos`) borran la del paso deshecho y, si se rehace, toman la última.
+- **Relativo al estado que se vio:** el cliente manda `desde` (el estado que estaba mostrando). Si la cirugía ya cambió (un reintento, otra persona que retrocedió, alguien que avanzó), 409. Sin esto, dos toques retrocedían dos pasos.
 - **CAS** por el estado leído, como siempre. Volver de "Regreso" a "En cirugía" vuelve a meter la operatoria en el candado por paciente: si ya le marcaron otra en curso, da 409 con un mensaje claro.
 
 ### 53.3. Origen automático cuando PROGAL cambia al paciente de cama
@@ -1774,7 +1776,8 @@ Corrige un paso marcado por error (p. ej. "En traslado a cirugía" que al final 
 Antes, si PROGAL cambiaba de cama al paciente de un pre-ticket o traslado abierto (p. ej. 407.1 → 407.2), el pedido quedaba apuntando a la cama vieja y la trababa para el próximo paciente (§49). Ahora se reubica solo.
 
 - **Detección en el cliente** ([lib/originBed.ts](../../lib/originBed.ts) → `findOriginMoves`, sobre el mapa crudo de Gamma). Solo pedidos que todavía no salieron (Presolicitud, Esperando Habitación, Habitación Lista) y con código de paciente, y además:
-  - la cama vieja está en el mapa y **no** tiene al paciente;
+  - la cama vieja ya tiene a **otro** paciente. Es la prueba de que se fue, porque dos pacientes no comparten cama, y es justo cuando el pedido traba a alguien. Una cama vieja vacía **no** alcanza: PROGAL adelantado (lo internaron o consolidaron en otra cama antes del movimiento físico) la muestra libre con el paciente todavía ahí;
+  - la cama nueva es del **mismo sector** (ITR 03 → 05, 407.1 → 407.2). Entre sectores suele ser un cambio de plan: queda la marca "Ya no está en la cama" y lo decide Admisión;
   - el paciente figura en **una sola** cama nueva;
   - la cama nueva **no** es el destino del pedido (PROGAL adelantado: ya lo consolidaron allá y el paciente sigue en la de origen);
   - ningún otro pedido activo sale de esa cama.
@@ -1785,16 +1788,17 @@ Antes, si PROGAL cambiaba de cama al paciente de un pre-ticket o traslado abiert
   - actualiza `cama_origen`, `cama_origen_codigo` y `cama_origen_area`;
   - deja **un** evento en la trayectoria: "Modificación — Origen: X → Y — Motivo: Cambio de cama en PROGAL (automático)";
   - si dos dispositivos lo detectan a la vez, el segundo recibe un noop.
-- **Mapas viejos:** el cliente manda la antigüedad de su mapa (`mapaEdadMs`; una respuesta fresca de `/api/beds` o un 304 equivale a ≤45 s, el cache stale no cuenta). El servidor rechaza si la fila cambió **después** de ese mapa, comparando contra su propio reloj. Así un dispositivo con el mapa atrasado no puede devolver el origen a la cama vieja.
+- **Mapas viejos:** el cliente manda la antigüedad de su mapa (`mapaEdadMs`). Una respuesta fresca de `/api/beds` o un 304 cuenta como ≤90 s: 45 s de cache más hasta 30 s de demora de Gamma. Una respuesta del cache **stale** (Gamma caído, puede tener minutos) pone la antigüedad en "desconocida" y el origen automático no corre. El servidor rechaza un mapa de más de 3 minutos, o uno anterior al último cambio de la fila, comparando contra su propio reloj. Así un dispositivo con el mapa atrasado no puede devolver el origen a la cama vieja.
 - Sin push: notify-push no notifica un cambio de origen sin cambio de estado. La grilla se actualiza por Realtime y la marca "Ya no está en la cama" desaparece.
 
 ### 53.4. "Restablecer destino" en el pre-ticket
 
 En "Editar traslado" de un pre-ticket **configurado** (con cama destino y sin intervención de la azafata) aparece "Restablecer destino (liberar X)", con confirmación inline. El pre-ticket vuelve a **Presolicitud**: la cama queda libre (le dieron esa cama a un paciente más urgente) y en la grilla vuelve a aparecer "Configurar destino". No hace falta cancelarlo ni volver a cargarlo.
 
-- `PATCH /api/tickets` con `restablecerDestino: true`. Pide `completar_pre_ticket`. El servidor fija los campos y no toma los del body: `status = 'Presolicitud'`, `cama_destino`/`_codigo`/`_status`/`_area = null` y `hab_compartida = false`.
+- `PATCH /api/tickets` con `restablecerDestino: true`. Pide `completar_pre_ticket`; como el link vive en "Editar", en la práctica también hace falta `editar_ticket`. El servidor fija los campos y no toma los del body: `status = 'Presolicitud'`, `cama_destino`/`_codigo`/`_status`/`_area = null` y `hab_compartida = false`.
 - CAS por estado + "sin intervención de azafata": si la azafata marcó "Habitación lista" justo antes, da 409 y no pisa nada.
-- Trayectoria: "Modificación — Destino: X → (sin destino) — Motivo: Destino restablecido — {motivo de modificación, si se cargó}".
+- Trayectoria: "Modificación — Destino: X → (sin destino) — Motivo: Destino restablecido — {motivo de modificación, si se cargó}". Lo graba el **servidor**, una sola vez y solo si ganó el CAS.
+- **Acciones de azafata con la lista atrasada:** el PATCH genérico ya no aplica una acción de azafata (`intervenedByHostess: 'SI'`) sobre un pedido en Presolicitud, Consolidado o Cancelado (409). Antes, "Habitación lista" revivía el pre-ticket con la cama que se le había dado a otro paciente.
 - Sin push: Presolicitud no notifica. La azafata del destino deja de verlo en su grilla. Al reconfigurar, Presolicitud → estado vivo dispara el NEW_TICKET de siempre.
 
 ### 53.5. Verificación
@@ -1811,3 +1815,26 @@ En "Editar traslado" de un pre-ticket **configurado** (con cama destino y sin in
   - el origen automático manda una sola vez `reubicarOrigen` (407.1 → 407.2);
   - "Restablecer destino" → PATCH + evento con el motivo.
 - De paso, a 1280 se corrigió la grilla de Cirugías: la pill de estado pisaba al paciente y la cama se cortaba en dos líneas.
+
+### 53.6. Hotfix v20261020_1.12.1: hallazgos del agente de QA
+
+La 1.12.0 subió a producción y en paralelo se corrió una revisión adversarial. Se corrigió:
+
+- **Alto. Origen automático con mapa stale:** el cliente aplicaba un mapa del cache stale de otra instancia como si fuera fresco y podía devolver el origen a la cama vieja. Ahora el stale anula la frescura y el servidor pone un tope de 3 min (§53.3).
+- **Alto. Origen automático con PROGAL adelantado:** con la cama vieja vacía, o con un destino de PROGAL distinto del de MediFlow, el pedido se movía a una cama donde el paciente todavía no estaba. Ahora solo se mueve si la cama vieja la ocupa otro paciente y la nueva es del mismo sector (§53.3).
+- **Medio:**
+  - "Volver un paso" no era idempotente; ahora lleva `desde` (§53.2).
+  - `spUpdate` reenviaba `origin`/`destination` locales en cada PATCH y pisaba el origen corregido; ya no los manda (cuando cambian, van en `updates`).
+  - Una acción de azafata con la lista atrasada revivía un pre-ticket restablecido; ahora da 409 (§53.4).
+- **Bajo:**
+  - previa sin internación → 400;
+  - el evento de restablecer lo graba el servidor;
+  - el rollback por red ya no genera una notificación falsa;
+  - las notificaciones locales con el mismo id se reemplazan (había keys duplicadas);
+  - el bloque de cirugía del mapa solo se monta para quien puede actuar (Catering lo veía);
+  - las etiquetas de cama largas ya no desbordan la grilla de Cirugías;
+  - RETROCEDER desde "Listo" da 409 y no 403;
+  - SQL de depuración con `id_univoco` único y `event_key` obligatorio.
+- **Pendiente (bajo, conocido):**
+  - dos POST de previa simultáneos desde dos dispositivos podrían duplicar la fila (el botón se bloquea mientras guarda);
+  - `areaActual` lo informa el cliente (diseño de la 1.11.4).

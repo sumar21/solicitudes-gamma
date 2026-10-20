@@ -363,7 +363,7 @@ async function handler(req: any, res: any) {
         const denied = await authzPreTicket(req, 'completar_pre_ticket');
         if (denied) return res.status(denied.status).json({ error: denied.error });
         const { data: cur } = await supa.from('traslados')
-          .select('status, workflow, intervino_azafata, urgencia')
+          .select('status, workflow, intervino_azafata, urgencia, cama_destino')
           .eq('id_univoco', idUnivoco).eq('entorno', ENTORNO).limit(1).maybeSingle();
         const v = validarRestablecerDestino(cur);
         if (!v.ok) return res.status(v.status ?? 409).json({ error: v.error });
@@ -381,6 +381,19 @@ async function handler(req: any, res: any) {
           .or('intervino_azafata.is.null,intervino_azafata.neq.SI').select('id_univoco');
         if (error) { console.error('[tickets] restablecer destino failed:', error.message); return res.status(500).json({ error: 'No se pudo restablecer el destino.' }); }
         if (!upd?.length) return res.status(409).json({ error: 'El traslado cambió (¿intervino la azafata?); recargá.' });
+        // El evento lo deja el servidor (solo quien ganó el CAS): desde el cliente se perdía si se cortaba la
+        // respuesta, o se duplicaba en un reintento (QA del 20/10, v1.12.1).
+        const motivo = String(req.body?.motivo ?? '').trim().slice(0, 300);
+        const usuarioId = Number(req.body?.usuarioId);
+        await supa.from('traslado_eventos').insert({
+          traslado_id: idUnivoco,
+          entorno: ENTORNO,
+          tipo: `Modificacion - Destino: ${cur!.cama_destino ?? '—'} → (sin destino) - Motivo: Destino restablecido${motivo ? ` — ${motivo}` : ''}`,
+          usuario: req.body?.usuario ? String(req.body.usuario) : null,
+          usuario_id: Number.isFinite(usuarioId) && req.body?.usuarioId ? usuarioId : null,
+          operador: req.body?.operador ? String(req.body.operador) : null,
+          version: String(req.body?.version ?? ''),
+        });
         return res.status(200).json({ ok: true });
       }
 
@@ -460,8 +473,18 @@ async function handler(req: any, res: any) {
       if (originArea !== undefined) fields.cama_origen_area = originArea ? String(originArea) : null;
       if (destinationArea !== undefined) fields.cama_destino_area = destinationArea ? String(destinationArea) : null;
 
-      const { error } = await supa.from('traslados').update(fields)
-        .eq('id_univoco', idUnivoco).eq('entorno', ENTORNO);
+      // Acción de azafata sobre un pedido que ya no está en circuito (volvió a Presolicitud por "Restablecer
+      // destino", o se cerró): con la lista atrasada, "Habitación lista" revivía el pre-ticket con la cama
+      // que se le había dado a otro paciente (QA del 20/10, v1.12.1). Se exige que siga en circuito.
+      const accionAzafata = updates.intervenedByHostess === 'SI' && !!endpoint;
+      let q = supa.from('traslados').update(fields).eq('id_univoco', idUnivoco).eq('entorno', ENTORNO);
+      if (accionAzafata) {
+        q = q.not('status', 'in', `(${TicketStatus.PRESOLICITUD},${TicketStatus.COMPLETED},${TicketStatus.REJECTED})`);
+      }
+      const { data: upd, error } = await q.select('id_univoco');
+      if (!error && accionAzafata && !upd?.length) {
+        return res.status(409).json({ error: 'El traslado cambió (se restableció el destino, se canceló o se cerró); recargá.' });
+      }
       if (error) {
         if (error.code === '23505' && updates.destination) {
           const conflictingTicketId = await findDestinationConflict(supa, String(updates.destination), idUnivoco);

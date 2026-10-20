@@ -855,7 +855,8 @@ const CirugiaBedBlock: React.FC<{
   // se habían operado en esta internación y la "Q" los mostraba como pendientes. Deja constancia (una
   // cirugía previa completada): la "Q" se va y una nueva cirugía necesita la marca de Admisión.
   const puedeListo = !!onMarcarListo && (autoQ || flagActivo);
-  const puedePrevia = !!onCirugiaPrevia && autoQ && !!bed.patientCode;
+  // Sin la internación (evento) de PROGAL no se ofrece: la previa tiene que quedar atada a esta internación.
+  const puedePrevia = !!onCirugiaPrevia && autoQ && !!bed.patientCode && !!bedEventKey(bed);
   if (bed.status !== BedStatus.OCCUPIED || !(puedeListo || puedePrevia || previa)) return null;
 
   // Operatoria viva de OTRO paciente que salió de esta cama (p. ej. el anterior quedó en "Regreso de

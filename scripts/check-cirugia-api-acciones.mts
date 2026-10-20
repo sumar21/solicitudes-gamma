@@ -97,9 +97,16 @@ r = await call('PATCH', { id: 'cx-1', action: 'RETROCEDER', areaActual: P8 }, { 
 assert.equal(r.code, 200, 'sector actual del paciente autoriza');
 r = await call('PATCH', { id: 'cx-1', action: 'RETROCEDER' }, { perms: ['cirugia_entregar'], floors: [P8], cur: enTraslado });
 assert.equal(r.code, 403, 'otro sector → 403');
-// LISTO no tiene anterior; terminal tampoco.
-r = await call('PATCH', { id: 'cx-1', action: 'RETROCEDER' }, { perms: ['cirugia_listo', 'cirugia_cancelar'], cur: { ...enTraslado, estado: 'LISTO_PARA_CIRUGIA' } });
+// LISTO no tiene anterior; terminal tampoco. 409 aunque no tenga cirugia_cancelar (antes daba 403).
+r = await call('PATCH', { id: 'cx-1', action: 'RETROCEDER' }, { perms: ['cirugia_listo'], cur: { ...enTraslado, estado: 'LISTO_PARA_CIRUGIA' } });
 assert(r.code === 409 && !upd(r.ops), 'LISTO → 409 sin escribir');
+// `desde`: el cliente manda el estado que estaba viendo. Si cambió (reintento, otra persona, avance de otro) → 409.
+r = await call('PATCH', { id: 'cx-1', action: 'RETROCEDER', desde: 'EN_TRASLADO' }, { perms: ['cirugia_entregar'], cur: enTraslado });
+assert(r.code === 200 && upd(r.ops).payload.estado === 'VAN_A_BUSCAR', 'desde coincide → retrocede');
+r = await call('PATCH', { id: 'cx-1', action: 'RETROCEDER', desde: 'EN_TRASLADO' }, { perms: ['cirugia_buscar', 'cirugia_entregar'], cur: { ...enTraslado, estado: 'VAN_A_BUSCAR' } });
+assert(r.code === 409 && !upd(r.ops), 'reintento (ya retrocedió) → 409, no retrocede dos pasos');
+r = await call('PATCH', { id: 'cx-1', action: 'RETROCEDER', desde: 'EN_TRASLADO' }, { perms: ['cirugia_entregar', 'cirugia_operar'], cur: { ...enTraslado, estado: 'EN_CIRUGIA' } });
+assert(r.code === 409 && !upd(r.ops), 'otro avanzó mientras tanto → 409, no le deshace el paso');
 r = await call('PATCH', { id: 'cx-1', action: 'RETROCEDER' }, { perms: ['cirugia_tolerancia', 'cirugia_cancelar'], cur: { ...enTraslado, estado: 'TOLERANCIA_EVALUADA' } });
 assert(r.code === 409 && !upd(r.ops), 'terminal → 409');
 // CAS perdido → 409 sin evento. Volver a "En cirugía" con otra operatoria en curso del paciente → 409 claro.
@@ -122,8 +129,11 @@ assert(ins.payload.fecha_cierre, 'cerrada');
 assert(!evento(r.ops), 'sin eventos: no dispara "Iniciar dieta"');
 r = await call('POST', previa, { perms: ['cirugia_listo'], existente: [{ id: 'cx-vieja' }] });
 assert(r.code === 200 && r.body.id === 'cx-vieja' && !r.ops.some(o => o.op === 'insert'), 'idempotente por paciente + internación');
+// Sin internación (o inválida) → 400: una previa con event_key NULL contaría en todas las internaciones (QA v1.12.1).
 r = await call('POST', { ...previa, eventKey: "x' or 1=1" }, { perms: ['cirugia_listo'] });
-assert.equal(r.ops.find(o => o.op === 'insert').payload.event_key, null, 'eventKey inválido → null');
+assert(r.code === 400 && !r.ops.some(o => o.op === 'insert'), 'eventKey inválido → 400');
+r = await call('POST', { ...previa, eventKey: undefined }, { perms: ['cirugia_listo'] });
+assert(r.code === 400 && !r.ops.some(o => o.op === 'insert'), 'sin eventKey → 400');
 r = await call('POST', { ...previa, pacienteCodigo: '' }, { perms: ['cirugia_listo'] });
 assert.equal(r.code, 400, 'sin código de paciente → 400');
 

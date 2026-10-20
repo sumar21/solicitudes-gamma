@@ -380,13 +380,15 @@ pasada manual aparte (no son automatizables por browser/API).
 
 ### QA-TRA-29 · Origen automático cuando PROGAL cambia al paciente de cama
 - **Precondición**: pre-ticket (o traslado en Esperando Habitación / Habitación Lista) del paciente A desde la cama X; Admisión con la app abierta.
-- **Acción**: en PROGAL, pasar a A de la cama X a la Y (que no sea el destino del pedido).
-- **Resultado esperado**: en ≤1–2 min el origen del pedido pasa a Y en la grilla de todos, sin la marca "Ya no está en la cama", y la cama X queda libre para cargar otro pedido. En la trayectoria: "Origen: X → Y — Motivo: Cambio de cama en PROGAL (automático)", **una sola vez** aunque haya varios dispositivos abiertos. **No** se reubica si A aparece en la cama **destino** del pedido ni si ya está En Traslado / Por Consolidar.
+- **Acción**: en PROGAL, pasar a A de la cama X a la Y **del mismo sector** (que no sea el destino del pedido) e internar al paciente B en X.
+- **Resultado esperado**: en ≤2–3 min el origen del pedido pasa a Y en la grilla de todos, sin la marca "Ya no está en la cama", y se puede cargar el pedido de B desde X. En la trayectoria: "Origen: X → Y — Motivo: Cambio de cama en PROGAL (automático)", **una sola vez** aunque haya varios dispositivos abiertos.
+- **No se reubica** (v1.12.1) si: X quedó **vacía** (PROGAL adelantado); Y es de **otro sector** (queda la marca "Ya no está en la cama"); A aparece en la cama **destino** del pedido; ya está En Traslado / Por Consolidar; o Gamma está caído (mapa stale).
 
 ### QA-TRA-30 · "Restablecer destino" de un pre-ticket configurado
-- **Precondición**: pre-ticket con destino configurado (Habitación Lista o Esperando Habitación), sin intervención de la azafata; usuario con `completar_pre_ticket`.
+- **Precondición**: pre-ticket con destino configurado (Habitación Lista o Esperando Habitación), sin intervención de la azafata; usuario con `editar_ticket` y `completar_pre_ticket`.
 - **Acción**: Operativa → "Editar" → (opcional: motivo de modificación) → "Restablecer destino (liberar X)" → "Sí, liberar la cama".
 - **Resultado esperado**: el pre-ticket vuelve a Presolicitud con "Configurar destino". La cama X queda disponible para otro pedido y la trayectoria registra el destino restablecido con el motivo. Si la azafata ya intervino, el link no aparece. Configurarlo de nuevo dispara el aviso de nuevo traslado al destino nuevo.
+- **Regresión a vigilar (v1.12.1)**: si la azafata del destino, con la grilla sin refrescar, toca "Habitación lista" después del restablecimiento, ve el aviso "El traslado cambió…" y el pre-ticket **no** revive.
 
 ---
 
@@ -1090,4 +1092,4 @@ Diseño en [arquitectura.md §48](../arquitectura/arquitectura.md). **Prerrequis
 ### QA-CX-08 · "Volver un paso"
 - **Precondición**: operatoria en "En traslado a cirugía"; usuario con `cirugia_entregar`.
 - **Acción**: en Operativa → Cirugías (2000/1440/1280/390) tocar "Volver un paso" → confirmar. Repetir desde el detalle de la cama en el mapa.
-- **Resultado esperado**: queda en "Búsqueda para cirugía", la hora de "Retirado" desaparece y el timeline muestra en ámbar "Volvió un paso: En traslado a cirugía → Búsqueda para cirugía". Sin push. El primer toque solo pide confirmación. Sin `cirugia_entregar` no aparece el botón. En "Listo para cirugía" no hay botón (se cancela).
+- **Resultado esperado**: tocar "Sí, volver" dos veces o desde dos dispositivos retrocede **un solo** paso (el segundo recibe "La cirugía cambió de estado"). Queda en "Búsqueda para cirugía", la hora de "Retirado" desaparece y el timeline muestra en ámbar "Volvió un paso: En traslado a cirugía → Búsqueda para cirugía". Sin push. El primer toque solo pide confirmación. Sin `cirugia_entregar` no aparece el botón. En "Listo para cirugía" no hay botón (se cancela).
