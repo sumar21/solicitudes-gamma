@@ -21,6 +21,7 @@ import { requireAuth } from './jwt.js';
 import { getSupabaseAdmin } from './supabase-admin.js';
 import { authzCirugia } from './cirugia-authz.js';
 import { cirugiaBedBusyMessage, resolveAltaChoque, type LiveCirugiaRow } from './cirugia-conflict.js';
+import { ANTERIOR, pasosDesdeEventos } from './cirugia-pasos.js';
 
 const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 
@@ -46,6 +47,13 @@ const TRANSICIONES: Record<string, string[]> = {
   TOLERANCIA_EVALUADA: [],
   CANCELADO:           [],
 };
+
+// "Ya se operó (fuera de MediFlow)" (20/10/2026): Gamma empezó a usar el módulo con pacientes que ya
+// se habían operado, y la "Q" del mapa los mostraba como pendientes. Se registra una cirugía COMPLETADA
+// (TOLERANCIA_EVALUADA) con este `tipo`: así la respetan solos el gate de consentimiento, la "Q" y el
+// detalle (una 2da cirugía necesita la marca de Admisión). Sin eventos (no dispara el push de "Iniciar
+// dieta") y fuera del histórico/métricas. Se anula con la acción ANULAR_PREVIA.
+const TIPO_PREVIA = 'PREVIA_EXTERNA';
 
 // Permiso requerido por cada acción del PATCH (el alta POST exige cirugia_listo). El gating client-side
 // esconde los botones, pero un PATCH directo lo saltea → se enforça acá (ver authzCirugia).
@@ -127,7 +135,9 @@ async function handler(req: any, res: any) {
       const from = isDate(req.query?.from) ? String(req.query.from) : '';
       const to   = isDate(req.query?.to)   ? String(req.query.to)   : '';
       let q = supa.from('cirugia_traslados').select('*')
-        .eq('entorno', ENTORNO).in('estado', ['TOLERANCIA_EVALUADA', 'CANCELADO']).limit(2000);
+        .eq('entorno', ENTORNO).in('estado', ['TOLERANCIA_EVALUADA', 'CANCELADO'])
+        .or(`tipo.is.null,tipo.neq.${TIPO_PREVIA}`) // las previas no son operatorias de MediFlow (métricas)
+        .limit(2000);
       if (from) q = q.gte('fecha_cierre', `${from}T00:00:00Z`);
       if (to)   q = q.lte('fecha_cierre', `${to}T23:59:59Z`);
       const { data, error } = await q;
@@ -182,22 +192,21 @@ async function handler(req: any, res: any) {
       if (error) { console.error('[cirugia] GET failed:', error.message); return res.status(200).json({ cirugias: [] }); }
       const rows = (data ?? []) as any[];
       // Timestamps por paso (cirugia_eventos) de las vivas → habilita las columnas de HORA de cada
-      // paso en la grilla (Retirado / En cirugía / Recibido / …). 1 query con `in`, primera
-      // ocurrencia de cada tipo = cuándo se hizo ese paso.
+      // paso en la grilla (Retirado / En cirugía / Recibido / …). 1 query con `in`; la hora de cada paso
+      // la arma pasosDesdeEventos (contempla "Volver un paso").
       const pasosById = new Map<string, Record<string, string>>();
       const ids = rows.map(r => String(r.id)).filter(Boolean);
       if (ids.length) {
         const { data: evs } = await supa.from('cirugia_eventos')
-          .select('cirugia_id, tipo, created_at')
+          .select('cirugia_id, tipo, meta, created_at')
           .eq('entorno', ENTORNO).in('cirugia_id', ids)
           .order('created_at', { ascending: true }).limit(2000);
+        const evsById = new Map<string, any[]>();
         for (const e of (evs ?? []) as any[]) {
-          const cid = String(e.cirugia_id ?? ''), tipo = String(e.tipo ?? '');
-          if (!cid || !tipo) continue;
-          const rec = pasosById.get(cid) ?? {};
-          if (!(tipo in rec)) rec[tipo] = String(e.created_at ?? '');
-          pasosById.set(cid, rec);
+          const cid = String(e.cirugia_id ?? '');
+          if (cid) evsById.set(cid, [...(evsById.get(cid) ?? []), e]);
         }
+        for (const [cid, list] of evsById) pasosById.set(cid, pasosDesdeEventos(list));
       }
       // Cirugías COMPLETADAS ("Iniciar dieta") del último año, solo paciente + internación: con esto el
       // Mapa de Camas decide si muestra la "Q" de un quirúrgico (se oculta si ya se operó en ESTA
@@ -220,6 +229,50 @@ async function handler(req: any, res: any) {
   }
 
   // ── POST — alta (LISTO_PARA_CIRUGIA; la marca Enfermería de piso) ─────────
+  if (req.method === 'POST' && req.body?.previa === true) {
+    // ── "Ya se operó (fuera de MediFlow)": cirugía previa registrada a mano (ver TIPO_PREVIA) ──
+    const { pacienteCodigo, pacienteNombre, camaOrigen, area, eventKey, userId } = req.body ?? {};
+    const pcode = String(pacienteCodigo ?? '').trim();
+    if (!pcode) return res.status(400).json({ error: 'Falta el código de paciente.' });
+    if (!String(camaOrigen ?? '').trim()) return res.status(400).json({ error: 'camaOrigen is required' });
+    const deny1 = await authzCirugia(req, 'cirugia_listo', area != null ? String(area) : null);
+    const deny2 = deny1 ? await authzCirugia(req, 'cirugia_marcar', area != null ? String(area) : null) : null;
+    if (deny1 && deny2) return res.status(deny1.status).json({ error: deny1.error });
+    const ekeyRaw = eventKey != null ? String(eventKey).trim() : '';
+    const ekey = /^[A-Za-z0-9_-]{1,64}$/.test(ekeyRaw) ? ekeyRaw : null;
+    try {
+      // Idempotente: una sola previa por paciente + internación.
+      let ya = supa.from('cirugia_traslados').select('id').eq('entorno', ENTORNO).eq('paciente_codigo', pcode)
+        .eq('estado', 'TOLERANCIA_EVALUADA').eq('tipo', TIPO_PREVIA);
+      ya = ekey ? ya.eq('event_key', ekey) : ya.is('event_key', null);
+      const { data: existente } = await ya.limit(1);
+      if (existente?.length) return res.status(200).json({ ok: true, id: String(existente[0].id) });
+      const nowIso = new Date().toISOString();
+      const { data: created, error } = await supa.from('cirugia_traslados').insert({
+        entorno: ENTORNO,
+        id_univoco: `previa:${pcode}:${ekey ?? 'sin-evento'}:${Date.now()}`,
+        paciente_codigo: pcode,
+        paciente_nombre: pacienteNombre != null ? String(pacienteNombre) : null,
+        cama_origen: String(camaOrigen),
+        area: area != null ? String(area) : null,
+        tipo: TIPO_PREVIA,
+        estado: 'TOLERANCIA_EVALUADA',
+        event_key: ekey,
+        fecha_cierre: nowIso,
+        created_by_id: userId != null ? String(userId) : null,
+        last_actor_id: userId != null ? String(userId) : null,
+        operador: req.body?.operador != null && req.body.operador !== '' ? String(req.body.operador) : null,
+        version: String(req.body?.version ?? ''),
+      }).select('id').single();
+      if (error) { console.error('[cirugia] POST previa failed:', error.message); return res.status(500).json({ error: 'No se pudo registrar la cirugía previa.' }); }
+      console.log(`[cirugia] PREVIA registrada paciente=${pcode} evento=${ekey ?? '-'} por ${req.body?.userName ?? userId}`);
+      return res.status(200).json({ ok: true, id: String(created.id) });
+    } catch (err: any) {
+      console.error('[cirugia] POST previa error:', err);
+      return res.status(500).json({ error: 'No se pudo registrar la cirugía previa.' });
+    }
+  }
+
   if (req.method === 'POST') {
     const { idUnivoco, pacienteCodigo, pacienteNombre, camaOrigen, area, tipo, admissionTypeCode, eventKey, userId, userName } = req.body ?? {};
     if (!String(idUnivoco ?? '').trim())  return res.status(400).json({ error: 'idUnivoco is required' });
@@ -346,7 +399,7 @@ async function handler(req: any, res: any) {
     if (!String(id ?? '').trim()) return res.status(400).json({ error: 'id is required' });
 
     const act = String(action ?? '');
-    const ACCIONES = ['VAN_A_BUSCAR', 'EN_TRASLADO', 'EN_CIRUGIA', 'EN_DEVOLUCION', 'TOLERANCIA_EVALUADA', 'CANCELADO'];
+    const ACCIONES = ['VAN_A_BUSCAR', 'EN_TRASLADO', 'EN_CIRUGIA', 'EN_DEVOLUCION', 'TOLERANCIA_EVALUADA', 'CANCELADO', 'RETROCEDER', 'ANULAR_PREVIA'];
     if (!ACCIONES.includes(act)) return res.status(400).json({ error: `action must be one of: ${ACCIONES.join(', ')}` });
     if (act === 'CANCELADO' && !String(motivoCancelacion ?? '').trim()) {
       return res.status(400).json({ error: 'motivoCancelacion is required for CANCELADO' });
@@ -356,7 +409,7 @@ async function handler(req: any, res: any) {
       // Guard: leer el estado ACTUAL antes de escribir (fuente de verdad del 409). Trae `area` para
       // la autorización por sector.
       const { data: cur, error: readErr } = await supa.from('cirugia_traslados')
-        .select('estado, cama_origen, cama_destino, area, paciente_codigo').eq('id', String(id)).eq('entorno', ENTORNO).maybeSingle();
+        .select('estado, cama_origen, cama_destino, area, paciente_codigo, tipo').eq('id', String(id)).eq('entorno', ENTORNO).maybeSingle();
       if (readErr) { console.error('[cirugia] PATCH read failed:', readErr.message); return res.status(500).json({ error: 'Failed to read cirugia' }); }
       if (!cur) return res.status(404).json({ error: 'Cirugia not found' });
 
@@ -366,17 +419,37 @@ async function handler(req: any, res: any) {
       // decía "no pertenece a tus pisos" (20/10/2026). `areaActual` lo manda el cliente desde el mapa de
       // Gamma; el permiso de la acción se exige igual.
       const areasAccion = [cur.area, areaActual != null ? String(areaActual) : null];
-      const denyPatch = await authzCirugia(req, ACCION_PERMISO[act] ?? 'cirugia_cancelar', areasAccion);
+      // RETROCEDER exige el permiso del paso que se deshace (deshacer "En traslado" = cirugia_entregar).
+      // ANULAR_PREVIA: los mismos que la registran (cirugia_listo o cirugia_marcar).
+      let denyPatch: { status: number; error: string } | null;
+      if (act === 'ANULAR_PREVIA') {
+        const d1 = await authzCirugia(req, 'cirugia_listo', areasAccion);
+        denyPatch = d1 ? await authzCirugia(req, 'cirugia_marcar', areasAccion) : null;
+      } else {
+        const permiso = act === 'RETROCEDER' ? ACCION_PERMISO[String(cur.estado)] : ACCION_PERMISO[act];
+        denyPatch = await authzCirugia(req, permiso ?? 'cirugia_cancelar', areasAccion);
+      }
       if (denyPatch) return res.status(denyPatch.status).json({ error: denyPatch.error });
 
-      const permitidas = TRANSICIONES[String(cur.estado)] ?? [];
-      if (!permitidas.includes(act)) {
-        return res.status(409).json({ error: `Transición inválida: ${cur.estado} → ${act}` });
+      let estadoNuevo = act;
+      if (act === 'RETROCEDER') {
+        estadoNuevo = ANTERIOR[String(cur.estado)] ?? '';
+        if (!estadoNuevo) return res.status(409).json({ error: 'Este paso no tiene uno anterior al que volver.' });
+      } else if (act === 'ANULAR_PREVIA') {
+        if (cur.tipo !== TIPO_PREVIA || cur.estado !== 'TOLERANCIA_EVALUADA') {
+          return res.status(409).json({ error: 'Solo se puede anular una cirugía previa registrada a mano.' });
+        }
+        estadoNuevo = 'CANCELADO';
+      } else {
+        const permitidas = TRANSICIONES[String(cur.estado)] ?? [];
+        if (!permitidas.includes(act)) {
+          return res.status(409).json({ error: `Transición inválida: ${cur.estado} → ${act}` });
+        }
       }
 
       const nowIso = new Date().toISOString();
       const fields: Record<string, unknown> = {
-        estado: act,
+        estado: estadoNuevo,
         last_actor_id: userId != null ? String(userId) : null,
         version: String(req.body?.version ?? ''),
       };
@@ -392,13 +465,21 @@ async function handler(req: any, res: any) {
         fields.fecha_cierre = nowIso;
         fields.motivo_cancelacion = String(motivoCancelacion);
       }
+      if (act === 'ANULAR_PREVIA') fields.motivo_cancelacion = 'Cirugía previa anulada (registrada por error)';
 
       // CAS (compare-and-set): el UPDATE reafirma el estado que leímos recién. Si otra transición ganó
       // la carrera entre el read y el write (doble-tap, dos dispositivos), afecta 0 filas → 409 y NO se
       // loguea el evento (evita duplicar el paso en la auditoría y un push repetido).
       const { data: updated, error } = await supa.from('cirugia_traslados').update(fields)
         .eq('id', String(id)).eq('entorno', ENTORNO).eq('estado', String(cur.estado)).select('id');
-      if (error) { console.error('[cirugia] PATCH failed:', error.message, act); return res.status(500).json({ error: 'Failed to update cirugia' }); }
+      if (error) {
+        // Volver de "Regreso de cirugía" a "En cirugía" la mete de nuevo en el candado por paciente: si ya
+        // le marcaron OTRA operatoria en curso, choca con cirugia_viva_paciente_uidx.
+        if ((error as any).code === '23505' && act === 'RETROCEDER') {
+          return res.status(409).json({ error: 'El paciente ya tiene otra cirugía en curso; no se puede volver este paso.' });
+        }
+        console.error('[cirugia] PATCH failed:', error.message, act); return res.status(500).json({ error: 'Failed to update cirugia' });
+      }
       if (!updated || updated.length === 0) {
         return res.status(409).json({ error: 'La cirugía cambió de estado; recargá e intentá de nuevo.' });
       }
@@ -430,7 +511,10 @@ async function handler(req: any, res: any) {
       const meta: Record<string, unknown> = { camaOrigen: String(cur.cama_origen), estadoResultante: fields.estado };
       if (fields.cama_destino) meta.camaDestino = fields.cama_destino;
       if (fields.motivo_cancelacion) meta.motivo = fields.motivo_cancelacion;
-      await logEvento(supa, String(id), act, req.body, meta);
+      // RETROCESO: evento propio (no es un paso de la lista de push de notify-change → no notifica) con
+      // de/a, para medir cuántas veces se marca un paso por error.
+      if (act === 'RETROCEDER') { meta.de = String(cur.estado); meta.a = estadoNuevo; }
+      await logEvento(supa, String(id), act === 'RETROCEDER' ? 'RETROCESO' : act, req.body, meta);
 
       console.log(`[cirugia] ${cur.estado} → ${act} (id=${id}) por ${userName ?? userId}`);
       return res.status(200).json({ ok: true });

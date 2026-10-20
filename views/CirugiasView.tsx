@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Bed, CirugiaEstado, CirugiaTraslado, User, Area } from '../types';
 import { can } from '../lib/permissions';
 import { cn, formatBedName, formatDateTime, formatDateReadable } from '../lib/utils';
-import { CIRUGIA_ESTADO_LABEL, CIRUGIA_ESTADO_SHORT, CIRUGIA_PILL_CLASS } from '../lib/constants';
+import { CIRUGIA_ESTADO_LABEL, CIRUGIA_ESTADO_SHORT, CIRUGIA_PILL_CLASS, CIRUGIA_ANTERIOR, CIRUGIA_PERMISO_DEL_PASO } from '../lib/constants';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
@@ -10,8 +10,9 @@ import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popove
 import { Calendar } from '../components/ui/calendar';
 import {
   Activity, ArrowRight, BedDouble, CheckCircle2, Clock, RefreshCw, Search, X, XCircle, AlertTriangle,
-  Calendar as CalendarIcon, Eye, User as UserIcon,
+  Calendar as CalendarIcon, Eye, User as UserIcon, Undo2,
 } from 'lucide-react';
+import { cirugiaEventoLabel, esRetroceso } from '../lib/cirugiaEventos';
 
 // Display de área (copiado de BedsView/CleaningManagementView — no está exportado).
 const AREA_LABELS: Record<string, string> = {
@@ -34,6 +35,8 @@ interface Props {
   onEnDevolucion: (id: string) => Promise<TxResult>;
   onTolerancia?: (id: string) => Promise<TxResult>;
   onCancelar: (id: string, motivo: string) => Promise<TxResult>;
+  /** "Volver un paso": corrige un paso marcado por error (queda en el timeline como retroceso). */
+  onRetroceder?: (id: string) => Promise<TxResult>;
   onRefresh?: () => void | Promise<void>;
 }
 
@@ -61,9 +64,6 @@ const fmtWhen = (iso?: string) => {
   const d = new Date(iso);
   return isNaN(d.getTime()) ? String(iso) : d.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
 };
-
-// Label legible de un paso (cirugia_eventos.tipo): reusa las etiquetas de estado, fallback al raw.
-const pasoLabel = (tipo: string): string => (CIRUGIA_ESTADO_LABEL as Record<string, string>)[tipo] ?? tipo;
 
 // Columnas de HORA por paso en la grilla Activas: cada una muestra cuándo se alcanzó ese estado
 // (de c.pasos, poblado por el backend). El label es el pedido por negocio, no el técnico.
@@ -115,13 +115,15 @@ const DateRangeTrigger = React.forwardRef<
 DateRangeTrigger.displayName = 'DateRangeTrigger';
 
 export const CirugiasView: React.FC<Props> = ({
-  cirugias, beds, currentUser, onVanABuscar, onEnTraslado, onEnCirugia, onEnDevolucion, onTolerancia, onCancelar, onRefresh,
+  cirugias, beds, currentUser, onVanABuscar, onEnTraslado, onEnCirugia, onEnDevolucion, onTolerancia, onCancelar, onRetroceder, onRefresh,
 }) => {
   const [search, setSearch] = useState('');
   const [pending, setPending] = useState<Set<string>>(new Set());
   // Panel inline "Cancelar": id + motivo tipeado.
   const [cancelando, setCancelando] = useState<{ id: string; motivo: string } | null>(null);
   const [rowError, setRowError] = useState<Record<string, string>>({});
+  // "Volver un paso" pide un 2do toque (queda en la trayectoria y en la métrica de retrocesos).
+  const [confirmRetro, setConfirmRetro] = useState<string | null>(null);
 
   // ── Sub-solapa Histórico (cerradas: Tolerancia evaluada / Cancelada, por fecha_cierre) ────────
   // Mismo patrón que el histórico de Limpiezas: rango Desde/Hasta + buscador. El backend ya expone
@@ -306,6 +308,40 @@ export const CirugiasView: React.FC<Props> = ({
     }
   };
 
+  // "Volver un paso" (20/10/2026): para un paso marcado por error ("En traslado" que al final no empezó).
+  // Requiere el permiso del paso que se deshace. Queda en el timeline como "Volvió un paso".
+  const renderRetroceder = (c: CirugiaTraslado) => {
+    const anterior = CIRUGIA_ANTERIOR[c.estado];
+    const permiso = CIRUGIA_PERMISO_DEL_PASO[c.estado];
+    if (!onRetroceder || !anterior || !permiso || !can(currentUser, permiso)) return null;
+    if (confirmRetro === c.id) {
+      return (
+        <div className="flex flex-col gap-1.5 rounded-lg border border-amber-200 bg-amber-50 p-2 max-w-[240px]">
+          <p className="text-[10px] font-bold text-amber-900 leading-tight">¿Volver a "{CIRUGIA_ESTADO_LABEL[anterior]}"?</p>
+          <div className="flex gap-1.5">
+            <Button size="sm" disabled={isPending(c.id)}
+              onClick={() => { setConfirmRetro(null); withPending(c.id, () => onRetroceder(c.id)); }}
+              className="h-7 flex-1 text-[10px] uppercase font-bold tracking-tight bg-amber-500 hover:bg-amber-600 text-white">
+              <Undo2 className="w-3.5 h-3.5 mr-1" /> Sí, volver
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setConfirmRetro(null)}
+              className="h-7 text-[10px] uppercase font-bold tracking-tight border-slate-300 text-slate-600 hover:bg-white">
+              No
+            </Button>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <Button size="sm" variant="outline" disabled={isPending(c.id)}
+        onClick={() => setConfirmRetro(c.id)}
+        title={`Volver a "${CIRUGIA_ESTADO_LABEL[anterior]}" (corrige un paso marcado por error)`}
+        className="h-8 text-[10px] uppercase font-bold tracking-tight border-slate-300 text-slate-600 hover:bg-slate-50">
+        <Undo2 className="w-3.5 h-3.5 mr-1.5" /> Volver un paso
+      </Button>
+    );
+  };
+
   const renderRow = (c: CirugiaTraslado) => {
     const p = isPending(c.id);
     const camaChange = !!c.camaDestino && c.camaDestino !== c.camaOrigen;
@@ -361,6 +397,7 @@ export const CirugiasView: React.FC<Props> = ({
           {/* Acciones (pinneadas a la derecha en desktop) */}
           <div className="flex items-center gap-1.5 flex-wrap md:justify-end md:shrink-0">
             {renderCirugiaActions(c)}
+            {renderRetroceder(c)}
             {can(currentUser, 'cirugia_cancelar') && (
               <Button size="sm" variant="outline" disabled={p}
                 onClick={() => setCancelando({ id: c.id, motivo: '' })}
@@ -381,7 +418,7 @@ export const CirugiasView: React.FC<Props> = ({
     return (
       <tr key={c.id} className="align-middle hover:bg-slate-50/60">
         {/* Estado (columna a la izquierda de todo) */}
-        <td className="px-4 py-3"><Pill estado={c.estado} short /></td>
+        <td className="pl-4 pr-1 py-3"><Pill estado={c.estado} short /></td>
         {/* Paciente + área/ingreso + tipo */}
         <td className="px-4 py-3">
           <p className="font-black text-slate-800 leading-tight break-words uppercase">{c.pacienteNombre || 'Paciente s/nombre'}</p>
@@ -398,10 +435,10 @@ export const CirugiasView: React.FC<Props> = ({
         {/* Cama (origen → destino si cambió) */}
         <td className="px-4 py-3">
           <div className="flex items-center gap-1.5 text-[12px] font-bold text-slate-700 flex-wrap">
-            <span>{formatBedName(c.camaOrigen)}</span>
+            <span className="whitespace-nowrap">{formatBedName(c.camaOrigen)}</span>
             {camaChange && (<>
               <ArrowRight className="w-3 h-3 text-violet-500 shrink-0" />
-              <span className="text-violet-700">{formatBedName(c.camaDestino!)}</span>
+              <span className="text-violet-700 whitespace-nowrap">{formatBedName(c.camaDestino!)}</span>
             </>)}
           </div>
           {camaChange && (
@@ -426,6 +463,7 @@ export const CirugiasView: React.FC<Props> = ({
           {rowError[c.id] && <p className="text-[10px] font-bold text-red-600 mb-1">{rowError[c.id]}</p>}
           <div className="flex items-center gap-1.5 flex-wrap">
             {renderCirugiaActions(c)}
+            {renderRetroceder(c)}
             {can(currentUser, 'cirugia_cancelar') && (
               <Button size="sm" variant="outline" disabled={p}
                 onClick={() => setCancelando({ id: c.id, motivo: '' })}
@@ -498,8 +536,9 @@ export const CirugiasView: React.FC<Props> = ({
                 <div className="overflow-x-auto">
                 <table className="w-full text-sm table-fixed min-w-[720px]">
                   <colgroup>
-                    <col className="w-[11%]" /><col className="w-[20%]" /><col className="w-[9%]" />
-                    <col className="w-[12%]" /><col className="w-[13%]" /><col className="w-[12%]" /><col className="w-[23%]" />
+                    {/* Con Estado al 11% la pill "Cx · En traslado" (~130px) pisaba al paciente a 1280px. */}
+                    <col className="w-[15%]" /><col className="w-[17%]" /><col className="w-[10%]" />
+                    <col className="w-[10%]" /><col className="w-[10%]" /><col className="w-[10%]" /><col className="w-[28%]" />
                   </colgroup>
                   <thead>
                     <tr className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500 font-bold">
@@ -730,12 +769,12 @@ export const CirugiasView: React.FC<Props> = ({
                       return (
                         <div key={i} className="flex gap-3">
                           <div className="flex flex-col items-center">
-                            <div className="w-2.5 h-2.5 rounded-full bg-violet-500 mt-1.5 shrink-0" />
+                            <div className={cn("w-2.5 h-2.5 rounded-full mt-1.5 shrink-0", esRetroceso(e) ? "bg-amber-500" : "bg-violet-500")} />
                             {!last && <div className="w-px flex-1 bg-slate-200 my-0.5" />}
                           </div>
                           <div className={cn("min-w-0", last ? "pb-1" : "pb-4")}>
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-xs font-black uppercase tracking-tight text-slate-700">{pasoLabel(e.tipo)}</span>
+                              <span className={cn("text-xs font-black uppercase tracking-tight", esRetroceso(e) ? "text-amber-700" : "text-slate-700")}>{cirugiaEventoLabel(e as { tipo: string; meta?: { de?: unknown; a?: unknown } })}</span>
                               {dur && <span className="text-[10px] font-bold text-violet-600" title="Tiempo desde el paso anterior">+{dur}</span>}
                             </div>
                             <p className="text-[11px] text-slate-500 flex items-center gap-1.5 mt-0.5 flex-wrap">

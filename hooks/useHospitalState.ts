@@ -14,10 +14,11 @@ import { roomCheckFor, destinationState, describeRoomCheck } from '../lib/roomCh
 import { supabase, resetSupabasePase } from '../lib/supabase';
 import { APP_VERSION } from '../lib/version';
 import { appAlert } from '../lib/appDialog';
-import { activeTicketsByOrigin, bedHasTicketPatient, describeOriginBedBusy, findOrphanTickets, isActiveTicket } from '../lib/originBed';
+import { activeTicketsByOrigin, bedHasTicketPatient, describeOriginBedBusy, findOrphanTickets, findOriginMoves, isActiveTicket, puedeRestablecerDestino, type OriginMove } from '../lib/originBed';
 import { makeAreaScope } from '../lib/ticketFilters';
 import { bedsShrinkDecision } from '../lib/bedsGuard';
 import { mostrarQ, type CirugiaCompletada } from '../lib/cirugiaQ';
+import { CIRUGIA_ANTERIOR } from '../lib/constants';
 
 // ── JWT helpers (client-side, solo lectura — sin verificar firma) ─────────────
 function parseJwtPayload(token: string): Record<string, unknown> | null {
@@ -976,6 +977,10 @@ export const useHospitalState = () => {
   // estado `rawBeds` adentro veía SIEMPRE el [] inicial (los guards de mapa parcial nunca se activaban).
   const rawBedsRef = React.useRef<Bed[]>([]);
   rawBedsRef.current = rawBeds;
+  // Desde cuándo vale el mapa de PROGAL que tenemos (ms, reloj local). /api/beds cachea 45s, así que una
+  // respuesta fresca (o un 304) garantiza un mapa de hace ≤45s; el cache "stale" no actualiza esto. Lo usa
+  // el origen automático para no reubicar pedidos con un mapa viejo.
+  const rawBedsAtRef = React.useRef(0);
   // Desde cuándo Gamma viene mandando un mapa sospechosamente más chico (ver fetchBeds).
   const bedsShrinkSinceRef = React.useRef<number | null>(null);
   // Arranca VACÍO. Antes arrancaba con MOCK_TICKETS (25 traslados de prueba, todos Consolidados): si el
@@ -1120,7 +1125,7 @@ export const useHospitalState = () => {
 
       const r = await authFetch('/api/beds', { headers });
       if (r.status === 401) { handleLogout(); return; }
-      if (r.status === 304) { setBedsError(null); return; } // sin cambios = saludable
+      if (r.status === 304) { setBedsError(null); rawBedsAtRef.current = Date.now() - 45_000; return; } // sin cambios = saludable
       if (!r.ok) { setBedsError(`HTTP ${r.status}`); return; } // mantiene data previa
 
       const etag = r.headers.get('etag');
@@ -1159,6 +1164,7 @@ export const useHospitalState = () => {
         // La ref se actualiza YA (no en el próximo render): dos fetchBeds en vuelo a la vez (poll + catch-up
         // de foco) comparaban el segundo mapa contra el [] viejo y un parcial se colaba como "primer load".
         rawBedsRef.current = data.beds;
+        if (!data.stale && r.headers.get('X-Beds-Stale') !== '1') rawBedsAtRef.current = Date.now() - 45_000;
         setRawBeds(data.beds);
       } else if (rawBedsRef.current.length === 0) {
         // Respuesta OK pero sin camas y no tenemos data previa → Progal no devolvió nada.
@@ -1798,7 +1804,7 @@ export const useHospitalState = () => {
 
   const transicionarCirugia = useCallback(async (
     id: string,
-    action: Exclude<CirugiaEstado, 'LISTO_PARA_CIRUGIA'>,
+    action: Exclude<CirugiaEstado, 'LISTO_PARA_CIRUGIA'> | 'RETROCEDER',
     extra?: { motivoCancelacion?: string },
   ): Promise<{ ok: boolean; error?: string }> => {
     if (!id) return { ok: false };
@@ -1814,6 +1820,9 @@ export const useHospitalState = () => {
       const goesTerminal = action === 'CANCELADO' || action === 'TOLERANCIA_EVALUADA';
       if (goesTerminal) {
         n.delete(id); // sale de la cola
+      } else if (action === 'RETROCEDER') {
+        // "Volver un paso": al estado anterior (el server lo valida y registra el RETROCESO).
+        n.set(id, { ...cur, estado: CIRUGIA_ANTERIOR[cur.estado] ?? cur.estado });
       } else {
         n.set(id, { ...cur, estado: action });
       }
@@ -1865,6 +1874,42 @@ export const useHospitalState = () => {
   const cirugiaEnTraslado   = useCallback((id: string) => transicionarCirugia(id, 'EN_TRASLADO'), [transicionarCirugia]);        // Enfermería (entrega al camillero)
   const cirugiaEnCirugia    = useCallback((id: string) => transicionarCirugia(id, 'EN_CIRUGIA'), [transicionarCirugia]);          // Cirugía
   const cirugiaEnDevolucion = useCallback((id: string) => transicionarCirugia(id, 'EN_DEVOLUCION'), [transicionarCirugia]);       // Cirugía (el paciente vuelve; sin elegir destino)
+  const cirugiaRetroceder   = useCallback((id: string) => transicionarCirugia(id, 'RETROCEDER'), [transicionarCirugia]); // "Volver un paso" (corrige un paso marcado por error)
+
+  // "Ya se operó (fuera de MediFlow)": registra una cirugía previa de ESTA internación → la "Q" deja de
+  // mostrarse y una 2da cirugía necesita la marca de Admisión (ver TIPO_PREVIA en api/cirugia.ts).
+  const registrarCirugiaPrevia = useCallback(async (bed: Bed): Promise<{ ok: boolean; error?: string }> => {
+    if (!bed?.patientCode) return { ok: false, error: 'La cama no tiene código de paciente.' };
+    try {
+      const r = await authFetch('/api/cirugia', {
+        method: 'POST',
+        body: JSON.stringify({
+          previa: true, pacienteCodigo: bed.patientCode, pacienteNombre: bed.patientName, camaOrigen: bed.label,
+          area: bed.area, eventKey: bedEventKey(bed) || undefined,
+          userId: currentUser?.id ?? '', userName: currentUser?.name ?? '', operador: getOperador(), version: APP_VERSION,
+        }),
+      });
+      if (!r.ok) { const err = await r.json().catch(() => ({} as any)); return { ok: false, error: err?.error ?? `No se pudo registrar (HTTP ${r.status}).` }; }
+      await fetchCirugias(); // refresca las completadas → la "Q" se va
+      return { ok: true };
+    } catch (e: any) { return { ok: false, error: e?.message ?? 'Error de red.' }; }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authFetch, currentUser, fetchCirugias]);
+
+  const anularCirugiaPrevia = useCallback(async (id: string, bed?: Bed): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const r = await authFetch('/api/cirugia', {
+        method: 'PATCH',
+        body: JSON.stringify({ id, action: 'ANULAR_PREVIA', areaActual: bed?.area,
+          userId: currentUser?.id ?? '', userName: currentUser?.name ?? '', operador: getOperador(), version: APP_VERSION }),
+      });
+      if (!r.ok) { const err = await r.json().catch(() => ({} as any)); return { ok: false, error: err?.error ?? `No se pudo anular (HTTP ${r.status}).` }; }
+      await fetchCirugias();
+      return { ok: true };
+    } catch (e: any) { return { ok: false, error: e?.message ?? 'Error de red.' }; }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authFetch, currentUser, fetchCirugias]);
+
   const cirugiaTolerancia   = useCallback((id: string) => transicionarCirugia(id, 'TOLERANCIA_EVALUADA'), [transicionarCirugia]); // Enfermería del piso — inicia dieta y CIERRA (paso final)
   const cancelarCirugia     = useCallback((id: string, motivoCancelacion: string) => transicionarCirugia(id, 'CANCELADO', { motivoCancelacion }), [transicionarCirugia]);
 
@@ -3301,6 +3346,90 @@ export const useHospitalState = () => {
     }
   };
 
+  // "Restablecer destino" (20/10/2026): el pre-ticket configurado vuelve a "Presolicitud" y libera la cama
+  // destino — le dieron esa cama a un paciente más urgente y antes había que cancelar y volver a cargar.
+  // Solo antes de que intervenga la azafata. El servidor fija los campos (validarRestablecerDestino).
+  const restablecerDestinoPreTicket = async (ticketId: string, motivo?: string): Promise<boolean> => {
+    if (!can(currentUser, 'completar_pre_ticket')) { appAlert('Tu rol no tiene permiso para configurar destinos.'); return false; }
+    const t = tickets.find(x => x.id === ticketId);
+    if (!t || !puedeRestablecerDestino(t)) { appAlert('Este pre-ticket ya no se puede restablecer: la azafata ya intervino o cambió de estado.'); return false; }
+    if (!t.spItemId) { appAlert('El pre-ticket todavía no terminó de guardarse. Esperá unos segundos.'); return false; }
+    writingRef.current = true;
+    prevTicketSnapshotRef.current.set(t.id, `${TicketStatus.PRESOLICITUD}|`);
+    const reset: Ticket = { ...t, status: TicketStatus.PRESOLICITUD, destination: null, destinationBedCode: undefined,
+      destinationBedStatus: undefined, targetBedOriginalStatus: undefined, habCompartida: false };
+    setTickets(prev => prev.map(x => x.id === t.id ? reset : x));
+    try {
+      const r = await authFetch('/api/tickets', {
+        method: 'PATCH',
+        body: JSON.stringify({ id: t.id, restablecerDestino: true, operador: getOperador(), version: APP_VERSION }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({} as any));
+        setTickets(prev => prev.map(x => x.id === t.id ? t : x)); // rollback
+        prevTicketSnapshotRef.current.set(t.id, `${t.status}|${t.destination ?? ''}`);
+        appAlert(err?.error ?? 'No se pudo restablecer el destino. Volvé a intentarlo.');
+        return false;
+      }
+      const m = (motivo ?? '').trim();
+      spLogEvent(t.id, `Modificacion - Destino: ${t.destination} → (sin destino) - Motivo: Destino restablecido${m ? ` — ${m}` : ''}`);
+      return true;
+    } catch {
+      setTickets(prev => prev.map(x => x.id === t.id ? t : x));
+      appAlert('No se pudo restablecer el destino (sin conexión).');
+      return false;
+    } finally {
+      setTimeout(() => { writingRef.current = false; ticketsEtagRef.current = null; fetchTickets(); }, 1000);
+    }
+  };
+
+  // ── Origen automático (20/10/2026) ──────────────────────────────────────────
+  // PROGAL cambió al paciente de cama (407.1 → 407.2) con el pedido abierto: el pedido pasa a salir de la
+  // cama nueva y la vieja queda libre para otro paciente (antes quedaba trabada, caso 14/10 en ITR). Lo
+  // hace el dispositivo de quien opera traslados, con un mapa más nuevo que el último cambio del pedido;
+  // el servidor valida y deja el evento (una sola vez aunque lo detecten varios). Hasta 3 intentos por
+  // pedido y cama, cada 2 min.
+  const puedeReubicarOrigen = !!currentUser && (['crear_ticket', 'crear_pre_ticket', 'editar_ticket', 'completar_pre_ticket'] as Permission[])
+    .some(p => can(currentUser, p));
+  const reubicarIntentosRef = React.useRef(new Map<string, { n: number; at: number }>());
+  useEffect(() => {
+    if (!puedeReubicarOrigen || !rawBedsAtRef.current) return;
+    for (const m of findOriginMoves(tickets, rawBeds)) {
+      const t = tickets.find(x => x.id === m.ticketId);
+      if (!t?.spItemId) continue;
+      if (Date.parse(t.createdAt) > rawBedsAtRef.current) continue; // el mapa es anterior al pedido
+      const key = `${m.ticketId}|${m.to}`;
+      const prev = reubicarIntentosRef.current.get(key);
+      if (prev && (prev.n >= 3 || Date.now() - prev.at < 120_000)) continue;
+      reubicarIntentosRef.current.set(key, { n: (prev?.n ?? 0) + 1, at: Date.now() });
+      void reubicarOrigen(m);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tickets, rawBeds, puedeReubicarOrigen]);
+
+  const reubicarOrigen = async (m: OriginMove) => {
+    try {
+      const r = await authFetch('/api/tickets', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          id: m.ticketId,
+          reubicarOrigen: { from: m.from, to: m.to, toCode: m.toCode, toArea: m.toArea, patientCode: m.patientCode,
+            mapaEdadMs: Math.max(0, Date.now() - rawBedsAtRef.current) },
+          usuario: currentUser?.name ?? '', usuarioId: currentUser?.id ?? '', operador: getOperador(), version: APP_VERSION,
+        }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({} as any));
+        console.warn(`[origen-auto] ${m.ticketId} ${m.from} → ${m.to}: HTTP ${r.status} ${err?.error ?? ''}`);
+        return;
+      }
+      // Optimista hasta que llegue el cambio por Realtime.
+      setTickets(prev => prev.map(x => x.id === m.ticketId && x.origin === m.from
+        ? { ...x, origin: m.to, originBedCode: m.toCode ?? x.originBedCode } : x));
+      console.info(`[origen-auto] ${m.ticketId}: origen ${m.from} → ${m.to} (PROGAL)`);
+    } catch { /* lo reintenta el próximo ciclo */ }
+  };
+
   const handleRoomReady = (ticketId: string) => runTicketAction(ticketId, async () => {
     const ticket = tickets.find(t => t.id === ticketId);
     if (!ticket?.destination || ticket.status === TicketStatus.IN_TRANSIT) return;
@@ -4092,13 +4221,14 @@ export const useHospitalState = () => {
       setLoginEmail, setLoginPass,
       handleLogin, handleLogout, enableNotifications,
       setOperador, cambioTurno,
-      handleCreateTicket, createPreTicket, completePreTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
+      handleCreateTicket, createPreTicket, completePreTicket, restablecerDestinoPreTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
       fetchBeds, enrichBed, fetchPatientTickets, searchHistory, refreshAll, fetchAllTickets, setHistoryRange,
       markBedClean, undoBedClean,
       startRoutineCleaning, finishRoutineCleaning, fetchRoutineCleanings,
       saveMealLoad, clearMealLoad, saveCompanionLoad, clearCompanionLoad, setMealStatus,
       fetchCirugias, marcarListoParaCirugia, transicionarCirugia,
       cirugiaVanABuscar, cirugiaEnTraslado, cirugiaEnCirugia, cirugiaEnDevolucion, cirugiaTolerancia, cancelarCirugia,
+      cirugiaRetroceder, registrarCirugiaPrevia, anularCirugiaPrevia,
       marcarVaCirugia, desmarcarVaCirugia, fetchCirugiaMarcas,
       setOperativaSubview,
       handleUpdateUserAreas, refreshSessionRole, syncSessionRole, handleMarkNotificationRead, handleMarkAllNotificationsRead, handleOpenNotifications, handleDismissToast,

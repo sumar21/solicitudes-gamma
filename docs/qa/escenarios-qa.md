@@ -377,6 +377,17 @@ pasada manual aparte (no son automatizables por browser/API).
 - **Precondición**: usuario que filtra por sectores (Coordinación / azafata) con traslados activos en sus sectores.
 - **Acción**: `/api/beds` devuelve un mapa incompleto (p. ej. sin ITR ni Coronaria).
 - **Resultado esperado**: si ya había un mapa bueno, se mantiene, y el Mapa de Camas muestra "debug: PARCIAL: Progal devolvió N de M camas". Si el mapa parcial es el primero (recién abierta la app), los traslados que no se pueden ubicar **se muestran igual** (falla abierto) y los botones de azafata siguen disponibles. Lo que creó el usuario se ve siempre.
+
+### QA-TRA-29 · Origen automático cuando PROGAL cambia al paciente de cama
+- **Precondición**: pre-ticket (o traslado en Esperando Habitación / Habitación Lista) del paciente A desde la cama X; Admisión con la app abierta.
+- **Acción**: en PROGAL, pasar a A de la cama X a la Y (que no sea el destino del pedido).
+- **Resultado esperado**: en ≤1–2 min el origen del pedido pasa a Y en la grilla de todos, sin la marca "Ya no está en la cama", y la cama X queda libre para cargar otro pedido. En la trayectoria: "Origen: X → Y — Motivo: Cambio de cama en PROGAL (automático)", **una sola vez** aunque haya varios dispositivos abiertos. **No** se reubica si A aparece en la cama **destino** del pedido ni si ya está En Traslado / Por Consolidar.
+
+### QA-TRA-30 · "Restablecer destino" de un pre-ticket configurado
+- **Precondición**: pre-ticket con destino configurado (Habitación Lista o Esperando Habitación), sin intervención de la azafata; usuario con `completar_pre_ticket`.
+- **Acción**: Operativa → "Editar" → (opcional: motivo de modificación) → "Restablecer destino (liberar X)" → "Sí, liberar la cama".
+- **Resultado esperado**: el pre-ticket vuelve a Presolicitud con "Configurar destino". La cama X queda disponible para otro pedido y la trayectoria registra el destino restablecido con el motivo. Si la azafata ya intervino, el link no aparece. Configurarlo de nuevo dispara el aviso de nuevo traslado al destino nuevo.
+
 ---
 
 ## 4. Limpiezas (Mapa de Camas + overlay "Opción B")
@@ -1065,3 +1076,18 @@ Diseño en [arquitectura.md §48](../arquitectura/arquitectura.md). **Prerrequis
 - **Precondición**: migración `20261020130000` aplicada; un paciente con operatoria abierta; ya pasó al menos una corrida del cron después del deploy.
 - **Acción**: en PROGAL, cambiar de cama al paciente.
 - **Resultado esperado**: en ≤15 min se registra el cambio (`cirugia_cambios`), llega el push de cambio de habitación y la operatoria guarda `cama_destino`; en "Regreso de cirugía" la cama nueva muestra "Cama destino".
+
+### QA-CX-06 · "Ya se operó (fuera de MediFlow)" saca la "Q"
+- **Precondición**: paciente `Q` sin cirugías en MediFlow (con "Q" en la celda); usuario con `cirugia_listo` o `cirugia_marcar`.
+- **Acción**: abrir la cama → "Ya se operó (fuera de MediFlow)" → "Sí, ya se operó".
+- **Resultado esperado**: se cierra el detalle y la "Q" desaparece. Al reabrir: nota "Cirugía previa registrada (fuera de MediFlow) el dd/mm…" sin "Listo para cirugía". Con "Va a cirugía" de Admisión vuelve el botón ("Re-Cx"). En la trayectoria del paciente: "Cirugía previa (fuera de MediFlow)". **No** llega push de "Iniciar dieta" ni aparece en el histórico de Cirugías. Tocar dos veces no duplica.
+
+### QA-CX-07 · Deshacer la cirugía previa
+- **Precondición**: QA-CX-06 hecho.
+- **Acción**: en la nota del detalle, "Deshacer".
+- **Resultado esperado**: vuelve la "Q" y "Listo para cirugía". La trayectoria muestra "Cirugía previa anulada". Un PATCH `ANULAR_PREVIA` sobre una cirugía real de MediFlow da 409.
+
+### QA-CX-08 · "Volver un paso"
+- **Precondición**: operatoria en "En traslado a cirugía"; usuario con `cirugia_entregar`.
+- **Acción**: en Operativa → Cirugías (2000/1440/1280/390) tocar "Volver un paso" → confirmar. Repetir desde el detalle de la cama en el mapa.
+- **Resultado esperado**: queda en "Búsqueda para cirugía", la hora de "Retirado" desaparece y el timeline muestra en ámbar "Volvió un paso: En traslado a cirugía → Búsqueda para cirugía". Sin push. El primer toque solo pide confirmación. Sin `cirugia_entregar` no aparece el botón. En "Listo para cirugía" no hay botón (se cancela).

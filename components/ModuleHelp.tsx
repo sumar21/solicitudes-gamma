@@ -25,7 +25,7 @@ export const ModuleHelp: React.FC<{ moduleKey: string; user: User | null }> = ({
   if (!mod) return null;
 
   const fbf = !!user?.filterByFloors;
-  const has = (perm: string) => perm === '*' || can(user, perm as Permission);
+  const has = (perm: string) => perm === '*' || perm.split('|').some(p => can(user, p as Permission));
   const caps = mod.capabilities.filter(c => has(c.permission));
   const notifs = mod.notifications.filter(n => has(n.permission));
 
