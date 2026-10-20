@@ -11,8 +11,9 @@
  * PATCH  /api/cirugia                                   → transición de estado (máquina guardada server-side)
  *
  * Máquina de estados propia (no reusa el pipeline de traslados). Estados VIVOS = todos menos los
- * terminales (TOLERANCIA_EVALUADA/CANCELADO). El índice único parcial cirugia_viva_uidx garantiza UNA operatoria
- * viva por (entorno, cama_origen). Cada escritura estampa version + last_actor_id.
+ * terminales (TOLERANCIA_EVALUADA/CANCELADO). Candado POR PACIENTE (índice cirugia_viva_paciente_uidx,
+ * migración 20261020140000): un paciente no puede tener dos operatorias EN CURSO ("Regreso de cirugía" no
+ * cuenta); sin código de paciente, respaldo por cama. Cada escritura estampa version + last_actor_id.
  *
  * ⚠️ Push: NO se emite en esta fase (va en F6). Sin llamadas a push-utils todavía.
  */
@@ -23,7 +24,7 @@ import { cirugiaBedBusyMessage, resolveAltaChoque, type LiveCirugiaRow } from '.
 
 const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 
-// Estados que ocupan el candado "una viva por cama" (índice parcial cirugia_viva_uidx).
+// Estados VIVOS (cola + overlay). El candado por paciente cubre solo los EN CURSO (todos menos EN_DEVOLUCION).
 const VIVOS = ['LISTO_PARA_CIRUGIA', 'VAN_A_BUSCAR', 'EN_TRASLADO', 'EN_CIRUGIA', 'EN_DEVOLUCION'];
 // Lo que se muestra en overlay + cola: las vivas (EN_DEVOLUCION incluido, que espera "Iniciar dieta").
 const EN_COLA = [...VIVOS];
@@ -198,7 +199,20 @@ async function handler(req: any, res: any) {
           pasosById.set(cid, rec);
         }
       }
-      return res.status(200).json({ cirugias: rows.map(r => ({ ...rowToCirugia(r), pasos: pasosById.get(String(r.id)) ?? {} })) });
+      // Cirugías COMPLETADAS ("Iniciar dieta") del último año, solo paciente + internación: con esto el
+      // Mapa de Camas decide si muestra la "Q" de un quirúrgico (se oculta si ya se operó en ESTA
+      // internación y no tiene consentimiento nuevo). Misma regla que el gate del POST. Best-effort.
+      let completadas: { pacienteCodigo: string; eventKey?: string }[] = [];
+      try {
+        const desde = new Date(Date.now() - 365 * 24 * 3600 * 1000).toISOString();
+        const { data: comp } = await supa.from('cirugia_traslados').select('paciente_codigo, event_key')
+          .eq('entorno', ENTORNO).eq('estado', 'TOLERANCIA_EVALUADA')
+          .or(`fecha_cierre.gte.${desde},fecha_cierre.is.null`).limit(5000);
+        completadas = ((comp ?? []) as any[])
+          .filter(c => c.paciente_codigo != null && String(c.paciente_codigo).trim())
+          .map(c => ({ pacienteCodigo: String(c.paciente_codigo).trim(), eventKey: c.event_key != null ? String(c.event_key) : undefined }));
+      } catch (e: any) { console.error('[cirugia] GET completadas:', e?.message ?? e); }
+      return res.status(200).json({ cirugias: rows.map(r => ({ ...rowToCirugia(r), pasos: pasosById.get(String(r.id)) ?? {} })), completadas });
     } catch (err: any) {
       console.error('[cirugia] GET error:', err);
       return res.status(200).json({ cirugias: [] });
@@ -261,7 +275,7 @@ async function handler(req: any, res: any) {
       const { data: created, error } = await supa.from('cirugia_traslados').insert({
         entorno: ENTORNO,
         id_univoco: String(idUnivoco),
-        paciente_codigo: pacienteCodigo != null ? String(pacienteCodigo) : null,
+        paciente_codigo: String(pacienteCodigo ?? '').trim() || null, // '' → null (índices por paciente)
         paciente_nombre: pacienteNombre != null ? String(pacienteNombre) : null,
         cama_origen: String(camaOrigen),
         // Internación en la que ocurre esta cirugía — acota el gate de consentimiento (ver arriba).
@@ -278,15 +292,24 @@ async function handler(req: any, res: any) {
       if (error) {
         // 23505 = choque contra uno de los dos índices únicos:
         //   cirugia_univoco_uidx → alta reintentada (mismo id_univoco) → devolver la existente.
-        //   cirugia_viva_uidx    → ya hay una EN CURSO para esa cama_origen: si es del MISMO paciente,
-        //                          devolverla (idempotente); si no, 409 (ver api/cirugia-conflict.ts).
+        //   cirugia_viva_paciente_uidx → el paciente ya tiene una EN CURSO → devolverla (idempotente).
+        //   (índices viejos por cama, si siguieran) → otro paciente toma la cama → 409 con el motivo.
         if ((error as any).code === '23505') {
           const { data: byUniv } = await supa.from('cirugia_traslados').select('id')
             .eq('entorno', ENTORNO).eq('id_univoco', String(idUnivoco)).limit(1);
           if (byUniv?.length) return res.status(200).json({ ok: true, id: String(byUniv[0].id) });
-          const { data: vivas } = await supa.from('cirugia_traslados')
-            .select('id, paciente_codigo, paciente_nombre, estado, cama_origen, cama_destino, updated_at')
-            .eq('entorno', ENTORNO).eq('cama_origen', String(camaOrigen)).in('estado', VIVOS).limit(10);
+          // Candidatas: las EN CURSO del mismo paciente (candado por paciente) + las vivas de esa cama
+          // (índices viejos por cama, o paciente sin código).
+          const COLS = 'id, paciente_codigo, paciente_nombre, estado, cama_origen, cama_destino, updated_at';
+          const pcodeAlta = String(pacienteCodigo ?? '').trim();
+          const [delPaciente, deLaCama] = await Promise.all([
+            pcodeAlta
+              ? supa.from('cirugia_traslados').select(COLS).eq('entorno', ENTORNO).eq('paciente_codigo', pcodeAlta).in('estado', VIVOS).limit(10)
+              : Promise.resolve({ data: [] as any[] }),
+            supa.from('cirugia_traslados').select(COLS).eq('entorno', ENTORNO).eq('cama_origen', String(camaOrigen)).in('estado', VIVOS).limit(10),
+          ]);
+          const vistas = new Set<string>();
+          const vivas = [...(delPaciente.data ?? []), ...(deLaCama.data ?? [])].filter((r: any) => !vistas.has(r.id) && (vistas.add(r.id), true));
           // Mismo paciente con una operatoria EN CURSO → reintento (doble tap, dos dispositivos):
           // idempotente. Cualquier otro choque → 409 con el motivo. Antes se devolvía 200 con el id de la
           // viva aunque fuera de OTRO paciente y la app creía que había marcado (20/10/2026).
@@ -319,7 +342,7 @@ async function handler(req: any, res: any) {
 
   // ── PATCH — transición de estado (máquina de estados guardada) ────────────
   if (req.method === 'PATCH') {
-    const { id, action, motivoCancelacion, userId, userName } = req.body ?? {};
+    const { id, action, motivoCancelacion, userId, userName, areaActual } = req.body ?? {};
     if (!String(id ?? '').trim()) return res.status(400).json({ error: 'id is required' });
 
     const act = String(action ?? '');
@@ -338,7 +361,12 @@ async function handler(req: any, res: any) {
       if (!cur) return res.status(404).json({ error: 'Cirugia not found' });
 
       // Autorización server-side: permiso de la acción + (si filtra por pisos) sector de la operatoria.
-      const denyPatch = await authzCirugia(req, ACCION_PERMISO[act] ?? 'cirugia_cancelar', cur.area);
+      // "Iniciar dieta" lo confirma la enfermería de donde ESTÁ el paciente: si volvió de cirugía a otro
+      // sector (p. ej. del piso a UTI), su sector actual también vale. Antes solo valía el de origen y a
+      // UTI le decía "no pertenece a tus pisos" (20/10/2026). `areaActual` lo manda el cliente desde el
+      // mapa de Gamma; igual se exige el permiso cirugia_tolerancia.
+      const areasAccion = act === 'TOLERANCIA_EVALUADA' ? [cur.area, areaActual != null ? String(areaActual) : null] : cur.area;
+      const denyPatch = await authzCirugia(req, ACCION_PERMISO[act] ?? 'cirugia_cancelar', areasAccion);
       if (denyPatch) return res.status(denyPatch.status).json({ error: denyPatch.error });
 
       const permitidas = TRANSICIONES[String(cur.estado)] ?? [];

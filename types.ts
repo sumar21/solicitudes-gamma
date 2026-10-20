@@ -145,10 +145,14 @@ export interface Bed {
   // leen `cirugia.estado` para pintar la pill Cx por color. Ver mergeBeds.
   cirugia?: BedCirugiaOverlay;
   // Operatoria VIVA cuya cama_origen es ESTA cama pero de OTRO paciente (p. ej. el anterior quedó en
-  // "Regreso de cirugía" sin "Iniciar dieta"). No pinta la pill (no es de quien ocupa la cama), pero
-  // BLOQUEA el alta (índice cirugia_viva_uidx: una viva por cama). BedsView avisa y no ofrece "Listo
-  // para cirugía" (20/10/2026). Lo setea mergeBeds.
+  // "Regreso de cirugía" sin "Iniciar dieta"). No pinta la pill (no es de quien ocupa la cama) y NO
+  // bloquea el alta (el candado es por paciente, migración 20261020140000): BedsView solo lo informa.
+  // Lo setea mergeBeds.
   cirugiaBloqueante?: BedCirugiaOverlay;
+  // Paciente QUIRÚRGICO (PROGAL 'Q') pendiente de su cirugía en esta internación: la celda muestra la
+  // "Q". No se setea si ya se operó en esta internación sin consentimiento nuevo, si tiene marca de
+  // Admisión ("Re-Cx") o una cirugía viva (pill Cx). Lo setea el useMemo `beds` (lib/cirugiaQ.ts).
+  quirurgicoPendiente?: boolean;
   // Marca "va a cirugía" de Admisión sobre un paciente NO quirúrgico (overlay de
   // public.cirugia_marcas ACTIVA, keyed por PACIENTE). Lo setea el useMemo `beds` AL FINAL
   // (post-move, gate patientCode && patientName) para que SIGA al paciente arrastrando cambios

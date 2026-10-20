@@ -286,6 +286,33 @@ export default async function handler(req: any, res: any) {
     }
     const occData = (await occRes.json()) as GammaSector[];
 
+    // 2b) Nombres de cama del mapa COMPLETO. `obtenermapacamasocupadas` no trae `bed.nombre`, así que el
+    // label caía siempre al fallback "Cama 0<codigo>" (bedNombrePresente=false): nunca se guardaba la cama
+    // del paciente y la detección de "PROGAL lo cambió de cama" (cirugia_cambios + cama_destino + push
+    // CIRUGIA_MOVE) jamás se disparó en producción (verificado el 20/10/2026: 0 avisos, 0 cama_destino).
+    // Mismo origen que el label de /api/beds (= cirugia_traslados.cama_origen). Best-effort: si falla, se
+    // sigue como antes (sin detección de cama) y el resto del cron no cambia.
+    const nombresCama = new Map<string, { room: string; bed: string }>();
+    try {
+      const tokenMap = await getToken('obtenermapacamas');
+      const mapRes = await fetchWithTimeout(`${GAMMA_BASE}/oauth_resource/obtenermapacamas`, { headers: { Authorization: `Bearer ${tokenMap}` } });
+      if (mapRes.ok) {
+        const mapData = (await mapRes.json()) as GammaSector[];
+        for (const sector of Array.isArray(mapData) ? mapData : []) {
+          for (const room of sector.habitaciones ?? []) {
+            for (const bed of room.camas ?? []) {
+              const nombre = String(bed.nombre ?? '').trim();
+              if (nombre) nombresCama.set(`${sector.codigo}-${room.codigo}-${bed.codigo}`, { room: String(room.nombre ?? '').trim(), bed: nombre });
+            }
+          }
+        }
+      } else {
+        console.warn(`[cron-enrich] obtenermapacamas HTTP ${mapRes.status} — sin nombres de cama (no se detectan cambios de cama este ciclo)`);
+      }
+    } catch (e: any) {
+      console.warn('[cron-enrich] obtenermapacamas falló — sin nombres de cama este ciclo:', e?.message ?? e);
+    }
+
     // 3) Flatten a camas con paciente + evento válido. Guardamos areaName/patientName
     // para que la detección de cambio de fasting pueda emitir push (Catering filtra por
     // área y necesita el nombre legible).
@@ -300,6 +327,9 @@ export default async function handler(req: any, res: any) {
         for (const bed of room.camas ?? []) {
           const code = bed.codigo_paciente ? String(bed.codigo_paciente).trim() : '';
           const origen = bed.origen_evento ? String(bed.origen_evento).trim() : '';
+          const delMapa = nombresCama.get(`${sector.codigo}-${room.codigo}-${bed.codigo}`);
+          const nombreCama = String(bed.nombre ?? '').trim() || delMapa?.bed || '';
+          const nombreHab = delMapa?.room || String(room.nombre ?? '').trim();
           const numero = typeof bed.numero_evento === 'number' ? bed.numero_evento : Number(bed.numero_evento);
           if (!code || !origen || !numero) continue;
           beds.push({
@@ -312,10 +342,11 @@ export default async function handler(req: any, res: any) {
             roomName: String(room.nombre ?? '').trim(),
             // Label bed-level EXACTO, mismo formato que cirugia_traslados.cama_origen
             // ("Habitación 417 HPR - Cama 01") — para detectar el move a nivel cama (no habitación).
-            bedLabel: `${String(room.nombre ?? '').trim()} - ${String(bed.nombre ?? '').trim() || `Cama 0${bed.codigo}`}`,
+            bedLabel: `${nombreHab} - ${nombreCama || `Cama 0${bed.codigo}`}`,
             // ¿el nombre de cama vino de Gamma (confiable) o se cayó al fallback "Cama 0<codigo>"? Si es
             // fallback, el label es inestable entre corridas → no se usa para detectar move ni de baseline.
-            bedNombrePresente: !!String(bed.nombre ?? '').trim(),
+            // El nombre sale del mapa completo (2b); ocupadas no lo trae.
+            bedNombrePresente: !!nombreCama,
           });
         }
       }

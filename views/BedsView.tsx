@@ -801,32 +801,14 @@ const CirugiaBedBlock: React.FC<{
   // aparecía para cualquier Q sin importar cuántas cirugías previas tuviera.
   if (bed.status !== BedStatus.OCCUPIED || !onMarcarListo || !(autoQ || flagActivo)) return null;
 
-  // Operatoria viva de OTRO paciente que salió de esta cama:
-  //  · EN CURSO (listo / búsqueda / traslado / quirófano) → la cama está tomada (una en curso por cama):
-  //    el alta rebotaría, así que se avisa en vez de ofrecer el botón.
-  //  · "Regreso de cirugía" → solo espera "Iniciar dieta" (que el paciente vuelva a comer); NO toma la
-  //    cama: se informa y el botón sigue (pedido del 20/10/2026, migración 20261020120000).
-  // Antes la API devolvía ok y el panel se cerraba sin marcar nada. Mismo texto que el 409 de
-  // api/cirugia-conflict.ts.
+  // Operatoria viva de OTRO paciente que salió de esta cama (p. ej. el anterior quedó en "Regreso de
+  // cirugía" sin "Iniciar dieta"). Ya NO bloquea: el candado es por paciente (migración 20261020140000).
+  // Solo se informa para que no pase desapercibida. Antes la API devolvía ok sin marcar (20/10/2026).
   const bloq = bed.cirugiaBloqueante;
   const bloqDesde = bloq?.updatedAt ? new Date(bloq.updatedAt) : null;
   const bloqDesdeTxt = bloqDesde && !isNaN(bloqDesde.getTime())
     ? ` desde el ${bloqDesde.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })} ${bloqDesde.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })}`
     : '';
-  if (bloq && bloq.estado !== 'EN_DEVOLUCION') {
-    return (
-      <div role="alert" className="rounded-2xl p-3.5 border border-red-200 bg-red-50 flex items-start gap-2">
-        <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-        <div className="min-w-0">
-          <p className="text-[11px] font-bold text-red-900">No se puede marcar "Listo para cirugía" todavía</p>
-          <p className="text-[11px] font-medium text-red-800 mt-0.5 break-words">
-            Esta cama tiene una cirugía en curso de <strong>{bloq.pacienteNombre || 'otro paciente'}</strong> ({CIRUGIA_ESTADO_LABEL[bloq.estado]}{bloqDesdeTxt}).
-            {' '}Terminala o cancelala desde Operativa → Cirugías y después volvé a marcar a este paciente.
-          </p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="rounded-2xl p-3.5 border border-amber-200 bg-amber-50/50 flex flex-col gap-2.5">
@@ -850,7 +832,10 @@ const CirugiaBedBlock: React.FC<{
         <div className="flex items-start gap-2">
           <Info className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
           <p className="text-[11px] font-medium text-slate-600 break-words">
-            Esta cama tiene pendiente "Iniciar dieta" de <strong>{bloq.pacienteNombre || 'otro paciente'}</strong> (Regreso de cirugía{bloqDesdeTxt}). No impide marcar a este paciente.
+            {bloq.estado === 'EN_DEVOLUCION'
+              ? <>Esta cama tiene pendiente "Iniciar dieta" de <strong>{bloq.pacienteNombre || 'otro paciente'}</strong> (Regreso de cirugía{bloqDesdeTxt}).</>
+              : <>De esta cama salió una cirugía de <strong>{bloq.pacienteNombre || 'otro paciente'}</strong> que sigue abierta ({CIRUGIA_ESTADO_LABEL[bloq.estado]}{bloqDesdeTxt}).</>}
+            {' '}No impide marcar a este paciente.
           </p>
         </div>
       )}
@@ -2910,6 +2895,17 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                       >
                         <Activity className="w-2 h-2 md:w-2.5 md:h-2.5 shrink-0" strokeWidth={3} />
                         <span className="tracking-tight">{(bed.admissionTypeCode ?? '').toUpperCase() === 'Q' ? 'Re-Cx' : 'C→Q'}</span>
+                      </div>
+                    )}
+                    {/* "Q": paciente quirúrgico (PROGAL) pendiente de su cirugía en esta internación
+                        (lib/cirugiaQ.ts). No aparece si ya se operó en esta internación sin consentimiento
+                        nuevo; con marca de Admisión va "Re-Cx" y con cirugía viva la pill Cx (mismo lugar). */}
+                    {bed.quirurgicoPendiente && (
+                      <div
+                        className="absolute top-0.5 left-1/2 -translate-x-1/2 flex items-center justify-center px-1 min-w-[14px] h-3 md:h-3.5 rounded-full ring-1 ring-white shadow-sm text-[7px] md:text-[8px] font-black z-10 bg-amber-100 text-amber-800 border border-amber-300"
+                        title={`Paciente quirúrgico (PROGAL) — pendiente de su cirugía${bed.expectedSurgeryDate ? ` · probable: ${new Date(bed.expectedSurgeryDate).toLocaleDateString('es-AR')}` : ''}`}
+                      >
+                        Q
                       </div>
                     )}
                     {/* Limpieza de RUTINA en curso: badge celeste (spray). Esquina inf. izq.; si hay

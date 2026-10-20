@@ -1726,4 +1726,24 @@ Pedido de Gamma tras probar el paquete en TESTING.
 - **Overlay por cama** (`buildCirugiaByBed`, exportado): si una cama tiene una operatoria en curso y otra en "Regreso", en la clave de la cama manda la **en curso**. La otra queda bajo `label#id`, así la pill sigue al paciente que volvió. Antes la segunda pisaba a la primera.
 - "Iniciar dieta" de una operatoria en "Regreso" sigue disponible en la cama donde está el paciente y en **Operativa → Cirugías**.
 
-**Verificación:** `scripts/check-cirugia-conflict.mts` y `scripts/check-merge-beds-cirugia.mts` (mergeBeds/buildCirugiaByBed reales vía esbuild), con mutaciones. Playwright con la app real e `/api` interceptado, a 1440 y 390: con "Regreso" de otro paciente, aviso informativo + botón, y el 409 se ve en el panel; con una operatoria en curso de otro paciente, aviso rojo sin botón.
+**Verificación:** `scripts/check-cirugia-conflict.mts` y `scripts/check-merge-beds-cirugia.mts` (mergeBeds/buildCirugiaByBed reales vía esbuild), con mutaciones. Playwright con la app real e `/api` interceptado, a 1440 y 390.
+
+> **Actualización (v20261020_1.11.3, §52):** el candado pasó a ser **por paciente**. Una operatoria de otro paciente que salió de la cama ya no bloquea nada; el panel solo la informa.
+
+## 52. Cirugía: candado por paciente, "Iniciar dieta" en otro sector, detección de cambio de cama y "Q" (2026-10-20, v20261020_1.11.3)
+
+- **Candado por paciente** (migración `20261020140000_cirugia_viva_por_paciente.sql`). Decisión del equipo: en cirugía todo sigue al paciente (la pill, la marca de Admisión, el consentimiento) y atarla a la cama traía problemas cada vez que el paciente se movía. El índice `cirugia_viva_paciente_uidx` asegura que un **paciente** no tenga dos operatorias **en curso**; "Regreso de cirugía" no cuenta. Para operatorias sin código de paciente queda de respaldo `cirugia_viva_sin_codigo_uidx`, por cama. `resolveAltaChoque` prioriza la operatoria en curso del propio paciente (idempotente). Si la base todavía tuviera los índices viejos por cama, el choque con otro paciente da 409 con el motivo. El panel de la cama ya no bloquea: informa (`cirugiaBloqueante`) y deja el botón.
+- **"Iniciar dieta" donde está el paciente.** Caso real: un paciente salió del piso a cirugía y volvió a **UTI**; la enfermería de UTI no podía iniciar la dieta ("no pertenece a tus pisos"), porque el permiso se validaba solo contra el sector de **origen** de la operatoria. Ahora `api/cirugia-authz.ts → sectorAutorizado` acepta varios sectores, y para `TOLERANCIA_EVALUADA` vale el de origen **o** el sector actual del paciente. Ese sector lo manda el cliente (`areaActual`, tomado del mapa crudo de Gamma, `areaActualDelPaciente`), sin preguntarle nada al usuario. Se sigue exigiendo `cirugia_tolerancia`.
+- **Detección de cambio de cama (PROGAL), reactivada.** El cron (`cron-enrich-beds`) detecta que PROGAL movió de cama a un paciente con cirugía abierta. En ese caso inserta en `cirugia_cambios` (lo que dispara el push `CIRUGIA_MOVE`) y graba `cama_destino`. **Nunca había funcionado en producción**: al 20/10 había 0 avisos y 0 `cama_destino`, por dos motivos:
+  1. `obtenermapacamasocupadas` no trae `bed.nombre`. El label caía siempre al fallback, `bedNombrePresente` quedaba en false y nunca se guardaba la cama del paciente. Ahora el cron lee los nombres del **mapa completo** (`obtenermapacamas`), igual que `/api/beds`: una llamada más por corrida, best-effort.
+  2. `cirugia_cambios` no tenía `GRANT` para `service_role` (daba 403). Lo arregla la migración `20261020130000_cirugia_cambios_grant_service_role.sql`.
+
+  La primera corrida después del deploy aprende la cama de todos sin notificar (bootstrap); desde la siguiente, un cambio de cama de un paciente con cirugía abierta avisa.
+- **"Q" en la celda del Mapa de Camas** ([lib/cirugiaQ.ts](../../lib/cirugiaQ.ts)): marca a los pacientes de internación **quirúrgica** (PROGAL `Q`) **pendientes de su cirugía en esta internación**. No aparece en estos casos:
+  - ya se operó en esta internación (cerrada con "Iniciar dieta") y no hay consentimiento nuevo;
+  - tiene marca de Admisión: en ese lugar va la pill "Re-Cx";
+  - tiene una cirugía viva: en ese lugar va la pill Cx.
+
+  Misma regla que el gate del POST y que el detalle de la cama (las completadas sin `event_key` cuentan siempre). Los datos llegan en el mismo `GET /api/cirugia` (campo `completadas`: paciente + internación de las cerradas del último año); el hook marca `bed.quirurgicoPendiente`.
+
+**Verificación:** `check-cirugia-authz`, `check-cirugia-q`, `check-cirugia-conflict` (con el caso de candado por paciente), `check-merge-beds-cirugia`, todos con mutaciones. Playwright con la app real: la Q aparece en los pendientes y no en el ya operado, "Re-Cx"/Cx no se duplican; la enfermería de UTI ve "Iniciar dieta" y el PATCH lleva `areaActual` de UTI; con una operatoria en curso de otro paciente en la cama, aviso informativo + botón.

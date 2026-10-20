@@ -1046,7 +1046,21 @@ Diseño en [arquitectura.md §48](../arquitectura/arquitectura.md). **Prerrequis
 - **Resultado esperado**: antes de tocar, aviso informativo "Esta cama tiene pendiente 'Iniciar dieta' de A… No impide marcar". Al tocar, se crea la operatoria de B y aparece su pill Cx "Listo". La operatoria de A sigue en "Regreso" (pill en la cama de A y en Operativa → Cirugías) hasta "Iniciar dieta".
 - **Regresión a vigilar**: nunca debe pasar que el panel se cierre "como ok" sin que aparezca la pill.
 
-### QA-CX-02 · "Listo para cirugía" con una operatoria EN CURSO de otro paciente en la misma cama
-- **Precondición**: una operatoria de C (listo / búsqueda / traslado / en cirugía) con cama de origen X; la paciente B ocupa X.
-- **Acción**: abrir la cama X.
-- **Resultado esperado**: aviso rojo "No se puede marcar 'Listo para cirugía' todavía… cirugía en curso de C (estado, desde)" y **sin** botón. Si se fuerza el POST (otro dispositivo con un build viejo): 409 con el mismo motivo, y el error queda visible en el panel.
+### QA-CX-02 · "Listo para cirugía" con una operatoria EN CURSO de otro paciente que salió de la misma cama
+- **Precondición**: operatoria de C (listo / búsqueda / traslado / en cirugía) con cama de origen X; C ya no está en X; la paciente B ocupa X. Migración `20261020140000` aplicada.
+- **Acción**: abrir la cama X y tocar "Listo para cirugía" para B.
+- **Resultado esperado**: aviso informativo "De esta cama salió una cirugía de C que sigue abierta… No impide marcar" y el botón disponible; se crea la operatoria de B (candado por paciente). Tocar dos veces para B no duplica (idempotente).
+
+### QA-CX-03 · "Iniciar dieta" cuando el paciente volvió de cirugía a otro sector (UTI)
+- **Precondición**: operatoria en "Regreso de cirugía" con origen en un piso; el paciente figura en el mapa en una cama de UTI; usuario de Enfermería que filtra por pisos y solo tiene UTI (con `cirugia_tolerancia`).
+- **Acción**: abrir la cama de UTI y tocar "Iniciar dieta".
+- **Resultado esperado**: se cierra la operatoria (sin "no pertenece a tus pisos"). Un usuario de otro piso sin ninguno de los dos sectores sigue sin poder.
+
+### QA-CX-04 · "Q" de quirúrgico pendiente en el Mapa de Camas
+- **Precondición**: pacientes `Q` en distintos estados: sin cirugías; ya operado en esta internación sin marca; ya operado en OTRA internación; con marca de Admisión; con cirugía viva; un clínico.
+- **Resultado esperado**: "Q" ámbar solo en el sin cirugías y en el operado en otra internación. El ya operado en esta internación, sin Q. Con marca, "Re-Cx" (no Q). Con cirugía viva, la pill Cx (no Q). El clínico, nada.
+
+### QA-CX-05 · Aviso de cambio de cama de un paciente con cirugía abierta
+- **Precondición**: migración `20261020130000` aplicada; un paciente con operatoria abierta; ya pasó al menos una corrida del cron después del deploy.
+- **Acción**: en PROGAL, cambiar de cama al paciente.
+- **Resultado esperado**: en ≤15 min se registra el cambio (`cirugia_cambios`), llega el push de cambio de habitación y la operatoria guarda `cama_destino`; en "Regreso de cirugía" la cama nueva muestra "Cama destino".

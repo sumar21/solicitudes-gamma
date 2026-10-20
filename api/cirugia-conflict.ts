@@ -7,9 +7,10 @@
  * para cirugía" para el paciente nuevo, la API contestaba ok, el panel se cerraba y no pasaba nada (la
  * pill Cx sigue al paciente, así que tampoco se veía la operatoria ajena).
  *
- * Ahora: mismo paciente → reintento idempotente (200, como siempre). Otro paciente → 409 con un mensaje
- * que dice qué operatoria bloquea la cama y qué hacer. Además, "Regreso de cirugía" (EN_DEVOLUCION) ya
- * no toma la cama (migración 20261020120000): solo espera "Iniciar dieta". Puro (sin imports) para testearlo:
+ * Ahora el candado es POR PACIENTE (migración 20261020140000): un paciente no puede tener dos operatorias
+ * en curso; la cama no importa y "Regreso de cirugía" no cuenta. Choque con el mismo paciente → idempotente
+ * (200). Si la base todavía tuviera los índices viejos por cama, un choque con OTRO paciente da 409 con un
+ * mensaje que dice qué operatoria toma la cama y qué hacer. Puro (sin imports) para testearlo:
  * npx tsx scripts/check-cirugia-conflict.mts
  */
 
@@ -98,7 +99,11 @@ export function resolveAltaChoque(
   req: { pacienteCodigo?: unknown; pacienteNombre?: unknown },
 ): AltaChoque {
   if (!rows.length) return { kind: 'ninguno' };
-  const live = rows.find(r => r.estado !== 'EN_DEVOLUCION') ?? rows[0];
-  if (live.estado !== 'EN_DEVOLUCION' && isSameCirugiaPatient(live, req)) return { kind: 'idempotente', id: String(live.id) };
-  return { kind: 'conflicto', live };
+  const enCurso = rows.filter(r => r.estado !== 'EN_DEVOLUCION');
+  // El MISMO paciente ya tiene una en curso → es esa (doble tap, dos dispositivos, o ya estaba marcado):
+  // idempotente. Con el candado por paciente (migración 20261020140000) es el único choque posible.
+  const propia = enCurso.find(r => isSameCirugiaPatient(r, req));
+  if (propia) return { kind: 'idempotente', id: String(propia.id) };
+  // Índices viejos por cama todavía aplicados: la cama está tomada por OTRO paciente → 409 con el motivo.
+  return { kind: 'conflicto', live: enCurso[0] ?? rows[0] };
 }

@@ -17,6 +17,7 @@ import { appAlert } from '../lib/appDialog';
 import { activeTicketsByOrigin, bedHasTicketPatient, describeOriginBedBusy, findOrphanTickets, isActiveTicket } from '../lib/originBed';
 import { makeAreaScope } from '../lib/ticketFilters';
 import { bedsShrinkDecision } from '../lib/bedsGuard';
+import { mostrarQ, type CirugiaCompletada } from '../lib/cirugiaQ';
 
 // ── JWT helpers (client-side, solo lectura — sin verificar firma) ─────────────
 function parseJwtPayload(token: string): Record<string, unknown> | null {
@@ -572,8 +573,8 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
       if (!cxCode) { bed.cirugia = info; continue; }
       if (bedCode) {
         if (bedCode === cxCode) { bed.cirugia = info; continue; } // su paciente sigue acá → pill correcta
-        // La ocupa OTRO → no es su cama (sin pill). Pero si la operatoria SALIÓ de esta cama, la sigue
-        // bloqueando para un alta nueva (una viva por cama_origen): se marca para que BedsView lo avise.
+        // La ocupa OTRO → no es su cama (sin pill). Si la operatoria SALIÓ de esta cama, se marca para que
+        // BedsView lo informe (ya no bloquea: el candado es por paciente).
         if (info.role === 'origin' && info.camaOrigen === bed.label) bed.cirugiaBloqueante = info;
         continue;
       }
@@ -1021,6 +1022,8 @@ export const useHospitalState = () => {
   // de la solapa Cirugías). El overlay POR CAMA se deriva en `cirugiaByBed`. El índice único
   // parcial de la tabla garantiza UNA operatoria viva por cama_origen.
   const [cirugias, setCirugias]                    = useState<Map<string, CirugiaTraslado>>(new Map());
+  // Cirugías completadas (paciente + internación), para la "Q" del mapa. Vienen con GET /api/cirugia.
+  const [cirugiasCompletadas, setCirugiasCompletadas] = useState<CirugiaCompletada[]>([]);
   // Contador (como mealsWritingRef): protege el update optimista del refetch Realtime en vuelo.
   const cirugiasWritingRef                         = React.useRef(0);
   // Limpiezas de RUTINA ABIERTAS (overlay sobre camas ocupadas), key = label de cama.
@@ -1078,8 +1081,13 @@ export const useHospitalState = () => {
         bed.goingToSurgeryAt = mk.at;
       }
     }
+    // "Q" de quirúrgico pendiente de su cirugía (lib/cirugiaQ.ts): va AL FINAL porque depende de la pill
+    // Cx (cirugiaByBed) y de la marca de Admisión (cirugiaMarcas), que se aplican arriba.
+    for (const bed of withEnrich) {
+      bed.quirurgicoPendiente = mostrarQ(bed, bedEventKey(bed) || undefined, cirugiasCompletadas) || undefined;
+    }
     return withEnrich;
-  }, [rawBeds, tickets, cleanings, meals, cirugiaByBed, routineCleanings, cirugiaMarcas]);
+  }, [rawBeds, tickets, cleanings, meals, cirugiaByBed, routineCleanings, cirugiaMarcas, cirugiasCompletadas]);
 
   // Cama de origen → ticket activo que la bloquea (para avisar en los modales ANTES de enviar), y
   // tickets huérfanos: su paciente ya no está en la cama de origen según PROGAL (marcados en Operativa).
@@ -1701,6 +1709,9 @@ export const useHospitalState = () => {
         map.set(String(c.id), c);
       }
       setCirugias(map);
+      // Completadas (paciente + internación) para la "Q" del mapa. Si el server es viejo y no las manda,
+      // se conservan las que había.
+      if (Array.isArray(data.completadas)) setCirugiasCompletadas(data.completadas as CirugiaCompletada[]);
     } catch { /* keep current */ }
   }, [authFetch]);
 
@@ -1726,11 +1737,13 @@ export const useHospitalState = () => {
     const now            = stampDate.toISOString();
     cirugiasWritingRef.current += 1;
     setCirugias(prev => {
-      // No pisar si ya hay una operatoria EN CURSO para esa cama (idempotencia del lado cliente; el
-      // server decide si es un reintento o un 409). No cuentan las terminales (TOLERANCIA_EVALUADA,
-      // CANCELADO) ni "Regreso de cirugía": solo espera "Iniciar dieta" y ya no toma la cama.
+      // No pisar si ESTE PACIENTE ya tiene una operatoria EN CURSO (idempotencia del lado cliente; el
+      // candado es por paciente, migración 20261020140000). Sin código, por cama (respaldo). No cuentan
+      // las terminales ni "Regreso de cirugía" (solo espera "Iniciar dieta").
       for (const c of prev.values()) {
-        if (c.camaOrigen === camaOrigen && !['TOLERANCIA_EVALUADA', 'CANCELADO', 'EN_DEVOLUCION'].includes(c.estado)) return prev;
+        if (['TOLERANCIA_EVALUADA', 'CANCELADO', 'EN_DEVOLUCION'].includes(c.estado)) continue;
+        const mismo = pacienteCodigo ? String(c.pacienteCodigo ?? '').trim() === String(pacienteCodigo).trim() : c.camaOrigen === camaOrigen;
+        if (mismo) return prev;
       }
       const n = new Map(prev);
       n.set(tempId, {
@@ -1776,6 +1789,13 @@ export const useHospitalState = () => {
   // Transición genérica (PATCH, máquina de estados guardada server-side). `action` == estado
   // destino. Optimista sobre el Map keyed por id; las terminales (RECIBIDA/CANCELADO) salen de
   // las vivas (dropea cola + overlay). Reconcilia (fetchCirugias, reemplazo total) ante !ok.
+  // Sector de la cama donde está HOY un paciente según el mapa crudo de Gamma (sin overlays).
+  const areaActualDelPaciente = (codigo?: string): string | undefined => {
+    const c = String(codigo ?? '').trim();
+    if (!c) return undefined;
+    return rawBedsRef.current.find(b => String(b.patientCode ?? '').trim() === c)?.area;
+  };
+
   const transicionarCirugia = useCallback(async (
     id: string,
     action: Exclude<CirugiaEstado, 'LISTO_PARA_CIRUGIA'>,
@@ -1805,6 +1825,9 @@ export const useHospitalState = () => {
         body: JSON.stringify({
           id, action,
           motivoCancelacion: extra?.motivoCancelacion,
+          // "Iniciar dieta": sector de la cama donde ESTÁ hoy el paciente (mapa de Gamma). Si volvió de
+          // cirugía a otro sector (p. ej. UTI), el server también lo acepta para la autorización.
+          areaActual: action === 'TOLERANCIA_EVALUADA' ? areaActualDelPaciente(curCirugia?.pacienteCodigo) : undefined,
           userId: u?.id ?? '', userName: u?.name ?? '', operador: getOperador(), version: APP_VERSION,
         }),
       });
