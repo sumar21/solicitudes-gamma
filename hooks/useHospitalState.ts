@@ -1825,9 +1825,9 @@ export const useHospitalState = () => {
         body: JSON.stringify({
           id, action,
           motivoCancelacion: extra?.motivoCancelacion,
-          // "Iniciar dieta": sector de la cama donde ESTÁ hoy el paciente (mapa de Gamma). Si volvió de
-          // cirugía a otro sector (p. ej. UTI), el server también lo acepta para la autorización.
-          areaActual: action === 'TOLERANCIA_EVALUADA' ? areaActualDelPaciente(curCirugia?.pacienteCodigo) : undefined,
+          // Sector de la cama donde ESTÁ hoy el paciente (mapa de Gamma): la operatoria sigue al paciente,
+          // así que el server lo acepta además del sector de origen (p. ej. ITR → 817, o piso → UTI).
+          areaActual: areaActualDelPaciente(curCirugia?.pacienteCodigo),
           userId: u?.id ?? '', userName: u?.name ?? '', operador: getOperador(), version: APP_VERSION,
         }),
       });

@@ -17,4 +17,8 @@ assert(sectorAutorizado(true, [], PISO8), 'sin sectores asignados');
 assert(sectorAutorizado(true, Array.from({ length: 9 }, (_, i) => `S${i}`), PISO8), 'full-access');
 assert(sectorAutorizado(true, [PISO4], null), 'sin sector conocido → fail-open');
 
+// Caso real 2 (20/10/2026): operatoria creada en ITR; PROGAL movió al paciente a la 817 (8° piso) y la
+// enfermería del 8° toca "En traslado a cirugía" → vale el sector actual.
+assert(sectorAutorizado(true, [PISO8], ['Internación Transitoria HPR', PISO8]), 'ITR → 817: el 8° piso puede');
+
 console.log('OK — cirugia-authz (sector de origen o actual)');

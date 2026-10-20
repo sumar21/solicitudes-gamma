@@ -15,8 +15,8 @@ import { getRoleByName } from './role-cache.js';
 import { getUserAreasById } from './user-cache.js';
 
 // `area`: el sector (o los sectores) desde los que se puede hacer la acción; alcanza con tener UNO.
-// "Iniciar dieta" se hace donde ESTÁ el paciente, que puede no ser el piso de origen (vuelve de cirugía a
-// UTI): ahí se pasa [sector de origen, sector actual] (20/10/2026).
+// Las transiciones de cirugía pasan [sector de origen, sector actual del paciente]: la operatoria sigue al
+// paciente, que PROGAL pudo mover (ITR → 817, piso → UTI) (20/10/2026).
 export async function authzCirugia(
   req: any,
   permiso: string,
