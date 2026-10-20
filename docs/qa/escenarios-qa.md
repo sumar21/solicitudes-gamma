@@ -1055,6 +1055,7 @@ Diseño en [arquitectura.md §48](../arquitectura/arquitectura.md). **Prerrequis
 - **Precondición**: operatoria en "Regreso de cirugía" con origen en un piso; el paciente figura en el mapa en una cama de UTI; usuario de Enfermería que filtra por pisos y solo tiene UTI (con `cirugia_tolerancia`).
 - **Acción**: abrir la cama de UTI y tocar "Iniciar dieta".
 - **Resultado esperado**: se cierra la operatoria (sin "no pertenece a tus pisos"). Un usuario de otro piso sin ninguno de los dos sectores sigue sin poder.
+- **Variante (v1.11.4)**: operatoria marcada en ITR, PROGAL pasa al paciente a un piso antes de que lo busquen → la enfermería del piso puede tocar "En traslado a cirugía".
 
 ### QA-CX-04 · "Q" de quirúrgico pendiente en el Mapa de Camas
 - **Precondición**: pacientes `Q` en distintos estados: sin cirugías; ya operado en esta internación sin marca; ya operado en OTRA internación; con marca de Admisión; con cirugía viva; un clínico.

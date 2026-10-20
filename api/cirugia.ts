@@ -360,12 +360,12 @@ async function handler(req: any, res: any) {
       if (readErr) { console.error('[cirugia] PATCH read failed:', readErr.message); return res.status(500).json({ error: 'Failed to read cirugia' }); }
       if (!cur) return res.status(404).json({ error: 'Cirugia not found' });
 
-      // Autorización server-side: permiso de la acción + (si filtra por pisos) sector de la operatoria.
-      // "Iniciar dieta" lo confirma la enfermería de donde ESTÁ el paciente: si volvió de cirugía a otro
-      // sector (p. ej. del piso a UTI), su sector actual también vale. Antes solo valía el de origen y a
-      // UTI le decía "no pertenece a tus pisos" (20/10/2026). `areaActual` lo manda el cliente desde el
-      // mapa de Gamma; igual se exige el permiso cirugia_tolerancia.
-      const areasAccion = act === 'TOLERANCIA_EVALUADA' ? [cur.area, areaActual != null ? String(areaActual) : null] : cur.area;
+      // Autorización server-side: permiso de la acción + (si filtra por pisos) sector. La operatoria sigue
+      // al PACIENTE: vale el sector de origen O el sector donde ESTÁ hoy (PROGAL pudo moverlo: de ITR a la
+      // 817 antes de "En traslado a cirugía", o del piso a UTI al volver). Antes solo valía el de origen y
+      // decía "no pertenece a tus pisos" (20/10/2026). `areaActual` lo manda el cliente desde el mapa de
+      // Gamma; el permiso de la acción se exige igual.
+      const areasAccion = [cur.area, areaActual != null ? String(areaActual) : null];
       const denyPatch = await authzCirugia(req, ACCION_PERMISO[act] ?? 'cirugia_cancelar', areasAccion);
       if (denyPatch) return res.status(denyPatch.status).json({ error: denyPatch.error });
 

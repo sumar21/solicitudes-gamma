@@ -1637,7 +1637,7 @@ Diseño y archivos en [arquitectura.md §48](arquitectura.md). Acá, el *por qu�
 
 ### 33. Cirugía: el candado es por paciente (no por cama) y "Iniciar dieta" se autoriza donde está el paciente (2026-10-20)
 
-**Qué:** un paciente no puede tener dos operatorias en curso (`cirugia_viva_paciente_uidx`); la cama no interviene, salvo como respaldo para operatorias sin código de paciente. "Iniciar dieta" se autoriza por el sector de origen **o** el sector actual del paciente según el mapa. Reemplaza lo de §32 sobre el índice por cama (allí se había descartado el candado por paciente; el equipo decidió lo contrario).
+**Qué:** un paciente no puede tener dos operatorias en curso (`cirugia_viva_paciente_uidx`); la cama no interviene, salvo como respaldo para operatorias sin código de paciente. Toda transición ("En traslado a cirugía", "Iniciar dieta", cancelar…) se autoriza por el sector de origen **o** el sector actual del paciente según el mapa (v20261020_1.11.4). Reemplaza lo de §32 sobre el índice por cama (allí se había descartado el candado por paciente; el equipo decidió lo contrario).
 
 **Por qué:** "las cosas tienen que estar atadas al paciente, no a la cama", definición del equipo. El paciente se mueve: va a cirugía, vuelve a otra cama o pasa a UTI. Todo lo demás de cirugía ya lo seguía (pill, marca, consentimiento). El candado por cama y la autorización por el sector de origen eran lo único atado a la cama, y fueron justo los dos bugs del 20/10 (825-01 y la vuelta a UTI).
 
