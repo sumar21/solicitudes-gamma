@@ -1035,3 +1035,18 @@ Diseño en [arquitectura.md §48](../arquitectura/arquitectura.md). **Prerrequis
 
 - **Traslados a Cirugía** — feature **planificada**, no implementada (ver
   [plan-traslados-cirugia.html](../planes/plan-traslados-cirugia.html)). No debe testearse como existente todavía.
+
+---
+
+## Cirugía (feature Cx)
+
+### QA-CX-01 · "Listo para cirugía" con una operatoria en "Regreso de cirugía" de otro paciente en la misma cama
+- **Precondición**: el paciente A volvió de cirugía (operatoria en "Regreso de cirugía", sin "Iniciar dieta") y dejó la cama X; la paciente B (quirúrgica o marcada por Admisión) ocupa la cama X. Migración `20261020120000` aplicada.
+- **Acción**: Enfermería abre la cama X en el Mapa de Camas y toca "Listo para cirugía".
+- **Resultado esperado**: antes de tocar, aviso informativo "Esta cama tiene pendiente 'Iniciar dieta' de A… No impide marcar". Al tocar, se crea la operatoria de B y aparece su pill Cx "Listo". La operatoria de A sigue en "Regreso" (pill en la cama de A y en Operativa → Cirugías) hasta "Iniciar dieta".
+- **Regresión a vigilar**: nunca debe pasar que el panel se cierre "como ok" sin que aparezca la pill.
+
+### QA-CX-02 · "Listo para cirugía" con una operatoria EN CURSO de otro paciente en la misma cama
+- **Precondición**: una operatoria de C (listo / búsqueda / traslado / en cirugía) con cama de origen X; la paciente B ocupa X.
+- **Acción**: abrir la cama X.
+- **Resultado esperado**: aviso rojo "No se puede marcar 'Listo para cirugía' todavía… cirugía en curso de C (estado, desde)" y **sin** botón. Si se fuerza el POST (otro dispositivo con un build viejo): 409 con el mismo motivo, y el error queda visible en el panel.

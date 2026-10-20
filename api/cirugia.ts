@@ -19,6 +19,7 @@
 import { requireAuth } from './jwt.js';
 import { getSupabaseAdmin } from './supabase-admin.js';
 import { authzCirugia } from './cirugia-authz.js';
+import { cirugiaBedBusyMessage, resolveAltaChoque, type LiveCirugiaRow } from './cirugia-conflict.js';
 
 const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 
@@ -277,15 +278,27 @@ async function handler(req: any, res: any) {
       if (error) {
         // 23505 = choque contra uno de los dos índices únicos:
         //   cirugia_univoco_uidx → alta reintentada (mismo id_univoco) → devolver la existente.
-        //   cirugia_viva_uidx    → ya hay una VIVA para esa cama_origen → devolver la viva.
-        // En ambos casos la respuesta es idempotente (200 con el id existente), no un duplicado.
+        //   cirugia_viva_uidx    → ya hay una EN CURSO para esa cama_origen: si es del MISMO paciente,
+        //                          devolverla (idempotente); si no, 409 (ver api/cirugia-conflict.ts).
         if ((error as any).code === '23505') {
           const { data: byUniv } = await supa.from('cirugia_traslados').select('id')
             .eq('entorno', ENTORNO).eq('id_univoco', String(idUnivoco)).limit(1);
           if (byUniv?.length) return res.status(200).json({ ok: true, id: String(byUniv[0].id) });
-          const { data: viva } = await supa.from('cirugia_traslados').select('id')
-            .eq('entorno', ENTORNO).eq('cama_origen', String(camaOrigen)).in('estado', VIVOS).limit(1);
-          if (viva?.length) return res.status(200).json({ ok: true, id: String(viva[0].id) });
+          const { data: vivas } = await supa.from('cirugia_traslados')
+            .select('id, paciente_codigo, paciente_nombre, estado, cama_origen, cama_destino, updated_at')
+            .eq('entorno', ENTORNO).eq('cama_origen', String(camaOrigen)).in('estado', VIVOS).limit(10);
+          // Mismo paciente con una operatoria EN CURSO → reintento (doble tap, dos dispositivos):
+          // idempotente. Cualquier otro choque → 409 con el motivo. Antes se devolvía 200 con el id de la
+          // viva aunque fuera de OTRO paciente y la app creía que había marcado (20/10/2026).
+          const choque = resolveAltaChoque((vivas ?? []) as LiveCirugiaRow[], { pacienteCodigo, pacienteNombre });
+          if (choque.kind === 'idempotente') return res.status(200).json({ ok: true, id: choque.id });
+          if (choque.kind === 'conflicto') {
+            console.warn(`[cirugia] alta rechazada: "${camaOrigen}" tiene viva ${choque.live.id} (${choque.live.estado}) de otro paciente`);
+            return res.status(409).json({
+              error: cirugiaBedBusyMessage(choque.live, String(camaOrigen)),
+              conflictingCirugiaId: String(choque.live.id),
+            });
+          }
         }
         console.error('[cirugia] POST failed:', error.message);
         return res.status(500).json({ error: 'Failed to create cirugia' });

@@ -800,6 +800,34 @@ const CirugiaBedBlock: React.FC<{
   // Un Q que ya se operó NO se auto-habilita → necesita la marca (nuevo consentimiento). Antes
   // aparecía para cualquier Q sin importar cuántas cirugías previas tuviera.
   if (bed.status !== BedStatus.OCCUPIED || !onMarcarListo || !(autoQ || flagActivo)) return null;
+
+  // Operatoria viva de OTRO paciente que salió de esta cama:
+  //  · EN CURSO (listo / búsqueda / traslado / quirófano) → la cama está tomada (una en curso por cama):
+  //    el alta rebotaría, así que se avisa en vez de ofrecer el botón.
+  //  · "Regreso de cirugía" → solo espera "Iniciar dieta" (que el paciente vuelva a comer); NO toma la
+  //    cama: se informa y el botón sigue (pedido del 20/10/2026, migración 20261020120000).
+  // Antes la API devolvía ok y el panel se cerraba sin marcar nada. Mismo texto que el 409 de
+  // api/cirugia-conflict.ts.
+  const bloq = bed.cirugiaBloqueante;
+  const bloqDesde = bloq?.updatedAt ? new Date(bloq.updatedAt) : null;
+  const bloqDesdeTxt = bloqDesde && !isNaN(bloqDesde.getTime())
+    ? ` desde el ${bloqDesde.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })} ${bloqDesde.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })}`
+    : '';
+  if (bloq && bloq.estado !== 'EN_DEVOLUCION') {
+    return (
+      <div role="alert" className="rounded-2xl p-3.5 border border-red-200 bg-red-50 flex items-start gap-2">
+        <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+        <div className="min-w-0">
+          <p className="text-[11px] font-bold text-red-900">No se puede marcar "Listo para cirugía" todavía</p>
+          <p className="text-[11px] font-medium text-red-800 mt-0.5 break-words">
+            Esta cama tiene una cirugía en curso de <strong>{bloq.pacienteNombre || 'otro paciente'}</strong> ({CIRUGIA_ESTADO_LABEL[bloq.estado]}{bloqDesdeTxt}).
+            {' '}Terminala o cancelala desde Operativa → Cirugías y después volvé a marcar a este paciente.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-2xl p-3.5 border border-amber-200 bg-amber-50/50 flex flex-col gap-2.5">
       {autoQ && (
@@ -815,6 +843,14 @@ const CirugiaBedBlock: React.FC<{
           <Activity className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" strokeWidth={2.5} />
           <p className="text-[11px] font-medium text-amber-800">
             {esQuirurgico ? 'Nueva cirugía autorizada por Admisión' : 'Marcado para cirugía por Admisión'}{bed.goingToSurgeryBy ? ` (${bed.goingToSurgeryBy})` : ''}.
+          </p>
+        </div>
+      )}
+      {bloq && (
+        <div className="flex items-start gap-2">
+          <Info className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
+          <p className="text-[11px] font-medium text-slate-600 break-words">
+            Esta cama tiene pendiente "Iniciar dieta" de <strong>{bloq.pacienteNombre || 'otro paciente'}</strong> (Regreso de cirugía{bloqDesdeTxt}). No impide marcar a este paciente.
           </p>
         </div>
       )}
@@ -1075,7 +1111,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   // cirugía" movía el switch pero NO refrescaba el botón "Listo para cirugía": había que cerrar y
   // reabrir el modal (y lo mismo al destildar).
   const cirugiaBed: Bed | null = displayBed && liveBed
-    ? { ...displayBed, status: liveBed.status, goingToSurgery: liveBed.goingToSurgery, goingToSurgeryBy: liveBed.goingToSurgeryBy, cirugia: liveBed.cirugia }
+    ? { ...displayBed, status: liveBed.status, goingToSurgery: liveBed.goingToSurgery, goingToSurgeryBy: liveBed.goingToSurgeryBy, cirugia: liveBed.cirugia, cirugiaBloqueante: liveBed.cirugiaBloqueante }
     : displayBed;
 
   // Historial de traslados del paciente de la cama abierta, ON-DEMAND: al abrir el modal se

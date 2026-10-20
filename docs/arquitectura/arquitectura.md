@@ -1709,3 +1709,21 @@ Pedido de Gamma tras probar el paquete en TESTING.
 - **Mapa de camas parcial:** si Gamma devuelve un mapa más de un 20% más chico que el último bueno, el cliente ([lib/bedsGuard.ts](../../lib/bedsGuard.ts), `fetchBeds`) y `/api/beds` se quedan con el anterior; si el mapa chico se sostiene 3 min, lo aceptan. El cliente no guarda el ETag de un mapa rechazado (un 304 lo dejaría trabado) y el Mapa de Camas muestra "debug: PARCIAL: Progal devolvió N de M camas". Se arregló de paso el guard de "todas libres" de `fetchBeds`, que nunca se activaba (leía `rawBeds` de una closure vieja; ahora usa `rawBedsRef`, que se actualiza en el momento de aceptar un mapa para que dos fetch en vuelo no se pisen).
 
 **Verificación:** `scripts/check-ticket-filters.mts` (recorte por sectores, mapa parcial) y `scripts/check-beds-guard.mts`, con mutaciones. Prueba de punta a punta con la app real (Vite + Playwright interceptando `/api`): con `/api/tickets` devolviendo 503, a los 3 s aparece el cartel y ningún dato de prueba; a los ~21 s se recupera solo con los 4 traslados. Un mapa parcial (6 de 36 camas) se rechaza con el aviso en el Mapa de Camas. Con un mapa parcial desde el arranque, los traslados igual se ven. Capturas a 2000/1440/1280/390 sin desborde.
+
+## 51. Cirugía: "Listo para cirugía" con otra operatoria en la cama (2026-10-20, v20261020_1.11.2)
+
+**Caso real (20/10/2026, 825-01):** la operatoria del paciente anterior de la cama quedó en "Regreso de cirugía" (`EN_DEVOLUCION`) toda la noche, porque nadie tocó "Iniciar dieta". Por la mañana Enfermería tocaba "Listo para cirugía" para la paciente nueva: aparecía "Marcando…", el panel se cerraba y no aparecía la pill Cx. Se repetía cada vez.
+
+**Por qué:** el índice `cirugia_viva_uidx` permitía una operatoria viva por `(entorno, cama_origen)`, **contando `EN_DEVOLUCION`**. El INSERT chocaba y `POST /api/cirugia` lo trataba como reintento idempotente: **200 con el id de la operatoria ajena**, sin comparar el paciente. El cliente veía ok y cerraba el panel. La pill Cx sigue al paciente, así que la operatoria ajena tampoco se veía en esa cama.
+
+**Cambios:**
+- **Migración `20261020120000_cirugia_viva_sin_devolucion.sql`:** el índice cubre solo los estados **en curso** (`LISTO_PARA_CIRUGIA`, `VAN_A_BUSCAR`, `EN_TRASLADO`, `EN_CIRUGIA`). "Regreso de cirugía" solo espera "Iniciar dieta" (que el paciente vuelva a comer) y **ya no toma la cama**. Una cama puede tener una operatoria en curso y, además, operatorias en "Regreso".
+- **API** ([api/cirugia-conflict.ts](../../api/cirugia-conflict.ts) → `resolveAltaChoque`): ante un choque, es reintento idempotente (200) **solo** si la operatoria **en curso** es del **mismo paciente**. Si no, responde **409** con un mensaje que dice de quién es la cirugía abierta, en qué estado y desde cuándo, y qué hacer. Si la base todavía tiene el índice viejo y el choque es con una `EN_DEVOLUCION`, también responde 409: nunca más un ok que no creó nada.
+- **Mapa de Camas:** `mergeBeds` marca `bed.cirugiaBloqueante` cuando una operatoria viva salió de esa cama pero es de otro paciente.
+  - Si está **en curso**, el panel muestra un aviso rojo y **no** ofrece el botón.
+  - Si está en **"Regreso de cirugía"**, el panel muestra un aviso informativo ("tiene pendiente 'Iniciar dieta' de X; no impide marcar") y deja el botón.
+  - Si la API responde 409, el error queda visible en el panel (no se cierra).
+- **Overlay por cama** (`buildCirugiaByBed`, exportado): si una cama tiene una operatoria en curso y otra en "Regreso", en la clave de la cama manda la **en curso**. La otra queda bajo `label#id`, así la pill sigue al paciente que volvió. Antes la segunda pisaba a la primera.
+- "Iniciar dieta" de una operatoria en "Regreso" sigue disponible en la cama donde está el paciente y en **Operativa → Cirugías**.
+
+**Verificación:** `scripts/check-cirugia-conflict.mts` y `scripts/check-merge-beds-cirugia.mts` (mergeBeds/buildCirugiaByBed reales vía esbuild), con mutaciones. Playwright con la app real e `/api` interceptado, a 1440 y 390: con "Regreso" de otro paciente, aviso informativo + botón, y el 409 se ve en el panel; con una operatoria en curso de otro paciente, aviso rojo sin botón.
