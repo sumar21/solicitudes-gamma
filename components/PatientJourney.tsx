@@ -9,7 +9,8 @@ import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
 import { Badge } from './ui/badge';
 import { cn, formatDateTime, formatTime, formatBedName, formatDateReadable, formatTicketDestination } from '../lib/utils';
 import { eventConfigFor, parseModification } from '../lib/ticketEvents';
-import { CIRUGIA_ESTADO_LABEL, CIRUGIA_PILL_CLASS } from '../lib/constants';
+import { CIRUGIA_ESTADO_LABEL, CIRUGIA_PILL_CLASS, CIRUGIA_TIPO_PREVIA } from '../lib/constants';
+import { cirugiaEventoLabel, esRetroceso } from '../lib/cirugiaEventos';
 
 interface TicketEvent {
   id: string;
@@ -44,9 +45,7 @@ const isActive = (t: Ticket) => ACTIVE_STATUSES.has(t.status);
 const episodeEnd = (t: Ticket) => t.completedAt || t.createdAt;
 
 // Un paso de la operatoria (cirugia_eventos) — para el timeline auditable dentro del journey.
-interface CxEvento { tipo: string; at: string; usuario?: string; operador?: string; }
-// Label legible de un paso (reusa las etiquetas de estado; fallback al raw).
-const pasoLabel = (tipo: string): string => (CIRUGIA_ESTADO_LABEL as Record<string, string>)[tipo] ?? tipo;
+interface CxEvento { tipo: string; at: string; usuario?: string; operador?: string; meta?: { de?: unknown; a?: unknown } | null; }
 
 // Panel "Cirugías" del journey: trae todas las rondas del paciente (GET /api/cirugia?paciente=) y,
 // por cada una, sus pasos (GET ?eventos=<id> → cirugia_eventos) para mostrar el timeline auditable
@@ -110,15 +109,17 @@ const CirugiaJourney: React.FC<{ patientCode?: string; isOpen: boolean }> = ({ p
           const est = c.estado as CirugiaEstado;
           const cambio = !!c.camaDestino && c.camaDestino !== c.camaOrigen;
           const cerrada = c.estado === 'TOLERANCIA_EVALUADA' || c.estado === 'CANCELADO';
+          // Cirugía previa registrada a mano ("Ya se operó (fuera de MediFlow)"): no tiene pasos ni duración.
+          const previa = c.tipo === CIRUGIA_TIPO_PREVIA;
           return (
             <div key={c.id} className="rounded-2xl border border-violet-100 bg-white overflow-hidden">
               <div className="px-4 py-3 flex items-start justify-between gap-3 border-b border-violet-100 bg-violet-50/40">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap mb-1">
                     <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9px] font-black uppercase', CIRUGIA_PILL_CLASS[est] ?? '')}>
-                      <Activity className="w-2.5 h-2.5" strokeWidth={3} /> Cx · {CIRUGIA_ESTADO_LABEL[est] ?? c.estado}
+                      <Activity className="w-2.5 h-2.5" strokeWidth={3} /> {previa ? (c.estado === 'CANCELADO' ? 'Cirugía previa anulada' : 'Cirugía previa (fuera de MediFlow)') : <>Cx · {CIRUGIA_ESTADO_LABEL[est] ?? c.estado}</>}
                     </span>
-                    {c.tipo && <Badge variant="outline" className="text-[8px] font-bold uppercase bg-white text-cyan-700 border-cyan-200 px-1.5 py-0">{c.tipo}</Badge>}
+                    {c.tipo && !previa && <Badge variant="outline" className="text-[8px] font-bold uppercase bg-white text-cyan-700 border-cyan-200 px-1.5 py-0">{c.tipo}</Badge>}
                     <span className="text-[10px] font-bold text-slate-400 tabular-nums">{formatDateTime(c.createdAt)}</span>
                   </div>
                   <div className="flex items-center gap-1.5 text-xs font-black uppercase tracking-tight text-slate-800 min-w-0">
@@ -130,7 +131,7 @@ const CirugiaJourney: React.FC<{ patientCode?: string; isOpen: boolean }> = ({ p
               <div className="px-4 py-2.5 flex items-center gap-x-3 gap-y-1 flex-wrap text-[11px] text-slate-500">
                 <span className="flex items-center gap-1"><Clock className="w-3 h-3 text-slate-400" /> Inicio {formatDateTime(c.createdAt)}</span>
                 {cerrada && c.fechaCierre && <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-500" /> Cierre {formatDateTime(c.fechaCierre)}</span>}
-                {cerrada && c.fechaCierre && <span className="font-bold text-violet-700">Duración {dur(c.createdAt, c.fechaCierre)}</span>}
+                {cerrada && c.fechaCierre && !previa && <span className="font-bold text-violet-700">Duración {dur(c.createdAt, c.fechaCierre)}</span>}
                 {c.motivoCancelacion && <span className="text-red-600 italic">Cancelada: {c.motivoCancelacion}</span>}
               </div>
               {(() => {
@@ -147,12 +148,12 @@ const CirugiaJourney: React.FC<{ patientCode?: string; isOpen: boolean }> = ({ p
                         return (
                           <div key={i} className="flex gap-2.5">
                             <div className="flex flex-col items-center">
-                              <div className="w-2 h-2 rounded-full bg-violet-500 mt-1.5 shrink-0" />
+                              <div className={cn('w-2 h-2 rounded-full mt-1.5 shrink-0', esRetroceso(e) ? 'bg-amber-500' : 'bg-violet-500')} />
                               {!last && <div className="w-px flex-1 bg-violet-100 my-0.5" />}
                             </div>
                             <div className={cn('min-w-0', last ? 'pb-0.5' : 'pb-3')}>
                               <div className="flex items-center gap-2 flex-wrap">
-                                <span className="text-[11px] font-black uppercase tracking-tight text-slate-700">{pasoLabel(e.tipo)}</span>
+                                <span className={cn('text-[11px] font-black uppercase tracking-tight', esRetroceso(e) ? 'text-amber-700' : 'text-slate-700')}>{cirugiaEventoLabel(e)}</span>
                                 {d && <span className="text-[9px] font-bold text-violet-600" title="Tiempo desde el paso anterior">+{d}</span>}
                               </div>
                               <p className="text-[10px] text-slate-500 flex items-center gap-1.5 mt-0.5 flex-wrap">

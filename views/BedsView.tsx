@@ -5,13 +5,13 @@ import { hasLiveFasting, fastingOccurrences, formatFastingDateTime, fastingTimes
 import { isolationSigla, isolationRule } from '../lib/isolations';
 import { Input } from '../components/ui/input';
 import { cn, dietRequiresCustomComanda, suggestedRoomSex, formatBedName, formatDateReadable, bedEventKey, isIndividualBoxArea } from '../lib/utils';
-import { BedDouble, User as UserIcon, Info, Search, X, Plus, ChevronDown, ChevronRight, Check, AlertTriangle, AlertCircle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan, History, Lock, Activity, ArrowRight, Calendar as CalendarIcon } from 'lucide-react';
+import { BedDouble, User as UserIcon, Info, Search, X, Plus, ChevronDown, ChevronRight, Check, AlertTriangle, AlertCircle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan, History, Lock, Activity, ArrowRight, Undo2, Calendar as CalendarIcon } from 'lucide-react';
 import { Calendar } from '../components/ui/calendar';
 import { Dialog, DialogContent, DialogTitle } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { PatientJourney } from '../components/PatientJourney';
-import { WORKFLOW_LABELS, CIRUGIA_ESTADO_LABEL, CIRUGIA_PILL_CLASS } from '../lib/constants';
+import { WORKFLOW_LABELS, CIRUGIA_ESTADO_LABEL, CIRUGIA_PILL_CLASS, CIRUGIA_ANTERIOR, CIRUGIA_PERMISO_DEL_PASO, CIRUGIA_TIPO_PREVIA } from '../lib/constants';
 import jsPDF from 'jspdf';
 
 const AREA_LABELS: Record<string, string> = {
@@ -70,6 +70,11 @@ interface BedsViewProps {
   onMarcarListo?: (bed: Bed) => Promise<{ ok: boolean; id?: string; error?: string }>;
   onCirugiaEnTraslado?: (id: string) => Promise<{ ok: boolean; error?: string }>;
   onCirugiaTolerancia?: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  /** "Volver un paso" de una operatoria (corrige un paso marcado por error). */
+  onCirugiaRetroceder?: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  /** "Ya se operó (fuera de MediFlow)": registra una cirugía previa de esta internación (saca la "Q"). */
+  onCirugiaPrevia?: (bed: Bed) => Promise<{ ok: boolean; error?: string }>;
+  onAnularCirugiaPrevia?: (id: string, bed?: Bed) => Promise<{ ok: boolean; error?: string }>;
   // Limpieza de rutina (camas ocupadas): iniciar / finalizar. Se pasan solo si el rol tiene el
   // permiso `limpieza_rutina` (App.tsx los gatea) → undefined = sin permiso = botón escondido.
   onStartRoutineCleaning?: (bed: Bed) => Promise<void>;
@@ -715,10 +720,27 @@ const CirugiaBedBlock: React.FC<{
   onMarcarListo?: (bed: Bed) => Promise<{ ok: boolean; id?: string; error?: string }>;
   onCirugiaEnTraslado?: (id: string) => Promise<{ ok: boolean; error?: string }>;
   onCirugiaTolerancia?: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  /** "Volver un paso" de una operatoria (corrige un paso marcado por error). */
+  onCirugiaRetroceder?: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  /** "Ya se operó (fuera de MediFlow)": registra una cirugía previa de esta internación (saca la "Q"). */
+  onCirugiaPrevia?: (bed: Bed) => Promise<{ ok: boolean; error?: string }>;
+  onAnularCirugiaPrevia?: (id: string, bed?: Bed) => Promise<{ ok: boolean; error?: string }>;
+  /** Cirugía previa ("fuera de MediFlow") de ESTA internación, si se registró. */
+  previa?: { id: string; createdAt?: string } | null;
+  currentUser: User | null;
   onDone: () => void;
-}> = ({ bed, tieneCirugiaCompletada, onMarcarListo, onCirugiaEnTraslado, onCirugiaTolerancia, onDone }) => {
+}> = ({ bed, tieneCirugiaCompletada, onMarcarListo, onCirugiaEnTraslado, onCirugiaTolerancia, onCirugiaRetroceder, onCirugiaPrevia, onAnularCirugiaPrevia, previa, currentUser, onDone }) => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Confirmación inline (nunca confirm() nativo): "Volver un paso" y "Ya se operó" dejan registro.
+  const [confirmando, setConfirmando] = useState<'retroceder' | 'previa' | null>(null);
+  const [accion, setAccion] = useState<'listo' | 'retroceder' | 'previa' | 'anular' | null>(null);
+  const run = async (a: NonNullable<typeof accion>, fn: () => Promise<{ ok: boolean; error?: string }>, fallback: string) => {
+    setBusy(true); setError(null); setAccion(a);
+    const r = await fn();
+    setBusy(false); setAccion(null); setConfirmando(null);
+    if (r.ok) onDone(); else setError(r.error ?? fallback);
+  };
   const cx = bed.cirugia;
   const esQuirurgico = (bed.admissionTypeCode ?? '').toUpperCase() === 'Q';
   // Auto-habilitado SOLO en la 1ra cirugía del quirúrgico (consentimiento del ingreso). Si ya tiene una
@@ -744,6 +766,12 @@ const CirugiaBedBlock: React.FC<{
     // donde LLEGA el paciente (cama destino si cambió, o la propia si volvió a la misma). En la cama
     // origen de un cambio NO va el botón. Cierra la operatoria y avisa a Catering.
     const puedoTolerancia = cx.estado === 'EN_DEVOLUCION' && (soyDestino || !esCambio);
+    // "Volver un paso" (20/10/2026): corrige un paso marcado por error (p. ej. "En traslado a cirugía"
+    // que al final no salió). Pide el permiso del paso que se deshace y queda en la trayectoria. En la
+    // cama vieja de un cambio no va (el paciente ya no está ahí).
+    const anterior = CIRUGIA_ANTERIOR[cx.estado];
+    const permisoPaso = CIRUGIA_PERMISO_DEL_PASO[cx.estado];
+    const puedoRetroceder = !!onCirugiaRetroceder && !!anterior && !!permisoPaso && can(currentUser, permisoPaso) && !soyOrigenConCambio;
     return (
       <div className="rounded-2xl p-3.5 border border-slate-200 bg-slate-50/70 flex flex-col gap-2.5">
         <div className="flex items-center gap-2">
@@ -791,6 +819,29 @@ const CirugiaBedBlock: React.FC<{
             <CheckCircle2 className="w-4 h-4" /> {busy ? 'Confirmando…' : 'Iniciar dieta'}
           </button>
         )}
+        {puedoRetroceder && (confirmando === 'retroceder' ? (
+          <div className="rounded-xl border border-amber-200 bg-white p-2.5 flex flex-col gap-2">
+            <p className="text-[11px] font-medium text-slate-700">
+              ¿Volver a <strong>"{CIRUGIA_ESTADO_LABEL[anterior!]}"</strong>? Queda registrado en la trayectoria del paciente.
+            </p>
+            <div className="flex gap-2">
+              <button disabled={busy} onClick={() => run('retroceder', () => onCirugiaRetroceder!(cx.id), 'No se pudo volver el paso.')}
+                className="flex-1 h-9 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-black uppercase tracking-widest disabled:opacity-50">
+                {busy ? 'Volviendo…' : 'Sí, volver'}
+              </button>
+              <button disabled={busy} onClick={() => setConfirmando(null)}
+                className="flex-1 h-9 rounded-xl border border-slate-300 bg-white text-slate-600 text-[10px] font-black uppercase tracking-widest hover:bg-slate-50">
+                No
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button disabled={busy} onClick={() => { setError(null); setConfirmando('retroceder'); }}
+            title={`Volver a "${CIRUGIA_ESTADO_LABEL[anterior!]}" (corrige un paso marcado por error)`}
+            className="w-full flex items-center justify-center gap-1.5 h-9 rounded-xl border border-slate-300 bg-white text-slate-600 text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 disabled:opacity-50">
+            <Undo2 className="w-3.5 h-3.5" /> Volver un paso
+          </button>
+        ))}
       </div>
     );
   }
@@ -799,7 +850,13 @@ const CirugiaBedBlock: React.FC<{
   // HABILITADO: quirúrgico en su 1ra cirugía (autoQ) o marcado por Admisión (flag "va a cirugía").
   // Un Q que ya se operó NO se auto-habilita → necesita la marca (nuevo consentimiento). Antes
   // aparecía para cualquier Q sin importar cuántas cirugías previas tuviera.
-  if (bed.status !== BedStatus.OCCUPIED || !onMarcarListo || !(autoQ || flagActivo)) return null;
+  //
+  // "Ya se operó (fuera de MediFlow)" (20/10/2026): Gamma empezó a usar el módulo con pacientes Q que ya
+  // se habían operado en esta internación y la "Q" los mostraba como pendientes. Deja constancia (una
+  // cirugía previa completada): la "Q" se va y una nueva cirugía necesita la marca de Admisión.
+  const puedeListo = !!onMarcarListo && (autoQ || flagActivo);
+  const puedePrevia = !!onCirugiaPrevia && autoQ && !!bed.patientCode;
+  if (bed.status !== BedStatus.OCCUPIED || !(puedeListo || puedePrevia || previa)) return null;
 
   // Operatoria viva de OTRO paciente que salió de esta cama (p. ej. el anterior quedó en "Regreso de
   // cirugía" sin "Iniciar dieta"). Ya NO bloquea: el candado es por paciente (migración 20261020140000).
@@ -809,9 +866,27 @@ const CirugiaBedBlock: React.FC<{
   const bloqDesdeTxt = bloqDesde && !isNaN(bloqDesde.getTime())
     ? ` desde el ${bloqDesde.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })} ${bloqDesde.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })}`
     : '';
+  const previaFecha = previa?.createdAt ? new Date(previa.createdAt) : null;
+  const previaFechaTxt = previaFecha && !isNaN(previaFecha.getTime()) ? ` el ${previaFecha.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}` : '';
 
   return (
-    <div className="rounded-2xl p-3.5 border border-amber-200 bg-amber-50/50 flex flex-col gap-2.5">
+    <div className={cn('rounded-2xl p-3.5 border flex flex-col gap-2.5',
+      puedeListo || puedePrevia ? 'border-amber-200 bg-amber-50/50' : 'border-slate-200 bg-slate-50/70')}>
+      {previa && (
+        <div className="flex items-start gap-2">
+          <Info className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
+          <p className="text-[11px] font-medium text-slate-600 break-words">
+            Cirugía previa registrada (fuera de MediFlow){previaFechaTxt}.
+            {!flagActivo && ' Para una nueva cirugía, Admisión tiene que habilitarlo con "Va a cirugía".'}
+            {onAnularCirugiaPrevia && (
+              <button disabled={busy} onClick={() => run('anular', () => onAnularCirugiaPrevia(previa.id, bed), 'No se pudo deshacer.')}
+                className="ml-1.5 font-bold text-slate-700 underline underline-offset-2 hover:text-slate-900 disabled:opacity-50">
+                {accion === 'anular' ? 'Deshaciendo…' : 'Deshacer'}
+              </button>
+            )}
+          </p>
+        </div>
+      )}
       {autoQ && (
         <div className="flex items-start gap-2">
           <Activity className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" strokeWidth={2.5} />
@@ -840,16 +915,35 @@ const CirugiaBedBlock: React.FC<{
         </div>
       )}
       {error && <p className="text-[10px] font-bold text-red-600">{error}</p>}
-      <button disabled={busy}
-        onClick={async () => {
-          setBusy(true); setError(null);
-          const r = await onMarcarListo(bed);
-          setBusy(false);
-          if (r.ok) onDone(); else setError(r.error ?? 'No se pudo marcar.');
-        }}
-        className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm disabled:opacity-50">
-        <Activity className="w-4 h-4" /> {busy ? 'Marcando…' : 'Listo para cirugía'}
-      </button>
+      {puedeListo && (
+        <button disabled={busy}
+          onClick={() => run('listo', () => onMarcarListo!(bed), 'No se pudo marcar.')}
+          className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm disabled:opacity-50">
+          <Activity className="w-4 h-4" /> {accion === 'listo' ? 'Marcando…' : 'Listo para cirugía'}
+        </button>
+      )}
+      {puedePrevia && (confirmando === 'previa' ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-2.5 flex flex-col gap-2">
+          <p className="text-[11px] font-medium text-slate-700">
+            ¿Este paciente <strong>ya se operó en esta internación</strong>? Queda registrado, la "Q" deja de mostrarse y una nueva cirugía va a necesitar la autorización de Admisión.
+          </p>
+          <div className="flex gap-2">
+            <button disabled={busy} onClick={() => run('previa', () => onCirugiaPrevia!(bed), 'No se pudo registrar.')}
+              className="flex-1 h-9 rounded-xl bg-slate-700 hover:bg-slate-800 text-white text-[10px] font-black uppercase tracking-widest disabled:opacity-50">
+              {busy ? 'Registrando…' : 'Sí, ya se operó'}
+            </button>
+            <button disabled={busy} onClick={() => setConfirmando(null)}
+              className="flex-1 h-9 rounded-xl border border-slate-300 bg-white text-slate-600 text-[10px] font-black uppercase tracking-widest hover:bg-slate-50">
+              No
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button disabled={busy} onClick={() => { setError(null); setConfirmando('previa'); }}
+          className="w-full flex items-center justify-center gap-1.5 h-9 rounded-xl border border-slate-300 bg-white text-slate-600 text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 disabled:opacity-50">
+          <CheckCircle2 className="w-3.5 h-3.5" /> Ya se operó (fuera de MediFlow)
+        </button>
+      ))}
     </div>
   );
 };
@@ -1028,7 +1122,7 @@ const AdmissionDateFilter: React.FC<{
   );
 };
 
-export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onFetchPatientTickets, onRefresh, onMarkClean, onUndoClean, onSaveMeal, onClearMeal, onSaveCompanion, onClearCompanion, onMarcarListo, onCirugiaEnTraslado, onCirugiaTolerancia, onStartRoutineCleaning, onFinishRoutineCleaning, onMarcarVaCirugia, onDesmarcarVaCirugia }) => {
+export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onFetchPatientTickets, onRefresh, onMarkClean, onUndoClean, onSaveMeal, onClearMeal, onSaveCompanion, onClearCompanion, onMarcarListo, onCirugiaEnTraslado, onCirugiaTolerancia, onCirugiaRetroceder, onCirugiaPrevia, onAnularCirugiaPrevia, onStartRoutineCleaning, onFinishRoutineCleaning, onMarcarVaCirugia, onDesmarcarVaCirugia }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
   // Turnos abiertos en el modal de la cama. Vive en el PADRE y no en cada box: si viviera adentro,
   // se perdería al cerrar/reabrir. Se resetea al cambiar de cama (el default se recalcula abajo).
@@ -1131,8 +1225,11 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   // consentimiento → de la 2da en adelante, aunque el paciente sea quirúrgico (Q), Admisión tiene que
   // re-habilitar con "va a cirugía". Solo las completadas cuentan (una cancelada no consumió consentimiento).
   const [patientTieneCxCompletada, setPatientTieneCxCompletada] = useState(false);
+  // Cirugía previa "fuera de MediFlow" de esta internación (para la nota + "Deshacer" de CirugiaBedBlock).
+  const [patientCxPrevia, setPatientCxPrevia] = useState<{ id: string; createdAt?: string } | null>(null);
   React.useEffect(() => {
     const code = selectedBed?.patientCode?.trim();
+    setPatientCxPrevia(null);
     if (!code || !selectedBed?.patientName) { setPatientHasCirugias(false); setPatientTieneCxCompletada(false); setPatientCirugiasLoaded(false); return; }
     let cancelled = false;
     setPatientCirugiasLoaded(false);
@@ -1142,15 +1239,17 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     const token = localStorage.getItem('mediflow_token');
     fetch(`/api/cirugia?paciente=${encodeURIComponent(code)}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
       .then(r => r.ok ? r.json() : { cirugias: [] })
-      .then((d: { cirugias?: { estado?: string; eventKey?: string }[] }) => {
+      .then((d: { cirugias?: { id?: string; estado?: string; eventKey?: string; tipo?: string; createdAt?: string }[] }) => {
         if (cancelled) return;
         const list = Array.isArray(d.cirugias) ? d.cirugias : [];
         setPatientHasCirugias(list.length > 0);
         // Sin eventKey (de la cama o de la fila) no se puede discriminar → cuenta, como antes.
         // Espeja exactamente el gate del servidor en api/cirugia.ts; ante falta de dato, nunca
         // desbloquear de más.
-        setPatientTieneCxCompletada(list.some(c =>
-          c?.estado === 'TOLERANCIA_EVALUADA' && (!ekey || !c.eventKey || c.eventKey === ekey)));
+        const deEstaInternacion = (c: { eventKey?: string }) => !ekey || !c.eventKey || c.eventKey === ekey;
+        setPatientTieneCxCompletada(list.some(c => c?.estado === 'TOLERANCIA_EVALUADA' && deEstaInternacion(c)));
+        const previa = list.find(c => c?.tipo === CIRUGIA_TIPO_PREVIA && c.estado === 'TOLERANCIA_EVALUADA' && deEstaInternacion(c));
+        setPatientCxPrevia(previa?.id ? { id: String(previa.id), createdAt: previa.createdAt } : null);
       })
       .catch(() => { if (!cancelled) { setPatientHasCirugias(false); setPatientTieneCxCompletada(false); } })
       .finally(() => { if (!cancelled) setPatientCirugiasLoaded(true); });
@@ -3104,13 +3203,18 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
 
                   {/* Cirugía (feature Cx): alta "Listo para cirugía" (Enfermería, cama ocupada) o
                       pill + "Iniciar dieta" cuando el paciente vuelve. Ver CirugiaBedBlock. */}
-                  {(onMarcarListo || onCirugiaEnTraslado || onCirugiaTolerancia) && (
+                  {(onMarcarListo || onCirugiaEnTraslado || onCirugiaTolerancia || onCirugiaRetroceder || onCirugiaPrevia) && (
                     <CirugiaBedBlock
                       bed={cirugiaBed ?? selectedBed}
                       tieneCirugiaCompletada={patientTieneCxCompletada}
                       onMarcarListo={onMarcarListo}
                       onCirugiaEnTraslado={onCirugiaEnTraslado}
                       onCirugiaTolerancia={onCirugiaTolerancia}
+                      onCirugiaRetroceder={onCirugiaRetroceder}
+                      onCirugiaPrevia={onCirugiaPrevia}
+                      onAnularCirugiaPrevia={onAnularCirugiaPrevia}
+                      previa={patientCxPrevia}
+                      currentUser={currentUser}
                       onDone={() => setSelectedBed(null)}
                     />
                   )}

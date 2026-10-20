@@ -7,10 +7,11 @@ import { Label } from '../ui/label';
 import { SearchableSelect } from '../ui/searchable-select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { ROOM_CHANGE_REASONS } from '../../lib/constants';
-import { isHitArea, isHraArea } from '../../lib/utils';
+import { formatBedName, isHitArea, isHraArea } from '../../lib/utils';
 import { roomCheckFor } from '../../lib/roomCheck';
 import { RoomCheckNotice } from '../RoomCheckNotice';
 import { splitDestinationsByIsolation } from '../../lib/isolations';
+import { puedeRestablecerDestino } from '../../lib/originBed';
 
 // Same ordering used elsewhere: pre-internación (HRA, HIT) first, then floors, then critical units
 const AREA_ORDER: Area[] = [
@@ -48,15 +49,20 @@ interface EditRequestModalProps {
   beds: Bed[];
   activeTransferDestinations?: Set<string>;
   onSave: (data: EditRequestPayload) => void;
+  /** "Restablecer destino" de un pre-ticket configurado: vuelve a Presolicitud y libera la cama. */
+  onResetDestino?: (ticketId: string, motivo?: string) => Promise<boolean>;
 }
 
-export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpenChange, ticket, beds, activeTransferDestinations = new Set(), onSave }) => {
+export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpenChange, ticket, beds, activeTransferDestinations = new Set(), onSave, onResetDestino }) => {
   const [workflow, setWorkflow] = useState<WorkflowType>(WorkflowType.INTERNAL);
   const [destination, setDestination] = useState('');
   const [reason, setReason] = useState('');
   const [itrSource, setItrSource] = useState('');
   const [observations, setObservations] = useState('');
   const [modificationReason, setModificationReason] = useState('');
+  // "Restablecer destino": confirmación inline (nunca confirm() nativo) + en curso.
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   // Guarda el ticket.id ya prefileado para no re-prefilear en cada actualización
   // del objeto `ticket` por polling (sino se pisa lo que el usuario está tipeando).
@@ -82,6 +88,7 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
     setItrSource(ticket.itrSource ?? '');
     setObservations(ticket.observations ?? '');
     setModificationReason('');
+    setConfirmReset(false);
   }, [open, ticket]);
 
   if (!ticket) return null;
@@ -219,6 +226,36 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
             {currentDestBed && !destinationChanged && (
               <p className="text-[10px] text-slate-400 px-1">Estado actual: {currentDestBed.status}</p>
             )}
+            {/* Pre-ticket configurado: liberar la cama sin cancelarlo (se la dieron a un paciente más urgente).
+                Vuelve a "Presolicitud" y a la grilla con "Configurar destino". */}
+            {onResetDestino && puedeRestablecerDestino(ticket) && (confirmReset ? (
+              <div className="flex flex-col gap-2 px-3 py-2.5 rounded-xl bg-red-50 border border-red-200">
+                <p className="text-[11px] font-medium text-red-800">
+                  Se libera <b>{formatBedName(ticket.destination!)}</b> para otro paciente y el pre-ticket vuelve a <b>Configurar destino</b>. Si cargaste un motivo de modificación, queda en la trayectoria.
+                </p>
+                <div className="flex gap-2">
+                  <Button type="button" size="sm" disabled={resetting}
+                    onClick={async () => {
+                      setResetting(true);
+                      const ok = await onResetDestino(ticket.id, modificationReason);
+                      setResetting(false);
+                      if (ok) onOpenChange(false); else setConfirmReset(false);
+                    }}
+                    className="h-8 rounded-lg bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold uppercase tracking-wide">
+                    {resetting ? 'Liberando…' : 'Sí, liberar la cama'}
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" disabled={resetting} onClick={() => setConfirmReset(false)}
+                    className="h-8 rounded-lg text-[10px] font-bold uppercase tracking-wide">
+                    No
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <button type="button" onClick={() => setConfirmReset(true)}
+                className="justify-self-start text-left px-1 text-[11px] font-bold text-red-600 underline underline-offset-2 hover:text-red-700">
+                Restablecer destino (liberar {formatBedName(ticket.destination!)})
+              </button>
+            ))}
           </div>
 
           {workflow === WorkflowType.INTERNAL && (

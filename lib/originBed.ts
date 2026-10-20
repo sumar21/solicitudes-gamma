@@ -8,10 +8,12 @@
  *   - dice si es del paciente que HOY está en la cama o de otro, y dónde está ese paciente ahora
  *     (caso típico: lo pasaron de una cama de ITR a otra por PROGAL y el ticket quedó en la vieja),
  *   - arma el aviso (el mismo texto en los modales, en el appAlert del hook y en Operativa),
- *   - marca como huérfanos los tickets cuyo paciente ya no está en su cama de origen.
+ *   - marca como huérfanos los tickets cuyo paciente ya no está en su cama de origen,
+ *   - detecta los que PROGAL ya cambió de cama, para reubicar su origen solo (findOriginMoves),
+ *   - dice si un pre-ticket configurado puede volver a "Presolicitud" (puedeRestablecerDestino).
  * Puro (sin React ni red). Self-check: npx tsx scripts/check-origin-bed.mts
  */
-import { Bed, BedStatus, Ticket, TicketStatus } from '../types';
+import { Bed, BedStatus, Ticket, TicketStatus, WorkflowType } from '../types';
 import { formatBedName, formatDateTime } from './utils';
 
 export const isActiveTicket = (t: Ticket): boolean =>
@@ -83,6 +85,59 @@ export function findOrphanTickets(tickets: Ticket[], rawBeds: Bed[]): Map<string
     out.set(t.id, { occupantName: bed.patientName, patientNowAt: now?.label, patientNotInMap: !now && !!t.patientCode });
   }
   return out;
+}
+
+export interface OriginMove {
+  ticketId: string;
+  from: string;
+  to: string;
+  toCode?: string;
+  toArea?: string;
+  patientCode: string;
+}
+
+/**
+ * Origen automático (20/10/2026): pedidos que todavía no salieron cuyo paciente PROGAL ya ubica en OTRA
+ * cama (p. ej. lo pasaron de la 407.1 a la 407.2). El pedido se reubica a la cama nueva para que la vieja
+ * quede libre para otro paciente. Conservador, porque escribe solo:
+ *   - solo con código de paciente (sin código no se lo busca por nombre: homónimos);
+ *   - la cama vieja está en el mapa y NO tiene al paciente (si figura en las dos, PROGAL está a mitad);
+ *   - el paciente figura en UNA sola cama nueva, y no es el destino del pedido (PROGAL adelantado: ya lo
+ *     consolidaron allá y el paciente sigue en la de origen hasta que lo trasladen);
+ *   - ningún otro pedido activo sale de la cama nueva.
+ * `rawBeds` = camas CRUDAS de Gamma. Del lado del servidor, validarReubicarOrigen (api/ticket-origen.ts).
+ */
+export function findOriginMoves(tickets: Ticket[], rawBeds: Bed[]): OriginMove[] {
+  const out: OriginMove[] = [];
+  if (!rawBeds.length) return out;
+  const byLabel = new Map(rawBeds.map(b => [b.label, b]));
+  const byOrigin = activeTicketsByOrigin(tickets);
+  for (const t of tickets) {
+    const pc = String(t.patientCode ?? '').trim();
+    if (!STILL_ON_ORIGIN.has(t.status) || !pc || t.urgencia) continue;
+    const old = byLabel.get(t.origin);
+    if (!old || bedHasTicketPatient(old, t)) continue;
+    const nuevas = rawBeds.filter(b => b.label !== t.origin && b.status === BedStatus.OCCUPIED
+      && String(b.patientCode ?? '').trim() === pc);
+    if (nuevas.length !== 1) continue;
+    const now = nuevas[0];
+    if (now.label === t.destination) continue;
+    const otro = byOrigin.get(now.label);
+    if (otro && otro.id !== t.id) continue;
+    out.push({ ticketId: t.id, from: t.origin, to: now.label, toCode: now.bedCode, toArea: now.area, patientCode: pc });
+  }
+  return out;
+}
+
+/**
+ * "Restablecer destino": un pre-ticket CONFIGURADO (con cama destino, todavía sin intervención de la
+ * azafata) puede volver a "Presolicitud" y liberar la cama. Espeja validarRestablecerDestino
+ * (api/ticket-origen.ts), que es la regla real.
+ */
+export function puedeRestablecerDestino(t: Ticket): boolean {
+  return t.workflow === WorkflowType.PRE_TICKET && !t.urgencia && !!t.destination
+    && (t.status === TicketStatus.WAITING_ROOM || t.status === TicketStatus.IN_TRANSIT)
+    && t.intervenedByHostess !== 'SI' && t.canCancel !== false;
 }
 
 export interface OriginBedBusy {

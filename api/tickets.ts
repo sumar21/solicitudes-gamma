@@ -19,6 +19,7 @@ import { getRoleByName } from './role-cache.js';
 import { getUserAreasById } from './user-cache.js';
 import { getSupabaseAdmin } from './supabase-admin.js';
 import { authzPreTicket } from './pre-ticket-authz.js';
+import { SIN_SALIR, validarReubicarOrigen, validarRestablecerDestino } from './ticket-origen.js';
 
 const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 
@@ -315,6 +316,73 @@ async function handler(req: any, res: any) {
       };
       const idUnivoco = String(updates.id ?? spItemId ?? '');
       if (!idUnivoco) return res.status(400).json({ error: 'id/spItemId required' });
+
+      // ── Origen automático: PROGAL movió al paciente de cama con el pedido abierto (ver ticket-origen.ts) ──
+      // Lo pide el cliente de quien opera traslados al detectarlo en el mapa. CAS por el origen leído:
+      // si dos dispositivos lo detectan a la vez, uno reubica (y deja el evento) y el otro recibe noop.
+      if (req.body?.reubicarOrigen) {
+        const ro = req.body.reubicarOrigen ?? {};
+        const denegados = await Promise.all(['crear_ticket', 'crear_pre_ticket', 'editar_ticket', 'completar_pre_ticket']
+          .map(p => authzPreTicket(req, p)));
+        if (denegados.every(Boolean)) return res.status(403).json({ error: 'No tenés permiso para modificar traslados.' });
+        const { data: cur } = await supa.from('traslados')
+          .select('status, cama_origen, cama_destino, codigo_paciente, updated_at')
+          .eq('id_univoco', idUnivoco).eq('entorno', ENTORNO).limit(1).maybeSingle();
+        const v = validarReubicarOrigen(cur, ro, Date.now());
+        if (!v.ok) return res.status(v.status ?? 409).json({ error: v.error });
+        if (v.noop) return res.status(200).json({ ok: true, unchanged: true });
+        const from = String(ro.from).trim(), to = String(ro.to).trim();
+        const { data: upd, error } = await supa.from('traslados').update({
+          cama_origen: to,
+          cama_origen_codigo: ro.toCode ? String(ro.toCode) : null,
+          cama_origen_area: ro.toArea ? String(ro.toArea) : null,
+          last_actor_id: Number(req.user?.id) || null,
+          version: String(req.body?.version ?? ''),
+        }).eq('id_univoco', idUnivoco).eq('entorno', ENTORNO).eq('cama_origen', from).in('status', SIN_SALIR).select('id_univoco');
+        if (error) { console.error('[tickets] reubicar origen failed:', error.message); return res.status(500).json({ error: 'No se pudo actualizar el origen.' }); }
+        if (!upd?.length) return res.status(409).json({ error: 'El traslado cambió; recargá.' });
+        // Mismo formato que las ediciones de Admisión → la auditoría y la trayectoria lo muestran como modificación.
+        const usuarioId = Number(req.body?.usuarioId);
+        await supa.from('traslado_eventos').insert({
+          traslado_id: idUnivoco,
+          entorno: ENTORNO,
+          tipo: `Modificacion - Origen: ${from} → ${to} - Motivo: Cambio de cama en PROGAL (automático)`,
+          usuario: req.body?.usuario ? String(req.body.usuario) : null,
+          usuario_id: Number.isFinite(usuarioId) && req.body?.usuarioId ? usuarioId : null,
+          operador: req.body?.operador ? String(req.body.operador) : null,
+          version: String(req.body?.version ?? ''),
+        });
+        console.log(`[tickets] origen reubicado ${idUnivoco}: "${from}" → "${to}" (PROGAL)`);
+        return res.status(200).json({ ok: true });
+      }
+
+      // ── Restablecer destino de un pre-ticket configurado (vuelve a Presolicitud y libera la cama) ──
+      // Los campos los fija el servidor (no el body). CAS por estado + "sin azafata": si la azafata marcó
+      // "Habitación lista" justo antes, no se pisa.
+      if (req.body?.restablecerDestino === true) {
+        const denied = await authzPreTicket(req, 'completar_pre_ticket');
+        if (denied) return res.status(denied.status).json({ error: denied.error });
+        const { data: cur } = await supa.from('traslados')
+          .select('status, workflow, intervino_azafata, urgencia')
+          .eq('id_univoco', idUnivoco).eq('entorno', ENTORNO).limit(1).maybeSingle();
+        const v = validarRestablecerDestino(cur);
+        if (!v.ok) return res.status(v.status ?? 409).json({ error: v.error });
+        if (v.noop) return res.status(200).json({ ok: true, unchanged: true });
+        const { data: upd, error } = await supa.from('traslados').update({
+          status: TicketStatus.PRESOLICITUD,
+          cama_destino: null,
+          cama_destino_codigo: null,
+          cama_destino_status: null,
+          cama_destino_area: null,
+          hab_compartida: false,
+          last_actor_id: Number(req.user?.id) || null,
+          version: String(req.body?.version ?? ''),
+        }).eq('id_univoco', idUnivoco).eq('entorno', ENTORNO).eq('status', String(cur!.status))
+          .or('intervino_azafata.is.null,intervino_azafata.neq.SI').select('id_univoco');
+        if (error) { console.error('[tickets] restablecer destino failed:', error.message); return res.status(500).json({ error: 'No se pudo restablecer el destino.' }); }
+        if (!upd?.length) return res.status(409).json({ error: 'El traslado cambió (¿intervino la azafata?); recargá.' });
+        return res.status(200).json({ ok: true });
+      }
 
       // Conversión de un pre-ticket (Admisión configura destino): si la fila está en 'Presolicitud',
       // exige completar_pre_ticket. Solo consultamos el estado actual cuando el update PARECE una

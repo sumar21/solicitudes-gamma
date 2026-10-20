@@ -235,6 +235,8 @@ export default function App() {
   const canViewBeds      = hasModule(state.currentUser, 'Mapa de Camas');
   const canViewComandas  = hasModule(state.currentUser, 'Gestion Comandas');
   const canViewConfig    = hasModule(state.currentUser, 'Configuracion');
+  // "Ya se operó (fuera de MediFlow)": quien marca "Listo" (Enfermería) o habilita cirugías (Admisión).
+  const canCirugiaPrevia = can(state.currentUser, 'cirugia_listo') || can(state.currentUser, 'cirugia_marcar');
 
   // Subsections de Configuración por permiso fino.
   const canSeeUsers = canViewConfig && can(state.currentUser, 'abm_usuarios');
@@ -818,6 +820,7 @@ export default function App() {
                     onEnDevolucion={actions.cirugiaEnDevolucion}
                     onTolerancia={can(state.currentUser, 'cirugia_tolerancia') ? actions.cirugiaTolerancia : undefined}
                     onCancelar={actions.cancelarCirugia}
+                    onRetroceder={actions.cirugiaRetroceder}
                     onRefresh={actions.refreshAll}
                   />
                 )
@@ -859,7 +862,7 @@ export default function App() {
           {/* Roles — gateado por permiso abm_roles */}
           {canSeeRoles && (state.currentView as string) === 'ROLES' && <RoleManagementView currentUser={state.currentUser} onSessionRoleUpdate={actions.refreshSessionRole} />}
           {/* Mapa de Camas — gateado por Acceso_RT */}
-          {canViewBeds && state.currentView === 'BEDS' && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} onEnrichBed={actions.enrichBed} onFetchPatientTickets={actions.fetchPatientTickets} onRefresh={actions.refreshAll} onMarkClean={actions.markBedClean} onUndoClean={actions.undoBedClean} onSaveMeal={actions.saveMealLoad} onClearMeal={actions.clearMealLoad} onSaveCompanion={actions.saveCompanionLoad} onClearCompanion={actions.clearCompanionLoad} onMarcarListo={can(state.currentUser, 'cirugia_listo') ? actions.marcarListoParaCirugia : undefined} onCirugiaEnTraslado={can(state.currentUser, 'cirugia_entregar') ? actions.cirugiaEnTraslado : undefined} onCirugiaTolerancia={can(state.currentUser, 'cirugia_tolerancia') ? actions.cirugiaTolerancia : undefined} onStartRoutineCleaning={can(state.currentUser, 'limpieza_rutina') ? actions.startRoutineCleaning : undefined} onFinishRoutineCleaning={can(state.currentUser, 'limpieza_rutina') ? actions.finishRoutineCleaning : undefined} onMarcarVaCirugia={can(state.currentUser, 'cirugia_marcar') ? actions.marcarVaCirugia : undefined} onDesmarcarVaCirugia={can(state.currentUser, 'cirugia_marcar') ? actions.desmarcarVaCirugia : undefined} />}
+          {canViewBeds && state.currentView === 'BEDS' && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} onEnrichBed={actions.enrichBed} onFetchPatientTickets={actions.fetchPatientTickets} onRefresh={actions.refreshAll} onMarkClean={actions.markBedClean} onUndoClean={actions.undoBedClean} onSaveMeal={actions.saveMealLoad} onClearMeal={actions.clearMealLoad} onSaveCompanion={actions.saveCompanionLoad} onClearCompanion={actions.clearCompanionLoad} onMarcarListo={can(state.currentUser, 'cirugia_listo') ? actions.marcarListoParaCirugia : undefined} onCirugiaEnTraslado={can(state.currentUser, 'cirugia_entregar') ? actions.cirugiaEnTraslado : undefined} onCirugiaTolerancia={can(state.currentUser, 'cirugia_tolerancia') ? actions.cirugiaTolerancia : undefined} onCirugiaRetroceder={actions.cirugiaRetroceder} onCirugiaPrevia={canCirugiaPrevia ? actions.registrarCirugiaPrevia : undefined} onAnularCirugiaPrevia={canCirugiaPrevia ? actions.anularCirugiaPrevia : undefined} onStartRoutineCleaning={can(state.currentUser, 'limpieza_rutina') ? actions.startRoutineCleaning : undefined} onFinishRoutineCleaning={can(state.currentUser, 'limpieza_rutina') ? actions.finishRoutineCleaning : undefined} onMarcarVaCirugia={can(state.currentUser, 'cirugia_marcar') ? actions.marcarVaCirugia : undefined} onDesmarcarVaCirugia={can(state.currentUser, 'cirugia_marcar') ? actions.desmarcarVaCirugia : undefined} />}
           {canViewComandas && state.currentView === 'COMANDAS' && <ComandasManagementView beds={state.beds} currentUser={state.currentUser} onRefresh={actions.refreshAll} onSetMealStatus={actions.setMealStatus} />}
         </main>
       </div>
@@ -923,6 +926,7 @@ export default function App() {
           actions.handleEditTicket(payload);
           setEditTicketId(null);
         }}
+        onResetDestino={can(state.currentUser, 'completar_pre_ticket') ? actions.restablecerDestinoPreTicket : undefined}
       />
       <AssignBedModal open={isAssignBedOpen} onOpenChange={setIsAssignBedOpen} onConfirm={onConfirmBed} />
       <RejectionModal

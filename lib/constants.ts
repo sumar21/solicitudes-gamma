@@ -1,6 +1,6 @@
 
 import { MOCK_API_RESPONSE, transformApiDataToBeds, generateMockTickets } from "./mock-api-data";
-import { Area, Bed, BedStatus, CirugiaEstado, Role, SedeType, Ticket, TicketStatus, User, WorkflowType } from "../types";
+import { Area, Bed, BedStatus, CirugiaEstado, Permission, Role, SedeType, Ticket, TicketStatus, User, WorkflowType } from "../types";
 
 // ── Cirugía: label + color de la pill "Cx" por estado ────────────────────────
 // Fuente única compartida (BedsView pinta la pill de la celda, CirugiasView agrupa la cola).
@@ -16,6 +16,26 @@ export const CIRUGIA_ESTADO_LABEL: Record<CirugiaEstado, string> = {
   TOLERANCIA_EVALUADA: 'Iniciar dieta',
   CANCELADO:          'Cancelada',
 };
+
+// "Volver un paso" en cirugía (20/10/2026): estado anterior de cada estado EN CURSO. Mismo mapa que
+// ANTERIOR en api/cirugia.ts. LISTO no tiene anterior (se cancela) y las terminales no vuelven.
+export const CIRUGIA_ANTERIOR: Partial<Record<CirugiaEstado, CirugiaEstado>> = {
+  VAN_A_BUSCAR:  'LISTO_PARA_CIRUGIA',
+  EN_TRASLADO:   'VAN_A_BUSCAR',
+  EN_CIRUGIA:    'EN_TRASLADO',
+  EN_DEVOLUCION: 'EN_CIRUGIA',
+};
+// Permiso de la acción que LLEVÓ a cada estado: para deshacerla hace falta el mismo (espeja
+// ACCION_PERMISO de api/cirugia.ts).
+export const CIRUGIA_PERMISO_DEL_PASO: Partial<Record<CirugiaEstado, Permission>> = {
+  VAN_A_BUSCAR:  'cirugia_buscar',
+  EN_TRASLADO:   'cirugia_entregar',
+  EN_CIRUGIA:    'cirugia_operar',
+  EN_DEVOLUCION: 'cirugia_devolver',
+};
+// `tipo` de una cirugía previa registrada a mano ("Ya se operó (fuera de MediFlow)"). Ver TIPO_PREVIA
+// en api/cirugia.ts.
+export const CIRUGIA_TIPO_PREVIA = 'PREVIA_EXTERNA';
 
 // Label corto para la pill de la celda del mapa (con prefijo "Cx").
 export const CIRUGIA_ESTADO_SHORT: Record<CirugiaEstado, string> = {

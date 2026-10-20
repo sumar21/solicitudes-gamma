@@ -1,0 +1,131 @@
+// Self-check del handler REAL de api/tickets.ts para el origen automático y "Restablecer destino"
+// (20/10/2026): authz, CAS (filtros del UPDATE), campos que fija el servidor y evento de auditoría.
+// Empaqueta el handler con esbuild y reemplaza SOLO los bordes (jwt, Supabase, caches de rol/usuario).
+// Correr:  npx tsx scripts/check-tickets-api-origen.mts
+import assert from 'node:assert';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { build } from 'esbuild';
+
+const tmp = mkdtempSync(join(tmpdir(), 'tickets-origen-check-'));
+const g = globalThis as any;
+
+writeFileSync(join(tmp, 'jwt-stub.mjs'), 'export const requireAuth = (h) => h;');
+writeFileSync(join(tmp, 'role-cache-stub.mjs'), `
+export async function getRoleByName() { return { permissions: globalThis.__perms ?? [], filterByFloors: false }; }
+`);
+writeFileSync(join(tmp, 'user-cache-stub.mjs'), `
+export async function getUserAreasById() { return { perfil: 'Rol', assignedAreas: [] }; }
+`);
+writeFileSync(join(tmp, 'push-utils-stub.mjs'), 'export const effectiveAreaNames = (o, d) => ({ origin: o, dest: d });');
+// Cada query registra tabla, operación, payload y filtros. El UPDATE devuelve __updRows filas (CAS).
+writeFileSync(join(tmp, 'supabase-admin-stub.mjs'), `
+export function getSupabaseAdmin() {
+  return {
+    from(table) {
+      const st = { table, op: null, payload: null, filters: [] };
+      const f = (k) => (...a) => { st.filters.push([k, ...a]); return api; };
+      const api = {
+        select() { st.op ??= 'select'; return api; },
+        eq: f('eq'), neq: f('neq'), not: f('not'), in: f('in'), or: f('or'), is: f('is'),
+        limit() { return api; }, order() { return api; }, range() { return api; },
+        update(p) { st.op = 'update'; st.payload = p; return api; },
+        insert(p) { globalThis.__ops.push({ table, op: 'insert', payload: p }); return Promise.resolve({ error: null }); },
+        maybeSingle() { return Promise.resolve({ data: globalThis.__cur ?? null, error: null }); },
+        then(res, rej) {
+          if (st.op === 'update') {
+            globalThis.__ops.push({ table, op: 'update', payload: st.payload, filters: st.filters });
+            return Promise.resolve({ data: Array.from({ length: globalThis.__updRows ?? 1 }, () => ({ id_univoco: 'x' })), error: null }).then(res, rej);
+          }
+          return Promise.resolve({ data: [], error: null }).then(res, rej);
+        },
+      };
+      return api;
+    },
+  };
+}
+`);
+const out = join(tmp, 'tickets.bundle.mjs');
+await build({
+  entryPoints: [resolve('api/tickets.ts')],
+  bundle: true, format: 'esm', platform: 'node', outfile: out, logLevel: 'error',
+  plugins: [{
+    name: 'stub-tickets-edges',
+    setup(b) {
+      const to = (re: RegExp, file: string) => b.onResolve({ filter: re }, () => ({ path: join(tmp, file) }));
+      to(/(^|\/)jwt(\.js)?$/, 'jwt-stub.mjs');
+      to(/(^|\/)role-cache(\.js)?$/, 'role-cache-stub.mjs');
+      to(/(^|\/)user-cache(\.js)?$/, 'user-cache-stub.mjs');
+      to(/(^|\/)supabase-admin(\.js)?$/, 'supabase-admin-stub.mjs');
+      to(/(^|\/)push-utils(\.js)?$/, 'push-utils-stub.mjs');
+    },
+  }],
+});
+const handler = (await import(pathToFileURL(out).href)).default as (req: any, res: any) => Promise<void>;
+
+async function patch(body: any, { perms = [] as string[], cur = null as any, updRows = 1 } = {}) {
+  g.__ops = []; g.__perms = perms; g.__cur = cur; g.__updRows = updRows;
+  const res: any = { code: 200, body: null, setHeader() {}, status(c: number) { this.code = c; return this; }, json(b: any) { this.body = b; return this; }, end() { return this; } };
+  await handler({ method: 'PATCH', body, headers: {}, query: {}, user: { id: '7' } }, res);
+  return { code: res.code as number, body: res.body, ops: g.__ops as any[] };
+}
+
+const A = 'Habitacion 407 HPR - Cama 01', B = 'Habitacion 407 HPR - Cama 02';
+const hace = (ms: number) => new Date(Date.now() - ms).toISOString();
+
+// ── Origen automático ────────────────────────────────────────────────────────
+const ro = (o: any = {}) => ({ id: 'TSL-1', reubicarOrigen: { from: A, to: B, toCode: 'C2', toArea: 'Internacion 4° Piso HPR', patientCode: '1001', mapaEdadMs: 10_000, ...o }, usuario: 'Admisión 1', usuarioId: '7', version: 'v1' });
+const curRo = { status: 'Presolicitud', cama_origen: A, cama_destino: null, codigo_paciente: '1001', updated_at: hace(60_000) };
+
+let r = await patch(ro(), { perms: [], cur: curRo });
+assert.equal(r.code, 403, 'sin ningún permiso de traslados → 403');
+assert.equal(r.ops.length, 0, '403 no escribe');
+
+r = await patch(ro(), { perms: ['editar_ticket'], cur: curRo });
+assert.equal(r.code, 200, r.body?.error);
+const upd = r.ops.find(o => o.op === 'update');
+assert.deepEqual(upd.payload.cama_origen, B, 'nuevo origen');
+assert.equal(upd.payload.cama_origen_codigo, 'C2');
+assert.equal(upd.payload.cama_origen_area, 'Internacion 4° Piso HPR');
+assert(!('status' in upd.payload) && !('cama_destino' in upd.payload), 'no toca estado ni destino');
+assert(upd.filters.some((x: any[]) => x[0] === 'eq' && x[1] === 'cama_origen' && x[2] === A), 'CAS por el origen leído');
+assert(upd.filters.some((x: any[]) => x[0] === 'in' && x[1] === 'status' && x[2].includes('Presolicitud') && !x[2].includes('En Traslado')), 'CAS: solo si todavía no salió');
+const evt = r.ops.find(o => o.op === 'insert' && o.table === 'traslado_eventos');
+assert(evt && evt.payload.tipo === `Modificacion - Origen: ${A} → ${B} - Motivo: Cambio de cama en PROGAL (automático)`, 'evento de auditoría');
+assert.equal(evt.payload.usuario_id, 7);
+
+// Otro dispositivo ganó la carrera entre la lectura y el UPDATE → 409 y sin evento.
+r = await patch(ro(), { perms: ['crear_pre_ticket'], cur: curRo, updRows: 0 });
+assert.equal(r.code, 409, 'CAS perdido → 409');
+assert(!r.ops.some(o => o.op === 'insert'), 'CAS perdido: sin evento');
+// Ya reubicado → noop sin escribir.
+r = await patch(ro(), { perms: ['crear_ticket'], cur: { ...curRo, cama_origen: B } });
+assert(r.code === 200 && r.body.unchanged === true && r.ops.length === 0, 'ya reubicado → noop');
+// Mapa anterior al último cambio de la fila → 409 sin escribir.
+r = await patch(ro({ mapaEdadMs: 120_000 }), { perms: ['completar_pre_ticket'], cur: curRo });
+assert(r.code === 409 && r.ops.length === 0, 'mapa viejo → 409');
+
+// ── Restablecer destino ──────────────────────────────────────────────────────
+const rd = { id: 'TSL-2', restablecerDestino: true, version: 'v1', destination: 'NO DEBE USARSE', status: 'Consolidado' };
+const curRd = { status: 'Habitacion Lista', workflow: 'PRE_TICKET', intervino_azafata: 'NO', urgencia: false };
+
+r = await patch(rd, { perms: ['editar_ticket'], cur: curRd });
+assert.equal(r.code, 403, 'sin completar_pre_ticket → 403');
+r = await patch(rd, { perms: ['completar_pre_ticket'], cur: curRd });
+assert.equal(r.code, 200, r.body?.error);
+const u2 = r.ops.find(o => o.op === 'update');
+assert.deepEqual(
+  { status: u2.payload.status, cama_destino: u2.payload.cama_destino, cama_destino_codigo: u2.payload.cama_destino_codigo,
+    cama_destino_status: u2.payload.cama_destino_status, cama_destino_area: u2.payload.cama_destino_area, hab_compartida: u2.payload.hab_compartida },
+  { status: 'Presolicitud', cama_destino: null, cama_destino_codigo: null, cama_destino_status: null, cama_destino_area: null, hab_compartida: false },
+  'los campos los fija el servidor (ignora destination/status del body)');
+assert(u2.filters.some((x: any[]) => x[0] === 'eq' && x[1] === 'status' && x[2] === 'Habitacion Lista'), 'CAS por estado');
+assert(u2.filters.some((x: any[]) => x[0] === 'or' && /intervino_azafata\.neq\.SI/.test(x[1])), 'CAS: sin intervención de azafata');
+r = await patch(rd, { perms: ['completar_pre_ticket'], cur: { ...curRd, intervino_azafata: 'SI' } });
+assert(r.code === 409 && r.ops.length === 0, 'azafata ya intervino → 409');
+r = await patch(rd, { perms: ['completar_pre_ticket'], cur: curRd, updRows: 0 });
+assert.equal(r.code, 409, 'la azafata marcó justo antes (CAS) → 409');
+
+console.log('OK — api/tickets: origen automático + restablecer destino');

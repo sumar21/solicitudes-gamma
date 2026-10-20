@@ -1642,3 +1642,27 @@ Diseño y archivos en [arquitectura.md §48](arquitectura.md). Acá, el *por qu�
 **Por qué:** "las cosas tienen que estar atadas al paciente, no a la cama", definición del equipo. El paciente se mueve: va a cirugía, vuelve a otra cama o pasa a UTI. Todo lo demás de cirugía ya lo seguía (pill, marca, consentimiento). El candado por cama y la autorización por el sector de origen eran lo único atado a la cama, y fueron justo los dos bugs del 20/10 (825-01 y la vuelta a UTI).
 
 **Costo asumido:** dos operatorias de pacientes distintos pueden tener la misma cama de origen; el overlay por cama prioriza la en curso y la pill sigue a cada paciente. `areaActual` lo informa el cliente: un usuario con `cirugia_tolerancia` podría forzarlo, pero el permiso sigue siendo obligatorio y el sector es un recorte operativo, no una barrera de seguridad.
+
+### 34. Pedido de Gamma: cómo se registran la cirugía previa, el retroceso, el origen automático y el destino restablecido (2026-10-20)
+
+**Qué:** cuatro correcciones sobre registros abiertos, en [arquitectura.md §53](arquitectura.md):
+- la cirugía previa es una fila **completada** con `tipo = 'PREVIA_EXTERNA'`;
+- el retroceso es un evento propio `RETROCESO`;
+- el origen se reubica solo desde el cliente, con validación en el servidor;
+- restablecer destino devuelve el pre-ticket a Presolicitud.
+
+**Por qué:**
+- **Previa como cirugía completada:** el gate de consentimiento, la "Q" y el detalle ya cuentan las completadas de la internación. Con una fila del mismo tipo, todo respeta la previa sin tocar ninguna regla, y queda en la trayectoria.
+- **`RETROCESO` propio:** el equipo quiere medir cuántas veces se marca un paso por error. Registrarlo con el tipo del paso anterior lo escondería y además dispararía de nuevo el push de ese paso. Pide el permiso del paso que se deshace: quien no puede marcarlo tampoco lo deshace.
+- **Origen automático desde el cliente:** el cliente ya tiene el mapa crudo de Gamma, el mismo que alimenta la marca de huérfanos. Hacerlo en el cron sumaba otra llamada masiva a una API inestable. Contra mapas viejos: antigüedad del mapa vs `updated_at` con el reloj del servidor, y CAS por origen.
+- **Restablecer en vez de cancelar:** conserva el TSL, los requisitos de cama y la historia, y no obliga a la Coordinadora a recargar el pedido.
+
+**Alternativas descartadas:**
+- *Flag "ya operado" en `cirugia_marcas`:* esa tabla **habilita** cirugías; usarla para lo contrario mezcla semánticas.
+- *Columna nueva en el enrich:* sería otra fuente más para la "Q".
+- *Reubicar el origen en el cron:* robusto aunque nadie tenga la app abierta, pero suma carga a Gamma. Queda como mejora si hiciera falta.
+
+**Costo asumido:**
+- El origen automático depende de que alguien con permiso de traslados tenga MediFlow abierto (en la práctica, Admisión 24/7). Hasta entonces sigue la marca "Ya no está en la cama".
+- Restablecer destino no avisa a la azafata del destino: el pedido simplemente deja de figurar en su grilla.
+- La previa la puede registrar Enfermería además de Admisión (pedido del equipo); queda el actor en `created_by_id` y se puede deshacer.

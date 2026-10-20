@@ -12,7 +12,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface HelpItem {
-  /** Código de PERMISSIONS que habilita la acción, o '*' si es siempre visible en el módulo. */
+  /** Código de PERMISSIONS que habilita la acción ('a|b' = cualquiera de los dos), o '*' si es siempre visible en el módulo. */
   permission: string;
   title: string;
   description: string;
@@ -154,6 +154,12 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
       },
       {
         permission: "*",
+        title: "Cirugía: volver un paso",
+        description: "Si se marcó un paso por error (por ejemplo 'En traslado a cirugía' y al final no salió), volvé la cirugía al paso anterior. Pide un segundo toque para confirmar y queda registrado en la línea de tiempo. Lo puede hacer quien tiene el permiso del paso que se deshace; desde 'Listo para cirugía' no se vuelve (se cancela).",
+        uiLocation: "Operativa → Cirugías → solapa Activas → botón 'Volver un paso' de la fila",
+      },
+      {
+        permission: "*",
         title: "Ver el histórico de cirugías y su detalle",
         description: "Consultá las cirugías cerradas (evaluadas o canceladas) por rango de fechas y abrí el detalle con la línea de tiempo de cada paso y sus tiempos. Solo lectura.",
         scopeNote: "Si tu rol filtra por pisos, solo ves las de tus sectores.",
@@ -183,6 +189,18 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
         title: "Configurar el destino de un pre-ticket",
         description: "Admisión toma un pre-ticket ('Presolicitud'), elige la cama de destino y lo convierte en una solicitud de traslado normal. Puede ajustar la observación antes de confirmar.",
         uiLocation: "Operativa → Traslados → botón 'Configurar destino' de la fila en 'Presolicitud'",
+      },
+      {
+        permission: "completar_pre_ticket",
+        title: "Restablecer el destino de un pre-ticket",
+        description: "Si a la cama de un pre-ticket ya configurado se la tienen que dar a un paciente más urgente, liberala sin cancelar el pedido: el pre-ticket vuelve a 'Presolicitud' y aparece otra vez 'Configurar destino'. Solo antes de que intervenga la azafata. Si cargás un motivo de modificación, queda en la trayectoria.",
+        uiLocation: "Operativa → Traslados → 'Editar' del pre-ticket → 'Restablecer destino (liberar …)'",
+      },
+      {
+        permission: "*",
+        title: "El origen se actualiza solo si PROGAL cambia de cama al paciente",
+        description: "Si al paciente de un pre-ticket o traslado que todavía no salió lo cambian de cama en PROGAL (por ejemplo de la 407.1 a la 407.2), MediFlow pasa el pedido a la cama nueva y la vieja queda libre para otro paciente. Queda en la trayectoria como modificación automática. No pasa si el paciente aparece en la cama destino del pedido.",
+        uiLocation: "Operativa → Traslados → columna Origen",
       },
       {
         permission: "cancelar_pre_ticket",
@@ -331,6 +349,18 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
         title: "Marcar 'Listo para cirugía' (alta del circuito)",
         description: "Da de alta la cirugía sobre una cama ocupada. Aparece para un quirúrgico en su PRIMERA cirugía, o para quien Admisión haya habilitado con 'va a cirugía' (un clínico, o un quirúrgico que ya se operó).",
         uiLocation: "Detalle de la cama ocupada → bloque ámbar → botón 'Listo para cirugía'",
+      },
+      {
+        permission: "cirugia_listo|cirugia_marcar",
+        title: "Ya se operó (fuera de MediFlow)",
+        description: "Para un quirúrgico que ya se operó en esta internación antes de usar MediFlow: deja constancia, la 'Q' deja de mostrarse y una nueva cirugía va a necesitar la habilitación de Admisión ('Va a cirugía'). Si te equivocaste, 'Deshacer' en la nota del detalle.",
+        uiLocation: "Detalle de la cama con 'Q' → bloque ámbar → botón 'Ya se operó (fuera de MediFlow)'",
+      },
+      {
+        permission: "*",
+        title: "Cirugía: volver un paso",
+        description: "Si se marcó un paso por error (por ejemplo 'En traslado a cirugía'), volvé la cirugía al paso anterior. Pide confirmación y queda en la línea de tiempo. Aparece si tenés el permiso del paso que se deshace.",
+        uiLocation: "Detalle de la cama con cirugía en curso → botón 'Volver un paso'",
       },
       {
         permission: "cirugia_entregar",
