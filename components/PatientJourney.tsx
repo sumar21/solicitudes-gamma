@@ -28,6 +28,12 @@ interface PatientJourneyProps {
   isOpen: boolean;
   onClose: () => void;
   workflowLabels: Record<WorkflowType, string>;
+  /**
+   * Dónde tiene HOY PROGAL al paciente: label de la cama, `null` si el mapa está cargado y no figura
+   * internado, `undefined` si no se sabe (mapa sin cargar). Sin esto, "Ubicación actual" era el destino del
+   * último traslado de MediFlow y un paciente dado de alta seguía "en" esa cama (consulta del 26/10/2026).
+   */
+  ubicacionProgal?: string | null;
 }
 
 const ACTIVE_STATUSES = new Set<TicketStatus>([
@@ -177,7 +183,7 @@ const CirugiaJourney: React.FC<{ patientCode?: string; isOpen: boolean }> = ({ p
 };
 
 export const PatientJourney: React.FC<PatientJourneyProps> = ({
-  patientTickets, isOpen, onClose, workflowLabels,
+  patientTickets, isOpen, onClose, workflowLabels, ubicacionProgal,
 }) => {
   const [eventsByTicket, setEventsByTicket] = useState<Map<string, TicketEvent[]>>(new Map());
   const [loading, setLoading] = useState(false);
@@ -248,8 +254,24 @@ export const PatientJourney: React.FC<PatientJourneyProps> = ({
         currentTone = lastDone ? 'done' : 'unknown';
       }
     }
-    return { code, financier, completed, cancelled, active, firstDate, lastDate, currentLocation, currentTone };
-  }, [episodes]);
+    // Sin traslado en curso manda el mapa de PROGAL: la cama de hoy, o "No internado" (con el último destino
+    // de MediFlow como referencia). Si el mapa no está cargado, se rotula "Último destino" (no "actual").
+    let locationLabel = active > 0 ? 'En curso' : 'Ubicación actual';
+    let locationHint = '';
+    if (active === 0) {
+      if (typeof ubicacionProgal === 'string' && ubicacionProgal) {
+        currentLocation = ubicacionProgal;
+        currentTone = 'done';
+      } else if (ubicacionProgal === null) {
+        locationHint = currentLocation ? `Última cama en MediFlow: ${formatBedName(currentLocation)}` : '';
+        currentLocation = '';
+        currentTone = 'unknown';
+      } else {
+        locationLabel = 'Último destino';
+      }
+    }
+    return { code, financier, completed, cancelled, active, firstDate, lastDate, currentLocation, currentTone, locationLabel, locationHint };
+  }, [episodes, ubicacionProgal]);
 
   if (!patient) return null;
 
@@ -298,15 +320,16 @@ export const PatientJourney: React.FC<PatientJourneyProps> = ({
               )}>
                 <span className="text-[8px] font-black uppercase tracking-widest text-slate-400 mb-0.5 flex items-center gap-1">
                   <MapPin className="w-2.5 h-2.5" />
-                  {summary.active > 0 ? 'En curso' : 'Ubicación actual'}
+                  {summary.locationLabel}
                 </span>
                 <span className={cn(
                   "text-xs font-black uppercase tracking-tight leading-tight break-words",
                   summary.currentTone === 'live' ? "text-blue-800"
                   : summary.currentTone === 'done' ? "text-emerald-800" : "text-slate-600",
                 )}>
-                  {summary.currentLocation ? formatBedName(summary.currentLocation) : '—'}
+                  {summary.currentLocation ? formatBedName(summary.currentLocation) : (ubicacionProgal === null && summary.active === 0 ? 'No internado' : '—')}
                 </span>
+                {summary.locationHint && <span className="text-[9px] font-bold text-slate-400 mt-0.5">{summary.locationHint}</span>}
               </div>
             </div>
           </div>

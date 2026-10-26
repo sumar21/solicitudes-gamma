@@ -473,7 +473,7 @@ Catálogo **cerrado** (`as const`). `can(user, perm)` gatea botones/mutaciones (
 |---|---|
 | Traslados | `crear_ticket`, `editar_ticket`, `cancelar_ticket`, `asignar_cama` (**legacy**, no-op), `confirmar_limpieza`, `iniciar_traslado`, `confirmar_recepcion`, `consolidar` |
 | Pre-ticket / urgencia | `crear_pre_ticket` (crea pre-ticket **y urgencias**; quien crea tickets no se recorta por estado aunque filtre por pisos y ve siempre lo que creó), `completar_pre_ticket`, `cancelar_pre_ticket` (también cancela una urgencia) |
-| Cirugía | `cirugia_listo`, `cirugia_buscar`, `cirugia_entregar`, `cirugia_operar`, `cirugia_devolver`, `cirugia_tolerancia`, `cirugia_cancelar`, `cirugia_marcar` |
+| Cirugía | `cirugia_listo`, `cirugia_buscar`, `cirugia_entregar`, `cirugia_operar`, `cirugia_devolver`, `cirugia_tolerancia`, `cirugia_cancelar`, `cirugia_marcar`, `cirugia_previa` ("Ya se operó", §54) |
 | Limpiezas | `consolidar_limpieza`, `limpieza_rutina` |
 | Comandas | `cargar_dieta` (todos los turnos), `cargar_comanda_{desayuno,almuerzo,merienda,cena}` (granular, derivados de `MEAL_SLOTS`), `ver_dieta`, `ver_planificacion`, `abm_planificacion` |
 | Configuración | `abm_usuarios`, `abm_roles` |
@@ -1754,7 +1754,7 @@ Pedido de Gamma tras probar el paquete en TESTING.
 
 Gamma empezó a usar el módulo de cirugía con pacientes que ya se habían operado en la internación actual. Para MediFlow no tenían ninguna cirugía cerrada, así que la "Q" los mostraba como pendientes y el botón "Listo para cirugía" seguía auto-habilitado.
 
-- **Botón en el detalle de la cama** (`CirugiaBedBlock`), solo para el quirúrgico auto-habilitado (la "Q"). Pide confirmación inline. Lo ven quienes tienen `cirugia_listo` (Enfermería) o `cirugia_marcar` (Admisión).
+- **Botón en el detalle de la cama** (`CirugiaBedBlock`), solo para el quirúrgico auto-habilitado (la "Q"). Pide confirmación inline. Desde v20261026_1.13.0 lo ven quienes tienen el permiso propio `cirugia_previa` (Coordinación; §54). Antes era `cirugia_listo` o `cirugia_marcar`.
 - **Qué graba:** `POST /api/cirugia` con `previa: true` inserta en `cirugia_traslados` una cirugía **completada** (`estado = 'TOLERANCIA_EVALUADA'`, `tipo = 'PREVIA_EXTERNA'`, `event_key` de la internación, `fecha_cierre = now`). No registra eventos, así que no dispara el push de "Iniciar dieta" ni aparece en el historial de dietas. Es idempotente por paciente + internación.
 - **Exige la internación** (`event_key` de PROGAL): sin ella, el botón no aparece y el servidor responde 400. Una completada sin `event_key` contaría en todas las internaciones y le sacaría el auto-Q al paciente para siempre.
 - **Lo respetan solos**, sin reglas nuevas: el gate de consentimiento del POST (una 2da cirugía necesita la marca de Admisión, "Va a cirugía"), la "Q" del mapa (`completadas`) y el detalle de la cama. Queda fuera del histórico de Operativa → Cirugías (métricas). En la trayectoria del paciente figura como "Cirugía previa (fuera de MediFlow)".
@@ -1793,10 +1793,10 @@ Antes, si PROGAL cambiaba de cama al paciente de un pre-ticket o traslado abiert
 
 ### 53.4. "Restablecer destino" en el pre-ticket
 
-En "Editar traslado" de un pre-ticket **configurado** (con cama destino y sin intervención de la azafata) aparece "Restablecer destino (liberar X)", con confirmación inline. El pre-ticket vuelve a **Presolicitud**: la cama queda libre (le dieron esa cama a un paciente más urgente) y en la grilla vuelve a aparecer "Configurar destino". No hace falta cancelarlo ni volver a cargarlo.
+En "Editar traslado" de un pre-ticket **configurado** (con cama destino y sin intervención de la azafata) aparece "Restablecer destino (liberar X)", con confirmación inline. Desde v20261026_1.13.0 también se puede con "Habitación lista" marcada por la azafata, con un botón en la fila (§54). El pre-ticket vuelve a **Presolicitud**: la cama queda libre (le dieron esa cama a un paciente más urgente) y en la grilla vuelve a aparecer "Configurar destino". No hace falta cancelarlo ni volver a cargarlo.
 
-- `PATCH /api/tickets` con `restablecerDestino: true`. Pide `completar_pre_ticket`; como el link vive en "Editar", en la práctica también hace falta `editar_ticket`. El servidor fija los campos y no toma los del body: `status = 'Presolicitud'`, `cama_destino`/`_codigo`/`_status`/`_area = null` y `hab_compartida = false`.
-- CAS por estado + "sin intervención de azafata": si la azafata marcó "Habitación lista" justo antes, da 409 y no pisa nada.
+- `PATCH /api/tickets` con `restablecerDestino: true`. Pide `completar_pre_ticket` (el link dentro de "Editar" pide además `editar_ticket`; el botón de la fila, no). El servidor fija los campos y no toma los del body: `status = 'Presolicitud'`, `cama_destino`/`_codigo`/`_status`/`_area = null`, `hab_compartida = false` e `intervino_azafata = 'NO'` (1.13.0).
+- CAS por estado **y por destino** (`destino` = la cama que vio quien confirma): si la azafata inició el traslado, o si otro operador ya restableció y reconfiguró a otra cama, da 409 y no pisa nada. Hasta la 1.12.1 también exigía "sin intervención de azafata".
 - Trayectoria: "Modificación — Destino: X → (sin destino) — Motivo: Destino restablecido — {motivo de modificación, si se cargó}". Lo graba el **servidor**, una sola vez y solo si ganó el CAS.
 - **Acciones de azafata con la lista atrasada:** el PATCH genérico ya no aplica una acción de azafata (`intervenedByHostess: 'SI'`) sobre un pedido en Presolicitud, Consolidado o Cancelado (409). Antes, "Habitación lista" revivía el pre-ticket con la cama que se le había dado a otro paciente.
 - Sin push: Presolicitud no notifica. La azafata del destino deja de verlo en su grilla. Al reconfigurar, Presolicitud → estado vivo dispara el NEW_TICKET de siempre.
@@ -1838,3 +1838,20 @@ La 1.12.0 subió a producción y en paralelo se corrió una revisión adversaria
 - **Pendiente (bajo, conocido):**
   - dos POST de previa simultáneos desde dos dispositivos podrían duplicar la fila (el botón se bloquea mientras guarda);
   - `areaActual` lo informa el cliente (diseño de la 1.11.4).
+
+## 54. Ajustes del 26/10/2026 (v20261026_1.13.0): permiso "Ya se operó", restablecer con habitación lista y "Ubicación actual"
+
+- **Permiso propio `cirugia_previa`.** Gamma (Julieta Degani) pidió que "Ya se operó (fuera de MediFlow)" lo tengan las **coordinadoras**, no las enfermeras. Antes alcanzaba con `cirugia_listo` (Enfermería) o `cirugia_marcar` (Admisión).
+  - Ahora es un permiso propio en el ABM, en el grupo "Cirugía — desde el mapa de camas". Lo exigen el botón, el "Deshacer" y el servidor: POST `previa` y PATCH `ANULAR_PREVIA`, con sector.
+  - Se tildó en Coordinación, Admin y sumar.ai.
+- **"Restablecer destino" con "Habitación lista" marcada por la azafata.** Hasta que arranca el traslado se puede liberar la cama, aunque la azafata ya la haya limpiado.
+  - El servidor (`validarRestablecerDestino`) acepta Esperando Habitación y Habitación Lista sin mirar `intervino_azafata`, y la reinicia a `'NO'`: la intervención era sobre la cama liberada y, al reconfigurar, el pedido vuelve a ser editable.
+  - El CAS por estado protege contra un "Iniciar traslado" simultáneo (409).
+  - Como en ese estado "Editar" no aparece (la azafata intervino), la grilla muestra un botón **"Restablecer destino"** en la fila, que abre `RestablecerDestinoModal` (motivo opcional; si la azafata intervino, recuerda revisar el estado de la cama en PROGAL, porque ya la había marcado limpia). Sin intervención, sigue el link dentro de "Editar".
+  - **Aviso "Destino liberado"** (revisión de QA): la azafata de origen ya había recibido "puede ser trasladado". El detector de cambios del hook avisa en la campanita y con un toast a quienes tenían el pedido en su grilla (áreas de origen y del destino viejo), cuando un pedido vivo vuelve a Presolicitud. Es **solo en la app**: el push con la app cerrada necesita sumar el caso en `notify-push` (hoy ignora Presolicitud) y desplegarlo, lo que queda pendiente.
+  - **Acciones de azafata con la grilla atrasada** (revisión de QA): mandan `expectedDestination` y el PATCH filtra por `cama_destino`. Si Admisión restableció y reconfiguró a otra cama, "Iniciar traslado" o "Habitación lista" dan 409 en vez de aplicarse sobre una cama que nadie preparó.
+- **"Ubicación actual" en la trayectoria** (`PatientJourney`). Era el destino del último traslado de MediFlow, así que un paciente dado de alta seguía "en" esa cama. Caso consultado el 26/10: un paciente consolidado en la 405-02 el 15/09, dado de alta el 17/09, figuraba ahí hasta su reingreso del 22/10.
+  - Ahora, sin traslado en curso, sale del **mapa crudo de PROGAL** (`state.rawBeds`, sin los overlays de `mergeBeds`, que pasan a "Asignada" la cama de quien vuelve de cirugía): la cama donde está hoy, o "No internado" con "Última cama en MediFlow: X" debajo.
+  - Se rotula "Último destino" si no se sabe: el mapa no cargó, falló o vino parcial (`bedsError`), el paciente no tiene código, o (desde el detalle de la cama) la cama no tiene código de paciente.
+  - Con un traslado en curso sigue mostrando "En curso".
+  - `HistoryView` recibe `beds`; `BedsView` pasa la cama abierta.

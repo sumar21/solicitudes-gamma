@@ -357,8 +357,9 @@ async function handler(req: any, res: any) {
       }
 
       // ── Restablecer destino de un pre-ticket configurado (vuelve a Presolicitud y libera la cama) ──
-      // Los campos los fija el servidor (no el body). CAS por estado + "sin azafata": si la azafata marcó
-      // "Habitación lista" justo antes, no se pisa.
+      // Los campos los fija el servidor (no el body). Vale también con "Habitación lista" marcada por la
+      // azafata (26/10/2026); CAS por estado: si justo inició el traslado, 409. La intervención de la azafata
+      // era sobre la cama liberada, así que se reinicia (el pre-ticket vuelve a ser editable al reconfigurarlo).
       if (req.body?.restablecerDestino === true) {
         const denied = await authzPreTicket(req, 'completar_pre_ticket');
         if (denied) return res.status(denied.status).json({ error: denied.error });
@@ -368,6 +369,11 @@ async function handler(req: any, res: any) {
         const v = validarRestablecerDestino(cur);
         if (!v.ok) return res.status(v.status ?? 409).json({ error: v.error });
         if (v.noop) return res.status(200).json({ ok: true, unchanged: true });
+        // La cama que vio quien restablece: si otro operador ya restableció y reconfiguró a otra, no se libera esa.
+        const destinoVisto = typeof req.body?.destino === 'string' ? String(req.body.destino) : '';
+        if (destinoVisto && destinoVisto !== String(cur!.cama_destino ?? '')) {
+          return res.status(409).json({ error: 'El destino de este pre-ticket cambió; recargá.' });
+        }
         const { data: upd, error } = await supa.from('traslados').update({
           status: TicketStatus.PRESOLICITUD,
           cama_destino: null,
@@ -375,12 +381,13 @@ async function handler(req: any, res: any) {
           cama_destino_status: null,
           cama_destino_area: null,
           hab_compartida: false,
+          intervino_azafata: 'NO',
           last_actor_id: Number(req.user?.id) || null,
           version: String(req.body?.version ?? ''),
         }).eq('id_univoco', idUnivoco).eq('entorno', ENTORNO).eq('status', String(cur!.status))
-          .or('intervino_azafata.is.null,intervino_azafata.neq.SI').select('id_univoco');
+          .eq('cama_destino', String(cur!.cama_destino ?? '')).select('id_univoco');
         if (error) { console.error('[tickets] restablecer destino failed:', error.message); return res.status(500).json({ error: 'No se pudo restablecer el destino.' }); }
-        if (!upd?.length) return res.status(409).json({ error: 'El traslado cambió (¿intervino la azafata?); recargá.' });
+        if (!upd?.length) return res.status(409).json({ error: 'El traslado cambió de estado o de destino (por ejemplo, la azafata ya marcó la habitación o inició el traslado); recargá.' });
         // El evento lo deja el servidor (solo quien ganó el CAS): desde el cliente se perdía si se cortaba la
         // respuesta, o se duplicaba en un reintento (QA del 20/10, v1.12.1).
         const motivo = String(req.body?.motivo ?? '').trim().slice(0, 300);
@@ -480,10 +487,15 @@ async function handler(req: any, res: any) {
       let q = supa.from('traslados').update(fields).eq('id_univoco', idUnivoco).eq('entorno', ENTORNO);
       if (accionAzafata) {
         q = q.not('status', 'in', `(${TicketStatus.PRESOLICITUD},${TicketStatus.COMPLETED},${TicketStatus.REJECTED})`);
+        // Y sobre el MISMO destino que veía la azafata: si se restableció y se reconfiguró a otra cama, "Iniciar
+        // traslado" con la grilla atrasada mandaba al paciente a una cama que nadie preparó (QA 26/10, v1.13.0).
+        // Clientes viejos no lo mandan → sin filtro.
+        const expectedDestination = (req.body as any)?.expectedDestination;
+        if (typeof expectedDestination === 'string' && expectedDestination) q = q.eq('cama_destino', expectedDestination);
       }
       const { data: upd, error } = await q.select('id_univoco');
       if (!error && accionAzafata && !upd?.length) {
-        return res.status(409).json({ error: 'El traslado cambió (se restableció el destino, se canceló o se cerró); recargá.' });
+        return res.status(409).json({ error: 'El traslado cambió (se restableció o se modificó el destino, se canceló o se cerró); recargá.' });
       }
       if (error) {
         if (error.code === '23505' && updates.destination) {

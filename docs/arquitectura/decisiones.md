@@ -1666,5 +1666,5 @@ Diseño y archivos en [arquitectura.md §48](arquitectura.md). Acá, el *por qu�
 
 **Costo asumido:**
 - El origen automático depende de que alguien con permiso de traslados tenga MediFlow abierto (en la práctica, Admisión 24/7). Hasta entonces sigue la marca "Ya no está en la cama".
-- Restablecer destino no avisa a la azafata del destino: el pedido simplemente deja de figurar en su grilla.
+- Restablecer destino avisa solo dentro de la app ("Destino liberado", desde la 1.13.0): con la app cerrada no llega push hasta que `notify-push` contemple la vuelta a Presolicitud.
 - La previa la puede registrar Enfermería además de Admisión (pedido del equipo); queda el actor en `created_by_id` y se puede deshacer.

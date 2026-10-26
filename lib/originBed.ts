@@ -134,14 +134,13 @@ export function findOriginMoves(tickets: Ticket[], rawBeds: Bed[]): OriginMove[]
 }
 
 /**
- * "Restablecer destino": un pre-ticket CONFIGURADO (con cama destino, todavía sin intervención de la
- * azafata) puede volver a "Presolicitud" y liberar la cama. Espeja validarRestablecerDestino
- * (api/ticket-origen.ts), que es la regla real.
+ * "Restablecer destino": un pre-ticket CONFIGURADO (con cama destino) puede volver a "Presolicitud" y
+ * liberar la cama hasta que arranca el traslado: también con "Habitación lista" marcada por la azafata
+ * (26/10/2026). Espeja validarRestablecerDestino (api/ticket-origen.ts), que es la regla real.
  */
 export function puedeRestablecerDestino(t: Ticket): boolean {
   return t.workflow === WorkflowType.PRE_TICKET && !t.urgencia && !!t.destination
-    && (t.status === TicketStatus.WAITING_ROOM || t.status === TicketStatus.IN_TRANSIT)
-    && t.intervenedByHostess !== 'SI' && t.canCancel !== false;
+    && (t.status === TicketStatus.WAITING_ROOM || t.status === TicketStatus.IN_TRANSIT);
 }
 
 export interface OriginBedBusy {

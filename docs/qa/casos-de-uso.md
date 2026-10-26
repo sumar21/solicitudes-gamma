@@ -31,7 +31,7 @@ Cada caso sigue este formato:
 | **Traslado / Ticket** | Movimiento de un paciente de una cama origen (ocupada) a una cama destino. Vive en `public.traslados` (Supabase). |
 | **Azafata (HOSTESS)** | Rol operativo que ejecuta los pasos físicos del traslado y marca camas limpias. Suele tener `filter_by_floors` (solo ve sus pisos). |
 | **Estado del ticket** | `Esperando Habitacion` → `Habitacion Lista` → `En Traslado` → `Por Consolidar` → `Consolidado`; rama `Cancelado`. |
-| **`intervino_azafata`** | Columna del ticket. `'NO'` al crear; pasa a `'SI'` en la primera acción de azafata. Bloquea la **edición** (no la cancelación). |
+| **`intervino_azafata`** | Columna del ticket. `'NO'` al crear; pasa a `'SI'` en la primera acción de azafata. Bloquea la **edición** (no la cancelación). "Restablecer destino" de un pre-ticket la vuelve a `'NO'` (la intervención era sobre la cama liberada). |
 | **Entorno** | `TESTING` / `PRODUCTIVO`. Mismo proyecto Supabase, aislados por columna `entorno` + RLS. |
 | **Comanda** | Una bandeja de comida (titular o acompañante) que carga Nutrición por cama/turno. Vive en `public.comandas`. |
 | **Overlay "Opción B"** | La app pinta el mapa de camas por encima de PROGAL (read-only): una cama marcada limpia se ve "Disponible" aunque PROGAL diga otra cosa. |

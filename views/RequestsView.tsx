@@ -6,7 +6,7 @@ import {
   Search, Plus, Timer, Clock, ArrowRightLeft,
   ChevronUp, ChevronDown, CheckCircle2, BedDouble, Users, ClipboardCheck, AlertCircle, X, XCircle, Info, MapPin, Pencil, UserCheck
 } from '../components/Icons';
-import { ShieldAlert, MessageSquare, Siren } from 'lucide-react';
+import { ShieldAlert, MessageSquare, Siren, Undo2 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Card } from '../components/ui/card';
@@ -20,7 +20,7 @@ import { visibleStatusChips, countByStatus, applyStatusFilter, toggleStatus, sho
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { cn, formatBedName, formatDateTime, effectiveHostessAreas } from '../lib/utils';
 import { realRequisitos } from '../lib/roomCheck';
-import type { OrphanTicket } from '../lib/originBed';
+import { puedeRestablecerDestino, type OrphanTicket } from '../lib/originBed';
 
 interface RequestsViewProps {
   tickets: Ticket[];
@@ -46,6 +46,8 @@ interface RequestsViewProps {
   onConsolidateUrgencia?: (id: string) => void;
   onReject?: (id: string) => void;
   onEdit?: (id: string) => void;
+  /** "Restablecer destino" de un pre-ticket con la habitación lista marcada por la azafata (ahí "Editar" no está). */
+  onResetDestino?: (id: string) => void;
   onAddObservation?: (id: string, texto: string) => Promise<boolean>;
   currentUser: User | null;
   beds: Bed[];
@@ -93,7 +95,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   searchTerm, setSearchTerm, sortConfig, onSort,
   onNewRequest, onNewPreTicket, onConfigureDestino, onValidateReason, onAssignBed,
   onHousekeepingAction, onStartTransport, onCompleteTransport,
-  onRoomReady, onConfirmReception, onConsolidate, onConsolidateUrgencia, onReject, onEdit, onAddObservation, currentUser, beds, orphanTickets, ticketsLoaded = true, ticketsError = null
+  onRoomReady, onConfirmReception, onConsolidate, onConsolidateUrgencia, onReject, onEdit, onResetDestino, onAddObservation, currentUser, beds, orphanTickets, ticketsLoaded = true, ticketsError = null
 }) => {
 
   // Filtro por estado (botonera). Vacío = se ve todo. Es de la sesión de pantalla: NO se persiste a
@@ -582,7 +584,10 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       const showEdit        = canMutate && can(currentUser, 'editar_ticket')   && !!onEdit;
       // Cancelar disponible en cualquier etapa activa (independiente de la intervención).
       const showCancel      = notTerminal && can(currentUser, 'cancelar_ticket') && !!onReject;
-      if (!showConsolidate && !showEdit && !showCancel) return null;
+      // Pre-ticket con "Habitación lista" ya marcada por la azafata: "Editar" no aparece, pero la cama se puede
+      // liberar hasta que arranque el traslado (26/10/2026). Sin intervención, el link vive dentro de "Editar".
+      const showReset       = !showEdit && puedeRestablecerDestino(ticket) && can(currentUser, 'completar_pre_ticket') && !!onResetDestino;
+      if (!showConsolidate && !showEdit && !showCancel && !showReset) return null;
       // Desktop en columna (no fila): Consolidar + Editar + Cancelar en fila medían ~380px y empujaban la columna
       // de Acciones fuera de pantalla a 1280px.
       return (
@@ -595,6 +600,12 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
           {showEdit && (
             <Button size={size} variant="outline" className={cn(btnClass, "border-amber-200 text-amber-700 hover:bg-amber-50")} onClick={() => onEdit!(ticket.id)}>
               <Pencil className="w-3.5 h-3.5 mr-2" /> Editar
+            </Button>
+          )}
+          {showReset && (
+            <Button size={size} variant="outline" className={cn(btnClass, "border-red-200 text-red-700 hover:bg-red-50")} onClick={() => onResetDestino!(ticket.id)}
+              title="Liberar la cama destino: el pre-ticket vuelve a 'Configurar destino'">
+              <Undo2 className="w-3.5 h-3.5 mr-2" /> Restablecer destino
             </Button>
           )}
           {showCancel && (

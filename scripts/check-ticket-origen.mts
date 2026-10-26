@@ -81,9 +81,8 @@ assert.deepEqual(validarReubicarOrigen({ ...row, updated_at: '2026-10-01T00:00:0
 const conf = ticket({ status: TicketStatus.IN_TRANSIT, destination: H501, intervenedByHostess: 'NO', canCancel: true });
 assert(puedeRestablecerDestino(conf), 'pre-ticket configurado (Habitación Lista) sin azafata');
 assert(puedeRestablecerDestino({ ...conf, status: TicketStatus.WAITING_ROOM }), 'Esperando Habitación');
-assert(!puedeRestablecerDestino({ ...conf, intervenedByHostess: 'SI', canCancel: false }), 'la azafata ya intervino');
-assert(!puedeRestablecerDestino({ ...conf, intervenedByHostess: 'SI', canCancel: undefined }), 'azafata: alcanza con intervenedByHostess');
-assert(!puedeRestablecerDestino({ ...conf, intervenedByHostess: undefined, canCancel: false }), 'azafata: alcanza con canCancel');
+// Con "Habitación lista" marcada por la azafata también (26/10/2026): hasta que arranca el traslado.
+assert(puedeRestablecerDestino({ ...conf, intervenedByHostess: 'SI', canCancel: false }), 'la azafata marcó Habitación lista → se puede');
 assert(!puedeRestablecerDestino({ ...conf, status: TicketStatus.PRESOLICITUD, destination: null }), 'sin configurar');
 assert(!puedeRestablecerDestino({ ...conf, status: TicketStatus.IN_TRANSPORT }), 'en traslado');
 assert(!puedeRestablecerDestino({ ...conf, workflow: WorkflowType.INTERNAL }), 'traslado normal (no pre-ticket)');
@@ -93,7 +92,7 @@ const r2 = { status: TicketStatus.IN_TRANSIT, workflow: WorkflowType.PRE_TICKET,
 assert.deepEqual(validarRestablecerDestino(r2), { ok: true }, 'servidor: caso feliz');
 assert.deepEqual(validarRestablecerDestino({ ...r2, status: TicketStatus.WAITING_ROOM }), { ok: true }, 'servidor: Esperando Habitación');
 assert.deepEqual(validarRestablecerDestino({ ...r2, status: TicketStatus.PRESOLICITUD }), { ok: true, noop: true }, 'servidor: ya sin destino');
-assert.equal(validarRestablecerDestino({ ...r2, intervino_azafata: 'si' }).status, 409, 'servidor: azafata (case-insensitive)');
+assert.deepEqual(validarRestablecerDestino({ ...r2, intervino_azafata: 'SI' }), { ok: true }, 'servidor: con Habitación lista de la azafata → ok');
 assert.equal(validarRestablecerDestino({ ...r2, workflow: WorkflowType.INTERNAL }).status, 409, 'servidor: no es pre-ticket');
 assert.equal(validarRestablecerDestino({ ...r2, urgencia: true }).status, 409, 'servidor: urgencia');
 assert.equal(validarRestablecerDestino({ ...r2, status: TicketStatus.IN_TRANSPORT }).status, 409, 'servidor: en traslado');

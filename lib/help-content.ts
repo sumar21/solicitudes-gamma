@@ -193,8 +193,8 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
       {
         permission: "completar_pre_ticket",
         title: "Restablecer el destino de un pre-ticket",
-        description: "Si a la cama de un pre-ticket ya configurado se la tienen que dar a un paciente más urgente, liberala sin cancelar el pedido: el pre-ticket vuelve a 'Presolicitud' y aparece otra vez 'Configurar destino'. Solo antes de que intervenga la azafata. Si cargás un motivo de modificación, queda en la trayectoria.",
-        uiLocation: "Operativa → Traslados → 'Editar' del pre-ticket → 'Restablecer destino (liberar …)'",
+        description: "Si a la cama de un pre-ticket ya configurado se la tienen que dar a un paciente más urgente, liberala sin cancelar el pedido: el pre-ticket vuelve a 'Presolicitud' y aparece otra vez 'Configurar destino'. Se puede hasta que arranca el traslado, aunque la azafata ya haya marcado la habitación lista (en ese caso, revisá el estado de la cama en PROGAL). El motivo que cargues queda en la trayectoria.",
+        uiLocation: "Operativa → Traslados → 'Editar' del pre-ticket → 'Restablecer destino (liberar …)'; con la habitación lista, botón 'Restablecer destino' de la fila",
       },
       {
         permission: "*",
@@ -351,7 +351,7 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
         uiLocation: "Detalle de la cama ocupada → bloque ámbar → botón 'Listo para cirugía'",
       },
       {
-        permission: "cirugia_listo|cirugia_marcar",
+        permission: "cirugia_previa",
         title: "Ya se operó (fuera de MediFlow)",
         description: "Para un quirúrgico que ya se operó en esta internación antes de usar MediFlow: deja constancia, la 'Q' deja de mostrarse y una nueva cirugía va a necesitar la habilitación de Admisión ('Va a cirugía'). Si te equivocaste, 'Deshacer' en la nota del detalle.",
         uiLocation: "Detalle de la cama con 'Q' → bloque ámbar → botón 'Ya se operó (fuera de MediFlow)'",

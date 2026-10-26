@@ -9,7 +9,7 @@ import {
   ORIGEN_URGENCIA, MOVIMIENTO_URGENCIA,
 } from '../types';
 import { can, hasModule, canReceiveNotif } from '../lib/permissions';
-import { effectiveHostessAreas, formatDateTime, createActionLock, bedEventKey, isHitArea, isHraArea } from '../lib/utils';
+import { effectiveHostessAreas, formatBedName, formatDateTime, createActionLock, bedEventKey, isHitArea, isHraArea } from '../lib/utils';
 import { roomCheckFor, destinationState, describeRoomCheck } from '../lib/roomCheck';
 import { supabase, resetSupabasePase } from '../lib/supabase';
 import { APP_VERSION } from '../lib/version';
@@ -2414,7 +2414,24 @@ export const useHospitalState = () => {
       // Pre-ticket (Presolicitud): la notif de "pedido de cama" a Admisión la maneja el webhook
       // (tipo PRE_TICKET). La detección local NO debe emitir "Nueva Solicitud" a las azafatas
       // mientras el pre-ticket no tenga destino; recién al convertirse (abajo) se trata como alta.
-      if (t.status === TicketStatus.PRESOLICITUD) continue;
+      //   Excepción: "Restablecer destino" (26/10/2026, también con la habitación lista). Un pedido VIVO vuelve a
+      // Presolicitud y libera su cama: las azafatas del origen y del destino viejo lo tenían en la grilla (y quizás
+      // el aviso "puede ser trasladado"). Se les avisa que ya no va. Quien restableció ya sembró el snapshot.
+      if (t.status === TicketStatus.PRESOLICITUD) {
+        const [prevStatus, prevDest] = (prevKey ?? '').split('|');
+        if (prevStatus && prevStatus !== TicketStatus.PRESOLICITUD && prevDest) {
+          newNotifs.push({
+            id: `NOTIF-POLL-${t.id}-LIBERADO-${prevDest}`, isRead: false,
+            timestamp: timestampOfTicketEvent(t),
+            type: NotificationType.STATUS_UPDATE,
+            title: 'Destino liberado',
+            message: `${t.patientName}: ya no va a ${formatBedName(prevDest)}. Admisión liberó la cama; el pedido se vuelve a configurar.`,
+            ticketId: t.id, sede: t.sede,
+            originArea: areaOf(t.origin), destinationArea: areaOf(prevDest),
+          });
+        }
+        continue;
+      }
 
       // Urgencia / ingreso directo recién aparecida: nace "Por Consolidar" y NO hay nada que las azafatas
       // preparen (el paciente ya va a la cama). El aviso a Admisión lo manda el webhook (PRE_TICKET).
@@ -2607,9 +2624,11 @@ export const useHospitalState = () => {
         destinationArea,
         sede: ticket.sede,
       } : {};
+      // Acción de azafata: el destino que estaba viendo. Si Admisión lo restableció/cambió, el server da 409.
+      const expected = updates.intervenedByHostess === 'SI' && ticket?.destination ? { expectedDestination: ticket.destination } : {};
       const r = await authFetch('/api/tickets', {
         method: 'PATCH',
-        body:   JSON.stringify({ spItemId, ...context, ...updates, operador: getOperador(), version: APP_VERSION }),
+        body:   JSON.stringify({ spItemId, ...context, ...updates, ...expected, operador: getOperador(), version: APP_VERSION }),
       });
       if (r.status === 409) {
         const data = await r.json().catch(() => ({} as any));
@@ -3356,21 +3375,24 @@ export const useHospitalState = () => {
 
   // "Restablecer destino" (20/10/2026): el pre-ticket configurado vuelve a "Presolicitud" y libera la cama
   // destino — le dieron esa cama a un paciente más urgente y antes había que cancelar y volver a cargar.
-  // Solo antes de que intervenga la azafata. El servidor fija los campos (validarRestablecerDestino).
-  const restablecerDestinoPreTicket = async (ticketId: string, motivo?: string): Promise<boolean> => {
+  // Hasta que arranca el traslado (también con la habitación lista). El servidor fija los campos (validarRestablecerDestino).
+  // `destinoVisto`: la cama que tenía el pedido cuando se abrió la confirmación (si cambió, no se libera otra).
+  const restablecerDestinoPreTicket = async (ticketId: string, motivo?: string, destinoVisto?: string | null): Promise<boolean> => {
     if (!can(currentUser, 'completar_pre_ticket')) { appAlert('Tu rol no tiene permiso para configurar destinos.'); return false; }
     const t = tickets.find(x => x.id === ticketId);
-    if (!t || !puedeRestablecerDestino(t)) { appAlert('Este pre-ticket ya no se puede restablecer: la azafata ya intervino o cambió de estado.'); return false; }
+    if (!t || !puedeRestablecerDestino(t)) { appAlert('Este pre-ticket ya no se puede restablecer: el traslado ya empezó o cambió de estado.'); return false; }
     if (!t.spItemId) { appAlert('El pre-ticket todavía no terminó de guardarse. Esperá unos segundos.'); return false; }
+    if (destinoVisto && destinoVisto !== t.destination) { appAlert('El destino de este pre-ticket cambió mientras confirmabas. Revisalo y volvé a intentar.'); return false; }
     writingRef.current = true;
     prevTicketSnapshotRef.current.set(t.id, `${TicketStatus.PRESOLICITUD}|`);
     const reset: Ticket = { ...t, status: TicketStatus.PRESOLICITUD, destination: null, destinationBedCode: undefined,
-      destinationBedStatus: undefined, targetBedOriginalStatus: undefined, habCompartida: false };
+      destinationBedStatus: undefined, targetBedOriginalStatus: undefined, habCompartida: false,
+      intervenedByHostess: 'NO', canCancel: true }; // la intervención era sobre la cama liberada (el server la reinicia)
     setTickets(prev => prev.map(x => x.id === t.id ? reset : x));
     try {
       const r = await authFetch('/api/tickets', {
         method: 'PATCH',
-        body: JSON.stringify({ id: t.id, restablecerDestino: true, motivo: (motivo ?? '').trim(),
+        body: JSON.stringify({ id: t.id, restablecerDestino: true, destino: t.destination, motivo: (motivo ?? '').trim(),
           usuario: currentUser?.name ?? '', usuarioId: currentUser?.id ?? '', operador: getOperador(), version: APP_VERSION }),
       });
       if (!r.ok) {
@@ -4217,6 +4239,8 @@ export const useHospitalState = () => {
       historyRange,
       loginEmail, loginPass, loginError, loginLoading, bedsLoading, bedsError, ticketActionLoading, beds,
       activeTicketByOrigin, orphanTickets,
+      // Mapa CRUDO de PROGAL (sin overlays de mergeBeds): para "dónde está hoy el paciente" (Trayectoria).
+      rawBeds,
       ticketsLoaded, ticketsError,
       tokenExpirySoon, tokenMinutesLeft,
       isolatedBeds,
