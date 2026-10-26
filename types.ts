@@ -417,6 +417,7 @@ export const PERMISSIONS = [
   'cirugia_tolerancia', // "iniciar dieta" (paso FINAL; cierra la operatoria y avisa a Catering)
   'cirugia_cancelar',   // cancelar la operatoria (transversal)
   'cirugia_marcar',     // Admisión: marcar "va a cirugía" un paciente NO quirúrgico (flag, desde el mapa)
+  'cirugia_previa',     // "Ya se operó (fuera de MediFlow)": registrar/deshacer una cirugía previa (saca la "Q"). Coordinación (26/10/2026)
   // Pre-ticket de traslado (pedido de cama de la Coordinadora). Ver docs/planes/pre-ticket.md.
   'crear_pre_ticket',      // Coordinadora: crea el pre-ticket (paciente + movimiento + requisitos, sin destino)
   'completar_pre_ticket',  // Admisión: ve el pre-ticket en la grilla y "Configura destino" → lo convierte en traslado

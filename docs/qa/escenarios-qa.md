@@ -389,6 +389,12 @@ pasada manual aparte (no son automatizables por browser/API).
 - **Acción**: Operativa → "Editar" → (opcional: motivo de modificación) → "Restablecer destino (liberar X)" → "Sí, liberar la cama".
 - **Resultado esperado**: el pre-ticket vuelve a Presolicitud con "Configurar destino". La cama X queda disponible para otro pedido y la trayectoria registra el destino restablecido con el motivo. Si la azafata ya intervino, el link no aparece. Configurarlo de nuevo dispara el aviso de nuevo traslado al destino nuevo.
 - **Regresión a vigilar (v1.12.1)**: si la azafata del destino, con la grilla sin refrescar, toca "Habitación lista" después del restablecimiento, ve el aviso "El traslado cambió…" y el pre-ticket **no** revive.
+- **Variante (v1.13.0) — con "Habitación lista" marcada por la azafata**: en la fila no está "Editar", pero sí el botón "Restablecer destino" → modal (motivo opcional) → "Sí, liberar la cama". Mismo resultado; al reconfigurarlo, "Editar" vuelve a estar disponible. Con el traslado ya **En Traslado**, no hay botón (y el servidor responde 409).
+
+### QA-TRA-31 · "Ubicación actual" en la trayectoria sale del mapa de PROGAL
+- **Precondición**: un paciente con traslados consolidados que hoy **no** está internado; otro que PROGAL movió de cama sin pasar por MediFlow.
+- **Acción**: Historial → Trayectoria de cada uno (y desde el detalle de la cama del segundo).
+- **Resultado esperado**: el primero muestra "Ubicación actual: No internado" con "Último traslado: X"; el segundo, la cama donde está hoy según el mapa (no el destino de su último traslado). Con un traslado activo sigue diciendo "En curso".
 
 ---
 
@@ -1080,7 +1086,7 @@ Diseño en [arquitectura.md §48](../arquitectura/arquitectura.md). **Prerrequis
 - **Resultado esperado**: en ≤15 min se registra el cambio (`cirugia_cambios`), llega el push de cambio de habitación y la operatoria guarda `cama_destino`; en "Regreso de cirugía" la cama nueva muestra "Cama destino".
 
 ### QA-CX-06 · "Ya se operó (fuera de MediFlow)" saca la "Q"
-- **Precondición**: paciente `Q` sin cirugías en MediFlow (con "Q" en la celda); usuario con `cirugia_listo` o `cirugia_marcar`.
+- **Precondición**: paciente `Q` sin cirugías en MediFlow (con "Q" en la celda); usuario con `cirugia_previa` (Coordinación). Un usuario de Enfermería (solo `cirugia_listo`) **no** ve el botón.
 - **Acción**: abrir la cama → "Ya se operó (fuera de MediFlow)" → "Sí, ya se operó".
 - **Resultado esperado**: se cierra el detalle y la "Q" desaparece. Al reabrir: nota "Cirugía previa registrada (fuera de MediFlow) el dd/mm…" sin "Listo para cirugía". Con "Va a cirugía" de Admisión vuelve el botón ("Re-Cx"). En la trayectoria del paciente: "Cirugía previa (fuera de MediFlow)". **No** llega push de "Iniciar dieta" ni aparece en el histórico de Cirugías. Tocar dos veces no duplica.
 

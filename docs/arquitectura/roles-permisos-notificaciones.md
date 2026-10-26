@@ -111,6 +111,18 @@ Regla: `permitsMealSlotLoad(perms, slot)` = `cargar_dieta` **O** `cargar_comanda
 (`types.ts:293`). `cargar_dieta` + un granular es redundante (gana "todos"). Los `cargar_comanda_*` se
 **derivan de `MEAL_SLOTS`**: agregar un turno al catálogo genera su permiso solo.
 
+### 3.2.1. Cirugía (Operativa → Cirugías y mapa de camas)
+
+Un permiso por acción de la máquina de estados (`cirugia_listo`, `cirugia_buscar`, `cirugia_entregar`, `cirugia_operar`,
+`cirugia_devolver`, `cirugia_tolerancia`, `cirugia_cancelar`), más:
+
+| Permiso | Qué habilita | Dónde se gatea |
+|---------|--------------|----------------|
+| `cirugia_marcar` | Marcar "Va a cirugía" (habilita a un no quirúrgico, o a un Q que ya se operó) — Admisión | UI + `api/cirugia-marcas.ts` |
+| `cirugia_previa` | "Ya se operó (fuera de MediFlow)" y su "Deshacer": registra una cirugía previa de la internación y saca la "Q" — **Coordinación** (26/10/2026, pedido de Gamma: no Enfermería) | UI (`App.tsx` → `BedsView`) + `api/cirugia.ts` (POST `previa`, PATCH `ANULAR_PREVIA`), con sector |
+
+"Volver un paso" no tiene permiso propio: pide el del paso que se deshace (`CIRUGIA_PERMISO_DEL_PASO`).
+
 ### 3.3. Gestión de Comandas — planificación de menú
 
 | Permiso | Qué habilita | Dónde se gatea |

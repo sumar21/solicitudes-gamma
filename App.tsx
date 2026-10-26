@@ -41,6 +41,7 @@ import { PreTicketModal } from './components/modals/PreTicketModal';
 import { ConfigureDestinoModal } from './components/modals/ConfigureDestinoModal';
 import { ConsolidarUrgenciaModal } from './components/modals/ConsolidarUrgenciaModal';
 import { EditRequestModal, EditRequestPayload } from './components/modals/EditRequestModal';
+import { RestablecerDestinoModal } from './components/modals/RestablecerDestinoModal';
 import { AssignBedModal } from './components/modals/AssignBedModal';
 import { AreaSelectionModal } from './components/modals/AreaSelectionModal';
 import { RejectionModal } from './components/modals/RejectionModal';
@@ -149,6 +150,7 @@ export default function App() {
   const [isUnreadModalOpen, setIsUnreadModalOpen] = useState(false);
   const [rejectTicketId, setRejectTicketId] = useState<string | null>(null);
   const [editTicketId, setEditTicketId] = useState<string | null>(null);
+  const [resetDestinoId, setResetDestinoId] = useState<string | null>(null);
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -235,8 +237,8 @@ export default function App() {
   const canViewBeds      = hasModule(state.currentUser, 'Mapa de Camas');
   const canViewComandas  = hasModule(state.currentUser, 'Gestion Comandas');
   const canViewConfig    = hasModule(state.currentUser, 'Configuracion');
-  // "Ya se operó (fuera de MediFlow)": quien marca "Listo" (Enfermería) o habilita cirugías (Admisión).
-  const canCirugiaPrevia = can(state.currentUser, 'cirugia_listo') || can(state.currentUser, 'cirugia_marcar');
+  // "Ya se operó (fuera de MediFlow)": permiso propio del ABM (cirugia_previa; Coordinación, pedido de Gamma).
+  const canCirugiaPrevia = can(state.currentUser, 'cirugia_previa');
   // "Volver un paso" pide el permiso del paso que se deshace: sin ninguno, ni se monta el bloque de cirugía del
   // mapa (si no, Catering/Nutrición veían la pill y los textos de la operatoria).
   const canCirugiaRetroceder = (['cirugia_buscar', 'cirugia_entregar', 'cirugia_operar', 'cirugia_devolver'] as const).some(p => can(state.currentUser, p));
@@ -847,6 +849,7 @@ export default function App() {
                 onConsolidateUrgencia={(id) => setConsolidarUrgenciaId(id)}
                 onReject={(id) => { setRejectTicketId(id); setIsRejectOpen(true); }}
                 onEdit={(id) => setEditTicketId(id)}
+                onResetDestino={can(state.currentUser, 'completar_pre_ticket') ? (id) => setResetDestinoId(id) : undefined}
                 onAddObservation={actions.handleAddObservation}
                 currentUser={state.currentUser}
                 beds={state.beds}
@@ -859,7 +862,7 @@ export default function App() {
             </>
           )}
           {/* Historial — gateado por Acceso_RT */}
-          {canViewHistorial && state.currentView === 'HISTORY' && <HistoryView tickets={state.historyTickets} onRefresh={() => actions.fetchAllTickets(true)} refreshing={state.allTicketsLoading} onRangeChange={actions.setHistoryRange} onFetchPatientTickets={actions.fetchPatientTickets} onSearchHistory={actions.searchHistory} />}
+          {canViewHistorial && state.currentView === 'HISTORY' && <HistoryView tickets={state.historyTickets} onRefresh={() => actions.fetchAllTickets(true)} refreshing={state.allTicketsLoading} onRangeChange={actions.setHistoryRange} onFetchPatientTickets={actions.fetchPatientTickets} onSearchHistory={actions.searchHistory} beds={state.beds} />}
           {/* Usuarios — gateado por permiso abm_usuarios */}
           {canSeeUsers && state.currentView === 'USERS' && <UserManagementView currentUser={state.currentUser} />}
           {/* Roles — gateado por permiso abm_roles */}
@@ -930,6 +933,12 @@ export default function App() {
           setEditTicketId(null);
         }}
         onResetDestino={can(state.currentUser, 'completar_pre_ticket') ? actions.restablecerDestinoPreTicket : undefined}
+      />
+      <RestablecerDestinoModal
+        open={!!resetDestinoId}
+        onOpenChange={(open) => { if (!open) setResetDestinoId(null); }}
+        ticket={resetDestinoId ? (state.tickets.find(t => t.id === resetDestinoId) ?? null) : null}
+        onConfirm={actions.restablecerDestinoPreTicket}
       />
       <AssignBedModal open={isAssignBedOpen} onOpenChange={setIsAssignBedOpen} onConfirm={onConfirmBed} />
       <RejectionModal

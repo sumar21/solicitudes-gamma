@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { Ticket, TicketStatus } from '../types';
+import { Bed, BedStatus, Ticket, TicketStatus } from '../types';
 import {
   Search, Calendar as CalendarIcon, Clock, CheckCircle2,
   ArrowRightLeft, Settings, X, Filter, AlertCircle, Download,
@@ -33,6 +33,8 @@ interface HistoryViewProps {
   onFetchPatientTickets?: (patientCode?: string) => Promise<Ticket[]>;
   /** Busca en TODO el histórico por nombre/ID (cross-fecha) — para el buscador de la Lista. */
   onSearchHistory?: (term: string) => Promise<Ticket[]>;
+  /** Mapa de camas actual: la Trayectoria muestra dónde está HOY el paciente según PROGAL. */
+  beds?: Bed[];
 }
 
 const DateRangeTrigger = React.forwardRef<
@@ -59,7 +61,7 @@ const DateRangeTrigger = React.forwardRef<
 ));
 DateRangeTrigger.displayName = "DateRangeTrigger";
 
-export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, refreshing, onRangeChange, onFetchPatientTickets, onSearchHistory }) => {
+export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, refreshing, onRangeChange, onFetchPatientTickets, onSearchHistory, beds }) => {
   const todayISO = (() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -157,6 +159,13 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
     }
     setJourneyTickets(group.tickets);
   }, [journeyPatientKey, patientGroups, onFetchPatientTickets]);
+  // Cama donde PROGAL tiene HOY al paciente de la Trayectoria (null = no figura internado; undefined = sin
+  // mapa o sin código, no se sabe).
+  const journeyUbicacion = useMemo((): string | null | undefined => {
+    const code = journeyTickets.find(t => t.patientCode)?.patientCode?.trim();
+    if (!code || !beds?.length) return undefined;
+    return beds.find(b => b.status === BedStatus.OCCUPIED && String(b.patientCode ?? '').trim() === code)?.label ?? null;
+  }, [journeyTickets, beds]);
 
   const filteredHistory = useMemo(() => {
     // Con búsqueda CROSS-fecha resuelta usamos esos resultados (el server ya filtró por nombre/ID en
@@ -623,6 +632,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
 
       <PatientJourney
         patientTickets={journeyTickets}
+        ubicacionProgal={journeyUbicacion}
         isOpen={!!journeyPatientKey}
         onClose={() => setJourneyPatientKey(null)}
         workflowLabels={WORKFLOW_LABELS}

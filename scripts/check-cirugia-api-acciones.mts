@@ -117,9 +117,12 @@ assert(r.code === 409 && /otra cirugía en curso/.test(r.body.error), 'choque co
 
 // ── POST previa ("Ya se operó fuera de MediFlow") ────────────────────────────
 const previa = { previa: true, pacienteCodigo: '1001', pacienteNombre: 'PACIENTE A', camaOrigen: 'Habitacion 817 HPR - Cama 01', area: P8, eventKey: 'HIN-55', userId: '7' };
-r = await call('POST', previa, { perms: ['cirugia_buscar'] });
-assert(r.code === 403 && r.ops.length === 0, 'sin cirugia_listo ni cirugia_marcar → 403');
-r = await call('POST', previa, { perms: ['cirugia_marcar'] });
+// Permiso propio del ABM (26/10/2026: Coordinación, no Enfermería). Ni "Listo" ni "Va a cirugía" alcanzan.
+r = await call('POST', previa, { perms: ['cirugia_listo', 'cirugia_marcar', 'cirugia_tolerancia'] });
+assert(r.code === 403 && r.ops.length === 0, 'sin cirugia_previa → 403 (aunque tenga listo/marcar)');
+r = await call('POST', previa, { perms: ['cirugia_previa'], floors: ['Internacion 4° Piso HPR'] });
+assert(r.code === 403 && r.ops.length === 0, 'cirugia_previa de otro sector → 403');
+r = await call('POST', previa, { perms: ['cirugia_previa'] });
 assert.equal(r.code, 200, r.body?.error);
 const ins = r.ops.find(o => o.op === 'insert' && o.table === 'cirugia_traslados');
 assert.deepEqual(
@@ -127,26 +130,26 @@ assert.deepEqual(
   { estado: 'TOLERANCIA_EVALUADA', tipo: 'PREVIA_EXTERNA', event_key: 'HIN-55', paciente_codigo: '1001' }, 'completada previa de esta internación');
 assert(ins.payload.fecha_cierre, 'cerrada');
 assert(!evento(r.ops), 'sin eventos: no dispara "Iniciar dieta"');
-r = await call('POST', previa, { perms: ['cirugia_listo'], existente: [{ id: 'cx-vieja' }] });
+r = await call('POST', previa, { perms: ['cirugia_previa'], existente: [{ id: 'cx-vieja' }] });
 assert(r.code === 200 && r.body.id === 'cx-vieja' && !r.ops.some(o => o.op === 'insert'), 'idempotente por paciente + internación');
 // Sin internación (o inválida) → 400: una previa con event_key NULL contaría en todas las internaciones (QA v1.12.1).
-r = await call('POST', { ...previa, eventKey: "x' or 1=1" }, { perms: ['cirugia_listo'] });
+r = await call('POST', { ...previa, eventKey: "x' or 1=1" }, { perms: ['cirugia_previa'] });
 assert(r.code === 400 && !r.ops.some(o => o.op === 'insert'), 'eventKey inválido → 400');
-r = await call('POST', { ...previa, eventKey: undefined }, { perms: ['cirugia_listo'] });
+r = await call('POST', { ...previa, eventKey: undefined }, { perms: ['cirugia_previa'] });
 assert(r.code === 400 && !r.ops.some(o => o.op === 'insert'), 'sin eventKey → 400');
-r = await call('POST', { ...previa, pacienteCodigo: '' }, { perms: ['cirugia_listo'] });
+r = await call('POST', { ...previa, pacienteCodigo: '' }, { perms: ['cirugia_previa'] });
 assert.equal(r.code, 400, 'sin código de paciente → 400');
 
 // ── ANULAR_PREVIA ────────────────────────────────────────────────────────────
 const prev = { estado: 'TOLERANCIA_EVALUADA', cama_origen: 'Habitacion 817 HPR - Cama 01', area: P8, paciente_codigo: '1001', tipo: 'PREVIA_EXTERNA' };
-r = await call('PATCH', { id: 'cx-p', action: 'ANULAR_PREVIA' }, { perms: ['cirugia_buscar'], cur: prev });
-assert.equal(r.code, 403, 'anular pide cirugia_listo o cirugia_marcar');
-r = await call('PATCH', { id: 'cx-p', action: 'ANULAR_PREVIA' }, { perms: ['cirugia_listo'], cur: prev });
+r = await call('PATCH', { id: 'cx-p', action: 'ANULAR_PREVIA' }, { perms: ['cirugia_listo', 'cirugia_marcar'], cur: prev });
+assert.equal(r.code, 403, 'anular pide cirugia_previa');
+r = await call('PATCH', { id: 'cx-p', action: 'ANULAR_PREVIA' }, { perms: ['cirugia_previa'], cur: prev });
 assert.equal(r.code, 200, r.body?.error);
 assert.equal(upd(r.ops).payload.estado, 'CANCELADO', 'queda cancelada (constancia)');
 assert.equal(upd(r.ops).payload.motivo_cancelacion, 'Cirugía previa anulada (registrada por error)');
 // Una cirugía REAL de MediFlow no se anula por acá.
-r = await call('PATCH', { id: 'cx-p', action: 'ANULAR_PREVIA' }, { perms: ['cirugia_listo'], cur: { ...prev, tipo: null } });
+r = await call('PATCH', { id: 'cx-p', action: 'ANULAR_PREVIA' }, { perms: ['cirugia_previa'], cur: { ...prev, tipo: null } });
 assert(r.code === 409 && !upd(r.ops), 'cirugía real → 409');
 
 console.log('OK — api/cirugia: volver un paso + cirugía previa');

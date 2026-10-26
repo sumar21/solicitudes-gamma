@@ -98,10 +98,12 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
     ],
   },
   {
-    // Cirugía — acciones de ENFERMERÍA, se operan desde la tarjeta de la cama (mapa de camas).
-    module: 'Mapa de Camas', label: 'Cirugía — Enfermería (mapa de camas)',
+    // Cirugía — acciones que se hacen desde la tarjeta de la cama (mapa de camas): Enfermería, Admisión y
+    // Coordinación.
+    module: 'Mapa de Camas', label: 'Cirugía — desde el mapa de camas',
     perms: [
       { code: 'cirugia_marcar',   label: 'Marcar "va a cirugía" (Admisión, paciente no quirúrgico)' },
+      { code: 'cirugia_previa',   label: 'Registrar "Ya se operó (fuera de MediFlow)" (Coordinación; saca la "Q")' },
       { code: 'cirugia_listo',    label: 'Marcar "listo para cirugía"' },
       { code: 'cirugia_entregar', label: 'Registrar "en traslado a cirugía"' },
       { code: 'cirugia_tolerancia', label: 'Iniciar dieta (paso final, cierra la operatoria)' },

@@ -70,7 +70,11 @@ export function validarReubicarOrigen(
   return { ok: true };
 }
 
-/** ¿El pre-ticket puede volver a "Presolicitud" (sin destino)? Solo configurado y sin intervención de la azafata. */
+/**
+ * ¿El pre-ticket puede volver a "Presolicitud" (sin destino)? Configurado (Esperando Habitación) o con la
+ * habitación lista, aunque la haya marcado la azafata (26/10/2026: hasta ese momento se puede liberar la
+ * cama). Desde "En Traslado" ya no: el paciente salió.
+ */
 export function validarRestablecerDestino(cur: TrasladoRowLite | null): Veredicto {
   if (!cur) return { ok: false, status: 404, error: 'Traslado no encontrado.' };
   if (cur.status === TicketStatus.PRESOLICITUD) return { ok: true, noop: true }; // ya está sin destino
@@ -79,9 +83,6 @@ export function validarRestablecerDestino(cur: TrasladoRowLite | null): Veredict
   }
   if (cur.status !== TicketStatus.WAITING_ROOM && cur.status !== TicketStatus.IN_TRANSIT) {
     return { ok: false, status: 409, error: 'El traslado ya está en curso: no se puede restablecer el destino.' };
-  }
-  if (String(cur.intervino_azafata ?? '').trim().toUpperCase() === 'SI') {
-    return { ok: false, status: 409, error: 'La azafata ya intervino: no se puede restablecer el destino.' };
   }
   return { ok: true };
 }

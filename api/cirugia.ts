@@ -235,9 +235,9 @@ async function handler(req: any, res: any) {
     const pcode = String(pacienteCodigo ?? '').trim();
     if (!pcode) return res.status(400).json({ error: 'Falta el código de paciente.' });
     if (!String(camaOrigen ?? '').trim()) return res.status(400).json({ error: 'camaOrigen is required' });
-    const deny1 = await authzCirugia(req, 'cirugia_listo', area != null ? String(area) : null);
-    const deny2 = deny1 ? await authzCirugia(req, 'cirugia_marcar', area != null ? String(area) : null) : null;
-    if (deny1 && deny2) return res.status(deny1.status).json({ error: deny1.error });
+    // Permiso propio, configurable en el ABM (26/10/2026: Gamma lo quiere en Coordinación, no en Enfermería).
+    const denyPrevia = await authzCirugia(req, 'cirugia_previa', area != null ? String(area) : null);
+    if (denyPrevia) return res.status(denyPrevia.status).json({ error: denyPrevia.error });
     const ekeyRaw = eventKey != null ? String(eventKey).trim() : '';
     const ekey = /^[A-Za-z0-9_-]{1,64}$/.test(ekeyRaw) ? ekeyRaw : null;
     // Sin internación no se registra: una completada con event_key NULL cuenta en TODAS las internaciones
@@ -434,11 +434,10 @@ async function handler(req: any, res: any) {
       // Gamma; el permiso de la acción se exige igual.
       const areasAccion = [cur.area, areaActual != null ? String(areaActual) : null];
       // RETROCEDER exige el permiso del paso que se deshace (deshacer "En traslado" = cirugia_entregar).
-      // ANULAR_PREVIA: los mismos que la registran (cirugia_listo o cirugia_marcar).
+      // ANULAR_PREVIA: el mismo permiso que la registra (cirugia_previa).
       let denyPatch: { status: number; error: string } | null;
       if (act === 'ANULAR_PREVIA') {
-        const d1 = await authzCirugia(req, 'cirugia_listo', areasAccion);
-        denyPatch = d1 ? await authzCirugia(req, 'cirugia_marcar', areasAccion) : null;
+        denyPatch = await authzCirugia(req, 'cirugia_previa', areasAccion);
       } else {
         const permiso = act === 'RETROCEDER' ? ACCION_PERMISO[String(cur.estado)] : ACCION_PERMISO[act];
         denyPatch = await authzCirugia(req, permiso ?? 'cirugia_cancelar', areasAccion);

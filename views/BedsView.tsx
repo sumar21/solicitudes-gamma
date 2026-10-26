@@ -3766,6 +3766,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
           cerrar vuelve al detalle (no cerramos selectedBed al abrirlo). */}
       <PatientJourney
         patientTickets={patientTickets}
+        ubicacionProgal={selectedBed?.status === BedStatus.OCCUPIED ? selectedBed.label : undefined}
         isOpen={journeyOpen}
         onClose={() => setJourneyOpen(false)}
         workflowLabels={WORKFLOW_LABELS}

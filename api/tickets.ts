@@ -357,8 +357,9 @@ async function handler(req: any, res: any) {
       }
 
       // ── Restablecer destino de un pre-ticket configurado (vuelve a Presolicitud y libera la cama) ──
-      // Los campos los fija el servidor (no el body). CAS por estado + "sin azafata": si la azafata marcó
-      // "Habitación lista" justo antes, no se pisa.
+      // Los campos los fija el servidor (no el body). Vale también con "Habitación lista" marcada por la
+      // azafata (26/10/2026); CAS por estado: si justo inició el traslado, 409. La intervención de la azafata
+      // era sobre la cama liberada, así que se reinicia (el pre-ticket vuelve a ser editable al reconfigurarlo).
       if (req.body?.restablecerDestino === true) {
         const denied = await authzPreTicket(req, 'completar_pre_ticket');
         if (denied) return res.status(denied.status).json({ error: denied.error });
@@ -375,12 +376,12 @@ async function handler(req: any, res: any) {
           cama_destino_status: null,
           cama_destino_area: null,
           hab_compartida: false,
+          intervino_azafata: 'NO',
           last_actor_id: Number(req.user?.id) || null,
           version: String(req.body?.version ?? ''),
-        }).eq('id_univoco', idUnivoco).eq('entorno', ENTORNO).eq('status', String(cur!.status))
-          .or('intervino_azafata.is.null,intervino_azafata.neq.SI').select('id_univoco');
+        }).eq('id_univoco', idUnivoco).eq('entorno', ENTORNO).eq('status', String(cur!.status)).select('id_univoco');
         if (error) { console.error('[tickets] restablecer destino failed:', error.message); return res.status(500).json({ error: 'No se pudo restablecer el destino.' }); }
-        if (!upd?.length) return res.status(409).json({ error: 'El traslado cambió (¿intervino la azafata?); recargá.' });
+        if (!upd?.length) return res.status(409).json({ error: 'El traslado cambió (¿la azafata ya inició el traslado?); recargá.' });
         // El evento lo deja el servidor (solo quien ganó el CAS): desde el cliente se perdía si se cortaba la
         // respuesta, o se duplicaba en un reintento (QA del 20/10, v1.12.1).
         const motivo = String(req.body?.motivo ?? '').trim().slice(0, 300);

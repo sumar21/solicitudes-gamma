@@ -3360,12 +3360,13 @@ export const useHospitalState = () => {
   const restablecerDestinoPreTicket = async (ticketId: string, motivo?: string): Promise<boolean> => {
     if (!can(currentUser, 'completar_pre_ticket')) { appAlert('Tu rol no tiene permiso para configurar destinos.'); return false; }
     const t = tickets.find(x => x.id === ticketId);
-    if (!t || !puedeRestablecerDestino(t)) { appAlert('Este pre-ticket ya no se puede restablecer: la azafata ya intervino o cambió de estado.'); return false; }
+    if (!t || !puedeRestablecerDestino(t)) { appAlert('Este pre-ticket ya no se puede restablecer: el traslado ya empezó o cambió de estado.'); return false; }
     if (!t.spItemId) { appAlert('El pre-ticket todavía no terminó de guardarse. Esperá unos segundos.'); return false; }
     writingRef.current = true;
     prevTicketSnapshotRef.current.set(t.id, `${TicketStatus.PRESOLICITUD}|`);
     const reset: Ticket = { ...t, status: TicketStatus.PRESOLICITUD, destination: null, destinationBedCode: undefined,
-      destinationBedStatus: undefined, targetBedOriginalStatus: undefined, habCompartida: false };
+      destinationBedStatus: undefined, targetBedOriginalStatus: undefined, habCompartida: false,
+      intervenedByHostess: 'NO', canCancel: true }; // la intervención era sobre la cama liberada (el server la reinicia)
     setTickets(prev => prev.map(x => x.id === t.id ? reset : x));
     try {
       const r = await authFetch('/api/tickets', {
