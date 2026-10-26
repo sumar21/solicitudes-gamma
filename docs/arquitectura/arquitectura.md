@@ -1843,7 +1843,7 @@ La 1.12.0 subió a producción y en paralelo se corrió una revisión adversaria
 
 - **Permiso propio `cirugia_previa`.** Gamma (Julieta Degani) pidió que "Ya se operó (fuera de MediFlow)" lo tengan las **coordinadoras**, no las enfermeras. Antes alcanzaba con `cirugia_listo` (Enfermería) o `cirugia_marcar` (Admisión).
   - Ahora es un permiso propio en el ABM, en el grupo "Cirugía — desde el mapa de camas". Lo exigen el botón, el "Deshacer" y el servidor: POST `previa` y PATCH `ANULAR_PREVIA`, con sector.
-  - Se tildó en Coordinación, Admin y sumar.ai.
+  - Hay que tildarlo en el ABM (Configuración → Roles) en Coordinación y en los roles de administración: los roles son compartidos entre TESTING y PRODUCTIVO y la sesión lo toma sola en ~1 min (`syncSessionRole`). Mientras no esté tildado en ningún rol, nadie ve el botón.
 - **"Restablecer destino" con "Habitación lista" marcada por la azafata.** Hasta que arranca el traslado se puede liberar la cama, aunque la azafata ya la haya limpiado.
   - El servidor (`validarRestablecerDestino`) acepta Esperando Habitación y Habitación Lista sin mirar `intervino_azafata`, y la reinicia a `'NO'`: la intervención era sobre la cama liberada y, al reconfigurar, el pedido vuelve a ser editable.
   - El CAS por estado protege contra un "Iniciar traslado" simultáneo (409).
