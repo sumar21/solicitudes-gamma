@@ -263,7 +263,7 @@ export const PatientJourney: React.FC<PatientJourneyProps> = ({
         currentLocation = ubicacionProgal;
         currentTone = 'done';
       } else if (ubicacionProgal === null) {
-        locationHint = currentLocation ? `Último traslado: ${formatBedName(currentLocation)}` : '';
+        locationHint = currentLocation ? `Última cama en MediFlow: ${formatBedName(currentLocation)}` : '';
         currentLocation = '';
         currentTone = 'unknown';
       } else {

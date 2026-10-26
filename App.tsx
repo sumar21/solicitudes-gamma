@@ -862,7 +862,7 @@ export default function App() {
             </>
           )}
           {/* Historial — gateado por Acceso_RT */}
-          {canViewHistorial && state.currentView === 'HISTORY' && <HistoryView tickets={state.historyTickets} onRefresh={() => actions.fetchAllTickets(true)} refreshing={state.allTicketsLoading} onRangeChange={actions.setHistoryRange} onFetchPatientTickets={actions.fetchPatientTickets} onSearchHistory={actions.searchHistory} beds={state.beds} />}
+          {canViewHistorial && state.currentView === 'HISTORY' && <HistoryView tickets={state.historyTickets} onRefresh={() => actions.fetchAllTickets(true)} refreshing={state.allTicketsLoading} onRangeChange={actions.setHistoryRange} onFetchPatientTickets={actions.fetchPatientTickets} onSearchHistory={actions.searchHistory} beds={state.bedsError ? undefined : state.rawBeds} />}
           {/* Usuarios — gateado por permiso abm_usuarios */}
           {canSeeUsers && state.currentView === 'USERS' && <UserManagementView currentUser={state.currentUser} />}
           {/* Roles — gateado por permiso abm_roles */}

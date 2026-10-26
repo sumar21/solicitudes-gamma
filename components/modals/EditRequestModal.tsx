@@ -50,7 +50,7 @@ interface EditRequestModalProps {
   activeTransferDestinations?: Set<string>;
   onSave: (data: EditRequestPayload) => void;
   /** "Restablecer destino" de un pre-ticket configurado: vuelve a Presolicitud y libera la cama. */
-  onResetDestino?: (ticketId: string, motivo?: string) => Promise<boolean>;
+  onResetDestino?: (ticketId: string, motivo?: string, destinoVisto?: string | null) => Promise<boolean>;
 }
 
 export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpenChange, ticket, beds, activeTransferDestinations = new Set(), onSave, onResetDestino }) => {
@@ -237,7 +237,7 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
                   <Button type="button" size="sm" disabled={resetting}
                     onClick={async () => {
                       setResetting(true);
-                      const ok = await onResetDestino(ticket.id, modificationReason);
+                      const ok = await onResetDestino(ticket.id, modificationReason, ticket.destination);
                       setResetting(false);
                       if (ok) onOpenChange(false); else setConfirmReset(false);
                     }}

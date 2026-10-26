@@ -139,6 +139,11 @@ r = await patch(rd, { perms: ['completar_pre_ticket'], cur: curRd, updRows: 0 })
 assert(r.code === 409 && !r.ops.some(o => o.op === 'insert'), 'la azafata inició el traslado justo antes (CAS) → 409 sin evento');
 r = await patch(rd, { perms: ['completar_pre_ticket'], cur: { ...curRd, status: 'Presolicitud' } });
 assert(r.code === 200 && r.body.unchanged && r.ops.length === 0, 'ya en Presolicitud → noop sin evento');
+// CAS por destino (QA 26/10): la cama que vio quien confirma. Si otro ya restableció y reconfiguró a otra, 409.
+r = await patch({ ...rd, destino: 'Habitacion 777 HPR - Cama 01' }, { perms: ['completar_pre_ticket'], cur: curRd });
+assert(r.code === 409 && r.ops.length === 0, 'destino visto distinto del actual → 409 sin escribir');
+r = await patch({ ...rd, destino: 'Habitacion 501 HPR - Cama 01' }, { perms: ['completar_pre_ticket'], cur: curRd });
+assert(r.code === 200 && r.ops.find(o => o.op === 'update').filters.some((x: any[]) => x[0] === 'eq' && x[1] === 'cama_destino' && x[2] === 'Habitacion 501 HPR - Cama 01'), 'el UPDATE filtra por el destino');
 
 // ── Acción de azafata sobre un pedido fuera de circuito (QA v1.12.1) ─────────
 // Con la lista atrasada, "Habitación lista" sobre un pre-ticket al que le restablecieron el destino lo revivía.
@@ -149,6 +154,11 @@ const u3 = r.ops.find(o => o.op === 'update');
 assert(u3.filters.some((x: any[]) => x[0] === 'not' && x[1] === 'status' && x[2] === 'in' && /Presolicitud/.test(x[3]) && /Cancelado/.test(x[3]) && /Consolidado/.test(x[3])), 'filtro: fuera de Presolicitud/cerrados');
 r = await patch(habLista, { perms: [], updRows: 1 });
 assert.equal(r.code, 200, 'en circuito → 200');
+assert(!r.ops.find(o => o.op === 'update').filters.some((x: any[]) => x[0] === 'eq' && x[1] === 'cama_destino'), 'cliente viejo (sin expectedDestination): sin filtro por destino');
+// Con expectedDestination (QA 26/10): si Admisión restableció y reconfiguró a otra cama, el UPDATE no aplica → 409.
+r = await patch({ ...habLista, expectedDestination: 'Habitacion 501 HPR - Cama 01' }, { perms: [], updRows: 0 });
+assert.equal(r.code, 409, 'destino cambiado → 409');
+assert(r.ops.find(o => o.op === 'update').filters.some((x: any[]) => x[0] === 'eq' && x[1] === 'cama_destino' && x[2] === 'Habitacion 501 HPR - Cama 01'), 'filtro por el destino que veía la azafata');
 // Una acción de Admisión (sin intervenedByHostess) no lleva ese filtro.
 r = await patch({ id: 'TSL-2', observations: 'x' }, { perms: [], updRows: 0 });
 assert(r.code === 200 && !r.ops.find(o => o.op === 'update').filters.some((x: any[]) => x[0] === 'not'), 'edición de Admisión: sin filtro de azafata');

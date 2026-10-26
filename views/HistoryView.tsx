@@ -33,7 +33,8 @@ interface HistoryViewProps {
   onFetchPatientTickets?: (patientCode?: string) => Promise<Ticket[]>;
   /** Busca en TODO el histórico por nombre/ID (cross-fecha) — para el buscador de la Lista. */
   onSearchHistory?: (term: string) => Promise<Ticket[]>;
-  /** Mapa de camas actual: la Trayectoria muestra dónde está HOY el paciente según PROGAL. */
+  /** Mapa CRUDO de PROGAL (sin overlays: mergeBeds pasa a "Asignada" la cama de quien vuelve de cirugía y el
+   *  paciente quedaba "No internado"). undefined si falló o vino parcial: la Trayectoria dice "Último destino". */
   beds?: Bed[];
 }
 
