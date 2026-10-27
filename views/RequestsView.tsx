@@ -517,12 +517,14 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       // pisos, se remapea al piso real del otro extremo. Así, en un traslado HRA→Piso la
       // azafata de destino queda como dueña de origen Y destino (inicia y recibe) y las
       // demás no ven nada; en Piso→Piso cada una conserva su etapa.
-      const { origin: effOriginArea, dest: effDestArea } = effectiveHostessAreas(originBed?.area, destBed?.area);
+      // Si la cama no está en el mapa del dispositivo (mapa parcial de Gamma), el sector guardado en el traslado.
+      const originArea = originBed?.area ?? (ticket.originSector as Area | undefined);
+      const destArea = destBed?.area ?? (ticket.destinationSector as Area | undefined);
+      const { origin: effOriginArea, dest: effDestArea } = effectiveHostessAreas(originArea, destArea);
 
-      // Mismo criterio que makeAreaScope (lib/ticketFilters.ts): si con el mapa actual no se puede ubicar
-      // NI el origen NI el destino (mapa de camas parcial de Gamma), no se recorta → la fila no queda sin
-      // botones y se puede seguir operando.
-      const unlocated = !originBed?.area && !destBed?.area;
+      // Mismo criterio que makeAreaScope (lib/ticketFilters.ts): solo si NI el mapa NI el sector guardado
+      // ubican el traslado, no se recorta (la fila no queda sin botones).
+      const unlocated = !originArea && !destArea;
       const isOriginHostess = hasAllAreas || unlocated || !!(effOriginArea && currentUser?.assignedAreas?.includes(effOriginArea));
       const isDestHostess   = hasAllAreas || unlocated || !!(effDestArea   && currentUser?.assignedAreas?.includes(effDestArea));
 

@@ -110,7 +110,19 @@ assert(scope(hraA4) && !scope(hraA5), 'HRA se remapea al piso destino');
 assert(makeAreaScope({ id: '1', filterByFloors: false, assignedAreas: [Area.PISO_8] }, mapa)(deHss), 'no filtra por pisos');
 assert(makeAreaScope({ ...azafata4, assignedAreas: [] }, mapa)(deHss), 'sin sectores');
 assert(makeAreaScope({ ...azafata4, assignedAreas: Object.values(Area).slice(1) }, mapa)(deHss), 'todos menos uno = todos');
-assert(makeAreaScope(azafata4, [])(deHss), 'mapa sin cargar → no filtra');
+assert(makeAreaScope(azafata4, [])(deHss), 'mapa sin cargar y sin sector guardado → se muestra (falla abierto)');
+// Caso real 27/10/2026: el mapa del celular de la azafata del 5° no tenía UCO ni el 6° piso y vio (y marcó)
+// un traslado UCO 07 → 623. Con el sector GUARDADO en el traslado ya no lo ve, haya o no mapa.
+const azafata5 = { id: '36', filterByFloors: true, assignedAreas: [Area.PISO_5, Area.HRA] };
+const uco623 = { origin: 'Unidad Coronaria HPR - Cama 07', destination: 'Habitación 623 HPR - Cama 01', createdById: '56',
+  originSector: Area.HUC, destinationSector: Area.PISO_6 };
+const soloPiso5 = [{ label: 'Habitación 513 HPR - Cama 02', area: Area.PISO_5 }];
+assert(!makeAreaScope(azafata5, soloPiso5)(uco623), 'mapa parcial sin UCO ni 6°: usa el sector guardado → no lo ve');
+assert(!makeAreaScope(azafata5, [])(uco623), 'mapa vacío: usa el sector guardado → no lo ve');
+assert(makeAreaScope({ ...azafata5, assignedAreas: [Area.PISO_6] }, [])(uco623), 'la azafata del 6° sí lo ve (sector guardado del destino)');
+assert(makeAreaScope(azafata5, [])({ ...uco623, destinationSector: Area.PISO_5 }), 'sector guardado de su piso → lo ve');
+// El mapa manda sobre el guardado si tiene la cama (el guardado puede quedar viejo).
+assert(makeAreaScope(azafata5, [{ label: 'Habitación 623 HPR - Cama 01', area: Area.PISO_5 }])(uco623), 'el mapa del dispositivo tiene prioridad');
 assert(makeAreaScope(null, mapa)(deHss), 'sin usuario → no filtra');
 
 console.log('OK — ticketFilters');

@@ -1855,3 +1855,28 @@ La 1.12.0 subió a producción y en paralelo se corrió una revisión adversaria
   - Se rotula "Último destino" si no se sabe: el mapa no cargó, falló o vino parcial (`bedsError`), el paciente no tiene código, o (desde el detalle de la cama) la cama no tiene código de paciente.
   - Con un traslado en curso sigue mostrando "En curso".
   - `HistoryView` recibe `beds`; `BedsView` pasa la cama abierta.
+
+## 55. Una azafata del 5° vio y marcó un traslado del 6° (27/10/2026, v20261027_1.13.1)
+
+**Caso.** A las 11:37 la cuenta "Azafata, Piso 5" (sectores: 5° piso y Sala de Espera) marcó "Habitación lista" en el traslado UCO 07 → 623 (6° piso). La 623 no estaba limpia, así que se volvió a "Esperando Habitación" a mano: la limpieza quedó anulada y hay un evento de corrección en la trayectoria.
+
+**Causa.** El mapa de camas de ese celular venía **sin UCO ni 6° piso**. Lo delató la limpieza grabada sin sector: 5 segundos después, la 511 del mismo celular sí lo tenía. Con eso:
+1. La grilla ubica cada traslado por el mapa del dispositivo. Si no ubica ningún extremo, lo **muestra** (regla del 14/10 para no vaciar grillas), y lo mismo pasa con los botones.
+2. El servidor validaba el piso con el sector que **manda el cliente**, que llegó vacío, y lo dejó pasar.
+3. Las dos defensas contra mapas parciales (servidor y cliente) comparan contra un mapa anterior. Una instancia nueva de Vercel o una app recién abierta no lo tienen, y por eso el mapa incompleto llegó como bueno.
+
+**Arreglo.**
+- **Sector guardado en el traslado** (`cama_origen_area` / `cama_destino_area`, que todos los traslados activos tienen) expuesto como `originSector` / `destinationSector`:
+  - `makeAreaScope` y los botones de azafata lo usan cuando la cama no está en el mapa, también con el mapa vacío. Solo se "falla abierto" si no hay ni mapa ni sector guardado.
+  - El servidor valida el piso de las acciones de azafata con el **guardado** primero. El que manda el cliente solo cuenta si la fila no tiene.
+- **Mapa sin un sector entero** (`api/beds-sectores.ts`). Lista fija de los 9 sectores que siempre vienen (pisos 4-8, ITR, UCO, UTI y Sala de Espera), así que no depende de un mapa anterior.
+  - Si falta alguno, `/api/beds` sirve el cache bueno. Si no hay cache, manda el mapa marcado `partial`, sin cachearlo.
+  - El cliente conserva su mapa anterior. Si no tiene, lo usa como no confiable (aviso "PARCIAL: Progal no mandó …"; el origen automático no corre).
+  - Si la falta se sostiene 10 minutos (por ejemplo, cerraron un sector), se acepta.
+
+**Verificación.**
+- `check-ticket-filters` incluye el caso real.
+- `check-beds-sectores` es nuevo.
+- `check-tickets-api-origen` cubre el piso con el sector guardado.
+- Las mutaciones quedan detectadas.
+- Playwright: con un mapa que solo tiene el 5°, la azafata del 5° no ve el traslado UCO → 623 y la del 6° sí.

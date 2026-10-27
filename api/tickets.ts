@@ -74,6 +74,8 @@ function rowToTicket(r: Record<string, any>): Ticket {
     targetBedOriginalStatus: r.cama_destino_status ? (r.cama_destino_status as BedStatus) : undefined,
     intervenedByHostess,
     canCancel:              intervenedByHostess === 'NO',
+    originSector:           r.cama_origen_area ? String(r.cama_origen_area) : undefined,
+    destinationSector:      r.cama_destino_area ? String(r.cama_destino_area) : undefined,
   };
 }
 
@@ -460,7 +462,15 @@ async function handler(req: any, res: any) {
         const areas = userAreas?.assignedAreas ?? [];
         const hasAll = areas.length >= 9; // mismo criterio "full access" que push-utils
         if (roleCfg?.filterByFloors && areas.length && !hasAll) {
-          const { origin, dest } = effectiveAreaNames(originArea, destinationArea);
+          // Sector GUARDADO en el traslado primero; el que manda el cliente solo si no hay guardado. Antes era solo
+          // el del cliente: con el mapa del dispositivo incompleto llegaba vacío y el control dejaba pasar
+          // (una azafata del 5° marcó "Habitación lista" de un traslado UCO → 6°, 27/10/2026).
+          const { data: guardado } = await supa.from('traslados').select('cama_origen_area, cama_destino_area')
+            .eq('id_univoco', idUnivoco).eq('entorno', ENTORNO).limit(1).maybeSingle();
+          const { origin, dest } = effectiveAreaNames(
+            guardado?.cama_origen_area || originArea || undefined,
+            guardado?.cama_destino_area || destinationArea || undefined,
+          );
           const requiredArea = endpoint === 'origin' ? origin : dest;
           if (requiredArea && !areas.includes(requiredArea)) {
             console.warn(`[tickets] PATCH 403 — user=${userId} areas=[${areas.join(',')}] requiredArea="${requiredArea}" status=${updates.status}`);

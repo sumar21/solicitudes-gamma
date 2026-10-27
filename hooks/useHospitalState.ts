@@ -1136,6 +1136,14 @@ export const useHospitalState = () => {
 
       if (Array.isArray(data.beds) && data.beds.length > 0) {
         const prev = rawBedsRef.current;
+        // Mapa al que le falta un sector ENTERO (lo marca /api/beds; 27/10/2026): con uno anterior, se conserva.
+        // Sin anterior (recién abierta la app) se usa igual, pero queda como no confiable (rawBedsAtRef = 0, ver
+        // abajo) y la grilla se ubica con el sector guardado en cada traslado.
+        const faltan: string[] = Array.isArray(data.partial) ? data.partial : [];
+        if (faltan.length && prev.length) {
+          setBedsError(`PARCIAL: Progal no mandó ${faltan.join(', ')} — se mantiene el mapa anterior`);
+          return;
+        }
         // Skip partial failures (all beds available when we know some are occupied)
         const hasOccupied = data.beds.some((b: any) => b.status === 'Ocupada' || b.status === 'En preparación' || b.status === 'Inhabilitada');
         if (!hasOccupied && prev.some(b => b.status === BedStatus.OCCUPIED)) {
@@ -1161,7 +1169,7 @@ export const useHospitalState = () => {
             patientEnrichMapRef.current.set(bed.patientCode, extractEnrichSnapshot(bed));
           }
         }
-        setBedsError(null);
+        setBedsError(faltan.length ? `PARCIAL: Progal no mandó ${faltan.join(', ')}` : null);
         // La ref se actualiza YA (no en el próximo render): dos fetchBeds en vuelo a la vez (poll + catch-up
         // de foco) comparaban el segundo mapa contra el [] viejo y un parcial se colaba como "primer load".
         rawBedsRef.current = data.beds;
@@ -1424,7 +1432,7 @@ export const useHospitalState = () => {
         bedLabel: ticket.destination,
         bedCode: dest?.bedCode ?? ticket.destinationBedCode ?? '',
         roomCode: dest?.roomCode ?? '',
-        area: dest?.area ?? '',
+        area: dest?.area ?? ticket.destinationSector ?? '',
         userId: currentUser?.id ?? '', userName: currentUser?.name ?? '', operador: getOperador(),
       }),
     }).catch(() => { /* best-effort */ });

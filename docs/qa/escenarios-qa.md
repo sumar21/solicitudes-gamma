@@ -391,6 +391,11 @@ pasada manual aparte (no son automatizables por browser/API).
 - **Regresión a vigilar (v1.12.1)**: si la azafata del destino, con la grilla sin refrescar, toca "Habitación lista" después del restablecimiento, ve el aviso "El traslado cambió…" y el pre-ticket **no** revive.
 - **Variante (v1.13.0) — con "Habitación lista" marcada por la azafata**: en la fila no está "Editar", pero sí el botón "Restablecer destino" → modal (motivo opcional) → "Sí, liberar la cama". Mismo resultado; al reconfigurarlo, "Editar" vuelve a estar disponible. Con el traslado ya **En Traslado**, no hay botón (y el servidor responde 409). Las azafatas del origen y del destino viejo con la app abierta reciben "Destino liberado". Si una de ellas, con la grilla atrasada, toca "Iniciar traslado" después de que se reconfiguró a otra cama, ve "El traslado cambió…" y no se aplica.
 
+### QA-TRA-32 · Mapa de camas incompleto: cada azafata ve solo lo de sus pisos
+- **Precondición**: traslado UCO → 6° piso; azafata del 5° (sectores 5° + Sala de Espera); `/api/beds` devuelve un mapa sin UCO ni 6° piso (simular con DevTools → override de la respuesta).
+- **Acción**: la azafata del 5° abre Operativa; después, la del 6°.
+- **Resultado esperado**: la del 5° **no** ve el traslado ni sus botones; la del 6° sí. Si fuerza el PATCH, el servidor responde 403 ("no pertenece a tus pisos"). El Mapa de Camas muestra "PARCIAL: Progal no mandó …".
+
 ### QA-TRA-31 · "Ubicación actual" en la trayectoria sale del mapa de PROGAL
 - **Precondición**: un paciente con traslados consolidados que hoy **no** está internado; otro que PROGAL movió de cama sin pasar por MediFlow.
 - **Acción**: Historial → Trayectoria de cada uno (y desde el detalle de la cama del segundo).
