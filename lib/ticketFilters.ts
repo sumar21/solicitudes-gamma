@@ -94,11 +94,12 @@ export function toggleStatus(selected: ReadonlySet<TicketStatus>, status: Ticket
 export function makeAreaScope(
   user: { id?: string | number; filterByFloors?: boolean; assignedAreas?: readonly string[] } | null | undefined,
   beds: readonly { label: string; area?: string }[],
-): (t: { origin?: string | null; destination?: string | null; createdById?: string | number }) => boolean {
+): (t: { origin?: string | null; destination?: string | null; createdById?: string | number; originSector?: string; destinationSector?: string }) => boolean {
   const areas = user?.assignedAreas ?? [];
   const allAreas = Object.values(Area) as string[];
   const hasAll = areas.length >= allAreas.length - 1; // todos menos uno = efectivamente todos
-  if (!user?.filterByFloors || areas.length === 0 || hasAll || beds.length === 0) return () => true;
+  // Sin mapa igual se recorta con el sector GUARDADO en el traslado (originSector/destinationSector).
+  if (!user?.filterByFloors || areas.length === 0 || hasAll) return () => true;
 
   const areaByLabel = new Map<string, string>();
   for (const b of beds) if (b.area) areaByLabel.set(b.label, b.area);
@@ -110,9 +111,11 @@ export function makeAreaScope(
 
   return t => {
     if (t.createdById != null && user.id != null && String(t.createdById) === String(user.id)) return true;
-    const rawOrigin = areaOf(t.origin);
-    const rawDest = areaOf(t.destination);
-    if (!rawOrigin && !rawDest) return true; // no se pudo ubicar → se muestra (falla abierto)
+    // Mapa del dispositivo primero; si la cama no está (mapa parcial de Gamma), el sector guardado en el traslado.
+    // Antes, sin mapa se mostraba todo: una azafata del 5° vio y marcó un traslado UCO → 6° (27/10/2026).
+    const rawOrigin = areaOf(t.origin) ?? t.originSector;
+    const rawDest = areaOf(t.destination) ?? t.destinationSector;
+    if (!rawOrigin && !rawDest) return true; // ni mapa ni sector guardado → se muestra (falla abierto)
     const { origin, dest } = effectiveHostessAreas(rawOrigin, rawDest);
     return (!!origin && areas.includes(origin)) || (!!dest && areas.includes(dest));
   };

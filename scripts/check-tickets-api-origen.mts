@@ -14,10 +14,10 @@ const g = globalThis as any;
 
 writeFileSync(join(tmp, 'jwt-stub.mjs'), 'export const requireAuth = (h) => h;');
 writeFileSync(join(tmp, 'role-cache-stub.mjs'), `
-export async function getRoleByName() { return { permissions: globalThis.__perms ?? [], filterByFloors: false }; }
+export async function getRoleByName() { return { permissions: globalThis.__perms ?? [], filterByFloors: !!globalThis.__floors }; }
 `);
 writeFileSync(join(tmp, 'user-cache-stub.mjs'), `
-export async function getUserAreasById() { return { perfil: 'Rol', assignedAreas: [] }; }
+export async function getUserAreasById() { return { perfil: 'Rol', assignedAreas: globalThis.__floors ?? [] }; }
 `);
 writeFileSync(join(tmp, 'push-utils-stub.mjs'), 'export const effectiveAreaNames = (o, d) => ({ origin: o, dest: d });');
 // Cada query registra tabla, operación, payload y filtros. El UPDATE devuelve __updRows filas (CAS).
@@ -65,8 +65,8 @@ await build({
 });
 const handler = (await import(pathToFileURL(out).href)).default as (req: any, res: any) => Promise<void>;
 
-async function patch(body: any, { perms = [] as string[], cur = null as any, updRows = 1 } = {}) {
-  g.__ops = []; g.__perms = perms; g.__cur = cur; g.__updRows = updRows;
+async function patch(body: any, { perms = [] as string[], cur = null as any, updRows = 1, floors = undefined as string[] | undefined } = {}) {
+  g.__ops = []; g.__perms = perms; g.__cur = cur; g.__updRows = updRows; g.__floors = floors;
   const res: any = { code: 200, body: null, setHeader() {}, status(c: number) { this.code = c; return this; }, json(b: any) { this.body = b; return this; }, end() { return this; } };
   await handler({ method: 'PATCH', body, headers: {}, query: {}, user: { id: '7' } }, res);
   return { code: res.code as number, body: res.body, ops: g.__ops as any[] };
@@ -162,5 +162,19 @@ assert(r.ops.find(o => o.op === 'update').filters.some((x: any[]) => x[0] === 'e
 // Una acción de Admisión (sin intervenedByHostess) no lleva ese filtro.
 r = await patch({ id: 'TSL-2', observations: 'x' }, { perms: [], updRows: 0 });
 assert(r.code === 200 && !r.ops.find(o => o.op === 'update').filters.some((x: any[]) => x[0] === 'not'), 'edición de Admisión: sin filtro de azafata');
+
+// ── Piso de la azafata con el sector GUARDADO (caso real 27/10/2026) ─────────
+// La azafata del 5° marcó "Habitación lista" de un traslado UCO → 623 (6°): su celular no tenía esas camas en el
+// mapa y mandó el sector vacío; el control lo dejaba pasar. Ahora usa el sector guardado en el traslado.
+const P5 = 'Internacion 5° Piso HPR', P6 = 'Internacion 6° Piso HPR';
+const guardado = { cama_origen_area: 'Unidad Coronaria HPR', cama_destino_area: P6 };
+r = await patch({ id: 'TSL-56', status: 'Habitacion Lista', intervenedByHostess: 'SI' }, { floors: [P5, 'Recepción Admision y Altas de Internacion HPR'], cur: guardado });
+assert(r.code === 403 && !r.ops.some(o => o.op === 'update'), 'sin sector en el body: usa el guardado (6°) → 403');
+r = await patch({ id: 'TSL-56', status: 'Habitacion Lista', intervenedByHostess: 'SI', destinationArea: P5 }, { floors: [P5], cur: guardado });
+assert.equal(r.code, 403, 'el guardado manda sobre el que manda el celular');
+r = await patch({ id: 'TSL-56', status: 'Habitacion Lista', intervenedByHostess: 'SI' }, { floors: [P6], cur: guardado });
+assert.equal(r.code, 200, 'la azafata del 6° puede');
+r = await patch({ id: 'TSL-56', status: 'Habitacion Lista', intervenedByHostess: 'SI', destinationArea: P6 }, { floors: [P6], cur: { cama_origen_area: null, cama_destino_area: null } });
+assert.equal(r.code, 200, 'fila sin sector guardado: usa el del celular (como antes)');
 
 console.log('OK — api/tickets: origen automático + restablecer destino');

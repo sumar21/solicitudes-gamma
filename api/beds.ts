@@ -20,6 +20,7 @@ import {
 import { graphFetch } from './graph.js';
 import type { EnrichResult } from './enrich-core.js';
 import { enrichReadsFromSupabase, readEnrichSupabase } from './enrich-store.js';
+import { sectoresFaltantes } from './beds-sectores.js';
 
 const SITE_ID = process.env.SHAREPOINT_SITE_ID ?? '';
 const ENRICH_LIST_ID = '443c4ff0-bc98-43ef-a49c-7fd91cc63734'; // 12.EnrichCamas
@@ -222,6 +223,12 @@ const SHRINK_ACCEPT_MS = 3 * 60_000;
 let shrinkSince: number | null = null;
 const isSuspiciousShrink = (next: number, prev: number) => prev > 0 && next < prev * SHRINK_RATIO;
 
+// Mapa al que le falta un SECTOR entero (api/beds-sectores.ts): no depende de un mapa anterior en memoria.
+// Si un sector falta de verdad (cerraron un piso), la falta se sostiene: pasado este tiempo se acepta el mapa
+// (sino quedaría congelado en el cache para siempre). Memoria por instancia, como shrinkSince.
+const FALTAN_ACCEPT_MS = 10 * 60_000;
+let faltanSince: number | null = null;
+
 // ── Handler ──────────────────────────────────────────────────────────────────
 async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -318,6 +325,24 @@ async function handler(req: any, res: any) {
     }
 
     const beds = transformBeds(mapData, occData);
+
+    const faltan = sectoresFaltantes(beds);
+    if (!faltan.length) faltanSince = null;
+    else if (faltanSince === null) faltanSince = Date.now();
+    if (faltan.length && Date.now() - faltanSince! >= FALTAN_ACCEPT_MS) {
+      console.warn(`[api/beds] faltan ${faltan.join(' / ')} hace más de ${FALTAN_ACCEPT_MS / 60_000} min: se acepta el mapa`);
+    } else if (faltan.length) {
+      console.warn(`[api/beds] mapa parcial: faltan los sectores ${faltan.join(' / ')} (${beds.length} camas)`);
+      if (bedsCache && !sectoresFaltantes(bedsCache.beds).length) {
+        res.setHeader('ETag', bedsCache.etag);
+        res.setHeader('X-Beds-Stale', '1');
+        return res.status(200).json({ beds: bedsCache.beds, stale: true });
+      }
+      // Sin un mapa bueno guardado: se manda lo que hay (algo es mejor que nada para el Mapa de Camas) pero
+      // marcado, sin cachearlo ni dar ETag. El cliente conserva su mapa anterior si tiene uno.
+      res.setHeader('X-Beds-Partial', '1');
+      return res.status(200).json({ beds, partial: faltan, stale: true });
+    }
 
     if (bedsCache && isSuspiciousShrink(beds.length, bedsCache.beds.length)) {
       const now = Date.now();

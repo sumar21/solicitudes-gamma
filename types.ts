@@ -594,6 +594,12 @@ export interface Ticket {
   porConsolidarAt?: string;
   canCancel?: boolean;          // true while no hostess action has touched this ticket
   intervenedByHostess?: 'SI' | 'NO'; // IntervinoAzafata_T in SP — "NO" at creation, "SI" after first hostess action
+  // Sector de cada extremo GUARDADO en el traslado (cama_origen_area / cama_destino_area). Solo lectura: lo
+  // escribe el servidor desde el mapa. Respaldo para ubicar el traslado cuando el mapa de camas del dispositivo
+  // vino incompleto: sin él, el filtro por pisos "fallaba abierto" y una azafata del 5° vio y marcó un traslado
+  // del 6° (27/10/2026).
+  originSector?: string;
+  destinationSector?: string;
 }
 
 // ── Traslados a Cirugía (quirófano) ──────────────────────────────────────────
