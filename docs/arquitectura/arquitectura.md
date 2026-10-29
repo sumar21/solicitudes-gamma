@@ -1914,3 +1914,7 @@ Dos pedidos, cada uno con su permiso propio en el ABM. No hay cambios de esquema
 - Sin cambios de esquema: quién canceló queda en `motivo_anulacion`, con el formato "observación — cuenta (nombre del turno)". La grilla lo muestra debajo del estado "Anulada".
 - CAS por el estado leído: si otra persona la finalizó o la canceló entre la lectura y la escritura, da 409.
 - Test: `check-rutina-cancelar` (handler real).
+- **v20261030_1.15.1: también en Activas.** El usuario esperaba el botón en la solapa **Activas**: camas marcadas limpias pendientes de consolidar. "Cancelar", con el mismo permiso y el mismo modal, cierra la limpieza con `PATCH /api/limpiezas` y `reason: 'CANCELADA'` más la observación, y la cama vuelve a verse como dice PROGAL.
+  - Sin cambios de esquema: queda en `motivo_cierre` como "CANCELADA: observación — cuenta (turno)".
+  - El historial lo muestra como "Cancelada", con la observación en el tooltip.
+  - El permiso se renombró en el ABM a "Cancelar limpiezas con observación (activas sin consolidar y de rutina)".

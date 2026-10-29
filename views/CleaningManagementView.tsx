@@ -76,9 +76,11 @@ interface Props {
   onRefresh?: () => void | Promise<void>;
   /** Cancelar una limpieza de rutina con observación (permiso limpieza_rutina_cancelar). */
   onCancelRutina?: (id: string, motivo: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Cancelar una limpieza ACTIVA (sin consolidar) con observación (mismo permiso). */
+  onCancelLimpieza?: (bedLabel: string, observacion: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
-export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onConsolidate, onRefresh, onCancelRutina }) => {
+export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onConsolidate, onRefresh, onCancelRutina, onCancelLimpieza }) => {
   // Limpiezas activas = camas con overlay `cleaned` vigente (mergeBeds). Respeta el filtro
   // por áreas del usuario (misma regla que el botón "Marcar limpia" de BedsView).
   const rows = useMemo(() => {
@@ -98,6 +100,10 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
   const [confirmBed, setConfirmBed] = useState<Bed | null>(null);
   // Solo los roles con el permiso pueden consolidar; el resto ve la lista en solo-lectura.
   const canConsolidate = can(currentUser, 'consolidar_limpieza');
+  // "Cancelar" una limpieza activa (marcada limpia por error), con observación (30/10/2026).
+  const canCancelActiva = !!onCancelLimpieza && can(currentUser, 'limpieza_rutina_cancelar');
+  const [cancelandoActiva, setCancelandoActiva] = useState<Bed | null>(null);
+  const [cancelActivaError, setCancelActivaError] = useState<string | null>(null);
   const consolidate = (label: string) => {
     setPending(p => new Set(p).add(label));
     setConfirmBed(null);
@@ -193,7 +199,9 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
   //   GAMMA  = PROGAL avanzó el estado de la cama (se liberó/reasignó en el sistema, sin traslado en la app).
   //   SUCIA  = "Volver a En preparación": se había pasado a limpia y estaba sucia (rollback, 29/10/2026).
   const REASON_LABEL: Record<string, string> = { GAMMA: 'PROGAL', TICKET: 'Traslado', ANULADA: 'Anulada', CONSOLIDADO: 'Consolidado', SUCIA: 'Volvió a preparación' };
-  const reasonLabel = (r: string) => REASON_LABEL[r] ?? (r || '—');
+  // "CANCELADA: <observación> — <quién>" (30/10/2026): el texto viaja en el mismo motivo_cierre.
+  const esCancelada = (r: string) => r.startsWith('CANCELADA');
+  const reasonLabel = (r: string) => esCancelada(r) ? 'Cancelada' : (REASON_LABEL[r] ?? (r || '—'));
   // Explicación del motivo (tooltip). "Traslado" (TICKET) son DOS cosas que comparten rótulo:
   //   · nació cerrada (limpia == cerrada): es la constancia de "Habitación lista" de un traslado;
   //   · se marcó limpia a mano y quedó sin consolidar en PROGAL; después un traslado tomó la cama y la app la cerró
@@ -204,6 +212,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
         ? 'Constancia de "Habitación lista": la azafata preparó esta cama como destino de un traslado.'
         : 'No se limpió en un traslado: se marcó limpia, no se consolidó en PROGAL y después un traslado tomó la cama, así que la limpieza se cerró sola por ese traslado (buscalo en Historial por la cama y la hora de cierre).';
     }
+    if (esCancelada(h.reason)) return `Se canceló (estaba marcada limpia por error): ${h.reason.replace(/^CANCELADA:\s*/, '')}`;
     if (h.reason === 'SUCIA') return 'Se había pasado a limpia y estaba sucia: volvió a "En preparación" (rollback).';
     if (h.reason === 'GAMMA') return 'PROGAL cambió el estado de la cama por fuera de la app.';
     if (h.reason === 'ANULADA') return 'La marca de limpia se deshizo.';
@@ -213,7 +222,8 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
   // Nombre del cambio de turno + la cuenta (las de azafata son compartidas por piso: "María Fernanda · Azafata, Piso 5").
   const quienLimpio = (h: { operador?: string; by: string }) => (h.operador ? `${h.operador}${h.by ? ` · ${h.by}` : ''}` : (h.by || '—'));
   const reasonClass = (r: string) =>
-    r === 'CONSOLIDADO' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+    esCancelada(r)      ? 'bg-red-50 text-red-700 border-red-200'
+    : r === 'CONSOLIDADO' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
     : r === 'ANULADA'   ? 'bg-amber-50 text-amber-700 border-amber-200'
     : r === 'GAMMA'     ? 'bg-violet-50 text-violet-700 border-violet-200' // PROGAL avanzó la cama
     : r === 'SUCIA'     ? 'bg-orange-50 text-orange-700 border-orange-200' // rollback: estaba sucia
@@ -544,10 +554,19 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                     <DoorClosed className="w-4 h-4" /> Consolidado PROGAL
                   </Button>
                 )}
+                {canCancelActiva && (
+                  <Button variant="outline" onClick={() => { setCancelActivaError(null); setCancelandoActiva(bed); }}
+                    className="w-full h-9 rounded-xl text-xs font-black uppercase tracking-widest border-red-200 text-red-600 hover:bg-red-50">
+                    <XCircle className="w-3.5 h-3.5 mr-2" /> Cancelar
+                  </Button>
+                )}
               </div>
             ))}
           </div>
 
+          {cancelActivaError && (
+            <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700">{cancelActivaError}</div>
+          )}
           {/* Desktop — grilla */}
           <Card className="hidden md:block shadow-sm border-slate-200 overflow-hidden bg-white rounded-2xl">
             <div className="overflow-x-auto">
@@ -571,14 +590,22 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                       <td className="px-4 py-3 text-slate-600">{bed.cleanedBy || '—'}</td>
                       <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmtWhen(bed.cleanedAt)}</td>
                       <td className="px-4 py-3 text-right">
-                        {canConsolidate ? (
-                          <Button onClick={() => setConfirmBed(bed)} disabled={pending.has(bed.label)} size="sm"
-                            className="h-9 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-2">
-                            <DoorClosed className="w-4 h-4" /> Consolidado PROGAL
-                          </Button>
-                        ) : (
-                          <span className="text-[11px] font-medium text-slate-400">Sin permiso</span>
-                        )}
+                        <div className="inline-flex items-center gap-2">
+                          {canCancelActiva && (
+                            <Button variant="outline" size="sm" onClick={() => { setCancelActivaError(null); setCancelandoActiva(bed); }}
+                              className="h-9 px-3 rounded-lg text-xs font-bold border-red-200 text-red-600 hover:bg-red-50">
+                              <XCircle className="w-4 h-4 mr-1.5" /> Cancelar
+                            </Button>
+                          )}
+                          {canConsolidate ? (
+                            <Button onClick={() => setConfirmBed(bed)} disabled={pending.has(bed.label)} size="sm"
+                              className="h-9 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-2">
+                              <DoorClosed className="w-4 h-4" /> Consolidado PROGAL
+                            </Button>
+                          ) : !canCancelActiva && (
+                            <span className="text-[11px] font-medium text-slate-400">Sin permiso</span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -613,6 +640,21 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <RejectionModal
+        open={!!cancelandoActiva}
+        onOpenChange={(open) => { if (!open) setCancelandoActiva(null); }}
+        onConfirm={async (obs) => {
+          const b = cancelandoActiva;
+          if (!b || !onCancelLimpieza) return;
+          setCancelActivaError(null);
+          const r = await onCancelLimpieza(b.label, obs);
+          if (!r.ok) setCancelActivaError(r.error ?? 'No se pudo cancelar.');
+        }}
+        title="Cancelar limpieza"
+        description={cancelandoActiva ? `${formatBedName(cancelandoActiva.label)} · marcada por ${cancelandoActiva.cleanedBy || '—'}. La cama vuelve a mostrarse como dice PROGAL. La observación es obligatoria y queda en el historial con quién canceló.` : ''}
+        placeholder="Ej: se marcó limpia por error, todavía está sucia..."
+        confirmLabel="Cancelar limpieza"
+      />
       <RejectionModal
         open={!!cancelandoRutina}
         onOpenChange={(open) => { if (!open) setCancelandoRutina(null); }}

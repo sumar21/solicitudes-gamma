@@ -86,6 +86,19 @@ r = await call('GET', null, [], { history: '1' });
 const h = r.body.cleanings.find((x: any) => x.reason === 'ANULADA');
 assert(h.operador === 'Marisa Ortiz' && h.by === 'Azafata, Piso 5', 'historial: operador + cuenta');
 
+// ── Cancelar una limpieza ACTIVA con observación (30/10/2026) ─────────────────
+g.__rows = [{ id: 'a1', entorno: 'TESTING', cama_label: 'Habitación 507 HPR - Cama 02', status: 'Activo', motivo_cierre: null }];
+r = await call('PATCH', { spItemId: 'a1', reason: 'CANCELADA', observacion: 'estaba sucia', userName: 'Admin', operador: 'Lucas' }, ['confirmar_limpieza']);
+assert(r.code === 403 && g.__rows[0].status === 'Activo', 'sin limpieza_rutina_cancelar → 403');
+r = await call('PATCH', { spItemId: 'a1', reason: 'CANCELADA', observacion: ' ', userName: 'Admin' }, ['limpieza_rutina_cancelar']);
+assert(r.code === 400 && g.__rows[0].status === 'Activo', 'sin observación → 400');
+r = await call('PATCH', { spItemId: 'a1', reason: 'CANCELADA', observacion: 'estaba sucia', userName: 'Admin', operador: 'Lucas' }, ['limpieza_rutina_cancelar']);
+assert(r.code === 200 && g.__rows[0].status === 'Inactivo' && g.__rows[0].motivo_cierre === 'CANCELADA: estaba sucia — Admin (Lucas)', 'cancelada con observación y quién');
+// Los cierres de siempre no cambian (sin permiso nuevo).
+g.__rows.push({ id: 'a2', entorno: 'TESTING', cama_label: 'X', status: 'Activo', motivo_cierre: null });
+r = await call('PATCH', { spItemId: 'a2', reason: 'CONSOLIDADO' }, []);
+assert(r.code === 200 && g.__rows[1].motivo_cierre === 'CONSOLIDADO', 'consolidar sigue igual');
+
 // ── Overlay del mapa (mergeBeds real) ─────────────────────────────────────────
 const cama = (status: string) => ({ id: C517, label: C517, area: 'Internacion 5° Piso HPR', status });
 const sucia = new Map([[C517, { by: 'Azafata, Piso 5', byId: '36', at: '2026-10-28T16:00:00Z', spItemId: 'x', operador: 'Susana Ledesma', sucia: true }]]);
