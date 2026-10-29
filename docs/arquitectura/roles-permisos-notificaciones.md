@@ -119,6 +119,7 @@ Un permiso por acción de la máquina de estados (`cirugia_listo`, `cirugia_busc
 | Permiso | Qué habilita | Dónde se gatea |
 |---------|--------------|----------------|
 | `cirugia_marcar` | Marcar "Va a cirugía" (habilita a un no quirúrgico, o a un Q que ya se operó) — Admisión | UI + `api/cirugia-marcas.ts` |
+| `limpieza_rutina_cancelar` | Cancelar una limpieza de rutina (en curso o finalizada) con observación obligatoria — por defecto Admin, Hotelería Admin, Admisión Admin y Admisión | UI (`CleaningManagementView`, solapa Rutina) + `api/limpiezas-rutina.ts` (PATCH `ANULAR`) |
 | `cirugia_volver_listo` | "Volver atrás" desde "Listo para cirugía": anula la marca (pedido de Enfermería, 29/10/2026) | UI (`BedsView`, `CirugiasView`) + `api/cirugia.ts` (`RETROCEDER` desde LISTO), con sector |
 | `limpieza_revertir` | "Volver a En preparación" una habitación que se pasó a limpia y está sucia (marca SUCIA si ya estaba consolidada) | UI (`BedsView`) + `api/limpiezas.ts` (POST `revertir`) |
 | `cirugia_previa` | "Ya se operó (fuera de MediFlow)" y su "Deshacer": registra una cirugía previa de la internación y saca la "Q" — **Coordinación** (26/10/2026, pedido de Gamma: no Enfermería) | UI (`App.tsx` → `BedsView`) + `api/cirugia.ts` (POST `previa`, PATCH `ANULAR_PREVIA`), con sector |

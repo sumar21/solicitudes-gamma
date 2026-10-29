@@ -7,12 +7,16 @@
  * GET   /api/limpiezas-rutina?report=1&date=YYYY-MM-DD → rutinas del DÍA (reporte) por fecha_inicio (día AR, UTC-3)
  * GET   /api/limpiezas-rutina?paciente=<codigo>        → todas las rondas de ese paciente (journey)
  * POST  /api/limpiezas-rutina                          → INICIAR (nace INICIADA); idempotente por (entorno, cama)
- * PATCH /api/limpiezas-rutina                          → FINALIZAR / ANULAR una rutina abierta
+ * PATCH /api/limpiezas-rutina                          → FINALIZAR una rutina abierta / ANULAR ("Cancelar", 30/10/2026:
+ *                                                          permiso limpieza_rutina_cancelar + observación obligatoria;
+ *                                                          vale para una abierta o una ya finalizada marcada por error)
  *
  * Sin push (no lo pide el flujo). Cada escritura estampa version.
  */
 import { requireAuth } from './jwt.js';
 import { getSupabaseAdmin } from './supabase-admin.js';
+// Chequeo genérico "el rol tiene el permiso" (fail-open si el rol no se resuelve); nació para el pre-ticket.
+import { authzPreTicket as authzPermiso } from './pre-ticket-authz.js';
 
 const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 
@@ -145,10 +149,15 @@ async function handler(req: any, res: any) {
 
   // ── PATCH — FINALIZAR / ANULAR una rutina abierta ─────────────────────────
   if (req.method === 'PATCH') {
-    const { id, bedLabel, action, motivo, userId, userName } = req.body ?? {};
+    const { id, bedLabel, action, motivo, userId, userName, operador } = req.body ?? {};
     const act = String(action ?? 'FINALIZAR');
     if (act !== 'FINALIZAR' && act !== 'ANULAR') return res.status(400).json({ error: 'action must be FINALIZAR or ANULAR' });
     if (!String(id ?? '').trim() && !String(bedLabel ?? '').trim()) return res.status(400).json({ error: 'id o bedLabel requerido' });
+    if (act === 'ANULAR') {
+      if (!String(motivo ?? '').trim()) return res.status(400).json({ error: 'La observación es obligatoria para cancelar.' });
+      const denied = await authzPermiso(req, 'limpieza_rutina_cancelar');
+      if (denied) return res.status(denied.status).json({ error: denied.error });
+    }
 
     try {
       // Ubicar la rutina abierta (por id, o la INICIADA de esa cama).
@@ -157,22 +166,30 @@ async function handler(req: any, res: any) {
       const { data: cur, error: readErr } = await q.limit(1).maybeSingle();
       if (readErr) { console.error('[limpiezas-rutina] PATCH read failed:', readErr.message); return res.status(500).json({ error: 'Failed to read routine' }); }
       if (!cur) return res.status(404).json({ error: 'Rutina no encontrada' });
-      if (String(cur.estado) !== 'INICIADA') return res.status(409).json({ error: `La rutina no está abierta (${cur.estado})` });
+      // Finalizar: solo una abierta. Cancelar: abierta o ya finalizada (marcada por error); una cancelada, no.
+      const estadoOk = act === 'ANULAR' ? ['INICIADA', 'FINALIZADA'].includes(String(cur.estado)) : String(cur.estado) === 'INICIADA';
+      if (!estadoOk) return res.status(409).json({ error: act === 'ANULAR' ? 'La limpieza ya estaba cancelada.' : `La rutina no está abierta (${cur.estado})` });
 
       const fields: Record<string, unknown> = {
         estado: act === 'ANULAR' ? 'ANULADA' : 'FINALIZADA',
-        fecha_fin: new Date().toISOString(),
         version: String(req.body?.version ?? ''),
       };
+      // Al cancelar una ya finalizada se conserva su hora de fin (y quién la finalizó).
+      if (!(act === 'ANULAR' && String(cur.estado) === 'FINALIZADA')) fields.fecha_fin = new Date().toISOString();
       if (act === 'FINALIZAR') {
         fields.finalizada_por_id = userId != null ? String(userId) : null;
         fields.finalizada_por = userName != null ? String(userName) : null;
       } else {
-        fields.motivo_anulacion = motivo != null ? String(motivo) : null;
+        // Quién canceló va en el mismo campo (sin cambios de esquema): "observación — cuenta (nombre del turno)".
+        const quien = [userName, operador ? `(${operador})` : ''].filter(Boolean).join(' ');
+        fields.motivo_anulacion = `${String(motivo).trim().slice(0, 300)}${quien ? ` — ${quien}` : ''}`;
       }
 
-      const { error } = await supa.from('limpiezas_rutina').update(fields).eq('id', String(cur.id)).eq('entorno', ENTORNO);
+      // CAS por el estado leído: si otro la finalizó/canceló entre la lectura y la escritura, 409.
+      const { data: upd, error } = await supa.from('limpiezas_rutina').update(fields).eq('id', String(cur.id)).eq('entorno', ENTORNO)
+        .eq('estado', String(cur.estado)).select('id');
       if (error) { console.error('[limpiezas-rutina] PATCH failed:', error.message); return res.status(500).json({ error: 'Failed to update routine' }); }
+      if (!upd?.length) return res.status(409).json({ error: 'La limpieza cambió de estado; recargá.' });
 
       console.log(`[limpiezas-rutina] ${act} (id=${cur.id}) por ${userName ?? userId}`);
       return res.status(200).json({ ok: true, id: String(cur.id) });

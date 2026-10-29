@@ -8,7 +8,8 @@ import { Input } from '../components/ui/input';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { Calendar } from '../components/ui/calendar';
-import { CheckCircle2, DoorClosed, User as UserIcon, Clock, RefreshCw, Calendar as CalendarIcon, Search, X, SprayCan, Info } from 'lucide-react';
+import { RejectionModal } from '../components/modals/RejectionModal';
+import { CheckCircle2, DoorClosed, User as UserIcon, Clock, RefreshCw, Calendar as CalendarIcon, Search, X, SprayCan, Info, XCircle } from 'lucide-react';
 
 // ponytail: display map copiado de BedsView (no está exportado); exportar si un 3er lugar lo necesita.
 const AREA_LABELS: Record<string, string> = {
@@ -73,9 +74,11 @@ interface Props {
   currentUser: User | null;
   onConsolidate: (bedLabel: string) => void | Promise<void>;
   onRefresh?: () => void | Promise<void>;
+  /** Cancelar una limpieza de rutina con observación (permiso limpieza_rutina_cancelar). */
+  onCancelRutina?: (id: string, motivo: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
-export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onConsolidate, onRefresh }) => {
+export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onConsolidate, onRefresh, onCancelRutina }) => {
   // Limpiezas activas = camas con overlay `cleaned` vigente (mergeBeds). Respeta el filtro
   // por áreas del usuario (misma regla que el botón "Marcar limpia" de BedsView).
   const rows = useMemo(() => {
@@ -140,7 +143,12 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
   useEffect(() => { if (tab === 'historico') fetchHistory(); }, [tab, fetchHistory]);
 
   // ── Rutina del día (limpiezas de rutina de camas ocupadas) ─────────────────
-  type RoutineRow = { spItemId: string; bedLabel: string; area: string; patientName: string; startedBy: string; operador?: string; startedAt: string; finishedBy: string; finishedAt: string; estado: string };
+  type RoutineRow = { spItemId: string; bedLabel: string; area: string; patientName: string; startedBy: string; operador?: string; startedAt: string; finishedBy: string; finishedAt: string; estado: string; motivoAnulacion?: string };
+  // "Cancelar" (30/10/2026): misma estética que cancelar un traslado (RejectionModal), observación obligatoria.
+  const canCancelRutina = !!onCancelRutina && can(currentUser, 'limpieza_rutina_cancelar');
+  const [cancelandoRutina, setCancelandoRutina] = useState<RoutineRow | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const cancelable = (x: RoutineRow) => canCancelRutina && (x.estado === 'INICIADA' || x.estado === 'FINALIZADA');
   const [routineDate, setRoutineDate] = useState(todayStr);
   const [routineRows, setRoutineRows] = useState<RoutineRow[]>([]);
   const [loadingRoutine, setLoadingRoutine] = useState(false);
@@ -166,6 +174,14 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
     } catch { /* mantiene lo previo */ }
     finally { setLoadingRoutine(false); }
   }, [authFetch, routineDate, currentUser]);
+
+  const confirmarCancelRutina = async (motivo: string) => {
+    const x = cancelandoRutina;
+    if (!x || !onCancelRutina) return;
+    setCancelError(null);
+    const r = await onCancelRutina(x.spItemId, motivo);
+    if (r.ok) fetchRoutine(); else setCancelError(r.error ?? 'No se pudo cancelar.');
+  };
 
   // Auto-carga al entrar a Rutina y al cambiar el día.
   useEffect(() => { if (tab === 'rutina') fetchRoutine(); }, [tab, fetchRoutine]);
@@ -409,6 +425,9 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
             </div>
           ) : (
             <>
+              {cancelError && (
+                <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700">{cancelError}</div>
+              )}
               {/* Mobile — tarjetas */}
               <div className="grid grid-cols-1 gap-3 md:hidden">
                 {routineRows.map(x => (
@@ -422,7 +441,14 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                       <p className="flex items-center gap-1.5"><UserIcon className="w-3.5 h-3.5 text-slate-400" />{x.operador || x.startedBy || '—'}</p>
                       <p className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-slate-400" />Inicio: {fmtWhen(x.startedAt)}</p>
                       <p className="flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-slate-400" />Fin: {fmtWhen(x.finishedAt)}</p>
+                      {x.estado === 'ANULADA' && x.motivoAnulacion && <p className="text-slate-500 italic break-words">Cancelada: {x.motivoAnulacion}</p>}
                     </div>
+                    {cancelable(x) && (
+                      <Button size="sm" variant="outline" onClick={() => { setCancelError(null); setCancelandoRutina(x); }}
+                        className="w-full h-9 rounded-xl text-xs font-black uppercase tracking-widest border-red-200 text-red-600 hover:bg-red-50">
+                        <XCircle className="w-3.5 h-3.5 mr-2" /> Cancelar
+                      </Button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -440,6 +466,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                         <th className="px-4 py-3">Inicio</th>
                         <th className="px-4 py-3">Fin</th>
                         <th className="px-4 py-3">Estado</th>
+                        {canCancelRutina && <th className="px-4 py-3 text-right">Acciones</th>}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -453,7 +480,18 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                           <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmtWhen(x.finishedAt)}</td>
                           <td className="px-4 py-3">
                             <span className={cn("text-[10px] font-bold uppercase px-2.5 py-1 rounded-lg border", routineEstadoClass(x.estado))}>{routineEstadoLabel(x.estado)}</span>
+                            {x.estado === 'ANULADA' && x.motivoAnulacion && <p className="mt-1 max-w-[220px] text-[10px] text-slate-500 italic break-words">{x.motivoAnulacion}</p>}
                           </td>
+                          {canCancelRutina && (
+                            <td className="px-4 py-3 text-right">
+                              {cancelable(x) && (
+                                <Button size="sm" variant="outline" onClick={() => { setCancelError(null); setCancelandoRutina(x); }}
+                                  className="h-7 px-2 text-[10px] uppercase font-bold tracking-tight border-red-200 text-red-600 hover:bg-red-50">
+                                  <XCircle className="w-3.5 h-3.5 mr-1.5" /> Cancelar
+                                </Button>
+                              )}
+                            </td>
+                          )}
                         </tr>
                       ))}
                     </tbody>
@@ -575,6 +613,15 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <RejectionModal
+        open={!!cancelandoRutina}
+        onOpenChange={(open) => { if (!open) setCancelandoRutina(null); }}
+        onConfirm={confirmarCancelRutina}
+        title="Cancelar limpieza de rutina"
+        description={cancelandoRutina ? `${formatBedName(cancelandoRutina.bedLabel)}${cancelandoRutina.patientName ? ` · ${cancelandoRutina.patientName}` : ''}. La observación es obligatoria y queda registrada con quién canceló.` : ''}
+        placeholder="Ej: se marcó en la cama equivocada, no se llegó a hacer..."
+        confirmLabel="Cancelar limpieza"
+      />
     </div>
   );
 };
