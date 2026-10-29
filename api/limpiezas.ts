@@ -7,6 +7,11 @@
  * POST   /api/limpiezas   → marcar limpia (upsert por cama+entorno) { bedLabel, bedCode, roomCode, area, userId, userName }
  *                           + { closed: true, reason? } → limpieza que NACE cerrada (constancia histórica; sin push)
  * PATCH  /api/limpiezas   → cerrar una limpieza { bedLabel | spItemId, reason }  reason ∈ ANULADA|TICKET|GAMMA|CONSOLIDADO
+ * POST   /api/limpiezas   + { revertir: true } → "Volver a En preparación" (permiso limpieza_revertir, 29/10/2026):
+ *                           la cama se pasó a limpia y está sucia. Anula la limpieza activa si la hay y deja una fila
+ *                           ACTIVA con motivo_cierre = 'SUCIA': el mapa la vuelve a mostrar "En preparación" aunque
+ *                           PROGAL ya diga Disponible, hasta que una azafata la marque limpia (esa fila se cierra y
+ *                           queda en el historial como "Volvió a preparación"). Sin cambios de esquema.
  *
  * El overlay del front (mergeBeds) muestra la cama disponible sobre lo que reporta Gamma (read-only).
  * El push "Habitación Limpia" (ROOM_CLEANED) sigue saliendo por push-utils (que ya lee subs de Supabase).
@@ -14,9 +19,13 @@
 import { requireAuth } from './jwt.js';
 import { sendPushToSubscribers } from './push-utils.js';
 import { getSupabaseAdmin } from './supabase-admin.js';
+// Chequeo genérico "el rol tiene el permiso" (fail-open si el rol no se resuelve); nació para el pre-ticket.
+import { authzPreTicket as authzPermiso } from './pre-ticket-authz.js';
 
 const ENTORNO = (process.env.ENTORNO ?? 'TESTING').trim();
 const MOTIVOS = ['ANULADA', 'TICKET', 'GAMMA', 'CONSOLIDADO'];
+// Marca de "volvió a preparación": fila ACTIVA con este motivo_cierre (las limpiezas activas normales lo tienen null).
+const SUCIA = 'SUCIA';
 
 async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -45,6 +54,9 @@ async function handler(req: any, res: any) {
         bedLabel: String(r.cama_label ?? ''),
         area:     String(r.area ?? ''),
         by:       String(r.azafata_nombre ?? ''),
+        // Nombre que puso la persona al cambiar de turno (las cuentas son compartidas por piso): sin esto el
+        // historial mostraba solo "Azafata, Piso 5" (29/10/2026).
+        operador: String(r.operador ?? ''),
         at:       String(r.fecha_limpieza ?? ''),
         closedAt: String(r.fecha_cierre ?? ''),
         reason:   String(r.motivo_cierre ?? ''),
@@ -72,6 +84,7 @@ async function handler(req: any, res: any) {
         byId:     String(r.azafata_id ?? ''),
         operador: String(r.operador ?? ''),
         at:       String(r.fecha_limpieza ?? ''),
+        sucia:    r.motivo_cierre === SUCIA, // "volvió a preparación" (no es una limpieza: es la marca de sucia)
       }));
       return res.status(200).json({ cleanings });
     } catch (err: any) {
@@ -82,8 +95,37 @@ async function handler(req: any, res: any) {
 
   // ── POST — marcar limpia (upsert por cama + entorno) ──────────────────────
   if (req.method === 'POST') {
-    const { bedLabel, bedCode, roomCode, area, userId, userName, operador, closed, reason } = req.body ?? {};
+    const { bedLabel, bedCode, roomCode, area, userId, userName, operador, closed, reason, revertir } = req.body ?? {};
     if (!bedLabel) return res.status(400).json({ error: 'bedLabel is required' });
+
+    // ── "Volver a En preparación" (ver encabezado) ──
+    if (revertir === true) {
+      const denied = await authzPermiso(req, 'limpieza_revertir');
+      if (denied) return res.status(denied.status).json({ error: denied.error });
+      const nowIso0 = new Date().toISOString();
+      try {
+        const { data: activa } = await supa.from('limpiezas').select('id, motivo_cierre')
+          .eq('entorno', ENTORNO).eq('cama_label', String(bedLabel)).eq('status', 'Activo').limit(1);
+        if (activa?.length && activa[0].motivo_cierre === SUCIA) return res.status(200).json({ ok: true, unchanged: true, spItemId: String(activa[0].id) });
+        if (activa?.length) {
+          await supa.from('limpiezas').update({ status: 'Inactivo', motivo_cierre: 'ANULADA', fecha_cierre: nowIso0, version: String(req.body?.version ?? '') })
+            .eq('id', activa[0].id).eq('entorno', ENTORNO);
+        }
+        const { data: creada, error } = await supa.from('limpiezas').insert({
+          entorno: ENTORNO, cama_label: String(bedLabel), cama_codigo: String(bedCode ?? ''),
+          habitacion: String(roomCode ?? ''), area: String(area ?? ''), status: 'Activo', motivo_cierre: SUCIA,
+          azafata_id: String(userId ?? ''), azafata_nombre: String(userName ?? ''),
+          operador: operador != null && operador !== '' ? String(operador) : null,
+          fecha_limpieza: nowIso0, version: String(req.body?.version ?? ''),
+        }).select('id').single();
+        if (error) { console.error('[limpiezas] revertir failed:', error.message); return res.status(500).json({ error: 'No se pudo volver a "En preparación".' }); }
+        console.log(`[limpiezas] "${bedLabel}" volvió a En preparación por ${userName ?? userId}${operador ? ` (${operador})` : ''}`);
+        return res.status(200).json({ ok: true, spItemId: String(creada.id) });
+      } catch (err: any) {
+        console.error('[limpiezas] revertir error:', err);
+        return res.status(500).json({ error: err.message });
+      }
+    }
     const nowIso = new Date().toISOString();
     const naceCerrada = closed === true;
     const motivoCierre = MOTIVOS.includes(String(reason)) ? String(reason) : 'TICKET';
@@ -127,8 +169,14 @@ async function handler(req: any, res: any) {
 
       // Upsert de la ACTIVA: si ya hay una para esta cama+entorno → refrescar; si no → crear.
       const refresh = { azafata_id: String(userId ?? ''), azafata_nombre: String(userName ?? ''), operador: operador != null ? String(operador) : null, fecha_limpieza: nowIso, version: String(req.body?.version ?? '') };
-      const { data: existing } = await supa.from('limpiezas').select('id')
+      const { data: existing } = await supa.from('limpiezas').select('id, motivo_cierre')
         .eq('entorno', ENTORNO).eq('cama_label', String(bedLabel)).eq('status', 'Activo').limit(1);
+      // La activa es la marca de "volvió a preparación": se cierra (queda en el historial) y se crea la limpieza nueva.
+      if (existing?.length && existing[0].motivo_cierre === SUCIA) {
+        await supa.from('limpiezas').update({ status: 'Inactivo', fecha_cierre: nowIso, version: String(req.body?.version ?? '') })
+          .eq('id', existing[0].id).eq('entorno', ENTORNO);
+        existing.length = 0;
+      }
       if (existing?.length) {
         await supa.from('limpiezas').update(refresh).eq('id', existing[0].id);
         await notifyRoomCleaned();

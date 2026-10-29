@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Bed, CirugiaEstado, CirugiaTraslado, User, Area } from '../types';
 import { can } from '../lib/permissions';
 import { cn, formatBedName, formatDateTime, formatDateReadable } from '../lib/utils';
-import { CIRUGIA_ESTADO_LABEL, CIRUGIA_ESTADO_SHORT, CIRUGIA_PILL_CLASS, CIRUGIA_ANTERIOR, CIRUGIA_PERMISO_DEL_PASO } from '../lib/constants';
+import { CIRUGIA_ESTADO_LABEL, CIRUGIA_ESTADO_SHORT, CIRUGIA_PILL_CLASS, cirugiaRetrocesoDe } from '../lib/constants';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
@@ -315,13 +315,13 @@ export const CirugiasView: React.FC<Props> = ({
   // "Volver un paso" (20/10/2026): para un paso marcado por error ("En traslado" que al final no empezó).
   // Requiere el permiso del paso que se deshace. Queda en el timeline como "Volvió un paso".
   const renderRetroceder = (c: CirugiaTraslado) => {
-    const anterior = CIRUGIA_ANTERIOR[c.estado];
-    const permiso = CIRUGIA_PERMISO_DEL_PASO[c.estado];
-    if (!onRetroceder || !anterior || !permiso || !can(currentUser, permiso)) return null;
+    // Desde "Listo para cirugía" también (anula la marca, permiso cirugia_volver_listo; 29/10/2026).
+    const retro = cirugiaRetrocesoDe(c.estado);
+    if (!onRetroceder || !retro || !can(currentUser, retro.permiso)) return null;
     if (confirmRetro === c.id) {
       return (
         <div className="flex flex-col gap-1.5 rounded-lg border border-amber-200 bg-amber-50 p-2 max-w-[240px]">
-          <p className="text-[10px] font-bold text-amber-900 leading-tight">¿Volver a "{CIRUGIA_ESTADO_LABEL[anterior]}"?</p>
+          <p className="text-[10px] font-bold text-amber-900 leading-tight">¿{retro.pregunta}?</p>
           <div className="flex gap-1.5">
             <Button size="sm" disabled={isPending(c.id)}
               onClick={() => { setConfirmRetro(null); withPending(c.id, () => onRetroceder(c.id)); }}
@@ -339,7 +339,7 @@ export const CirugiasView: React.FC<Props> = ({
     return (
       <Button size="sm" variant="outline" disabled={isPending(c.id)}
         onClick={() => setConfirmRetro(c.id)}
-        title={`Volver a "${CIRUGIA_ESTADO_LABEL[anterior]}" (corrige un paso marcado por error)`}
+        title={`${retro.pregunta} (corrige un paso marcado por error)`}
         className="h-8 text-[10px] uppercase font-bold tracking-tight border-slate-300 text-slate-600 hover:bg-slate-50">
         <Undo2 className="w-3.5 h-3.5 mr-1.5" /> Volver un paso
       </Button>

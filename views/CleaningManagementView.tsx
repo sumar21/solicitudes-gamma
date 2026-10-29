@@ -157,12 +157,16 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
   // fuera de la app, SIN traslado) figurara como "cerrada por Traslado" y se reportara como bug.
   //   TICKET = un traslado de la app tomó la cama (sí hubo traslado).
   //   GAMMA  = PROGAL avanzó el estado de la cama (se liberó/reasignó en el sistema, sin traslado en la app).
-  const REASON_LABEL: Record<string, string> = { GAMMA: 'PROGAL', TICKET: 'Traslado', ANULADA: 'Anulada', CONSOLIDADO: 'Consolidado' };
+  //   SUCIA  = "Volver a En preparación": se había pasado a limpia y estaba sucia (rollback, 29/10/2026).
+  const REASON_LABEL: Record<string, string> = { GAMMA: 'PROGAL', TICKET: 'Traslado', ANULADA: 'Anulada', CONSOLIDADO: 'Consolidado', SUCIA: 'Volvió a preparación' };
   const reasonLabel = (r: string) => REASON_LABEL[r] ?? (r || '—');
+  // Nombre del cambio de turno + la cuenta (las de azafata son compartidas por piso: "María Fernanda · Azafata, Piso 5").
+  const quienLimpio = (h: { operador?: string; by: string }) => (h.operador ? `${h.operador}${h.by ? ` · ${h.by}` : ''}` : (h.by || '—'));
   const reasonClass = (r: string) =>
     r === 'CONSOLIDADO' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
     : r === 'ANULADA'   ? 'bg-amber-50 text-amber-700 border-amber-200'
     : r === 'GAMMA'     ? 'bg-violet-50 text-violet-700 border-violet-200' // PROGAL avanzó la cama
+    : r === 'SUCIA'     ? 'bg-orange-50 text-orange-700 border-orange-200' // rollback: estaba sucia
     : 'bg-sky-50 text-sky-700 border-sky-200'; // TICKET = Traslado
 
   // ── Buscador (aplica a las dos tabs) ───────────────────────────────────────
@@ -187,7 +191,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
     () => rows.map(b => ({ r: b, h: bedHaystack(b.label, b.area, b.cleanedBy) })),
     [rows]);
   const indexedHistory = useMemo(
-    () => history.map(h => ({ r: h, h: bedHaystack(h.bedLabel, h.area, h.by, reasonLabel(h.reason)) })),
+    () => history.map(h => ({ r: h, h: bedHaystack(h.bedLabel, h.area, `${h.by} ${h.operador ?? ''}`, reasonLabel(h.reason)) })),
     [history]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function applySearch<T>(indexed: { r: T; h: string }[]): T[] {
@@ -293,7 +297,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                     </div>
                     <p className="text-[11px] text-slate-500 font-medium">{areaLabel(h.area)}</p>
                     <div className="text-[11px] text-slate-600 space-y-1">
-                      <p className="flex items-center gap-1.5"><UserIcon className="w-3.5 h-3.5 text-slate-400" />{h.operador || h.by || '—'}</p>
+                      <p className="flex items-center gap-1.5"><UserIcon className="w-3.5 h-3.5 text-slate-400" />{quienLimpio(h)}</p>
                       <p className="flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-slate-400" />Limpia: {fmtWhen(h.at)}</p>
                       <p className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-slate-400" />Cerrada: {fmtWhen(h.closedAt)}</p>
                     </div>
@@ -320,7 +324,10 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                         <tr key={h.spItemId} className="hover:bg-slate-50/60">
                           <td className="px-4 py-3 font-bold text-slate-800">{h.bedLabel}</td>
                           <td className="px-4 py-3 text-slate-600">{areaLabel(h.area)}</td>
-                          <td className="px-4 py-3 text-slate-600">{h.operador || h.by || '—'}</td>
+                          <td className="px-4 py-3 text-slate-600">
+                            {h.operador || h.by || '—'}
+                            {h.operador && h.by && <span className="block text-[10px] text-slate-400">{h.by}</span>}
+                          </td>
                           <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmtWhen(h.at)}</td>
                           <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmtWhen(h.closedAt)}</td>
                           <td className="px-4 py-3">

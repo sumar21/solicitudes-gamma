@@ -39,4 +39,12 @@ assert.equal(cirugiaEventoLabel({ tipo: 'EN_CIRUGIA' }), 'En cirugía');
 assert.equal(cirugiaEventoLabel({ tipo: 'ANULAR_PREVIA' }), 'Cirugía previa anulada');
 assert(esRetroceso({ tipo: 'RETROCESO' }) && !esRetroceso({ tipo: 'EN_TRASLADO' }));
 
-console.log('OK — cirugía: volver un paso');
+// 4) Desde "Listo para cirugía" (29/10/2026): se anula con permiso propio; los demás, el del paso.
+import('../lib/constants').then(({ cirugiaRetrocesoDe }) => {
+  assert.equal(cirugiaRetrocesoDe('LISTO_PARA_CIRUGIA' as any)?.permiso, 'cirugia_volver_listo');
+  assert.equal(cirugiaRetrocesoDe('LISTO_PARA_CIRUGIA' as any)?.anula, true);
+  assert.equal(cirugiaRetrocesoDe('EN_TRASLADO' as any)?.permiso, 'cirugia_entregar');
+  assert.equal(cirugiaRetrocesoDe('TOLERANCIA_EVALUADA' as any), null, 'terminal: no');
+  assert.equal(cirugiaEventoLabel({ tipo: 'RETROCESO', meta: { de: 'LISTO_PARA_CIRUGIA', a: 'CANCELADO' } }), 'Volvió atrás: se deshizo "Listo para cirugía"');
+  console.log('OK — cirugía: volver un paso');
+});

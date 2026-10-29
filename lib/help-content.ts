@@ -363,6 +363,18 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
         uiLocation: "Detalle de la cama con cirugía en curso → botón 'Volver un paso'",
       },
       {
+        permission: "cirugia_volver_listo",
+        title: "Cirugía: deshacer 'Listo para cirugía'",
+        description: "Si se marcó 'Listo para cirugía' por error, deshacelo: la marca se anula (queda en la trayectoria) y el paciente vuelve a quedar para marcar cuando corresponda.",
+        uiLocation: "Detalle de la cama con cirugía en 'Listo para cirugía' → 'Volver un paso' (también en Operativa → Cirugías)",
+      },
+      {
+        permission: "limpieza_revertir",
+        title: "Volver una habitación a 'En preparación'",
+        description: "Si una habitación se pasó a limpia y está sucia, volvela a 'En preparación': el mapa la muestra así (aunque PROGAL ya la tenga disponible) hasta que una azafata la marque limpia de nuevo. Si ya estaba consolidada, actualicen también PROGAL. Queda en el historial de limpiezas con quién lo hizo.",
+        uiLocation: "Detalle de la cama disponible o 'Limpia ✓' → 'Volver a En preparación'",
+      },
+      {
         permission: "cirugia_entregar",
         title: "Registrar 'en traslado a cirugía'",
         description: "Confirmá que el camillero se llevó al paciente. La cama queda libre para limpiar.",

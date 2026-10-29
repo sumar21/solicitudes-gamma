@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogTitle } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { PatientJourney } from '../components/PatientJourney';
-import { WORKFLOW_LABELS, CIRUGIA_ESTADO_LABEL, CIRUGIA_PILL_CLASS, CIRUGIA_ANTERIOR, CIRUGIA_PERMISO_DEL_PASO, CIRUGIA_TIPO_PREVIA } from '../lib/constants';
+import { WORKFLOW_LABELS, CIRUGIA_ESTADO_LABEL, CIRUGIA_PILL_CLASS, CIRUGIA_TIPO_PREVIA, cirugiaRetrocesoDe } from '../lib/constants';
 import jsPDF from 'jspdf';
 
 const AREA_LABELS: Record<string, string> = {
@@ -59,6 +59,8 @@ interface BedsViewProps {
   // de 14.Limpiezas — ver hooks/useHospitalState markBedClean/undoBedClean).
   onMarkClean?: (bed: Bed) => void | Promise<void>;
   onUndoClean?: (bedLabel: string) => void | Promise<void>;
+  /** "Volver a En preparación" (permiso limpieza_revertir): la habitación se pasó a limpia y está sucia. */
+  onRevertirLimpieza?: (bed: Bed) => Promise<{ ok: boolean; error?: string }>;
   // Carga de menú por Nutrición (15.CargasDieta): carga/actualiza o quita una comida.
   onSaveMeal?: (bed: Bed, comida: MealSlot, tipo: 'MENU' | 'OPCION' | 'OTROS', detalle: string, observaciones: string) => Promise<{ ok: boolean; error?: string }>;
   onClearMeal?: (bed: Bed, comida: MealSlot, motivo?: string) => void | Promise<void>;
@@ -706,6 +708,42 @@ const CompanionEditor: React.FC<{
   );
 };
 
+// ── "Volver a En preparación" (rollback de limpieza, permiso limpieza_revertir; 29/10/2026) ──────────
+// Caso 517: se pasó a limpia y estaba sucia, y Admisión ya la había consolidado (PROGAL Disponible). Confirmación
+// inline (nunca confirm() nativo). La cama vuelve a verse En preparación hasta que la limpien de nuevo.
+const VolverAPreparacion: React.FC<{ bed: Bed; onConfirm: (bed: Bed) => Promise<{ ok: boolean; error?: string }>; onDone: () => void }> = ({ bed, onConfirm, onDone }) => {
+  const [confirmando, setConfirmando] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!confirmando) {
+    return (
+      <button onClick={() => { setError(null); setConfirmando(true); }}
+        className="w-full flex items-center justify-center gap-1.5 h-10 rounded-2xl border border-amber-300 bg-white text-amber-700 text-[11px] font-black uppercase tracking-widest hover:bg-amber-50">
+        <Undo2 className="w-3.5 h-3.5" /> Volver a "En preparación"
+      </button>
+    );
+  }
+  return (
+    <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-3 flex flex-col gap-2">
+      <p className="text-[11px] font-medium text-amber-900">
+        ¿La habitación está <strong>sucia</strong>? Se vuelve a mostrar <strong>En preparación</strong> hasta que una azafata la marque limpia de nuevo. Si ya estaba consolidada, actualicen también PROGAL.
+      </p>
+      {error && <p className="text-[10px] font-bold text-red-600">{error}</p>}
+      <div className="flex gap-2">
+        <button disabled={busy}
+          onClick={async () => { setBusy(true); setError(null); const r = await onConfirm(bed); setBusy(false); if (r.ok) onDone(); else setError(r.error ?? 'No se pudo.'); }}
+          className="flex-1 h-9 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-black uppercase tracking-widest disabled:opacity-50">
+          {busy ? 'Guardando…' : 'Sí, está sucia'}
+        </button>
+        <button disabled={busy} onClick={() => setConfirmando(false)}
+          className="flex-1 h-9 rounded-xl border border-slate-300 bg-white text-slate-600 text-[10px] font-black uppercase tracking-widest hover:bg-slate-50">
+          No
+        </button>
+      </div>
+    </div>
+  );
+};
+
 // ── Bloque de Cirugía en el detalle de la cama (Enfermería) ──────────────────
 // · Cama OCUPADA sin cirugía viva → botón "Listo para cirugía" (alta), SOLO si el paciente es
 //   quirúrgico (admissionTypeCode==='Q', aviso con fecha probable) o fue marcado por Admisión
@@ -769,9 +807,9 @@ const CirugiaBedBlock: React.FC<{
     // "Volver un paso" (20/10/2026): corrige un paso marcado por error (p. ej. "En traslado a cirugía"
     // que al final no salió). Pide el permiso del paso que se deshace y queda en la trayectoria. En la
     // cama vieja de un cambio no va (el paciente ya no está ahí).
-    const anterior = CIRUGIA_ANTERIOR[cx.estado];
-    const permisoPaso = CIRUGIA_PERMISO_DEL_PASO[cx.estado];
-    const puedoRetroceder = !!onCirugiaRetroceder && !!anterior && !!permisoPaso && can(currentUser, permisoPaso) && !soyOrigenConCambio;
+    // Desde "Listo para cirugía" también: anula la marca (permiso cirugia_volver_listo, pedido de Enfermería 29/10/2026).
+    const retro = cirugiaRetrocesoDe(cx.estado);
+    const puedoRetroceder = !!onCirugiaRetroceder && !!retro && can(currentUser, retro.permiso) && !soyOrigenConCambio;
     return (
       <div className="rounded-2xl p-3.5 border border-slate-200 bg-slate-50/70 flex flex-col gap-2.5">
         <div className="flex items-center gap-2">
@@ -822,7 +860,7 @@ const CirugiaBedBlock: React.FC<{
         {puedoRetroceder && (confirmando === 'retroceder' ? (
           <div className="rounded-xl border border-amber-200 bg-white p-2.5 flex flex-col gap-2">
             <p className="text-[11px] font-medium text-slate-700">
-              ¿Volver a <strong>"{CIRUGIA_ESTADO_LABEL[anterior!]}"</strong>? Queda registrado en la trayectoria del paciente.
+              ¿<strong>{retro!.pregunta}</strong>? Queda registrado en la trayectoria del paciente.
             </p>
             <div className="flex gap-2">
               <button disabled={busy} onClick={() => run('retroceder', () => onCirugiaRetroceder!(cx.id), 'No se pudo volver el paso.')}
@@ -837,7 +875,7 @@ const CirugiaBedBlock: React.FC<{
           </div>
         ) : (
           <button disabled={busy} onClick={() => { setError(null); setConfirmando('retroceder'); }}
-            title={`Volver a "${CIRUGIA_ESTADO_LABEL[anterior!]}" (corrige un paso marcado por error)`}
+            title={`${retro!.pregunta} (corrige un paso marcado por error)`}
             className="w-full flex items-center justify-center gap-1.5 h-9 rounded-xl border border-slate-300 bg-white text-slate-600 text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 disabled:opacity-50">
             <Undo2 className="w-3.5 h-3.5" /> Volver un paso
           </button>
@@ -1123,7 +1161,7 @@ const AdmissionDateFilter: React.FC<{
   );
 };
 
-export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onFetchPatientTickets, onRefresh, onMarkClean, onUndoClean, onSaveMeal, onClearMeal, onSaveCompanion, onClearCompanion, onMarcarListo, onCirugiaEnTraslado, onCirugiaTolerancia, onCirugiaRetroceder, onCirugiaPrevia, onAnularCirugiaPrevia, onStartRoutineCleaning, onFinishRoutineCleaning, onMarcarVaCirugia, onDesmarcarVaCirugia }) => {
+export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onFetchPatientTickets, onRefresh, onMarkClean, onUndoClean, onRevertirLimpieza, onSaveMeal, onClearMeal, onSaveCompanion, onClearCompanion, onMarcarListo, onCirugiaEnTraslado, onCirugiaTolerancia, onCirugiaRetroceder, onCirugiaPrevia, onAnularCirugiaPrevia, onStartRoutineCleaning, onFinishRoutineCleaning, onMarcarVaCirugia, onDesmarcarVaCirugia }) => {
   const [selectedBed, setSelectedBed] = useState<Bed | null>(null);
   // Turnos abiertos en el modal de la cama. Vive en el PADRE y no en cada box: si viviera adentro,
   // se perdería al cerrar/reabrir. Se resetea al cambiar de cama (el default se recalcula abajo).
@@ -3151,6 +3189,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                       || !currentUser?.assignedAreas?.length
                       || currentUser.assignedAreas.includes(selectedBed.area);
                     const canClean = can(currentUser, 'confirmar_limpieza') && areaOk;
+                    const canRevert = can(currentUser, 'limpieza_revertir') && areaOk && !!onRevertirLimpieza;
                     if (selectedBed.cleaned) {
                       const when = selectedBed.cleanedAt
                         ? new Date(selectedBed.cleanedAt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })
@@ -3164,15 +3203,38 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                               {selectedBed.cleanedBy ? `Por ${selectedBed.cleanedBy}` : 'Marcada limpia'}{when ? ` · ${when}` : ''}
                             </p>
                           </div>
-                          {canClean && onUndoClean && (
+                          {(canClean || canRevert) && onUndoClean && (
+                            // Todavía sin consolidar: anula la limpieza y PROGAL ya la tiene En preparación.
                             <Button variant="outline" size="sm" onClick={() => { onUndoClean(selectedBed.label); setSelectedBed(null); }}
+                              title='Volver a "En preparación" (anula la limpieza)'
                               className="h-8 px-3 text-[11px] font-bold rounded-lg border-emerald-200 text-emerald-700 hover:bg-emerald-100 shrink-0">
-                              Deshacer
+                              {canClean ? 'Deshacer' : 'Volver a En preparación'}
                             </Button>
                           )}
                         </div>
                       );
                     }
+                    // Volvió a "En preparación" por un rollback: quién y cuándo (+ deshacer para quien tiene el permiso).
+                    const vuelta = selectedBed.vueltaPreparacion;
+                    const vueltaNota = vuelta && (
+                      <div className="bg-amber-50 rounded-2xl p-3 border border-amber-200 flex items-center gap-2.5">
+                        <Undo2 className="w-4 h-4 text-amber-600 shrink-0" />
+                        <p className="flex-1 min-w-0 text-[11px] font-medium text-amber-900">
+                          Volvió a <strong>En preparación</strong> (estaba sucia) · {vuelta.by}{vuelta.at ? ` · ${new Date(vuelta.at).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}` : ''}
+                        </p>
+                        {canRevert && onUndoClean && (
+                          <Button variant="outline" size="sm" onClick={() => { onUndoClean(selectedBed.label); setSelectedBed(null); }}
+                            className="h-8 px-3 text-[11px] font-bold rounded-lg border-amber-200 text-amber-700 hover:bg-amber-100 shrink-0">
+                            Deshacer
+                          </Button>
+                        )}
+                      </div>
+                    );
+                    // Disponible (ya consolidada en PROGAL) pero sucia → rollback con el permiso.
+                    if (selectedBed.status === BedStatus.AVAILABLE && canRevert && !bedTicketMap.get(selectedBed.label)) {
+                      return <VolverAPreparacion bed={selectedBed} onConfirm={onRevertirLimpieza!} onDone={() => setSelectedBed(null)} />;
+                    }
+                    if (vuelta && !(isPrep && canClean && onMarkClean && !bedTicketMap.get(selectedBed.label))) return vueltaNota;
                     if (isPrep && canClean && onMarkClean) {
                       // Cama reservada como DESTINO de un traslado en curso: la marca de
                       // limpieza no aplica acá (el auto-cierre la anularía con motivo TICKET,
@@ -3193,10 +3255,13 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                         );
                       }
                       return (
-                        <button onClick={() => { onMarkClean(selectedBed); setSelectedBed(null); }}
-                          className="w-full flex items-center justify-center gap-2 h-12 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm">
-                          <SprayCan className="w-4 h-4" /> Marcar habitación limpia
-                        </button>
+                        <div className="flex flex-col gap-2">
+                          {vueltaNota}
+                          <button onClick={() => { onMarkClean(selectedBed); setSelectedBed(null); }}
+                            className="w-full flex items-center justify-center gap-2 h-12 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm">
+                            <SprayCan className="w-4 h-4" /> Marcar habitación limpia
+                          </button>
+                        </div>
                       );
                     }
                     return null;
