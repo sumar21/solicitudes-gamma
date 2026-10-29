@@ -397,6 +397,7 @@ export const PERMISSIONS = [
   // Limpieza de RUTINA de camas ocupadas (iniciar + finalizar). UN permiso: lo hace la misma
   // persona/rol de arranque a fin (~2 veces por día por cama).
   'limpieza_rutina',
+  'limpieza_rutina_cancelar', // Cancelar una limpieza de rutina (abierta o finalizada por error) con observación (30/10/2026)
   // Mapa de Camas — comandas: cargar (Nutrición) vs ver las comandas cargadas (Catering/Nutrición).
   'cargar_dieta',
   // Carga de comandas POR TURNO (derivados de MEAL_SLOTS). `cargar_dieta` de arriba

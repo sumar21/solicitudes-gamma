@@ -1371,6 +1371,23 @@ export const useHospitalState = () => {
     } catch { /* best-effort; el próximo poll/realtime reconcilia */ }
   }, [authFetch, currentUser, routineCleanings]);
 
+  // "Cancelar" una limpieza de rutina (permiso limpieza_rutina_cancelar, observación obligatoria; 30/10/2026). Vale para
+  // una abierta o una ya finalizada marcada por error. El server valida permiso, observación y estado.
+  const cancelarRutina = useCallback(async (id: string, motivo: string): Promise<{ ok: boolean; error?: string }> => {
+    if (!can(currentUser, 'limpieza_rutina_cancelar')) return { ok: false, error: 'Tu rol no tiene permiso para cancelar limpiezas de rutina.' };
+    if (!motivo.trim()) return { ok: false, error: 'La observación es obligatoria para cancelar.' };
+    const u = currentUser;
+    try {
+      const r = await authFetch('/api/limpiezas-rutina', {
+        method: 'PATCH',
+        body: JSON.stringify({ id, action: 'ANULAR', motivo: motivo.trim(), userId: u?.id ?? '', userName: u?.name ?? '', operador: getOperador(), version: APP_VERSION }),
+      });
+      if (!r.ok) { const err = await r.json().catch(() => ({} as any)); return { ok: false, error: err?.error ?? `No se pudo cancelar (HTTP ${r.status}).` }; }
+      fetchRoutineCleanings(); // si estaba abierta, sale del overlay del mapa
+      return { ok: true };
+    } catch (e: any) { return { ok: false, error: e?.message ?? 'Error de red.' }; }
+  }, [authFetch, currentUser, fetchRoutineCleanings]);
+
   // ── MARCA "va a cirugía" (Admisión, pacientes NO quirúrgicos) ─────────────
   // Flag keyed por PACIENTE que habilita el circuito Cx en camas no-Q y sigue al paciente.
   const fetchCirugiaMarcas = useCallback(async () => {
@@ -4310,7 +4327,7 @@ export const useHospitalState = () => {
       setOperador, cambioTurno,
       handleCreateTicket, createPreTicket, completePreTicket, restablecerDestinoPreTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
       fetchBeds, enrichBed, fetchPatientTickets, searchHistory, refreshAll, fetchAllTickets, setHistoryRange,
-      markBedClean, undoBedClean, revertirLimpieza,
+      markBedClean, undoBedClean, revertirLimpieza, cancelarRutina,
       startRoutineCleaning, finishRoutineCleaning, fetchRoutineCleanings,
       saveMealLoad, clearMealLoad, saveCompanionLoad, clearCompanionLoad, setMealStatus,
       fetchCirugias, marcarListoParaCirugia, transicionarCirugia,

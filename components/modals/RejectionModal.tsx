@@ -10,9 +10,16 @@ interface RejectionModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: (reason: string) => void;
+  // Textos para reutilizar el mismo modal en otras cancelaciones (p. ej. una limpieza de rutina, 30/10/2026).
+  title?: string;
+  description?: string;
+  placeholder?: string;
+  confirmLabel?: string;
 }
 
-export const RejectionModal: React.FC<RejectionModalProps> = ({ open, onOpenChange, onConfirm }) => {
+export const RejectionModal: React.FC<RejectionModalProps> = ({ open, onOpenChange, onConfirm, title = 'Cancelar Solicitud',
+  description = 'Es obligatorio documentar el motivo de la cancelación para auditoría.',
+  placeholder = 'Ej: Datos de paciente incorrectos, sin cupo, cambio de indicación médica...', confirmLabel = 'Confirmar Cancelación' }) => {
   const [rejectionInput, setRejectionInput] = useState('');
 
   const handleConfirm = () => {
@@ -31,15 +38,15 @@ export const RejectionModal: React.FC<RejectionModalProps> = ({ open, onOpenChan
             <div className="p-2 bg-rose-50 rounded-xl">
               <XCircle className="w-5 h-5 text-rose-400" />
             </div>
-            Cancelar Solicitud
+            {title}
           </DialogTitle>
         </DialogHeader>
         <div className="grid gap-3 py-2">
-          <p className="text-xs text-slate-400 font-medium">Es obligatorio documentar el motivo de la cancelación para auditoría.</p>
+          <p className="text-xs text-slate-400 font-medium">{description}</p>
           <div className="grid gap-1.5">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Motivo de Cancelación</Label>
             <textarea
-              placeholder="Ej: Datos de paciente incorrectos, sin cupo, cambio de indicación médica..."
+              placeholder={placeholder}
               value={rejectionInput}
               onChange={e => setRejectionInput(e.target.value)}
               rows={3}
@@ -54,7 +61,7 @@ export const RejectionModal: React.FC<RejectionModalProps> = ({ open, onOpenChan
             onClick={handleConfirm}
             className="bg-rose-600 hover:bg-rose-700 text-white rounded-xl h-10 px-6"
           >
-            Confirmar Cancelación
+            {confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

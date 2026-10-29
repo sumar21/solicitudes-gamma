@@ -1905,3 +1905,12 @@ Dos pedidos, cada uno con su permiso propio en el ABM. No hay cambios de esquema
   - una cama con marca SUCIA se ve En preparación, con la nota y "Marcar habitación limpia";
   - "Volver un paso" sobre "Listo para cirugía" manda `desde` = `LISTO_PARA_CIRUGIA`;
   - el historial muestra el nombre del turno.
+
+## 57. Cancelar una limpieza de rutina (30/10/2026, v20261030_1.15.0)
+
+- En Operativa → Limpiezas → **Rutina (hoy)**, cada rutina en curso o finalizada tiene un botón **"Cancelar"**. Abre el mismo modal que cancelar un traslado: `RejectionModal`, ahora con título, texto y botón parametrizables. La observación es obligatoria.
+- Permiso propio **`limpieza_rutina_cancelar`** en el ABM, junto a "Limpieza de rutina". El servidor lo exige (`PATCH /api/limpiezas-rutina` con `action: 'ANULAR'`), junto con la observación.
+- Vale para una rutina en curso o una ya finalizada, por ejemplo si se marcó en la cama equivocada. La finalizada conserva su hora de fin y quién la finalizó.
+- Sin cambios de esquema: quién canceló queda en `motivo_anulacion`, con el formato "observación — cuenta (nombre del turno)". La grilla lo muestra debajo del estado "Anulada".
+- CAS por el estado leído: si otra persona la finalizó o la canceló entre la lectura y la escritura, da 409.
+- Test: `check-rutina-cancelar` (handler real).

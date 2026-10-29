@@ -363,6 +363,12 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
         uiLocation: "Detalle de la cama con cirugía en curso → botón 'Volver un paso'",
       },
       {
+        permission: "limpieza_rutina_cancelar",
+        title: "Cancelar una limpieza de rutina",
+        description: "Si una limpieza de rutina se marcó por error (otra cama, no se llegó a hacer), cancelala con una observación obligatoria. Vale para una en curso o una ya finalizada; queda registrado quién la canceló.",
+        uiLocation: "Operativa → Limpiezas → Rutina (hoy) → botón 'Cancelar' de la fila",
+      },
+      {
         permission: "cirugia_volver_listo",
         title: "Cirugía: deshacer 'Listo para cirugía'",
         description: "Si se marcó 'Listo para cirugía' por error, deshacelo: la marca se anula (queda en la trayectoria) y el paciente vuelve a quedar para marcar cuando corresponda.",

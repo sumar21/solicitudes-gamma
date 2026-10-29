@@ -61,6 +61,7 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
       // tildado, era IMPOSIBLE darle este permiso a un rol con Operativa pero sin Limpieza.
       { code: 'consolidar_limpieza', label: 'Consolidar limpieza (solapa Limpiezas)' },
       { code: 'limpieza_rutina',     label: 'Limpieza de rutina (iniciar / finalizar en camas ocupadas)' },
+      { code: 'limpieza_rutina_cancelar', label: 'Cancelar una limpieza de rutina (con observación; solapa Limpiezas → Rutina)' },
     ],
   },
 
