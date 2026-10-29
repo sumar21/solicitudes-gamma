@@ -9,7 +9,7 @@
  * POST  /api/limpiezas-rutina                          → INICIAR (nace INICIADA); idempotente por (entorno, cama)
  * PATCH /api/limpiezas-rutina                          → FINALIZAR una rutina abierta / ANULAR ("Cancelar", 30/10/2026:
  *                                                          permiso limpieza_rutina_cancelar + observación obligatoria;
- *                                                          vale para una abierta o una ya finalizada marcada por error)
+ *                                                          solo una EN CURSO: una finalizada no se cancela)
  *
  * Sin push (no lo pide el flujo). Cada escritura estampa version.
  */
@@ -166,16 +166,16 @@ async function handler(req: any, res: any) {
       const { data: cur, error: readErr } = await q.limit(1).maybeSingle();
       if (readErr) { console.error('[limpiezas-rutina] PATCH read failed:', readErr.message); return res.status(500).json({ error: 'Failed to read routine' }); }
       if (!cur) return res.status(404).json({ error: 'Rutina no encontrada' });
-      // Finalizar: solo una abierta. Cancelar: abierta o ya finalizada (marcada por error); una cancelada, no.
-      const estadoOk = act === 'ANULAR' ? ['INICIADA', 'FINALIZADA'].includes(String(cur.estado)) : String(cur.estado) === 'INICIADA';
-      if (!estadoOk) return res.status(409).json({ error: act === 'ANULAR' ? 'La limpieza ya estaba cancelada.' : `La rutina no está abierta (${cur.estado})` });
+      // Finalizar y cancelar: solo una EN CURSO (una finalizada no se cancela).
+      if (String(cur.estado) !== 'INICIADA') {
+        return res.status(409).json({ error: act === 'ANULAR' ? `Solo se puede cancelar una limpieza en curso (esta está ${String(cur.estado).toLowerCase()}).` : `La rutina no está abierta (${cur.estado})` });
+      }
 
       const fields: Record<string, unknown> = {
         estado: act === 'ANULAR' ? 'ANULADA' : 'FINALIZADA',
         version: String(req.body?.version ?? ''),
+        fecha_fin: new Date().toISOString(),
       };
-      // Al cancelar una ya finalizada se conserva su hora de fin (y quién la finalizó).
-      if (!(act === 'ANULAR' && String(cur.estado) === 'FINALIZADA')) fields.fecha_fin = new Date().toISOString();
       if (act === 'FINALIZAR') {
         fields.finalizada_por_id = userId != null ? String(userId) : null;
         fields.finalizada_por = userName != null ? String(userName) : null;

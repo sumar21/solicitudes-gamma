@@ -1106,7 +1106,7 @@ Diseño en [arquitectura.md §48](../arquitectura/arquitectura.md). **Prerrequis
 - **Resultado esperado**: la consolidada se ve **En preparación** con la nota "Volvió a En preparación (estaba sucia) · nombre (cuenta)"; la azafata del piso ve "Marcar habitación limpia" y, al marcarla, el historial muestra "Volvió a preparación" y la limpieza nueva. La no consolidada vuelve a En preparación (limpieza anulada). Sin el permiso, el botón no aparece y el servidor responde 403. El historial de limpiezas muestra el nombre del cambio de turno (con la cuenta debajo).
 
 ### QA-LIM-R2 · Cancelar una limpieza de rutina
-- **Precondición**: usuario con `limpieza_rutina_cancelar`; una rutina en curso y otra finalizada del día.
+- **Precondición**: usuario con `limpieza_rutina_cancelar`; una rutina en curso y otra finalizada del día (la finalizada **no** tiene botón; el servidor responde 409).
 - **Acción**: Operativa → Limpiezas → Rutina (hoy) → "Cancelar" → escribir la observación → "Cancelar limpieza".
 - **Resultado esperado**: el botón de confirmar está deshabilitado sin observación. La rutina pasa a "Anulada" con "observación — cuenta (nombre del turno)" debajo; la en curso sale del mapa. Sin el permiso no hay columna Acciones y el servidor responde 403.
 

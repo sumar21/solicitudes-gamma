@@ -154,7 +154,8 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
   const canCancelRutina = !!onCancelRutina && can(currentUser, 'limpieza_rutina_cancelar');
   const [cancelandoRutina, setCancelandoRutina] = useState<RoutineRow | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
-  const cancelable = (x: RoutineRow) => canCancelRutina && (x.estado === 'INICIADA' || x.estado === 'FINALIZADA');
+  // Solo las EN CURSO: una finalizada no se cancela (pedido del usuario, 30/10/2026).
+  const cancelable = (x: RoutineRow) => canCancelRutina && x.estado === 'INICIADA';
   const [routineDate, setRoutineDate] = useState(todayStr);
   const [routineRows, setRoutineRows] = useState<RoutineRow[]>([]);
   const [loadingRoutine, setLoadingRoutine] = useState(false);
