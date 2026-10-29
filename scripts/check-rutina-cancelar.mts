@@ -67,10 +67,10 @@ assert.equal(r.code, 200, r.body?.error);
 assert.equal(g.__rows[0].estado, 'ANULADA');
 assert.equal(g.__rows[0].motivo_anulacion, 'cama equivocada — Admisión (Lucas)', 'observación + quién canceló');
 assert(g.__rows[0].fecha_fin, 'abierta → se cierra con fecha_fin');
-// Una ya finalizada (marcada por error) también se cancela y conserva su hora de fin y quién la finalizó.
+// Una finalizada NO se cancela (30/10/2026); una ya cancelada tampoco.
 r = await patch({ id: 'r2', action: 'ANULAR', motivo: 'no se hizo', ...quien }, ['limpieza_rutina_cancelar']);
-assert(r.code === 200 && g.__rows[1].estado === 'ANULADA' && g.__rows[1].fecha_fin === FIN && g.__rows[1].finalizada_por === 'Azafata, Piso 5', 'finalizada → cancelada, conserva fin');
-r = await patch({ id: 'r2', action: 'ANULAR', motivo: 'otra vez', ...quien }, ['limpieza_rutina_cancelar']);
+assert(r.code === 409 && g.__rows[1].estado === 'FINALIZADA' && g.__rows[1].fecha_fin === FIN, 'finalizada → 409, queda igual');
+r = await patch({ id: 'r1', action: 'ANULAR', motivo: 'otra vez', ...quien }, ['limpieza_rutina_cancelar']);
 assert.equal(r.code, 409, 'ya cancelada → 409');
 // Finalizar sigue igual (sin permiso nuevo) y solo sobre una abierta.
 g.__rows.push({ id: 'r3', entorno: 'TESTING', cama_label: 'Hab 503', estado: 'INICIADA', fecha_fin: null });
