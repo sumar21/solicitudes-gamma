@@ -160,6 +160,22 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
   //   SUCIA  = "Volver a En preparación": se había pasado a limpia y estaba sucia (rollback, 29/10/2026).
   const REASON_LABEL: Record<string, string> = { GAMMA: 'PROGAL', TICKET: 'Traslado', ANULADA: 'Anulada', CONSOLIDADO: 'Consolidado', SUCIA: 'Volvió a preparación' };
   const reasonLabel = (r: string) => REASON_LABEL[r] ?? (r || '—');
+  // Explicación del motivo (tooltip). "Traslado" (TICKET) son DOS cosas que comparten rótulo:
+  //   · nació cerrada (limpia == cerrada): es la constancia de "Habitación lista" de un traslado;
+  //   · se marcó limpia a mano y quedó sin consolidar en PROGAL; después un traslado tomó la cama y la app la cerró
+  //     sola. No es que "se limpió en un traslado" (consulta del 29/10/2026, cama 523).
+  const reasonTitle = (h: { reason: string; at: string; closedAt: string }): string | undefined => {
+    if (h.reason === 'TICKET') {
+      return h.at && h.at === h.closedAt
+        ? 'Constancia de "Habitación lista": la azafata preparó esta cama como destino de un traslado.'
+        : 'No se limpió en un traslado: se marcó limpia, no se consolidó en PROGAL y después un traslado tomó la cama, así que la limpieza se cerró sola por ese traslado (buscalo en Historial por la cama y la hora de cierre).';
+    }
+    if (h.reason === 'SUCIA') return 'Se había pasado a limpia y estaba sucia: volvió a "En preparación" (rollback).';
+    if (h.reason === 'GAMMA') return 'PROGAL cambió el estado de la cama por fuera de la app.';
+    if (h.reason === 'ANULADA') return 'La marca de limpia se deshizo.';
+    if (h.reason === 'CONSOLIDADO') return 'Admisión la consolidó en PROGAL.';
+    return undefined;
+  };
   // Nombre del cambio de turno + la cuenta (las de azafata son compartidas por piso: "María Fernanda · Azafata, Piso 5").
   const quienLimpio = (h: { operador?: string; by: string }) => (h.operador ? `${h.operador}${h.by ? ` · ${h.by}` : ''}` : (h.by || '—'));
   const reasonClass = (r: string) =>
@@ -293,7 +309,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                   <div key={h.spItemId} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <p className="font-black text-sm text-slate-800 leading-tight">{h.bedLabel}</p>
-                      <span className={cn("text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border shrink-0", reasonClass(h.reason))}>{reasonLabel(h.reason)}</span>
+                      <span title={reasonTitle(h)} className={cn("text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border shrink-0", reasonTitle(h) && "cursor-help", reasonClass(h.reason))}>{reasonLabel(h.reason)}</span>
                     </div>
                     <p className="text-[11px] text-slate-500 font-medium">{areaLabel(h.area)}</p>
                     <div className="text-[11px] text-slate-600 space-y-1">
@@ -331,7 +347,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                           <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmtWhen(h.at)}</td>
                           <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmtWhen(h.closedAt)}</td>
                           <td className="px-4 py-3">
-                            <span className={cn("text-[10px] font-bold uppercase px-2.5 py-1 rounded-lg border", reasonClass(h.reason))}>{reasonLabel(h.reason)}</span>
+                            <span title={reasonTitle(h)} className={cn("text-[10px] font-bold uppercase px-2.5 py-1 rounded-lg border", reasonTitle(h) && "cursor-help", reasonClass(h.reason))}>{reasonLabel(h.reason)}</span>
                           </td>
                         </tr>
                       ))}
