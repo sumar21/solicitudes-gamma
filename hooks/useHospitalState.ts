@@ -1274,6 +1274,32 @@ export const useHospitalState = () => {
     } catch { /* best-effort */ }
   }, [authFetch, cleanings]);
 
+  // "Cancelar" una limpieza ACTIVA (marcada limpia, sin consolidar) con observación (permiso limpieza_rutina_cancelar,
+  // 30/10/2026). La cama vuelve a verse como dice PROGAL; el server valida permiso y observación.
+  const cancelarLimpieza = useCallback(async (bedLabel: string, observacion: string): Promise<{ ok: boolean; error?: string }> => {
+    if (!can(currentUser, 'limpieza_rutina_cancelar')) return { ok: false, error: 'Tu rol no tiene permiso para cancelar limpiezas.' };
+    if (!observacion.trim()) return { ok: false, error: 'La observación es obligatoria para cancelar.' };
+    const info = cleanings.get(bedLabel);
+    const u = currentUser;
+    setCleanings(prev => { const n = new Map(prev); n.delete(bedLabel); return n; });
+    try {
+      const r = await authFetch('/api/limpiezas', {
+        method: 'PATCH',
+        body: JSON.stringify({ spItemId: info?.spItemId || undefined, bedLabel, reason: 'CANCELADA', observacion: observacion.trim(),
+          userName: u?.name ?? '', operador: getOperador(), version: APP_VERSION }),
+      });
+      if (!r.ok) {
+        if (info) setCleanings(prev => { const n = new Map(prev); n.set(bedLabel, info); return n; });
+        const err = await r.json().catch(() => ({} as any));
+        return { ok: false, error: err?.error ?? `No se pudo cancelar (HTTP ${r.status}).` };
+      }
+      return { ok: true };
+    } catch (e: any) {
+      if (info) setCleanings(prev => { const n = new Map(prev); n.set(bedLabel, info); return n; });
+      return { ok: false, error: e?.message ?? 'Error de red.' };
+    }
+  }, [authFetch, currentUser, cleanings]);
+
   // "Volver a En preparación" (permiso limpieza_revertir, 29/10/2026): la habitación se pasó a limpia y está sucia
   // (caso 517). Con la limpieza todavía sin consolidar, la anula; ya consolidada (PROGAL dice Disponible), deja la
   // marca SUCIA y el mapa la vuelve a mostrar En preparación hasta que la limpien de nuevo. El server la valida.
@@ -4327,7 +4353,7 @@ export const useHospitalState = () => {
       setOperador, cambioTurno,
       handleCreateTicket, createPreTicket, completePreTicket, restablecerDestinoPreTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
       fetchBeds, enrichBed, fetchPatientTickets, searchHistory, refreshAll, fetchAllTickets, setHistoryRange,
-      markBedClean, undoBedClean, revertirLimpieza, cancelarRutina,
+      markBedClean, undoBedClean, revertirLimpieza, cancelarRutina, cancelarLimpieza,
       startRoutineCleaning, finishRoutineCleaning, fetchRoutineCleanings,
       saveMealLoad, clearMealLoad, saveCompanionLoad, clearCompanionLoad, setMealStatus,
       fetchCirugias, marcarListoParaCirugia, transicionarCirugia,

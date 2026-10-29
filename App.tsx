@@ -812,7 +812,8 @@ export default function App() {
                 canSeeLimpiezas && (
                   <CleaningManagementView beds={state.beds} currentUser={state.currentUser}
                     onConsolidate={(label) => actions.undoBedClean(label, 'CONSOLIDADO')} onRefresh={actions.refreshAll}
-                    onCancelRutina={can(state.currentUser, 'limpieza_rutina_cancelar') ? actions.cancelarRutina : undefined} />
+                    onCancelRutina={can(state.currentUser, 'limpieza_rutina_cancelar') ? actions.cancelarRutina : undefined}
+                    onCancelLimpieza={can(state.currentUser, 'limpieza_rutina_cancelar') ? actions.cancelarLimpieza : undefined} />
                 )
               ) : operativaTab === 'cirugias' ? (
                 canSeeCirugias && (

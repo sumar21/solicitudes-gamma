@@ -364,9 +364,9 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
       },
       {
         permission: "limpieza_rutina_cancelar",
-        title: "Cancelar una limpieza de rutina",
-        description: "Si una limpieza de rutina se marcó por error (otra cama, no se llegó a hacer), cancelala con una observación obligatoria. Vale para una en curso o una ya finalizada; queda registrado quién la canceló.",
-        uiLocation: "Operativa → Limpiezas → Rutina (hoy) → botón 'Cancelar' de la fila",
+        title: "Cancelar una limpieza",
+        description: "Si una limpieza se marcó por error, cancelala con una observación obligatoria: una cama marcada limpia que todavía no se consolidó (vuelve a verse como dice PROGAL) o una limpieza de rutina en curso o finalizada. Queda registrado quién la canceló.",
+        uiLocation: "Operativa → Limpiezas → Activas o Rutina (hoy) → botón 'Cancelar' de la fila",
       },
       {
         permission: "cirugia_volver_listo",

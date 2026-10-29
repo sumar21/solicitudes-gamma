@@ -7,6 +7,9 @@
  * POST   /api/limpiezas   → marcar limpia (upsert por cama+entorno) { bedLabel, bedCode, roomCode, area, userId, userName }
  *                           + { closed: true, reason? } → limpieza que NACE cerrada (constancia histórica; sin push)
  * PATCH  /api/limpiezas   → cerrar una limpieza { bedLabel | spItemId, reason }  reason ∈ ANULADA|TICKET|GAMMA|CONSOLIDADO
+ * PATCH  /api/limpiezas   + { reason: 'CANCELADA', observacion } → "Cancelar" una limpieza activa con observación (permiso
+ *                           limpieza_rutina_cancelar, 30/10/2026). Sin cambios de esquema: queda en motivo_cierre como
+ *                           "CANCELADA: <observación> — <cuenta> (<turno>)" (el historial lo muestra como "Cancelada").
  * POST   /api/limpiezas   + { revertir: true } → "Volver a En preparación" (permiso limpieza_revertir, 29/10/2026):
  *                           la cama se pasó a limpia y está sucia. Anula la limpieza activa si la hay y deja una fila
  *                           ACTIVA con motivo_cierre = 'SUCIA': el mapa la vuelve a mostrar "En preparación" aunque
@@ -212,9 +215,17 @@ async function handler(req: any, res: any) {
 
   // ── PATCH — cerrar una limpieza ───────────────────────────────────────────
   if (req.method === 'PATCH') {
-    const { spItemId, bedLabel, reason } = req.body ?? {};
-    const motivo = MOTIVOS.includes(String(reason)) ? String(reason) : 'ANULADA';
+    const { spItemId, bedLabel, reason, observacion, userName, operador } = req.body ?? {};
+    let motivo = MOTIVOS.includes(String(reason)) ? String(reason) : 'ANULADA';
     const nowIso = new Date().toISOString();
+    if (String(reason) === 'CANCELADA') {
+      const obs = String(observacion ?? '').trim();
+      if (!obs) return res.status(400).json({ error: 'La observación es obligatoria para cancelar.' });
+      const denied = await authzPermiso(req, 'limpieza_rutina_cancelar');
+      if (denied) return res.status(denied.status).json({ error: denied.error });
+      const quien = [userName, operador ? `(${operador})` : ''].filter(Boolean).join(' ');
+      motivo = `CANCELADA: ${obs.slice(0, 300)}${quien ? ` — ${quien}` : ''}`;
+    }
 
     try {
       let itemId = spItemId ? String(spItemId) : '';
