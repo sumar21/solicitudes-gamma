@@ -8,7 +8,7 @@ import { Input } from '../components/ui/input';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { Calendar } from '../components/ui/calendar';
-import { CheckCircle2, DoorClosed, User as UserIcon, Clock, RefreshCw, Calendar as CalendarIcon, Search, X, SprayCan } from 'lucide-react';
+import { CheckCircle2, DoorClosed, User as UserIcon, Clock, RefreshCw, Calendar as CalendarIcon, Search, X, SprayCan, Info } from 'lucide-react';
 
 // ponytail: display map copiado de BedsView (no está exportado); exportar si un 3er lugar lo necesita.
 const AREA_LABELS: Record<string, string> = {
@@ -49,6 +49,24 @@ const DateRangeTrigger = React.forwardRef<
   </button>
 ));
 DateRangeTrigger.displayName = 'DateRangeTrigger';
+
+// Etiqueta del motivo con su explicación. El `title` nativo tarda en salir o no sale (se veía solo el cursor
+// con "?") y en el celular no existe. Tooltip propio en CSS: abre al pasar el mouse y al tocar (foco), a la
+// IZQUIERDA de la etiqueta para que el overflow de la tabla no lo recorte.
+const MotivoPill: React.FC<{ label: string; explicacion?: string; className: string }> = ({ label, explicacion, className }) => {
+  if (!explicacion) return <span className={className}>{label}</span>;
+  return (
+    <span tabIndex={0} className="relative inline-flex group outline-none" aria-label={`${label}: ${explicacion}`}>
+      <span className={cn(className, 'inline-flex items-center gap-1 cursor-help')}>
+        {label}<Info className="w-3 h-3 opacity-60" />
+      </span>
+      <span role="tooltip"
+        className="pointer-events-none absolute right-full top-1/2 -translate-y-1/2 mr-2 z-50 w-64 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-[11px] font-medium normal-case tracking-normal leading-snug text-slate-700 shadow-lg opacity-0 invisible transition-opacity group-hover:opacity-100 group-hover:visible group-focus:opacity-100 group-focus:visible">
+        {explicacion}
+      </span>
+    </span>
+  );
+};
 
 interface Props {
   beds: Bed[];
@@ -309,7 +327,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                   <div key={h.spItemId} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <p className="font-black text-sm text-slate-800 leading-tight">{h.bedLabel}</p>
-                      <span title={reasonTitle(h)} className={cn("text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border shrink-0", reasonTitle(h) && "cursor-help", reasonClass(h.reason))}>{reasonLabel(h.reason)}</span>
+                      <MotivoPill label={reasonLabel(h.reason)} explicacion={reasonTitle(h)} className={cn("text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border shrink-0", reasonClass(h.reason))} />
                     </div>
                     <p className="text-[11px] text-slate-500 font-medium">{areaLabel(h.area)}</p>
                     <div className="text-[11px] text-slate-600 space-y-1">
@@ -347,7 +365,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                           <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmtWhen(h.at)}</td>
                           <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmtWhen(h.closedAt)}</td>
                           <td className="px-4 py-3">
-                            <span title={reasonTitle(h)} className={cn("text-[10px] font-bold uppercase px-2.5 py-1 rounded-lg border", reasonTitle(h) && "cursor-help", reasonClass(h.reason))}>{reasonLabel(h.reason)}</span>
+                            <MotivoPill label={reasonLabel(h.reason)} explicacion={reasonTitle(h)} className={cn("text-[10px] font-bold uppercase px-2.5 py-1 rounded-lg border", reasonClass(h.reason))} />
                           </td>
                         </tr>
                       ))}
