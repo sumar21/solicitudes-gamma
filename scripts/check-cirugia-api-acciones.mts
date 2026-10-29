@@ -97,9 +97,20 @@ r = await call('PATCH', { id: 'cx-1', action: 'RETROCEDER', areaActual: P8 }, { 
 assert.equal(r.code, 200, 'sector actual del paciente autoriza');
 r = await call('PATCH', { id: 'cx-1', action: 'RETROCEDER' }, { perms: ['cirugia_entregar'], floors: [P8], cur: enTraslado });
 assert.equal(r.code, 403, 'otro sector → 403');
-// LISTO no tiene anterior; terminal tampoco. 409 aunque no tenga cirugia_cancelar (antes daba 403).
-r = await call('PATCH', { id: 'cx-1', action: 'RETROCEDER' }, { perms: ['cirugia_listo'], cur: { ...enTraslado, estado: 'LISTO_PARA_CIRUGIA' } });
-assert(r.code === 409 && !upd(r.ops), 'LISTO → 409 sin escribir');
+// Desde "Listo para cirugía" (29/10/2026, pedido de Enfermería): se ANULA la marca con permiso propio.
+const listo = { ...enTraslado, estado: 'LISTO_PARA_CIRUGIA' };
+r = await call('PATCH', { id: 'cx-1', action: 'RETROCEDER' }, { perms: ['cirugia_listo', 'cirugia_cancelar'], cur: listo });
+assert(r.code === 403 && !upd(r.ops), 'LISTO sin cirugia_volver_listo → 403 (ni "Listo" ni "Cancelar" alcanzan)');
+r = await call('PATCH', { id: 'cx-1', action: 'RETROCEDER', desde: 'LISTO_PARA_CIRUGIA' }, { perms: ['cirugia_volver_listo'], cur: listo });
+assert.equal(r.code, 200, r.body?.error);
+assert.equal(upd(r.ops).payload.estado, 'CANCELADO', 'se anula (no se borra)');
+assert(upd(r.ops).payload.fecha_cierre && /Listo para cirugía/.test(upd(r.ops).payload.motivo_cancelacion), 'cerrada con motivo');
+assert.equal(evento(r.ops).payload.tipo, 'RETROCESO', 'evento RETROCESO (sin push)');
+assert.equal(evento(r.ops).payload.meta.de, 'LISTO_PARA_CIRUGIA');
+r = await call('PATCH', { id: 'cx-1', action: 'RETROCEDER', desde: 'LISTO_PARA_CIRUGIA' }, { perms: ['cirugia_volver_listo'], cur: { ...listo, estado: 'VAN_A_BUSCAR' } });
+assert(r.code === 409 && !upd(r.ops), 'ya avanzó a Búsqueda → 409 (no anula)');
+r = await call('PATCH', { id: 'cx-1', action: 'RETROCEDER' }, { perms: ['cirugia_volver_listo'], floors: ['Internacion 4° Piso HPR'], cur: listo });
+assert.equal(r.code, 403, 'otro sector → 403');
 // `desde`: el cliente manda el estado que estaba viendo. Si cambió (reintento, otra persona, avance de otro) → 409.
 r = await call('PATCH', { id: 'cx-1', action: 'RETROCEDER', desde: 'EN_TRASLADO' }, { perms: ['cirugia_entregar'], cur: enTraslado });
 assert(r.code === 200 && upd(r.ops).payload.estado === 'VAN_A_BUSCAR', 'desde coincide → retrocede');

@@ -94,6 +94,8 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
       // MEAL_SLOTS) habilitan turno por turno y son aditivos — tildarlos junto con "todos los
       // turnos" es redundante, gana el de todos.
       { code: 'cargar_dieta', label: 'Cargar comandas — todos los turnos (Nutrición)' },
+      // Rollback de una limpieza (29/10/2026): la habitación se pasó a limpia y está sucia.
+      { code: 'limpieza_revertir', label: 'Volver una habitación limpia a "En preparación" (rollback de limpieza)' },
       ...MEAL_SLOTS.map(({ slot, label }) => ({ code: mealSlotPermission(slot), label: `Cargar comandas — solo ${label}` })),
     ],
   },
@@ -104,6 +106,7 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
     perms: [
       { code: 'cirugia_marcar',   label: 'Marcar "va a cirugía" (Admisión, paciente no quirúrgico)' },
       { code: 'cirugia_previa',   label: 'Registrar "Ya se operó (fuera de MediFlow)" (Coordinación; saca la "Q")' },
+      { code: 'cirugia_volver_listo', label: 'Volver atrás un "Listo para cirugía" (anula la marca; también en Operativa → Cirugías)' },
       { code: 'cirugia_listo',    label: 'Marcar "listo para cirugía"' },
       { code: 'cirugia_entregar', label: 'Registrar "en traslado a cirugía"' },
       { code: 'cirugia_tolerancia', label: 'Iniciar dieta (paso final, cierra la operatoria)' },

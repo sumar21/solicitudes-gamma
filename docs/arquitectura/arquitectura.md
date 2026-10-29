@@ -1880,3 +1880,28 @@ La 1.12.0 subió a producción y en paralelo se corrió una revisión adversaria
 - `check-tickets-api-origen` cubre el piso con el sector guardado.
 - Las mutaciones quedan detectadas.
 - Playwright: con un mapa que solo tiene el 5°, la azafata del 5° no ve el traslado UCO → 623 y la del 6° sí.
+
+## 56. Rollbacks configurables: limpieza y "Listo para cirugía" (29/10/2026, v20261029_1.14.0)
+
+Dos pedidos, cada uno con su permiso propio en el ABM. No hay cambios de esquema.
+
+- **"Volver a En preparación"** (`limpieza_revertir`, grupo Mapa de Camas). Caso de la 517-02: se marcó limpia el 28/10 a las 12:47, se consolidó a las 12:55 y estaba sucia.
+  - **Si la limpieza no se consolidó:** el botón anula la limpieza (`ANULADA`) y PROGAL sigue diciendo En preparación.
+  - **Si ya se consolidó (PROGAL dice Disponible):** `POST /api/limpiezas` con `revertir: true` deja una fila **activa** con `motivo_cierre = 'SUCIA'`. `mergeBeds` la pinta En preparación (`bed.vueltaPreparacion`, con quién y cuándo) hasta que una azafata la marque limpia de nuevo. En ese momento la fila SUCIA se cierra (queda en el historial como "Volvió a preparación") y nace una limpieza normal.
+  - Si PROGAL ocupa la cama, la marca se autocierra; ver el efecto de autocierre en `useHospitalState`.
+  - El servidor exige el permiso. La marca SUCIA no dispara el push de "Habitación limpia" y no aparece en la lista de limpiezas a consolidar.
+- **"Volver atrás" desde "Listo para cirugía"** (`cirugia_volver_listo`, grupo Cirugía — desde el mapa de camas). Pedido de Enfermería. Como no hay paso anterior, `RETROCEDER` desde `LISTO_PARA_CIRUGIA` **anula** la marca: `CANCELADO` con motivo "Volvió atrás desde 'Listo para cirugía' (marcado por error)".
+  - Deja un evento `RETROCESO`, sin push. La trayectoria muestra "Volvió atrás: se deshizo 'Listo para cirugía'".
+  - El paciente vuelve a quedar para marcar: una cancelada no consume el consentimiento y la marca de Admisión sigue activa.
+  - Está en el mapa y en Operativa → Cirugías (`cirugiaRetrocesoDe` en `lib/constants.ts`). Lleva `desde` y control por sector, como el resto de los retrocesos.
+- **Historial de limpiezas con el nombre del cambio de turno.** El endpoint del historial no mandaba `operador` (la vista ya lo esperaba), así que se veía solo la cuenta compartida ("Azafata, Piso 5"). Ahora muestra "Susana Ledesma" con la cuenta debajo, y es buscable. La lista de activas y el "Limpia ✓" del mapa también muestran "nombre (cuenta)".
+
+**Verificación.**
+- `check-limpieza-revertir` es nuevo: usa el handler real de `api/limpiezas.ts` y el `mergeBeds` real.
+- `check-cirugia-api-acciones` y `check-cirugia-retroceso` cubren el retroceso desde "Listo".
+- Las mutaciones quedan detectadas.
+- Playwright, a 1440 y 390:
+  - 517 Disponible → "Volver a En preparación" → POST `revertir`;
+  - una cama con marca SUCIA se ve En preparación, con la nota y "Marcar habitación limpia";
+  - "Volver un paso" sobre "Listo para cirugía" manda `desde` = `LISTO_PARA_CIRUGIA`;
+  - el historial muestra el nombre del turno.

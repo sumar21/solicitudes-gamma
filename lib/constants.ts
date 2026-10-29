@@ -33,6 +33,16 @@ export const CIRUGIA_PERMISO_DEL_PASO: Partial<Record<CirugiaEstado, Permission>
   EN_CIRUGIA:    'cirugia_operar',
   EN_DEVOLUCION: 'cirugia_devolver',
 };
+// "Volver atrás" desde "Listo para cirugía" (29/10/2026): no hay paso anterior, se anula la marca. Permiso propio
+// configurable en el ABM (en los demás estados, "Volver un paso" pide el permiso del paso que se deshace).
+export const CIRUGIA_PERMISO_VOLVER_LISTO: Permission = 'cirugia_volver_listo';
+/** ¿Se puede retroceder desde este estado y con qué permiso? (`pregunta` = texto de la confirmación, sin "¿?"). */
+export function cirugiaRetrocesoDe(estado: CirugiaEstado): { pregunta: string; permiso: Permission; anula: boolean } | null {
+  if (estado === 'LISTO_PARA_CIRUGIA') return { pregunta: 'Deshacer "Listo para cirugía" (se anula la marca)', permiso: CIRUGIA_PERMISO_VOLVER_LISTO, anula: true };
+  const anterior = CIRUGIA_ANTERIOR[estado], permiso = CIRUGIA_PERMISO_DEL_PASO[estado];
+  return anterior && permiso ? { pregunta: `Volver a "${CIRUGIA_ESTADO_LABEL[anterior]}"`, permiso, anula: false } : null;
+}
+
 // `tipo` de una cirugía previa registrada a mano ("Ya se operó (fuera de MediFlow)"). Ver TIPO_PREVIA
 // en api/cirugia.ts.
 export const CIRUGIA_TIPO_PREVIA = 'PREVIA_EXTERNA';

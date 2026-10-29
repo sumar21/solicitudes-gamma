@@ -172,7 +172,9 @@ function progalStillHasTicketPatientOnOrigin(origin: Bed, ticket: Ticket): boole
 }
 
 // Limpieza por azafata: label de cama → datos de quién/cuándo la marcó limpia.
-type CleaningInfo = { by: string; byId: string; at: string; spItemId: string };
+// `operador`: el nombre del cambio de turno (las cuentas de azafata son compartidas por piso).
+// `sucia`: no es una limpieza sino la marca de "volvió a En preparación" (motivo SUCIA en api/limpiezas.ts).
+type CleaningInfo = { by: string; byId: string; at: string; spItemId: string; operador?: string; sucia?: boolean };
 
 // Limpieza de RUTINA abierta sobre una cama ocupada: label → quién/cuándo la inició + id (para finalizar).
 type RoutineCleaningInfo = { id: string; by: string; at: string; patientCode: string };
@@ -430,10 +432,20 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
       const bed = result[i];
       const info = cleanings.get(bed.label);
       if (!info) continue;
+      // Quién: el nombre del cambio de turno + la cuenta ("María Fernanda (Azafata, Piso 5)").
+      const quien = info.operador ? `${info.operador} (${info.by})` : info.by;
+      if (info.sucia) {
+        // "Volver a En preparación": se pasó a limpia (o PROGAL ya la consolidó Disponible) y está sucia.
+        if (bed.status === BedStatus.AVAILABLE && !ticketTouched.has(bed.label)) {
+          bed.status = BedStatus.PREPARATION;
+          bed.vueltaPreparacion = { by: quien, at: info.at };
+        }
+        continue;
+      }
       if (bed.status === BedStatus.PREPARATION && !ticketTouched.has(bed.label)) {
         bed.status = BedStatus.AVAILABLE;
         bed.cleaned = true;
-        bed.cleanedBy = info.by;
+        bed.cleanedBy = quien;
         bed.cleanedAt = info.at;
       }
     }
@@ -1200,6 +1212,7 @@ export const useHospitalState = () => {
         map.set(String(c.bedLabel), {
           by: String(c.by ?? ''), byId: String(c.byId ?? ''),
           at: String(c.at ?? ''), spItemId: String(c.spItemId ?? ''),
+          operador: c.operador ? String(c.operador) : undefined, sucia: c.sucia === true,
         });
       }
       setCleanings(map);
@@ -1213,7 +1226,10 @@ export const useHospitalState = () => {
     const at = new Date().toISOString();
     setCleanings(prev => {
       const n = new Map(prev);
-      n.set(bed.label, { by: u?.name ?? '', byId: u?.id ?? '', at, spItemId: prev.get(bed.label)?.spItemId ?? '' });
+      // Si la activa era la marca de "volvió a preparación", el server la cierra y crea una limpieza nueva.
+      const prevInfo = prev.get(bed.label);
+      n.set(bed.label, { by: u?.name ?? '', byId: u?.id ?? '', at, operador: getOperador() || undefined,
+        spItemId: prevInfo && !prevInfo.sucia ? prevInfo.spItemId : '' });
       return n;
     });
     try {
@@ -1257,6 +1273,34 @@ export const useHospitalState = () => {
       });
     } catch { /* best-effort */ }
   }, [authFetch, cleanings]);
+
+  // "Volver a En preparación" (permiso limpieza_revertir, 29/10/2026): la habitación se pasó a limpia y está sucia
+  // (caso 517). Con la limpieza todavía sin consolidar, la anula; ya consolidada (PROGAL dice Disponible), deja la
+  // marca SUCIA y el mapa la vuelve a mostrar En preparación hasta que la limpien de nuevo. El server la valida.
+  const revertirLimpieza = useCallback(async (bed: Bed): Promise<{ ok: boolean; error?: string }> => {
+    if (!can(currentUser, 'limpieza_revertir')) return { ok: false, error: 'Tu rol no tiene permiso para volver una habitación a "En preparación".' };
+    const u = currentUser;
+    const at = new Date().toISOString();
+    const prevInfo = cleanings.get(bed.label);
+    setCleanings(prev => { const n = new Map(prev); n.set(bed.label, { by: u?.name ?? '', byId: u?.id ?? '', at, spItemId: '', operador: getOperador() || undefined, sucia: true }); return n; });
+    try {
+      const r = await authFetch('/api/limpiezas', {
+        method: 'POST',
+        body: JSON.stringify({ revertir: true, bedLabel: bed.label, bedCode: bed.bedCode ?? '', roomCode: bed.roomCode ?? '', area: bed.area ?? '',
+          userId: u?.id ?? '', userName: u?.name ?? '', operador: getOperador(), version: APP_VERSION }),
+      });
+      const data = await r.json().catch(() => ({} as any));
+      if (!r.ok) {
+        setCleanings(prev => { const n = new Map(prev); if (prevInfo) n.set(bed.label, prevInfo); else n.delete(bed.label); return n; });
+        return { ok: false, error: data?.error ?? `No se pudo (HTTP ${r.status}).` };
+      }
+      if (data?.spItemId) setCleanings(prev => { const n = new Map(prev); const cur = n.get(bed.label); if (cur?.sucia) n.set(bed.label, { ...cur, spItemId: String(data.spItemId) }); return n; });
+      return { ok: true };
+    } catch (e: any) {
+      setCleanings(prev => { const n = new Map(prev); if (prevInfo) n.set(bed.label, prevInfo); else n.delete(bed.label); return n; });
+      return { ok: false, error: e?.message ?? 'Error de red.' };
+    }
+  }, [authFetch, currentUser, cleanings]);
 
   // ── Limpiezas de RUTINA (camas ocupadas, ~2x/día): iniciar → finalizar ────
   const fetchRoutineCleanings = useCallback(async () => {
@@ -1826,7 +1870,8 @@ export const useHospitalState = () => {
       const n = new Map(prev);
       // Terminales (salen de la cola): TOLERANCIA_EVALUADA ("Iniciar dieta", cierra) y CANCELADO.
       // El destino no se elige acá (lo detecta el cron desde PROGAL).
-      const goesTerminal = action === 'CANCELADO' || action === 'TOLERANCIA_EVALUADA';
+      // Volver atrás desde "Listo para cirugía" también la saca de la cola: se anula (29/10/2026).
+      const goesTerminal = action === 'CANCELADO' || action === 'TOLERANCIA_EVALUADA' || (action === 'RETROCEDER' && cur.estado === 'LISTO_PARA_CIRUGIA');
       if (goesTerminal) {
         n.delete(id); // sale de la cola
       } else if (action === 'RETROCEDER') {
@@ -2354,7 +2399,9 @@ export const useHospitalState = () => {
       // cama ya Ocupada/Disponible NO se muestra limpia aunque la marca quede 'Activo' sin consolidar.
       // Tradeoff conocido: si la MISMA cama vuelve a 'En preparación' en un ciclo nuevo sin haberse
       // consolidado la marca vieja, esa marca podría reaparecer — antes GAMMA lo tapaba.
-      if (reason === 'GAMMA') continue;
+      // Excepción: la marca de "volvió a preparación" sí se cierra si PROGAL OCUPÓ la cama (internaron a alguien sin
+      // pasar por la app): si no, cuando ese paciente se fuera y la consolidaran, la marca vieja la volvería a pintar sucia.
+      if (reason === 'GAMMA' && !(info.sucia && rawByLabel.get(label)?.status === BedStatus.OCCUPIED)) continue;
       const spItemId = info.spItemId;
       closedCleaningsRef.current.add(spItemId); // evita disparos duplicados mientras el PATCH viaja
       setCleanings(prev => { const n = new Map(prev); n.delete(label); return n; });
@@ -4263,7 +4310,7 @@ export const useHospitalState = () => {
       setOperador, cambioTurno,
       handleCreateTicket, createPreTicket, completePreTicket, restablecerDestinoPreTicket, handleRoomReady, handleConfirmReception, handleConsolidate,
       fetchBeds, enrichBed, fetchPatientTickets, searchHistory, refreshAll, fetchAllTickets, setHistoryRange,
-      markBedClean, undoBedClean,
+      markBedClean, undoBedClean, revertirLimpieza,
       startRoutineCleaning, finishRoutineCleaning, fetchRoutineCleanings,
       saveMealLoad, clearMealLoad, saveCompanionLoad, clearCompanionLoad, setMealStatus,
       fetchCirugias, marcarListoParaCirugia, transicionarCirugia,

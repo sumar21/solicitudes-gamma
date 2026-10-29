@@ -11,6 +11,8 @@ const L = CIRUGIA_ESTADO_LABEL as Record<string, string>;
 export function cirugiaEventoLabel(e: { tipo: string; meta?: { de?: unknown; a?: unknown } | null }): string {
   if (e.tipo === 'RETROCESO') {
     const de = String(e.meta?.de ?? ''), a = String(e.meta?.a ?? '');
+    // Desde "Listo para cirugía" no hay paso anterior: la marca se anula (29/10/2026).
+    if (de === 'LISTO_PARA_CIRUGIA') return 'Volvió atrás: se deshizo "Listo para cirugía"';
     return `Volvió un paso: ${L[de] ?? (de || '?')} → ${L[a] ?? (a || '?')}`;
   }
   if (e.tipo === 'ANULAR_PREVIA') return 'Cirugía previa anulada';

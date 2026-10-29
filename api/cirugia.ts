@@ -424,8 +424,11 @@ async function handler(req: any, res: any) {
         if (desde && desde !== String(cur.estado)) {
           return res.status(409).json({ error: 'La cirugía cambió de estado; recargá e intentá de nuevo.' });
         }
-        if (!ANTERIOR[String(cur.estado)]) return res.status(409).json({ error: 'Este paso no tiene uno anterior al que volver.' });
+        if (!ANTERIOR[String(cur.estado)] && cur.estado !== 'LISTO_PARA_CIRUGIA') return res.status(409).json({ error: 'Este paso no tiene uno anterior al que volver.' });
       }
+      // "Volver atrás" desde "Listo para cirugía" (pedido de Enfermería, 29/10/2026): no hay paso anterior, así que
+      // se ANULA la marca (CANCELADO con motivo; sin borrar) y el paciente vuelve a quedar para marcar. Permiso propio.
+      const desdeListo = act === 'RETROCEDER' && cur.estado === 'LISTO_PARA_CIRUGIA';
 
       // Autorización server-side: permiso de la acción + (si filtra por pisos) sector. La operatoria sigue
       // al PACIENTE: vale el sector de origen O el sector donde ESTÁ hoy (PROGAL pudo moverlo: de ITR a la
@@ -439,14 +442,15 @@ async function handler(req: any, res: any) {
       if (act === 'ANULAR_PREVIA') {
         denyPatch = await authzCirugia(req, 'cirugia_previa', areasAccion);
       } else {
-        const permiso = act === 'RETROCEDER' ? ACCION_PERMISO[String(cur.estado)] : ACCION_PERMISO[act];
+        const permiso = desdeListo ? 'cirugia_volver_listo'
+          : act === 'RETROCEDER' ? ACCION_PERMISO[String(cur.estado)] : ACCION_PERMISO[act];
         denyPatch = await authzCirugia(req, permiso ?? 'cirugia_cancelar', areasAccion);
       }
       if (denyPatch) return res.status(denyPatch.status).json({ error: denyPatch.error });
 
       let estadoNuevo = act;
       if (act === 'RETROCEDER') {
-        estadoNuevo = ANTERIOR[String(cur.estado)] ?? '';
+        estadoNuevo = desdeListo ? 'CANCELADO' : (ANTERIOR[String(cur.estado)] ?? '');
         if (!estadoNuevo) return res.status(409).json({ error: 'Este paso no tiene uno anterior al que volver.' });
       } else if (act === 'ANULAR_PREVIA') {
         if (cur.tipo !== TIPO_PREVIA || cur.estado !== 'TOLERANCIA_EVALUADA') {
@@ -479,6 +483,10 @@ async function handler(req: any, res: any) {
         fields.motivo_cancelacion = String(motivoCancelacion);
       }
       if (act === 'ANULAR_PREVIA') fields.motivo_cancelacion = 'Cirugía previa anulada (registrada por error)';
+      if (desdeListo) {
+        fields.fecha_cierre = nowIso;
+        fields.motivo_cancelacion = 'Volvió atrás desde "Listo para cirugía" (marcado por error)';
+      }
 
       // CAS (compare-and-set): el UPDATE reafirma el estado que leímos recién. Si otra transición ganó
       // la carrera entre el read y el write (doble-tap, dos dispositivos), afecta 0 filas → 409 y NO se

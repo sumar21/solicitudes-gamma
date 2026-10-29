@@ -1100,6 +1100,16 @@ Diseño en [arquitectura.md §48](../arquitectura/arquitectura.md). **Prerrequis
 - **Acción**: en la nota del detalle, "Deshacer".
 - **Resultado esperado**: vuelve la "Q" y "Listo para cirugía". La trayectoria muestra "Cirugía previa anulada". Un PATCH `ANULAR_PREVIA` sobre una cirugía real de MediFlow da 409.
 
+### QA-LIM-R1 · "Volver a En preparación" (rollback de limpieza)
+- **Precondición**: usuario con `limpieza_revertir`; una cama Disponible en PROGAL (ya consolidada) y otra marcada "Limpia ✓" sin consolidar.
+- **Acción**: en cada una, "Volver a En preparación" → "Sí, está sucia" (en la limpia sin consolidar, el botón de la tarjeta verde).
+- **Resultado esperado**: la consolidada se ve **En preparación** con la nota "Volvió a En preparación (estaba sucia) · nombre (cuenta)"; la azafata del piso ve "Marcar habitación limpia" y, al marcarla, el historial muestra "Volvió a preparación" y la limpieza nueva. La no consolidada vuelve a En preparación (limpieza anulada). Sin el permiso, el botón no aparece y el servidor responde 403. El historial de limpiezas muestra el nombre del cambio de turno (con la cuenta debajo).
+
+### QA-CX-09 · Deshacer "Listo para cirugía"
+- **Precondición**: operatoria en "Listo para cirugía"; usuario con `cirugia_volver_listo`.
+- **Acción**: "Volver un paso" en la cama o en Operativa → Cirugías → confirmar.
+- **Resultado esperado**: la operatoria desaparece de la cola (cancelada con motivo "Volvió atrás…"), la trayectoria dice "Volvió atrás: se deshizo 'Listo para cirugía'" y el detalle de la cama vuelve a ofrecer "Listo para cirugía". Sin el permiso no aparece el botón en "Listo".
+
 ### QA-CX-08 · "Volver un paso"
 - **Precondición**: operatoria en "En traslado a cirugía"; usuario con `cirugia_entregar`.
 - **Acción**: en Operativa → Cirugías (2000/1440/1280/390) tocar "Volver un paso" → confirmar. Repetir desde el detalle de la cama en el mapa.

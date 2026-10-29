@@ -124,6 +124,9 @@ export interface Bed {
   cleaned?: boolean;
   cleanedBy?: string;   // nombre de la azafata que la marcó
   cleanedAt?: string;   // ISO — cuándo se marcó limpia
+  // "Volver a En preparación" (29/10/2026): se había pasado a limpia y estaba sucia. El mapa la muestra En
+  // preparación aunque PROGAL diga Disponible, hasta que una azafata la vuelva a marcar limpia.
+  vueltaPreparacion?: { by: string; at: string };
   // Limpieza de RUTINA en curso sobre una cama OCUPADA (~2x/día). Overlay de public.limpiezas_rutina
   // en estado INICIADA. NO cambia el estado de la cama — solo un indicador + habilita "Finalizar".
   routineCleaningActive?: boolean;
@@ -418,6 +421,8 @@ export const PERMISSIONS = [
   'cirugia_cancelar',   // cancelar la operatoria (transversal)
   'cirugia_marcar',     // Admisión: marcar "va a cirugía" un paciente NO quirúrgico (flag, desde el mapa)
   'cirugia_previa',     // "Ya se operó (fuera de MediFlow)": registrar/deshacer una cirugía previa (saca la "Q"). Coordinación (26/10/2026)
+  'cirugia_volver_listo', // "Volver atrás" desde "Listo para cirugía": anula la marca (pedido de Enfermería, 29/10/2026)
+  'limpieza_revertir',  // "Volver a En preparación" una habitación que se pasó a limpia y está sucia (caso 517, 29/10/2026)
   // Pre-ticket de traslado (pedido de cama de la Coordinadora). Ver docs/planes/pre-ticket.md.
   'crear_pre_ticket',      // Coordinadora: crea el pre-ticket (paciente + movimiento + requisitos, sin destino)
   'completar_pre_ticket',  // Admisión: ve el pre-ticket en la grilla y "Configura destino" → lo convierte en traslado
