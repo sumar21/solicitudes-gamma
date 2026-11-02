@@ -4,8 +4,20 @@
 // Se captura en el login (se persiste en la sesión, ver useHospitalState) y se consume desde ahí:
 // cada escritura transaccional la manda en el body → el endpoint la guarda en la columna `version`.
 // Así se detecta quién corre un build viejo (cacheado / no recargó el deploy). También la muestra
-// el badge del login y del sidebar.
+// el badge del login y del sidebar, y la devuelve GET /api/version para el aviso de versión nueva
+// (components/Actualizacion.tsx): un deploy sin bump no abre el aviso.
 //
 // Al cambiar este literal cambia el hash del bundle (cache-bust). Un cliente que quedó con un build
 // viejo escribe la versión vieja (o '' si es anterior a este feature) → esa es la señal buscada.
 export const APP_VERSION = 'v20261030_1.15.2';
+
+const FORMATO = /^v(\d{8})_(\d+)\.(\d+)\.(\d+)$/;
+
+/**
+ * Si un valor que llega de afuera (la respuesta de /api/version, por ejemplo) tiene
+ * la forma de una versión de esta aplicación. Lo que no la tiene se ignora.
+ * El tope de largo protege de cualquier cosa que mande la red.
+ */
+export function esVersionDeLaApp(valor: unknown): valor is string {
+  return typeof valor === 'string' && valor.length <= 40 && FORMATO.test(valor);
+}

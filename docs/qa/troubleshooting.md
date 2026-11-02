@@ -62,6 +62,12 @@ de cada diseño, ver [decisiones.md](../arquitectura/decisiones.md); para el "qu
 | Un usuario reporta un comportamiento **que ya se arregló** hace deploys | Corre un **build viejo cacheado** (no recargó / SW sirvió el bundle anterior) | Mirar el **badge de versión** en login/sidebar del usuario, y la columna `version` de sus últimas escrituras en Supabase. `APP_VERSION` (hoy `v20260731_1.0.1`, [version.ts:11](../lib/version.ts)) se estampa en cada escritura transaccional (traslados/limpiezas/comandas). Una fila con `version` vieja o `''`/NULL (pre-feature) = ese cliente no recargó → pedir hard-refresh / reinstalar PWA |
 | Quiero **saber quién corre qué versión** | La columna `version` está en todas las tablas transaccionales y en `push_subscriptions` | Query por `version` en `public.traslados`/`limpiezas`/`comandas` filtrando por `entorno`. El badge del sidebar muestra la versión corriendo en ese cliente |
 
+### El aviso de versión nueva no aparece o vuelve a aparecer
+
+- **`GET /api/version` devuelve la versión del deploy.** Si no contesta 200 con formato `vYYYYMMDD_<semver>`, el aviso no abre: una falla nunca abre ni cierra el aviso.
+- **Reaparece después de "Actualizar ahora":** el SW nuevo no llegó a instalarse y la recarga trajo el precache viejo. Revisar `sw.js` en DevTools → Application → Service Workers.
+- **El número no cambió después de un deploy:** no se bumpeó `APP_VERSION` en ese deploy: el aviso compara versiones, no builds.
+
 ## Limpieza de camas (`public.limpiezas` / overlay "Opción B")
 
 | Síntoma | Causa probable | Qué mirar / escalar |

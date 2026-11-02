@@ -9,6 +9,9 @@ import { GammaLogo } from './components/GammaLogo';
 import { ModuleHelp } from './components/ModuleHelp';
 import { IS_TESTING } from './lib/env';
 import { APP_VERSION } from './lib/version';
+import { ActualizacionProvider } from './components/Actualizacion';
+import { ActualizacionDialog } from './components/ActualizacionDialog';
+import { CuentaRegresivaDeActualizacion } from './components/CuentaRegresiva';
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
@@ -427,6 +430,7 @@ export default function App() {
   }
 
   return (
+    <ActualizacionProvider retenida={state.ticketActionLoading}>
     <div className="h-screen h-[100dvh] w-full flex flex-col md:flex-row bg-slate-50 overflow-hidden font-sans text-slate-900">
       {/* Toast notifications */}
       <NotificationToasts
@@ -654,6 +658,7 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-1 md:gap-4">
+            <CuentaRegresivaDeActualizacion />
             {state.currentView === 'BEDS' && (
               <Button variant="ghost" size="icon" className="w-10 h-10 sm:w-9 sm:h-9 text-slate-400 hover:text-slate-600" onClick={() => setIsLegendModalOpen(true)}>
                 <Info className="w-6 h-6 sm:w-5 sm:h-5" />
@@ -1060,5 +1065,7 @@ export default function App() {
         </DialogContent>
       </Dialog>
     </div>
+    <ActualizacionDialog />
+    </ActualizacionProvider>
   );
 }

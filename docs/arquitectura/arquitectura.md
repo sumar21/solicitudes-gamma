@@ -80,7 +80,7 @@ MediFlow corre sobre **tres backends simultáneos**:
 
 ### 1.3. Versionado de cliente (APP_VERSION)
 
-[lib/version.ts](../lib/version.ts) exporta `APP_VERSION` (hoy `v20260731_1.0.1`), un literal **baked-at-build** (NO env var) que se bumpéa a mano por deploy que se quiera trazar. Se captura en login (`localStorage.mediflow_version`) y se estampa en la columna `version` de **cada escritura transaccional** (traslados, eventos, obs, limpiezas, comandas, planificación). Migración [`20260731120000_version_columns.sql`](../supabase/migrations/20260731120000_version_columns.sql). Sirve para detectar clientes con build viejo/cacheado (filas server-side o pre-feature quedan `''`/NULL). Badge visible en login + sidebar.
+[lib/version.ts](../lib/version.ts) exporta `APP_VERSION` (hoy `v20261030_1.15.2`), un literal **baked-at-build** (NO env var) que se bumpéa a mano por deploy que se quiera trazar. También lo devuelve `GET /api/version` para el aviso de versión nueva (§12.5): un deploy sin bump no lo abre. Se captura en login (`localStorage.mediflow_version`) y se estampa en la columna `version` de **cada escritura transaccional** (traslados, eventos, obs, limpiezas, comandas, planificación). Migración [`20260731120000_version_columns.sql`](../supabase/migrations/20260731120000_version_columns.sql). Sirve para detectar clientes con build viejo/cacheado (filas server-side o pre-feature quedan `''`/NULL). Badge visible en login + sidebar.
 
 ---
 
@@ -717,7 +717,13 @@ La botonera de tabs es scrolleable en mobile (§37). Aislamientos se muestran en
 
 ### 12.4. Auto-update de PWA sin intervención del usuario
 
-`vite-plugin-pwa` se configuró con auto-actualización: el SW detecta una nueva versión, la activa y refresca la página automáticamente sin mostrar prompt al usuario. Decisión motivada por el perfil del usuario hospitalario (sin conocimiento técnico).
+> Reemplazado el 30/10/2026 por §12.5. Antes el SW nuevo se aplicaba y recargaba la página sin avisar.
+
+### 12.5. Aviso de versión nueva
+
+[`components/Actualizacion.tsx`](../../components/Actualizacion.tsx) pregunta `GET /api/version` a los 10 s, cada 5 minutos con la pestaña a la vista y al volver a ella (mínimo 30 s entre consultas). Compara con `!==`: un rollback también obliga a recargar. Si difiere abre un diálogo con **Actualizar ahora** o **Actualizar en 10 minutos**; lo segundo muestra un chip con la cuenta regresiva en el encabezado y a las 0:00 recarga sola, esperando si hay un guardado en curso (`ticketActionLoading`). Un rollback a la versión de la pestaña cancela aviso y cuenta. El plazo se guarda en `sessionStorage` (`mediflow_plazo_actualizacion`) para sobrevivir un remontaje.
+
+**La recarga pasa por el SW** ([`lib/version/serviceWorker.ts`](../../lib/version/serviceWorker.ts)): el bundle sale del precache, así que un `location.reload()` a secas traería el mismo código viejo. `recargarConLaVersionNueva()` aplica el SW en espera, o le pide que revise si `/api/version` se enteró antes, y vite-plugin-pwa recarga al recibir `controlling`. Sin sesión (`mediflow_token`) el SW se sigue aplicando solo: no hay trabajo que perder y una tablet en el login no queda vieja. Con varias pestañas, aplicar el SW en una recarga también las otras, aunque tengan una cuenta en curso.
 
 ---
 
