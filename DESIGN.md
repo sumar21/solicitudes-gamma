@@ -1,4 +1,4 @@
-<!-- sumar:estilo=01-minimal-zinc version=2.1.0 -->
+<!-- sumar:estilo=01-minimal-zinc version=2.2.0 -->
 # Estilo 1 · Minimalista zinc (Sumar UI Kit)
 
 Reglas visuales del estilo. Es **un tema sobre la base común** (`base/BASE.md`): la base fija stack, tokens, API de componentes, recetas, accesibilidad y textos; este documento dice **cómo se ven** acá. Es prescriptivo: si algo no está, se compone con los componentes de `src/components/ui/` y los tokens de §1, no se inventa.
@@ -11,9 +11,10 @@ Reglas visuales del estilo. Es **un tema sobre la base común** (`base/BASE.md`)
 > | **Repo existente** (otra estética) | `/rediseno` | **`REDISENO.md`** entero, después la sección de acá que pida cada capa. |
 > | **Dashboard, gráfico o KPI** | Las skills **`business-intelligence`** (qué se mide y cómo se calcula) y **`dataviz`** (cómo se dibuja), siempre y en ese orden (BASE §10). | **`DATAVIZ.md`** + §3.4 de este documento. |
 > | **Patrón de negocio** (cuenta corriente, checkout, emails, permisos, tipo de cambio) | Son opcionales. | **`EJEMPLOS.md`**. |
-> | **Tarea puntual** | — | Colores → §1.1 · tipografía → §1.2 · superficies, radios, sombras → §1.3–§1.5 · densidad → §1.6 · íconos → §1.7 · foco → §1.8 · animaciones → §1.9 · cómo se ve un componente → §2 · listado → §3.1 · detalle → §3.2 · formulario → §3.3 · inicio → §3.4 · login → §3.5 · confirmar → §3.6 · toasts y banners → §3.7 · filtros → §3.8 · tablas → §3.9 · sidebar, header, mobile, celular → §4 · modo noche → §5 · reglas de oro → §6. |
+> | **Receta citada por número del DESIGN.md original** (`§4.1`, `§4.7`, `§7.2`, `§12.1`…) o **el JSX completo** de un patrón | Recetas del original adaptadas al kit. | **`RECETAS.md`**, la sección con ese número (índice al principio). |
+> | **Tarea puntual** | — | Colores → §1.1 · tipografía → §1.2 · superficies, radios, sombras → §1.3–§1.5 · densidad → §1.6 · íconos → §1.7 · foco → §1.8 · animaciones → §1.9 · cómo se ve un componente → §2 · listado → §3.1 · detalle → §3.2 · formulario → §3.3 · inicio → §3.4 · login → §3.5 · confirmar → §3.6 · toasts y banners → §3.7 · filtros → §3.8 · tablas → §3.9 · sidebar, header, mobile, celular → §4 · modo noche → §5 · reglas de oro → §6. · JSX completo: modal de formulario → `RECETAS.md` §4.1 · página de listado → §4.4 · barra de filtros → §4.7 · toolbar → §5.2 · columnas progresivas y tarjeta mobile → §5.4 · celdas de dos líneas → §7.2 · acciones de fila → §7.6 · edición inline → §6.11 · cambios sin guardar → §8.8 · login → §12.1 |
 >
-> Dónde están los otros documentos: en un proyecto armado con `scripts/armar.mjs`, `BASE.md`, `REDISENO.md`, `DATAVIZ.md` y `KIT-DEMO.md` están en `docs/`. `EJEMPLOS.md` y `CHANGELOG.md` se leen del kit (`estilos/01-minimal-zinc/`), igual que cualquiera que falte en el proyecto.
+> Dónde están los otros documentos: en un proyecto armado con `scripts/armar.mjs`, `BASE.md`, `REDISENO.md`, `DATAVIZ.md`, `RECETAS.md` y `KIT-DEMO.md` están en `docs/`. `EJEMPLOS.md` y `CHANGELOG.md` se leen del kit (`estilos/01-minimal-zinc/`), igual que cualquiera que falte en el proyecto.
 
 **Dónde está el código** (este documento no pega código de componentes; la fuente de verdad son los archivos):
 
@@ -78,13 +79,13 @@ Los nombres de token son los de BASE §2. Los valores exactos, de día y de noch
 | Pieza | Clases |
 |---|---|
 | Badge / pill / chip | `bg-<sem>/10 text-<sem>` |
-| Banner suave | `rounded-lg border border-<sem>/20 bg-<sem>/10 p-3 text-sm text-<sem>` + ícono `h-4 w-4` |
+| Banner suave | `rounded-lg border border-<sem>/20 bg-<sem>/10 p-3 text-sm text-<sem>` + ícono `h-4 w-4`. Es el componente `Aviso` (`estados.tsx`, BASE §4): no se arma a mano. |
 | Tile de ícono | `h-9 w-9 rounded-lg bg-<sem>/10` + ícono `h-4 w-4 text-<sem>` |
 | Valor con signo | `text-success` (positivo) · `text-destructive` (negativo), con prefijo `+` / `−` |
 
-`<sem>` = `success` · `warning` · `info` · `destructive`. Nada de `emerald-*`, `amber-*`, `red-*`, `blue-*` crudos en pantallas: eso era el kit anterior.
+`<sem>` = `success` · `warning` · `info` · `destructive`. Nada de `emerald-*`, `amber-*`, `red-*`, `blue-*` crudos en pantallas: eso era el kit anterior (de noche quedan crema y pastel sobre negro; en un rediseño, el puente es BASE §9.4).
 
-**Estados → tonos.** Los estados de cada app se mapean a los seis tonos de `StatusBadge` (BASE §4) en `src/lib/estados.ts`, nunca en la pantalla. Dos reglas:
+**Estados → tonos.** Los estados de cada app se mapean a los tonos de `StatusBadge` (BASE §4) en `src/lib/estados.ts`, nunca en la pantalla: los seis de base (`neutro` · `aviso` · `exito` · `info` · `peligro` · `marca`) y tres extra para circuitos largos y categorías que no son estado, `cielo` (todavía no empezó, pospuesto) · `indigo` (en proceso) · `violeta` (despachado, el otro camino). Los extra son tokens (`--cielo`, `--indigo`, `--violeta`: sky / indigo / violet 700 de día, 400 de noche) y salen de la paleta §3.11 del DESIGN original (`RECETAS.md`). Dos reglas:
 
 1. **Un tono por etapa del circuito, no uno por estado.** Estados distintos que significan "falta lo mismo" comparten tono; los distingue el texto. Y el badge muestra el estado **de lectura**, no el enum del backend: una compra "Activa" que todavía se debe no puede llevar el mismo tono que una "Pagada".
 2. **Tonos que conviven en una columna tienen que separarse en matiz (≥ 25°).** Los estados usan los semánticos y `neutro`, nunca `marca` (BASE §3). Si en la misma columna aparece una etiqueta en tono `marca` (un canal, una categoría), no puede convivir con `info` si la marca del cliente es azulada, ni con `peligro` si es roja.
@@ -315,7 +316,7 @@ Muestra: `base/starter/src/pages/NuevoPedido.tsx`. **`Dialog`**; si tiene más d
 | Cuerpo | `FieldGroup` (en `grid grid-cols-1 sm:grid-cols-2 gap-4` si los campos son cortos) |
 | `DialogFooter` | `flex flex-col-reverse gap-2 sm:flex-row sm:justify-end`: en mobile apilados a lo ancho con la acción principal arriba; desde `sm`, en fila a la derecha. Cancelar `outline`, confirmar `default` |
 
-**Formulario largo (más de una pantalla de alto): en bandas.** Header y footer quedan fijos y scrollea solo el medio. Se compone con clases sobre el mismo `Dialog`: `DialogContent className="flex flex-col gap-0 p-0 sm:max-w-2xl"` · `DialogHeader className="shrink-0 border-b bg-secondary/20 px-6 py-4"` · cuerpo `min-h-0 flex-1 overflow-y-auto p-6` · `DialogFooter className="shrink-0 border-t bg-muted/20 p-4"`.
+**Formulario largo (más de una pantalla de alto): en bandas.** Header y footer quedan fijos y scrollea solo el medio. Se escribe con un **`DialogBody`** entre el header y el pie: el `dialog.tsx` del kit ve el cuerpo y pasa solo a bandas (header `border-b bg-secondary/20 px-6 py-4`, cuerpo `p-6` con scroll, pie `border-t bg-muted/20 p-4`). La pantalla pone solo el ancho (`DialogContent className="sm:max-w-2xl"`); el esqueleto completo, en `RECETAS.md` §4.1.
 
 En mobile **no es pantalla completa**: card centrada con 1 rem de margen a cada lado (`max-w-[calc(100%-2rem)]`), y lo que no entra scrollea. (El que ocupa todo el ancho en mobile es el `Sheet` del detalle.)
 
@@ -389,7 +390,7 @@ Muestra: `base/starter/src/pages/Login.tsx`. Contenedor `min-h-dvh flex bg-backg
 | Varias dimensiones a la vez (dashboards, vistas ricas) | **Barra colapsable**, abajo. |
 | Pocos estados (≤ 8) de una grilla operativa, donde **la cantidad por estado es información** | **Chips de estado**, abajo. |
 
-Barra colapsable:
+Barra colapsable (componentes `BotonFiltros`, `BarraFiltros` y `CampoFiltro` de `filtros.tsx`, BASE §4; las clases de abajo ya están adentro):
 
 - **Botón** (a la derecha del `PageHeader` o de la barra de tabs): `outline` con `SlidersHorizontal` "Filtros" y chevron; abierto o con filtros activos, `border-brand/30 bg-brand/5 text-brand`; contador `rounded-full bg-brand px-1.5 py-0.5 text-[10px] font-bold text-brand-foreground`.
 - **Barra** (inline, debajo del header, no flota): `rounded-xl border bg-muted/20 p-3`, fila `flex flex-wrap items-end gap-3`.
@@ -478,7 +479,9 @@ Los tokens de noche están en el bloque `.dark` de `src/index.css`; `useTema()` 
 | `primary` | negro con texto blanco | **se invierte**: casi blanco con texto casi negro (sigue siendo "el que decide") |
 | Bordes | zinc 200 | zinc 800 |
 | Semánticos | tonos 700 | tonos 400 (los 700 no contrastan sobre negro) |
-| `brand` | el del cliente | el mismo; si no da 3:1 contra el lienzo de noche, `.dark` define un paso más claro. `MARCA` (emails, PDF) sigue siendo el de día. |
+| `brand` | el del cliente | el mismo matiz, **aclarado y apagado** (saturación ~30–40 %): un tono claro saturado pasa el contraste pero encandila (BASE §3; `contraste.mjs` lo avisa). `MARCA` (emails, PDF) sigue siendo el de día. |
+| `panel-marca` (login) | la marca | un tinte oscuro de la marca (`color-mix` 22 % sobre el lienzo) con texto claro: nunca un bloque claro |
+| Avisos y estados | `bg-<sem>/10 text-<sem>` | los mismos tokens, de noche solos. Pasos crudos de paleta (`bg-amber-50`) no: quedan crema sobre negro |
 | `chart-*` | pasos de día | pasos más claros, validados contra la card de noche (`DATAVIZ.md` §3) |
 | Sombras | `shadow-xs` / `md` / `2xl` | casi invisibles; el borde separa. No se compensa con sombras más fuertes. |
 | Fondo de modal | `bg-black/60` | igual |
@@ -487,8 +490,8 @@ Reglas:
 
 1. **Cero `dark:` en pantallas y componentes de dominio.** Si algo se ve mal de noche, falta o está mal un token. Única excepción: logos e imágenes (`dark:invert` en un logo negro).
 2. **Nada que no sea token** (BASE §8): `bg-white` o un hex se quedan blancos de noche. El validador lo marca.
-3. **El selector de tema** va en el header (desktop) o en el menú de usuario (mobile): `DropdownMenu` con Claro / Oscuro / Sistema y el ícono actual (`Sun` / `Moon` / `Monitor`). Default: Sistema.
-4. **Revisión visual de las dos caras** (`REDISENO.md` §R.6): cada pantalla se mira de día y de noche.
+3. **El selector de tema** es `SelectorTema` (`src/components/layout/selector-tema.tsx`, BASE §4), en las `acciones` del `AppShell`: Claro / Oscuro / Según el sistema, con el ícono actual. Default: Sistema.
+4. **Revisión visual de las dos caras** (`REDISENO.md` §R.6): cada pantalla se mira de día y de noche, con capturas. "Pasa el contraste" no alcanza: de noche se mira además que nada encandile (botones rellenos, tabs, avisos).
 5. Los gráficos leen `var(--color-chart-N)`: cambian solos. Un hex en un gráfico es un bug de noche.
 
 ---

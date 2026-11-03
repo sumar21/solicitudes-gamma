@@ -67,8 +67,10 @@ Cada estilo define **todos** estos tokens en su `index.css`, como variables en `
 | `accent` / `accent-foreground` | Hover y selección en listas y menús. |
 | `destructive` / `destructive-foreground` | Borrar, errores. |
 | `success` · `warning` · `info` (+ `-foreground`) | Estados semánticos. La superficie es el mismo color con opacidad (`bg-success/10`). |
+| `cielo` · `indigo` · `violeta` | Tonos de estado extra del `StatusBadge` (§4), para circuitos de más de cuatro etapas y categorías que no son estado (turno, tipo). Solo texto y superficie al 10 %, nunca relleno. En el Copiloto `violeta` es ciruela e `indigo` = `info` (el violeta es la IA). |
 | `border` · `input` · `ring` | Bordes, borde de controles, anillo de foco. |
 | `brand` / `brand-foreground` | **El color del cliente.** Ver §3. |
+| `panel-marca` / `panel-marca-foreground` | El panel de marca del login: la marca de día, un tinte oscuro de la marca de noche (lo usa la utilidad `panel-marca`). |
 | `chart-1` … `chart-5` | Series de gráficos (ver el DATAVIZ del estilo). |
 | `sidebar`, `sidebar-foreground`, `sidebar-primary(-foreground)`, `sidebar-accent(-foreground)`, `sidebar-border`, `sidebar-ring` | El riel o sidebar de navegación (set completo de shadcn). |
 
@@ -105,7 +107,7 @@ Adentro de un componente se permiten capas locales `z-0` / `z-10` si el contened
 | `acento` | Texto de acento (un dato o un link que tiene que resaltar sin ser acción ni estado). | `text-brand` | `text-foreground` (la marca no va en textos) |
 | `flotante` | Panel que flota sin ser de Radix (tarjeta del recorrido, celular flotante): el material de un modal. | `rounded-xl border bg-popover shadow-2xl` | `rounded-xl bg-popover shadow-modal ring-1 ring-foreground/5` |
 | `lista` | Lista de filas dentro de una `Card` (cada fila pone su padding). | línea fina entre filas | sin líneas: cada fila en `bg-popover` redondeada, separadas por aire |
-| `panel-marca` | Panel grande en el color de la marca (la mitad de marca del login). | `bg-brand text-brand-foreground`, de borde a borde | idem, desde `md` despegado del borde con `rounded-2xl` |
+| `panel-marca` | Panel grande en el color de la marca (la mitad de marca del login). Sus textos van en `text-panel-marca-foreground` (con `/80`, `/60`). | `bg-panel-marca text-panel-marca-foreground` (la marca de día; de noche un tinte oscuro de la marca, nunca un bloque claro), de borde a borde | idem, desde `md` despegado del borde con `rounded-2xl` |
 | `barra-superior` · `barra-inferior` | Barra fija arriba (header sticky) o abajo (barra de acción) fuera del `AppShell`. | lienzo al 95 % con blur y `border-b` / `border-t` | lienzo translúcido con blur; la de abajo con `shadow-barra` |
 
 Todas salen de tokens (funcionan de día y de noche) y lo que se escribe al lado les gana (`display text-[38px]`, `recuadro bg-success/10`, `micro text-muted-foreground`): el color de `micro`, el tamaño fino de `display` y los márgenes los pone quien la usa. Lo que no es de estilo se escribe directo: layout (`flex`, `grid`, `gap`, padding de contenido), tamaños de texto del cuerpo (`text-sm`, `text-xs`), `font-medium` como énfasis y `tabular-nums`. Los radios por paso de la escala (`rounded-md` en un control o ítem, `rounded-lg` en una card, `rounded-xl` en un modal, `rounded-full` en una pastilla) significan lo mismo en todos los estilos.
@@ -115,7 +117,7 @@ Los **bordes y el espaciado de los encabezados y pies** de `Dialog`, `Sheet` y `
 ## 3. Color del cliente (marca)
 
 - **Un token**, `--brand` (hex) en `:root` de `src/index.css`, y su espejo `MARCA` en `src/lib/marca.ts` para lo que no lee CSS (emails, PDF, `<meta theme-color>`). El validador chequea que coincidan.
-- **De noche** `.dark` redefine `--brand` (y su foreground) con una versión aclarada del mismo color que pase contraste sobre el fondo oscuro; es obligatorio porque la marca de día casi nunca se lee sobre oscuro. Si algo fuera del CSS la necesita, `MARCA_NOCHE` en `marca.ts`.
+- **De noche** `.dark` redefine `--brand` (y su foreground) con una versión **aclarada y apagada** del mismo color: mismo matiz, luminosidad para el contraste sobre el fondo oscuro y **saturación bajada a ~30–40 %**. Es obligatorio porque la marca de día casi nunca se lee sobre oscuro. Un tono claro saturado (un `emerald-400`, un `rose-400`) pasa el contraste pero encandila en cada botón, tab y filtro: `contraste.mjs` lo avisa ("muy saturado"). Si algo fuera del CSS la necesita, `MARCA_NOCHE` en `marca.ts`.
 - **Dónde va la marca:** logo, login, portal de clientes, emails, acentos de dashboard y filtros/tabs activos si el estilo lo permite. **Dónde no:** botones de acción (eso es `primary`), estados (eso son los semánticos y `neutro`). Cada estilo precisa la lista en su `DESIGN.md`.
 - El tono **`marca` del `StatusBadge`** no es para estados: es para una etiqueta que no lo es y tiene que leerse como "propia del cliente" (un canal, una categoría: "Web", "Cliente VIP"). Si duda, `neutro`.
 - **En un rediseño la marca y `primary` salen de la app** (§9.1): el estilo pone su color de acción solo si la app no tiene uno.
@@ -129,7 +131,7 @@ Todos en `src/components/ui/`, archivos en kebab-case, exports con nombre. **La 
 
 Un estilo también puede **sumar componentes propios** en otra carpeta (el Copiloto trae `src/components/ai/*`, sus patrones de IA) y **reemplazar pantallas de muestra** de la base para mostrarlos (su `starter/src/pages/Inicio.tsx` pisa al de la base). Lo que suma va en su `DESIGN.md`; lo que reemplaza tiene que seguir usando el store y la API comunes.
 
-**De shadcn** (la API es la de shadcn/ui; ver ui.shadcn.com): `button` (variants `default | secondary | outline | ghost | destructive | link`; sizes `default | sm | lg | icon | icon-sm`), `input`, `label`, `textarea`, `field` (Field, FieldLabel, FieldDescription, FieldError, FieldGroup), `select`, `checkbox`, `switch`, `radio-group`, `input-group` (input con ícono o botón adentro: la búsqueda del listado), `dialog`, `alert-dialog`, `sheet`, `dropdown-menu`, `popover`, `command`, `tabs`, `tooltip` (trae su propio Provider), `badge`, `card`, `table`, `skeleton`, `separator`, `sonner` (Toaster), `calendar`, `scroll-area`, `avatar`, `progress`.
+**De shadcn** (la API es la de shadcn/ui; ver ui.shadcn.com): `button` (variants `default | secondary | outline | ghost | destructive | link`; sizes `default | sm | lg | icon | icon-sm`), `input`, `label`, `textarea`, `field` (Field, FieldLabel, FieldDescription, FieldError, FieldGroup), `select`, `checkbox`, `switch`, `radio-group`, `input-group` (input con ícono o botón adentro: la búsqueda del listado), `dialog` (+ `DialogBody` del kit: con un cuerpo adentro, el modal pasa solo a bandas, header y pie fijos), `alert-dialog`, `sheet`, `dropdown-menu`, `popover`, `command`, `tabs`, `tooltip` (trae su propio Provider), `badge`, `card`, `table`, `skeleton`, `separator`, `sonner` (Toaster), `calendar`, `scroll-area`, `avatar`, `progress`.
 
 **Del kit de Sumar** (misma API en todos los estilos):
 
@@ -137,11 +139,12 @@ Un estilo también puede **sumar componentes propios** en otra carpeta (el Copil
 |---|---|---|
 | `page-header.tsx` | `PageHeader` | `{ titulo: string; antetitulo?: ReactNode; descripcion?: ReactNode; acciones?: ReactNode }` — título de la página, va adentro de la página. |
 | `kpi.tsx` | `KpiGrid`, `Kpi` | `Kpi { etiqueta: string; valor: ReactNode; delta?: { valor: number; sufijo?: string; invertido?: boolean }; ayuda?: string }`. `delta.valor` en puntos (12.4 → "+12,4 %"; `sufijo` por defecto `" %"`). `invertido`: bajar es bueno. |
-| `status-badge.tsx` | `StatusBadge`, `type Tono`, `PUNTO_TONO` | `{ tono: "neutro" \| "info" \| "exito" \| "aviso" \| "peligro" \| "marca"; children }`. Cada app mapea sus estados a tonos en `src/lib/estados.ts`. `PUNTO_TONO[tono]` = la clase de fondo del punto de ese tono (chips de filtro, leyendas). |
+| `status-badge.tsx` | `StatusBadge`, `type Tono`, `PUNTO_TONO` | `{ tono: "neutro" \| "info" \| "exito" \| "aviso" \| "peligro" \| "marca" \| "cielo" \| "indigo" \| "violeta"; children }` + props de `<span>` (`title`, `aria-*`). Cada app mapea sus estados a tonos en `src/lib/estados.ts`; los que conviven en una columna se separan ≥ 25° de matiz (`indigo` y `violeta` no van juntos). Una categoría que no es estado (turno, tipo) usa los tonos extra o un punto `PUNTO_TONO[tono]` + texto. `PUNTO_TONO[tono]` = la clase de fondo del punto de ese tono (chips de filtro, leyendas). |
 | `money-input.tsx` | `MoneyInput` | `{ value: number \| null; onValueChange(v: number \| null); decimales?: number }` + props de `input`. Máscara es-AR (`1.234,56`). |
-| `date-picker.tsx` | `DatePicker`, `DateRangePicker` | `{ value?: Date; onChange(d?: Date); placeholder?: string }` · `{ value?: DateRange; onChange(r?: DateRange); placeholder?: string }`. Popover + Calendar, en castellano. Aceptan `id`, `disabled`, `className` y `aria-*` (para atarlos a `FieldLabel htmlFor` y marcar errores). |
-| `combobox.tsx` | `Combobox`, `MultiCombobox` | `{ opciones: { value: string; label: string }[]; value: string \| null; onChange(v: string \| null); placeholder?: string; vacio?: string; buscar?: string }` · `obligatorio` (no se desmarca ni se limpia; `onChange(v: string)`) · `MultiCombobox` con `value: string[]`. Aceptan `id`, `disabled`, `className` y `aria-*`. |
-| `estados.tsx` | `Cargando`, `Vacio`, `ErrorEstado` | `Cargando { texto? }` · `Vacio { icono?: LucideIcon; titulo; descripcion?; accion?: ReactNode }` · `ErrorEstado { titulo?; descripcion?; onReintentar() }`. |
+| `date-picker.tsx` | `DatePicker`, `DateRangePicker` | `{ value?: Date; onChange(d?: Date); placeholder?: string }` · `{ value?: DateRange; onChange(r?: DateRange); placeholder?: string }`. Popover + Calendar, en castellano. Aceptan `id`, `disabled`, `className` y `aria-*` (para atarlos a `FieldLabel htmlFor` y marcar errores); sin label visible (en una toolbar), `aria-label`. |
+| `combobox.tsx` | `Combobox`, `MultiCombobox` | `{ opciones: { value: string; label: string }[]; value: string \| null; onChange(v: string \| null); placeholder?: string; vacio?: string; buscar?: string }` · `obligatorio` (no se desmarca ni se limpia; `onChange(v: string)`) · `MultiCombobox` con `value: string[]`, `maxChips?` (chips antes de "+N", 2) y `resumen?(n): string` (con más elegidas que `maxChips`, el botón muestra el texto: `(n) => \`${n} sectores\``). Aceptan `id`, `disabled`, `className` y `aria-*`. |
+| `estados.tsx` | `Cargando`, `Vacio`, `ErrorEstado`, `Aviso` | `Cargando { texto? }` · `Vacio { icono?: LucideIcon; titulo; descripcion?; accion?: ReactNode }` · `ErrorEstado { titulo?; descripcion?; onReintentar() }` · `Aviso { tono?: "info" \| "aviso" \| "peligro" \| "exito"; icono?: LucideIcon; titulo?; accion?: ReactNode; compacto?; children? }`: el banner suave dentro de una pantalla, un panel o un modal (lo que hay que saber antes de actuar; el resultado de una acción es un toast). |
+| `filtros.tsx` | `BotonFiltros`, `BarraFiltros`, `CampoFiltro` | Filtros de varias dimensiones (DESIGN §3.8, "barra colapsable"). `BotonFiltros { abierto: boolean; activos: number }` + props de `Button` (en mobile queda el ícono; el nombre accesible lleva el conteo) · `BarraFiltros { activos; onLimpiar(); children }` (barra inline con "Limpiar") · `CampoFiltro { icono: LucideIcon; label; htmlFor?; children }` (micro-etiqueta atada al `id` del control). El estado de los filtros y si la barra se ve los tiene la vista. |
 | `confirm.tsx` | `ConfirmProvider`, `useConfirm` | `const confirmar = useConfirm(); await confirmar({ titulo, descripcion?, accion?, peligro? })` → `boolean`. Reemplaza a `confirm()`. |
 | `data-table.tsx` | `DataTable`, `type Columna<T>` | `{ filas: T[]; columnas: Columna<T>[]; clave(f: T): string; tarjeta?(f: T): ReactNode; onFila?(f: T); porPagina?: number; vacio?: ReactNode; cargando?: boolean; error?: { mensaje?: string; onReintentar() }; orden?; onOrden?(id); claseFila?(f): string }`. `Columna { id; titulo; celda(f): ReactNode; alinear?: "izq" \| "der"; ocultarEn?: "md" \| "lg"; ordenar?(f): string \| number; clase?: string }`. Con `onOrden` el orden es controlado (las filas llegan ordenadas, la tabla solo muestra el indicador); `porPagina={Infinity}` = sin paginar. `ocultarEn: "md"` = columna secundaria que aparece desde `lg`; `"lg"` = aparece desde `xl`. Desktop: tabla con orden y paginación. Mobile: lista de `tarjeta` (o una tarjeta automática con las columnas). |
 
@@ -160,6 +163,7 @@ Un estilo también puede **sumar componentes propios** en otra carpeta (el Copil
 | Archivo | Exports | API |
 |---|---|---|
 | `app-shell.tsx` | `AppShell`, `type ItemNav` | `{ nav: ItemNav[]; marca: ReactNode; marcaCompacta?: ReactNode; usuario?: ReactNode; usuarioCompacto?: ReactNode; acciones?: ReactNode; ubicacion?: ReactNode; avisos?: ReactNode; lateral?: ReactNode; relleno?: boolean; children }`. `ubicacion` = el nombre de la pantalla (y su ayuda): en mobile reemplaza a la marca en el header; en desktop va a la izquierda de las acciones (para apps cuyas vistas no traen `PageHeader`). `avisos` = banners de toda la app, a lo ancho arriba del contenido. `relleno={false}` = el contenido sin márgenes ni ancho máximo (vistas que ponen el suyo, §9). `marcaCompacta` / `usuarioCompacto` (logo y avatar) se usan cuando la navegación es un riel de íconos; si no vienen, el riel no los muestra. `ItemNav { to; label; icon: LucideIcon; grupo?; badge?: number }`. `lateral` es la columna derecha opcional (el celular del portal): el shell la muestra **solo desde `xl`**, con ancho y borde; abajo de `xl` la app la dibuja flotante con `z-overlay` (patrón en `src/demo/CelularPortal.tsx`: `useEsXl()` y un solo iframe por vez).  Resuelve sidebar o riel desktop, header y navegación mobile. |
+| `selector-tema.tsx` | `SelectorTema` | Sin props. Botón de ícono (sol / luna) con menú Claro · Oscuro · Según el sistema sobre `useTema()`. Va en las `acciones` del `AppShell`, siempre (con o sin demo). |
 
 ---
 
@@ -218,8 +222,9 @@ Cada estilo dice **cómo se ven**; acá está **qué llevan**. Las pantallas de 
 6. Toda lista tiene sus tres estados: cargando, vacío y error.
 7. Toda pantalla funciona en 390 px.
 8. Textos en castellano y números con `formato.ts`.
-9. Lo que el validador marca 🔴 no se mergea. Una excepción lleva motivo (`// sumar-validar-ignorar: <regla> <motivo>`).
+9. Lo que el validador marca 🔴 no se mergea. Una excepción lleva motivo (`// sumar-validar-ignorar: <regla> <motivo>`, en la línea o en la anterior; **una regla por comentario**: si una línea rompe dos, se parte la clase en dos renglones con un comentario cada uno).
 10. **Todo tablero, monitor, dashboard o KPI se hace con las skills `business-intelligence` y `dataviz`, siempre** (§10). Sin excepción por "es un gráfico chico".
+11. **Toda pantalla se mira también de noche** antes de darla por terminada: la marca y `primary` apagados (§3), avisos y estados con tokens, nada que encandile.
 
 ---
 
@@ -238,9 +243,15 @@ Se rediseña la estética, no la identidad: el cliente reconoce su app por su co
 - El color de acción propio del estilo (el negro del Estilo 1, la tinta del Copiloto) se usa **solo si
   la app no tiene uno**.
 - Variantes de entorno (una sidebar distinta en "testing") van como tokens bajo un atributo de `<html>`
-  (`[data-entorno="testing"] { --sidebar: … }`), no con clases en el JSX.
+  (`[data-entorno="testing"] { --sidebar: … }`, y `.dark[data-entorno="testing"]` de noche), no con
+  clases en el JSX. **Gris neutro** (zinc: `#3f3f46` de día, `#27272a` de noche), nunca un gris con
+  matiz: el pizarra (`slate`) se lee azul y parece un error de color. `contraste.mjs` mide esos bloques.
+- **Sidebar de color, de noche:** negra (o el lienzo), con el color de la app solo en el ítem activo.
+  Un verde o un azul casi negro de noche se lee como "color raro".
 - Se verifica con `node <kit>/scripts/contraste.mjs index.css`, de día y de noche. De noche el color
-  principal va aclarado (con un `-foreground` oscuro) como la marca (§3).
+  principal va **aclarado y apagado** (saturación ~30–40 %, con un `-foreground` oscuro) como la marca
+  (§3): en un rediseño `primary` es el color de la app y pinta cada botón relleno, así que un tono
+  saturado de noche hace la app chillona aunque pase el contraste (caso MediFlow: `#34d399` → `#5fa88e`).
 - Lo que el estilo reserva para otra cosa no se pisa: en el Copiloto el violeta es la IA. Si el color
   de la app es violeta, se pregunta.
 
@@ -273,6 +284,19 @@ Los tokens de noche se escriben en la capa 0 (y pasan el contraste), pero el **s
 habilita recién cuando todas las vistas usan tokens**. Mientras tanto `tema.ts` arranca en `"claro"`
 (no `"sistema"`) y `index.html` no aplica `.dark`: si no, a quien tiene el sistema en oscuro le sale
 media app rota.
+
+Al habilitarlo: `SelectorTema` (§4) en las `acciones` del shell, `tema.ts` con default `"sistema"`, y el
+script de `index.html` que pone `.dark` antes del primer render (misma clave que `tema.ts`). Después,
+**todas las vistas en 1440 y 390 de noche**, con capturas: el validador no ve lo que encandila.
+
+**Código heredado con pasos crudos de paleta** (avisos `bg-amber-50 border-amber-200 text-amber-700`,
+una paleta de estados del DESIGN original con más tonos que los del kit): de noche quedan como
+recuadros crema y pastillas pastel sobre el lienzo negro. Mientras no se pasan a tokens (`Aviso`,
+`StatusBadge` con los tonos extra), el puente es redefinir esos pasos **en `.dark`**, sin `dark:` en
+las vistas: `50` / `100` / `200` → el `500` del tono translúcido (10 % · 18 % · 32 %), `600` / `700` → el
+`400` / `300`. Los `500` (puntos) quedan igual. Los valores salen de `node_modules/tailwindcss/theme.css`
+(ejemplo completo: `REDISENO.md` §R.9, caso MediFlow). Ojo con un texto claro sobre una sidebar
+oscura escrito con un paso que se redefine (`text-red-200`): se usa uno que no cambie.
 
 ### 9.5 PWA
 

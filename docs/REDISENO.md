@@ -230,13 +230,15 @@ checklist de `REDISENO.md` §R.6 completa.
 
 Repo `solicitudes-gamma` (MediFlow, traslados de pacientes del Hospital Privado de Rosario), **en
 producción**: React 18, Tailwind 3, sin `src/` ni router, 16.000 líneas, un shadcn hecho a mano sin
-`cva`, cero tokens (1.233 colores crudos), PWA. Rama `rediseno/01-minimal-zinc`, capas 0–2 y
-**Operativa** como vista piloto (noviembre de 2026). Lo que enseña:
+`cva`, cero tokens (1.233 colores crudos), PWA. Rama `rediseno/01-minimal-zinc`, capas 0–2,
+**Operativa** como vista piloto y después **todas las vistas** y el modo noche (noviembre de 2026).
+Lo que enseña:
 
 1. **Los colores de la app se conservan** (BASE §9.1). La primera propuesta fue la sidebar blanca y el
    `primary` negro del estilo; el cliente reconoce su app por el verde. Quedó el verde Gamma en
-   `primary`, marca y sidebar, y el gris pizarra que la app usaba para el entorno de prueba, como tokens
-   bajo `[data-entorno="testing"]`.
+   `primary`, marca y sidebar, y una sidebar gris para el entorno de prueba, como tokens bajo
+   `[data-entorno="testing"]`. Primero fue el pizarra (`slate`) que usaba la app: se leía azul, sobre
+   todo de noche, y terminó en **gris neutro** (zinc) de día y de noche.
 2. **El stack fue un commit propio antes de la capa 0:** `npx @tailwindcss/upgrade` (36 archivos),
    React 19 (sin él, los `asChild` del kit pierden la ref sin error), `radix-ui`, lucide 1.x. El
    upgrader renombró la variante `"outline"` de Button a `"outline-solid"` y dejó `z-[9999]` como
@@ -249,9 +251,11 @@ producción**: React 18, Tailwind 3, sin `src/` ni router, 16.000 líneas, un sh
    porque las vistas no tenían título propio. Los avisos tipo `alert`, el aviso de versión, los
    toasts, la ayuda y las notificaciones se rehicieron sobre `Dialog` / `AlertDialog` / `Popover` en la
    misma capa: sin eso, la app nueva abría ventanas viejas.
-5. **Siete estados, cinco tonos:** con "un tono por etapa" (§1.1) quedaron Presolicitud `neutro`,
-   Esperando habitación y Por consolidar `aviso`, Habitación lista y En traslado `info`. Los chips con
-   contador de la grilla se quedaron (son información), con el punto del tono: es la receta de §3.8.
+5. **Siete estados no entran en cinco tonos.** La primera versión ("un tono por etapa" con los seis
+   del kit) juntaba etapas distintas en el mismo color; el usuario pidió las pastillas del DESIGN
+   original (§3.11, nueve tonos). De ahí salieron los tonos `cielo` · `indigo` · `violeta` del
+   `StatusBadge`, ahora como tokens (BASE §2). Los chips con contador de la grilla se quedaron (son
+   información), con el punto del tono: es la receta de §3.8.
 6. **`DataTable` necesitó tres cosas que el kit no tenía:** orden controlado (el orden vivía en el
    store y los pre-tickets van siempre arriba), clase por fila (cancelados) y clase por columna
    (acciones fijas a la derecha). Se sumaron al kit.
@@ -259,6 +263,34 @@ producción**: React 18, Tailwind 3, sin `src/` ni router, 16.000 líneas, un sh
    lo pasaron. Chunks por librería (BASE §9.5).
 8. **El validador encontró lo que el ojo no:** un `<body class="bg-gray-50">` en `index.html` que le
    ganaba a los tokens, y los `z-50` que el upgrader dejó en las vistas.
-9. **Resultado** (mismo validador sobre `develop` y la rama): 9 🔴 · 9 🟡 → 3 🔴 · 7 🟡; colores crudos
-   1.233 → 992 (todos en vistas sin migrar, listadas por archivo en `VALIDACION.md`); Operativa con cero
-   hallazgos. El modo noche quedó con tokens pero sin selector hasta migrar el resto (BASE §9.4).
+9. **El DESIGN.md comprimido no alcanzó.** La primera pasada siguió solo este estilo y el usuario la
+   rechazó: faltaban la barra de filtros, las columnas agrupadas en celdas de dos líneas, el radio del
+   modal canónico y Configuración abajo en la sidebar. Se rehízo con las recetas del DESIGN original,
+   que ahora están en `RECETAS.md` (con sus números de sección: el código cita "§4.7", "§7.2").
+10. **El tablero no es "el mismo gráfico con otros colores".** El Monitor se rehízo con
+   `business-intelligence` + `dataviz` (cifra héroe, deltas contra el período anterior, mediana y p90,
+   lectura por gráfico, vista tabla), con el tablero de Gamma como vara (BASE §10).
+11. **Las vistas se migraron en paralelo** (un agente por vista, con Operativa como referencia y
+   capturas a 1440 y 390), y cada una se revisó con sus capturas antes del commit.
+12. **El modo noche pasó el contraste y aun así era chillón.** Dos causas: el verde de noche era un
+   `emerald-400` (`#34d399`, saturación 64 %) en cada botón relleno, tab y filtro → verde salvia
+   `#5fa88e` (30 %, misma luminosidad); y los avisos y pastillas con pasos crudos (`bg-amber-50`,
+   `text-amber-700`) quedaban crema y pastel sobre negro → pasos redefinidos en `.dark` (BASE §9.4):
+
+   ```css
+   .dark {
+     --color-amber-50: color-mix(in oklab, oklch(76.9% 0.188 70.08) 10%, transparent);
+     --color-amber-100: color-mix(in oklab, oklch(76.9% 0.188 70.08) 18%, transparent);
+     --color-amber-200: color-mix(in oklab, oklch(76.9% 0.188 70.08) 32%, transparent);
+     --color-amber-600: oklch(82.8% 0.189 84.429);   /* el 400 */
+     --color-amber-700: oklch(87.9% 0.169 91.605);   /* el 300 */
+     /* … lo mismo para cada tono que use la app (valores de tailwindcss/theme.css) */
+   }
+   ```
+
+   La sidebar de producción quedó negra de noche y el panel del login pasó a los tokens del sidebar
+   (con `bg-brand` era un bloque menta). De ahí salieron `panel-marca` como token y el aviso de
+   saturación de `contraste.mjs`.
+13. **Resultado** (mismo validador sobre `develop` y la rama): 9 🔴 · 4 🟡 → **0 🔴 · 0 🟡** en toda la
+   app (1.233 colores crudos, 31 z-index y 9 hex → 0), con selector de tema y cada vista revisada de
+   día y de noche en 1440 y 390.

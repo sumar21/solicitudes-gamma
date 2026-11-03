@@ -48,7 +48,7 @@ con el **verde Gamma** como color principal (`primary`, marca y sidebar; de noch
 de componentes es la de la base de Sumar ([docs/BASE.md](docs/BASE.md) §4); este repo la implementa como
 dice la tabla de abajo. Cómo se llegó y qué falta: [docs/REDISENO.md](docs/REDISENO.md) y `VALIDACION.md`.
 
-**Antes de tocar UI:** leé la sección de `DESIGN.md` que corresponde a la tarea (ruteo al principio).
+**Antes de tocar UI:** leé la sección de `DESIGN.md` que corresponde a la tarea (ruteo al principio). El JSX completo de cada patrón (modal §4.1, filtros §4.7, columnas agrupadas §7.2, acciones de fila §7.6, login §12.1) está en [docs/RECETAS.md](docs/RECETAS.md): los "§" que cita el código de este repo son los de ese archivo.
 
 **Tableros (Monitor), KPIs y gráficos: siempre con las skills `business-intelligence` (qué se mide y
 cómo se calcula: preguntas, medianas / p90, ventanas, comparaciones, lecturas, ancla para verificar)
