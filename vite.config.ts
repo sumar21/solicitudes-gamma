@@ -71,6 +71,7 @@ export default defineConfig(({ mode }) => {
           supabase: ['@supabase/supabase-js'],
           pdf: ['jspdf', 'jspdf-autotable'],
           xlsx: ['xlsx'],
+          charts: ['recharts'],
         },
       },
     },
