@@ -1,6 +1,43 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+@theme {
+  --breakpoint-xs: 400px;
+
+  --color-gamma-50: #f0fdf4;
+  --color-gamma-100: #dcfce7;
+  --color-gamma-200: #bbf7d0;
+  --color-gamma-300: #079271;
+  --color-gamma-400: #059669;
+  --color-gamma-500: #034334;
+  --color-gamma-600: #022c22;
+  --color-gamma-700: #022c22;
+  --color-gamma-800: #011f18;
+  --color-gamma-900: #011610;
+
+  --color-hospital-50: #f0f9ff;
+  --color-hospital-100: #e0f2fe;
+  --color-hospital-500: #0ea5e9;
+  --color-hospital-600: #0284c7;
+  --color-hospital-900: #0c4a6e;
+}
+
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
 
 /* Custom Scrollbar Styles */
 ::-webkit-scrollbar {

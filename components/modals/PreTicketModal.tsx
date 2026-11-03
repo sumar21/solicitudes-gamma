@@ -336,7 +336,7 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
                     }
                   >
                     <span className={
-                      'flex h-4 w-4 shrink-0 items-center justify-center rounded border ' +
+                      'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border ' +
                       (active ? 'bg-emerald-600 border-emerald-600 text-white' : 'border-slate-300')
                     }>
                       {active && <Check className="h-3 w-3" strokeWidth={3} />}

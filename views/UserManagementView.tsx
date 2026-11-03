@@ -312,7 +312,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
             <p className="text-xs font-black uppercase tracking-widest">Sin resultados</p>
           </div>
         ) : filtered.map(u => (
-          <Card key={u.id} className="p-4 border-slate-200 bg-white shadow-sm">
+          <Card key={u.id} className="p-4 border-slate-200 bg-white shadow-xs">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-[10px] font-black text-slate-600">
@@ -353,7 +353,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
       </div>
 
       {/* Desktop table */}
-      <Card className="hidden md:block shadow-sm border-slate-200 overflow-hidden bg-white rounded-2xl">
+      <Card className="hidden md:block shadow-xs border-slate-200 overflow-hidden bg-white rounded-2xl">
         <div className="overflow-x-auto">
           <Table>
             <TableHeader className="bg-slate-50/50 border-b border-slate-200">
@@ -386,7 +386,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
                 <TableRow key={u.id} className="hover:bg-slate-50/50 transition-colors border-b border-slate-100 last:border-0">
                   <TableCell className="px-6 py-4">
                     <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-[10px] font-black text-slate-600 shadow-sm">
+                      <div className="w-9 h-9 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-[10px] font-black text-slate-600 shadow-xs">
                         {u.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}
                       </div>
                       <div>

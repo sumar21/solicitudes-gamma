@@ -52,7 +52,7 @@ export const RestablecerDestinoModal: React.FC<RestablecerDestinoModalProps> = (
               value={motivo}
               onChange={e => setMotivo(e.target.value)}
               rows={2}
-              className="w-full px-3 py-2.5 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-200 focus:border-red-300 resize-none"
+              className="w-full px-3 py-2.5 text-sm rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-red-200 focus:border-red-300 resize-none"
             />
           </div>
         </div>

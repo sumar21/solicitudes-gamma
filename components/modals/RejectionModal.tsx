@@ -50,7 +50,7 @@ export const RejectionModal: React.FC<RejectionModalProps> = ({ open, onOpenChan
               value={rejectionInput}
               onChange={e => setRejectionInput(e.target.value)}
               rows={3}
-              className="w-full px-3 py-2.5 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-rose-200 focus:border-rose-300 resize-none"
+              className="w-full px-3 py-2.5 text-sm rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-rose-200 focus:border-rose-300 resize-none"
             />
           </div>
         </div>

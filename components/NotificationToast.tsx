@@ -117,7 +117,7 @@ export const NotificationToasts: React.FC<NotificationToastProps> = ({ toasts, o
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed top-4 left-0 right-0 z-[99999] flex flex-col items-center gap-2 px-4 pointer-events-none">
+    <div className="fixed top-4 left-0 right-0 z-99999 flex flex-col items-center gap-2 px-4 pointer-events-none">
       {toasts.map((t) => (
         <div key={t.id} className="pointer-events-auto w-full max-w-sm">
           <SingleToast

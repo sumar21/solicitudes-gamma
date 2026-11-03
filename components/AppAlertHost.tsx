@@ -57,7 +57,7 @@ export const AppAlertHost: React.FC = () => {
   return (
     // Por encima de los modales (z-50) y del overlay "Guardando en sistema..." (z-[100]); debajo
     // de los toasts de notificación (z-[99999]).
-    <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-1000 flex items-center justify-center p-4">
       <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px] animate-in fade-in" onClick={close} />
       <div
         role="alertdialog"
@@ -74,7 +74,7 @@ export const AppAlertHost: React.FC = () => {
             <h3 id="app-alert-title" className="text-base font-semibold leading-snug text-slate-900">
               {current.title ?? tone.title}
             </h3>
-            <p id="app-alert-message" className="mt-1.5 text-sm leading-relaxed text-slate-600 whitespace-pre-line break-words">
+            <p id="app-alert-message" className="mt-1.5 text-sm leading-relaxed text-slate-600 whitespace-pre-line wrap-break-word">
               {current.message}
             </p>
           </div>
@@ -84,7 +84,7 @@ export const AppAlertHost: React.FC = () => {
             ref={buttonRef}
             type="button"
             onClick={close}
-            className="inline-flex items-center justify-center h-10 px-8 rounded-xl bg-emerald-950 text-sm font-medium text-white hover:bg-emerald-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2"
+            className="inline-flex items-center justify-center h-10 px-8 rounded-xl bg-emerald-950 text-sm font-medium text-white hover:bg-emerald-900 transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2"
           >
             {current.confirmLabel ?? 'Aceptar'}
           </button>

@@ -387,8 +387,8 @@ const MealSlotEditor: React.FC<{
             )}
             {meal ? (
               <>
-                {meal.detalle && <p className="text-[11px] font-semibold text-slate-800 whitespace-pre-wrap break-words">{meal.detalle}</p>}
-                {meal.observaciones && <p className="text-[11px] text-slate-500 whitespace-pre-wrap break-words mt-0.5">Obs: {meal.observaciones}</p>}
+                {meal.detalle && <p className="text-[11px] font-semibold text-slate-800 whitespace-pre-wrap wrap-break-word">{meal.detalle}</p>}
+                {meal.observaciones && <p className="text-[11px] text-slate-500 whitespace-pre-wrap wrap-break-word mt-0.5">Obs: {meal.observaciones}</p>}
                 <p className="text-[9px] text-slate-400 mt-1">{fmtMealWhen(meal)}</p>
               </>
             ) : <p className="text-[10px] text-slate-300 italic">Sin carga</p>}
@@ -487,12 +487,12 @@ const MealSlotEditor: React.FC<{
           <input value={detalle} onChange={e => { editedRef.current = true; setDetalle(e.target.value); }} maxLength={500}
             disabled={entregada || sinDieta}
             placeholder={tipo === 'OTROS' ? 'Comida / menú (obligatorio)' : 'Detalle de la comanda'}
-            className={cn('w-full rounded-lg border px-2.5 py-1.5 text-[11px] focus:outline-none focus:ring-2 focus:ring-emerald-200 disabled:bg-slate-50 disabled:text-slate-400',
+            className={cn('w-full rounded-lg border px-2.5 py-1.5 text-[11px] focus:outline-hidden focus:ring-2 focus:ring-emerald-200 disabled:bg-slate-50 disabled:text-slate-400',
               tipo === 'OTROS' && detalle.trim() === '' ? 'border-indigo-300 bg-indigo-50/30' : 'border-slate-200')} />
           <textarea value={obs} onChange={e => { editedRef.current = true; setObs(e.target.value); }} rows={2} maxLength={500}
             disabled={entregada || sinDieta}
             placeholder="Observaciones (opcional)"
-            className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] resize-none focus:outline-none focus:ring-2 focus:ring-emerald-200 disabled:bg-slate-50 disabled:text-slate-400" />
+            className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] resize-none focus:outline-hidden focus:ring-2 focus:ring-emerald-200 disabled:bg-slate-50 disabled:text-slate-400" />
           {saveError && (
             <div className="flex items-start gap-1.5 px-2 py-1.5 rounded-lg bg-red-50 border border-red-200">
               <AlertCircle className="w-3 h-3 text-red-500 shrink-0 mt-0.5" />
@@ -532,7 +532,7 @@ const MealSlotEditor: React.FC<{
               <textarea
                 autoFocus value={removeMotivo} onChange={e => setRemoveMotivo(e.target.value)} rows={2} maxLength={500}
                 placeholder="Ej: el paciente pasó a ayuno, alta, cambio de dieta…"
-                className="w-full rounded-lg border border-red-200 px-2 py-1.5 text-[11px] resize-none focus:outline-none focus:ring-2 focus:ring-red-200" />
+                className="w-full rounded-lg border border-red-200 px-2 py-1.5 text-[11px] resize-none focus:outline-hidden focus:ring-2 focus:ring-red-200" />
               <div className="flex gap-2">
                 <Button size="sm" disabled={!removeMotivo.trim() || saving}
                   onClick={async () => {
@@ -644,7 +644,7 @@ const CompanionEditor: React.FC<{
             if (!companion) { onDiscardDraft?.(); return; }   // draft → se descarta sin red ni motivo
             setRemoveMotivo(''); setRemoving(true);            // guardado → pide motivo
           }}
-          className="w-5 h-5 rounded flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-300">
+          className="w-5 h-5 rounded-sm flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-300">
           <X className="w-3 h-3" />
         </button>
       </div>
@@ -656,7 +656,7 @@ const CompanionEditor: React.FC<{
           <textarea
             autoFocus value={removeMotivo} onChange={e => setRemoveMotivo(e.target.value)} rows={2} maxLength={500}
             placeholder="Ej: cambio de dieta, ya no come el acompañante…"
-            className="w-full rounded-lg border border-red-200 px-2 py-1 text-[10px] resize-none focus:outline-none focus:ring-2 focus:ring-red-200" />
+            className="w-full rounded-lg border border-red-200 px-2 py-1 text-[10px] resize-none focus:outline-hidden focus:ring-2 focus:ring-red-200" />
           <div className="flex gap-2">
             <Button size="sm" disabled={!removeMotivo.trim() || saving}
               onClick={async () => {
@@ -677,7 +677,7 @@ const CompanionEditor: React.FC<{
       <div className="flex gap-1">
         {(['MENU', 'OPCION', 'OTROS'] as const).map(op => (
           <button key={op} type="button" onClick={() => pickTipo(op)} aria-pressed={tipo === op}
-            className={cn('flex-1 h-7 rounded text-[9px] font-bold uppercase border transition-all',
+            className={cn('flex-1 h-7 rounded-sm text-[9px] font-bold uppercase border transition-all',
               tipo === op ? TIPO_BTN_CLS[op] : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-100')}>
             {op === 'MENU' ? 'Menú' : op === 'OPCION' ? 'Opción' : 'Otros'}
           </button>
@@ -685,10 +685,10 @@ const CompanionEditor: React.FC<{
       </div>
       <input value={detalle} onChange={e => { editedRef.current = true; setDetalle(e.target.value); }} maxLength={500}
         placeholder={tipo === 'OTROS' ? 'Comida (obligatorio)' : 'Detalle'}
-        className="w-full rounded border border-slate-200 px-2 py-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-emerald-200" />
+        className="w-full rounded-sm border border-slate-200 px-2 py-1 text-[10px] focus:outline-hidden focus:ring-1 focus:ring-emerald-200" />
       <input value={obs} onChange={e => { editedRef.current = true; setObs(e.target.value); }} maxLength={500}
         placeholder="Observaciones (opcional)"
-        className="w-full rounded border border-slate-200 px-2 py-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-emerald-200" />
+        className="w-full rounded-sm border border-slate-200 px-2 py-1 text-[10px] focus:outline-hidden focus:ring-1 focus:ring-emerald-200" />
       {error && <p className="text-[9px] font-medium text-red-600">{error}</p>}
       <Button size="sm" disabled={!canSave || saving}
         onClick={async () => {
@@ -701,7 +701,7 @@ const CompanionEditor: React.FC<{
             else setError(r?.error ?? 'No se pudo guardar. Reintentá.');
           } finally { setSaving(false); }
         }}
-        className="w-full h-7 text-[10px] font-bold rounded bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40">
+        className="w-full h-7 text-[10px] font-bold rounded-sm bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40">
         {saving ? 'Guardando…' : companion ? 'Actualizar' : 'Guardar'}
       </Button>
     </div>
@@ -841,7 +841,7 @@ const CirugiaBedBlock: React.FC<{
               setBusy(false);
               if (r.ok) onDone(); else setError(r.error ?? 'No se pudo confirmar.');
             }}
-            className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-yellow-500 hover:bg-yellow-600 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm disabled:opacity-50">
+            className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-yellow-500 hover:bg-yellow-600 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-xs disabled:opacity-50">
             <ArrowRight className="w-4 h-4" /> {busy ? 'Registrando…' : 'En traslado a cirugía'}
           </button>
         )}
@@ -853,7 +853,7 @@ const CirugiaBedBlock: React.FC<{
               setBusy(false);
               if (r.ok) onDone(); else setError(r.error ?? 'No se pudo confirmar.');
             }}
-            className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm disabled:opacity-50">
+            className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-xs disabled:opacity-50">
             <CheckCircle2 className="w-4 h-4" /> {busy ? 'Confirmando…' : 'Iniciar dieta'}
           </button>
         )}
@@ -914,7 +914,7 @@ const CirugiaBedBlock: React.FC<{
       {previa && (
         <div className="flex items-start gap-2">
           <Info className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
-          <p className="text-[11px] font-medium text-slate-600 break-words">
+          <p className="text-[11px] font-medium text-slate-600 wrap-break-word">
             Cirugía previa registrada (fuera de MediFlow){previaFechaTxt}.
             {!flagActivo && ' Para una nueva cirugía, Admisión tiene que habilitarlo con "Va a cirugía".'}
             {onAnularCirugiaPrevia && (
@@ -945,7 +945,7 @@ const CirugiaBedBlock: React.FC<{
       {bloq && (
         <div className="flex items-start gap-2">
           <Info className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
-          <p className="text-[11px] font-medium text-slate-600 break-words">
+          <p className="text-[11px] font-medium text-slate-600 wrap-break-word">
             {bloq.estado === 'EN_DEVOLUCION'
               ? <>Esta cama tiene pendiente "Iniciar dieta" de <strong>{bloq.pacienteNombre || 'otro paciente'}</strong> (Regreso de cirugía{bloqDesdeTxt}).</>
               : <>De esta cama salió una cirugía de <strong>{bloq.pacienteNombre || 'otro paciente'}</strong> que sigue abierta ({CIRUGIA_ESTADO_LABEL[bloq.estado]}{bloqDesdeTxt}).</>}
@@ -957,7 +957,7 @@ const CirugiaBedBlock: React.FC<{
       {puedeListo && (
         <button disabled={busy}
           onClick={() => run('listo', () => onMarcarListo!(bed), 'No se pudo marcar.')}
-          className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm disabled:opacity-50">
+          className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-xs disabled:opacity-50">
           <Activity className="w-4 h-4" /> {accion === 'listo' ? 'Marcando…' : 'Listo para cirugía'}
         </button>
       )}
@@ -1029,7 +1029,7 @@ const VaCirugiaToggle: React.FC<{
           title={cxViva ? 'Cirugía en curso' : sinCodigo ? 'Paciente sin código Gamma' : checked ? 'Desmarcar' : 'Marcar va a cirugía'}
           className={cn('relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-40',
             checked ? 'bg-violet-600' : 'bg-slate-300')}>
-          <span className={cn('inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform', checked ? 'translate-x-5' : 'translate-x-0.5')} />
+          <span className={cn('inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform', checked ? 'translate-x-5' : 'translate-x-0.5')} />
         </button>
       </div>
       {cxViva && <p className="text-[10px] text-violet-500 mt-1">Cirugía en curso: el flag ya no aplica.</p>}
@@ -1069,7 +1069,7 @@ const RoutineCleaningBlock: React.FC<{
         {onFinish && (
           <button disabled={busy}
             onClick={async () => { setBusy(true); await onFinish(bed); setBusy(false); onDone(); }}
-            className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-sky-600 hover:bg-sky-700 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm disabled:opacity-50">
+            className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-sky-600 hover:bg-sky-700 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-xs disabled:opacity-50">
             <Check className="w-4 h-4" /> {busy ? 'Finalizando…' : 'Finalizar limpieza de rutina'}
           </button>
         )}
@@ -1080,7 +1080,7 @@ const RoutineCleaningBlock: React.FC<{
     <div className="rounded-2xl p-3.5 border border-sky-200 bg-sky-50/40">
       <button disabled={busy}
         onClick={async () => { setBusy(true); await onStart(bed); setBusy(false); onDone(); }}
-        className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-sky-500 hover:bg-sky-600 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm disabled:opacity-50">
+        className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-sky-500 hover:bg-sky-600 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-xs disabled:opacity-50">
         <SprayCan className="w-4 h-4" /> {busy ? 'Iniciando…' : 'Iniciar limpieza de rutina'}
       </button>
     </div>
@@ -1100,7 +1100,7 @@ const AdmissionDateFilter: React.FC<{
   const clear = () => { setFrom(''); setTo(''); };
   const chipClass = cn(
     'flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border',
-    active ? 'bg-slate-900 text-white border-slate-900 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50',
+    active ? 'bg-slate-900 text-white border-slate-900 shadow-xs' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50',
   );
   const label = active
     ? `${from ? formatDateReadable(from) : '…'} – ${to ? formatDateReadable(to) : '…'}`
@@ -2500,7 +2500,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     type="checkbox"
                     checked={areaFiltersVisibles === allowedAreas.length}
                     onChange={() => setAreaFilters(areaFiltersVisibles === allowedAreas.length ? new Set() : new Set(allowedAreas))}
-                    className="h-3.5 w-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 accent-emerald-700"
+                    className="h-3.5 w-3.5 rounded-sm border-slate-300 text-emerald-600 focus:ring-emerald-500 accent-emerald-700"
                   />
                   Todos los sectores
                 </label>
@@ -2514,7 +2514,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                       type="checkbox"
                       checked={areaFilters.has(area)}
                       onChange={() => toggleArea(area)}
-                      className="h-3.5 w-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 accent-emerald-700"
+                      className="h-3.5 w-3.5 rounded-sm border-slate-300 text-emerald-600 focus:ring-emerald-500 accent-emerald-700"
                     />
                     <span className="truncate">{AREA_LABELS[area] ?? area}</span>
                   </label>
@@ -2619,7 +2619,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                 className={cn(
                   "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
                   active
-                    ? "bg-slate-900 text-white border-slate-900 shadow-sm"
+                    ? "bg-slate-900 text-white border-slate-900 shadow-xs"
                     : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
                 )}
               >
@@ -2634,7 +2634,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
               className={cn(
                 "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
                 showIsolatedOnly
-                  ? "bg-violet-600 text-white border-violet-600 shadow-sm"
+                  ? "bg-violet-600 text-white border-violet-600 shadow-xs"
                   : "bg-white text-violet-600 border-violet-200 hover:bg-violet-50"
               )}
             >
@@ -2648,7 +2648,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
               className={cn(
                 "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
                 showDietOnly
-                  ? "bg-emerald-600 text-white border-emerald-600 shadow-sm"
+                  ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
                   : "bg-white text-emerald-600 border-emerald-200 hover:bg-emerald-50"
               )}
             >
@@ -2662,7 +2662,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
               className={cn(
                 "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
                 showFastingOnly
-                  ? "bg-amber-500 text-white border-amber-500 shadow-sm"
+                  ? "bg-amber-500 text-white border-amber-500 shadow-xs"
                   : "bg-white text-amber-600 border-amber-200 hover:bg-amber-50"
               )}
             >
@@ -2676,7 +2676,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
               className={cn(
                 "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
                 showCirugiaOnly
-                  ? "bg-cyan-600 text-white border-cyan-600 shadow-sm"
+                  ? "bg-cyan-600 text-white border-cyan-600 shadow-xs"
                   : "bg-white text-cyan-700 border-cyan-200 hover:bg-cyan-50"
               )}
             >
@@ -2691,7 +2691,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
               <PopoverTrigger asChild>
                 <button className={cn(
                   "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
-                  financierFilters.size > 0 ? "bg-slate-900 text-white border-slate-900 shadow-sm" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                  financierFilters.size > 0 ? "bg-slate-900 text-white border-slate-900 shadow-xs" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
                 )}>
                   <Search className="w-2.5 h-2.5" />
                   Financiador {financierFilters.size > 0 && `(${financierFilters.size})`}
@@ -2712,7 +2712,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     placeholder="Buscar financiador..."
                     value={financierSearch}
                     onChange={(e: any) => setFinancierSearch(e.target.value)}
-                    className="w-full pl-7 pr-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-400"
+                    className="w-full pl-7 pr-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-hidden focus:border-emerald-400"
                   />
                 </div>
                 <div className="max-h-48 overflow-y-auto">
@@ -2738,7 +2738,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
               <PopoverTrigger asChild>
                 <button className={cn(
                   "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
-                  physicianFilters.size > 0 ? "bg-slate-900 text-white border-slate-900 shadow-sm" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                  physicianFilters.size > 0 ? "bg-slate-900 text-white border-slate-900 shadow-xs" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
                 )}>
                   <Search className="w-2.5 h-2.5" />
                   Profesional {physicianFilters.size > 0 && `(${physicianFilters.size})`}
@@ -2759,7 +2759,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     placeholder="Buscar profesional..."
                     value={physicianSearch}
                     onChange={(e: any) => setPhysicianSearch(e.target.value)}
-                    className="w-full pl-7 pr-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-400"
+                    className="w-full pl-7 pr-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-hidden focus:border-emerald-400"
                   />
                 </div>
                 <div className="max-h-48 overflow-y-auto">
@@ -2785,7 +2785,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
               <PopoverTrigger asChild>
                 <button className={cn(
                   "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
-                  dietTypeFilters.size > 0 ? "bg-slate-900 text-white border-slate-900 shadow-sm" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                  dietTypeFilters.size > 0 ? "bg-slate-900 text-white border-slate-900 shadow-xs" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
                 )}>
                   <Utensils className="w-2.5 h-2.5" />
                   Tipo de dieta {dietTypeFilters.size > 0 && `(${dietTypeFilters.size})`}
@@ -2806,7 +2806,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     placeholder="Buscar tipo..."
                     value={dietTypeSearch}
                     onChange={(e: any) => setDietTypeSearch(e.target.value)}
-                    className="w-full pl-7 pr-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-none focus:border-emerald-400"
+                    className="w-full pl-7 pr-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-hidden focus:border-emerald-400"
                   />
                 </div>
                 <div className="max-h-48 overflow-y-auto">
@@ -2832,7 +2832,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
               <PopoverTrigger asChild>
                 <button className={cn(
                   "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
-                  admissionTypeFilters.size > 0 ? "bg-slate-900 text-white border-slate-900 shadow-sm" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
+                  admissionTypeFilters.size > 0 ? "bg-slate-900 text-white border-slate-900 shadow-xs" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
                 )}>
                   <Activity className="w-2.5 h-2.5" />
                   Tipo internación {admissionTypeFilters.size > 0 && `(${admissionTypeFilters.size})`}
@@ -2972,7 +2972,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                       isIsolated && `ring-2 ${isoColor.ring} ring-offset-1`
                     )}
                   >
-                    <div className={cn("absolute top-1 right-1 w-1 h-1 md:w-1.5 md:h-1.5 rounded-full shadow-sm", isBlocked ? "bg-violet-400" : isPreventiveAdj ? PREVENTIVE_ADJ_DOT : getStatusDot(bed.status))} />
+                    <div className={cn("absolute top-1 right-1 w-1 h-1 md:w-1.5 md:h-1.5 rounded-full shadow-xs", isBlocked ? "bg-violet-400" : isPreventiveAdj ? PREVENTIVE_ADJ_DOT : getStatusDot(bed.status))} />
                     {/* Aislamientos con sigla de cartelería (Q, DP) muestran la sigla en vez del escudo:
                         es el mismo dato que el cartel de la puerta, legible de un vistazo en la grilla. */}
                     {isIsolated && (() => {
@@ -2989,7 +2989,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                         and a thumbnail of the SECOND isolation color, so the user can tell at a glance
                         that the patient has more than one precaution active. */}
                     {isMultiIso && (
-                      <div className="absolute bottom-0.5 left-0.5 flex items-center gap-0.5 px-1 h-3 md:h-3.5 rounded-full bg-slate-900 text-white text-[7px] md:text-[8px] font-black ring-1 ring-white shadow-sm">
+                      <div className="absolute bottom-0.5 left-0.5 flex items-center gap-0.5 px-1 h-3 md:h-3.5 rounded-full bg-slate-900 text-white text-[7px] md:text-[8px] font-black ring-1 ring-white shadow-xs">
                         <span className={cn("w-1.5 h-1.5 rounded-full", (ISOLATION_COLORS[isoTipos[1].color] ?? DEFAULT_ISO_COLOR).bg)} />
                         <span>{isoTipos.length}</span>
                       </div>
@@ -3013,7 +3013,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     {bed.cirugia && (
                       <div
                         className={cn(
-                          'absolute top-0.5 left-1/2 -translate-x-1/2 flex items-center gap-0.5 px-1 h-3 md:h-3.5 rounded-full ring-1 ring-white shadow-sm text-[7px] md:text-[8px] font-black uppercase z-10',
+                          'absolute top-0.5 left-1/2 -translate-x-1/2 flex items-center gap-0.5 px-1 h-3 md:h-3.5 rounded-full ring-1 ring-white shadow-xs text-[7px] md:text-[8px] font-black uppercase z-10',
                           CIRUGIA_PILL_CLASS[bed.cirugia.estado],
                         )}
                         title={`Cirugía: ${CIRUGIA_ESTADO_LABEL[bed.cirugia.estado]}${bed.cirugia.role === 'destino' ? ' (cama destino)' : ''}`}
@@ -3028,7 +3028,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                         Estilo tenue/dashed para diferenciarlo de la pill Cx (cirugía en curso). */}
                     {bed.goingToSurgery && !bed.cirugia && (
                       <div
-                        className="absolute top-0.5 left-1/2 -translate-x-1/2 flex items-center gap-0.5 px-1 h-3 md:h-3.5 rounded-full ring-1 ring-white shadow-sm text-[7px] md:text-[8px] font-black uppercase z-10 whitespace-nowrap bg-violet-100 text-violet-700 border border-dashed border-violet-400"
+                        className="absolute top-0.5 left-1/2 -translate-x-1/2 flex items-center gap-0.5 px-1 h-3 md:h-3.5 rounded-full ring-1 ring-white shadow-xs text-[7px] md:text-[8px] font-black uppercase z-10 whitespace-nowrap bg-violet-100 text-violet-700 border border-dashed border-violet-400"
                         title={`${(bed.admissionTypeCode ?? '').toUpperCase() === 'Q' ? 'Nueva cirugía autorizada' : 'De clínico a quirúrgico'} — marcado por Admisión${bed.goingToSurgeryBy ? ` · ${bed.goingToSurgeryBy}` : ''}`}
                       >
                         <Activity className="w-2 h-2 md:w-2.5 md:h-2.5 shrink-0" strokeWidth={3} />
@@ -3040,7 +3040,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                         nuevo; con marca de Admisión va "Re-Cx" y con cirugía viva la pill Cx (mismo lugar). */}
                     {bed.quirurgicoPendiente && (
                       <div
-                        className="absolute top-0.5 left-1/2 -translate-x-1/2 flex items-center justify-center px-1 min-w-[14px] h-3 md:h-3.5 rounded-full ring-1 ring-white shadow-sm text-[7px] md:text-[8px] font-black z-10 bg-amber-100 text-amber-800 border border-amber-300"
+                        className="absolute top-0.5 left-1/2 -translate-x-1/2 flex items-center justify-center px-1 min-w-[14px] h-3 md:h-3.5 rounded-full ring-1 ring-white shadow-xs text-[7px] md:text-[8px] font-black z-10 bg-amber-100 text-amber-800 border border-amber-300"
                         title={`Paciente quirúrgico (PROGAL) — pendiente de su cirugía${bed.expectedSurgeryDate ? ` · probable: ${new Date(bed.expectedSurgeryDate).toLocaleDateString('es-AR')}` : ''}`}
                       >
                         Q
@@ -3051,7 +3051,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     {bed.routineCleaningActive && (
                       <div
                         className={cn(
-                          'absolute bottom-0.5 w-3 h-3 md:w-3.5 md:h-3.5 rounded-full bg-sky-500 ring-1 ring-white shadow-sm flex items-center justify-center z-10',
+                          'absolute bottom-0.5 w-3 h-3 md:w-3.5 md:h-3.5 rounded-full bg-sky-500 ring-1 ring-white shadow-xs flex items-center justify-center z-10',
                           isMultiIso ? 'left-5' : 'left-0.5',
                         )}
                         title={`Limpieza de rutina en curso${bed.routineCleaningBy ? ` · ${bed.routineCleaningBy}` : ''}`}
@@ -3067,7 +3067,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                         {suggestedSex && (
                           <div
                             className={cn(
-                              'flex items-center justify-center w-3.5 h-3.5 md:w-4 md:h-4 rounded-full bg-white ring-1 shadow-sm text-[8px] md:text-[9px] font-black leading-none',
+                              'flex items-center justify-center w-3.5 h-3.5 md:w-4 md:h-4 rounded-full bg-white ring-1 shadow-xs text-[8px] md:text-[9px] font-black leading-none',
                               suggestedSex === 'M' ? 'text-sky-600 ring-sky-400' : 'text-pink-600 ring-pink-400',
                             )}
                             title={`Sugerido: ${suggestedSex === 'M' ? 'masculino' : 'femenino'} — la habitación ya aloja ${suggestedSex === 'M' ? 'pacientes masculinos' : 'pacientes femeninos'}`}
@@ -3084,7 +3084,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                           return (
                             <div
                               className={cn(
-                                'flex items-center justify-center w-3.5 h-3.5 md:w-4 md:h-4 rounded-full ring-1 ring-white shadow-sm',
+                                'flex items-center justify-center w-3.5 h-3.5 md:w-4 md:h-4 rounded-full ring-1 ring-white shadow-xs',
                                 pendiente ? 'bg-indigo-500 text-white' : 'bg-emerald-100 text-emerald-600',
                               )}
                               title={pendiente ? 'Comanda pendiente de entregar' : 'Comanda cargada — ya entregada'}
@@ -3095,7 +3095,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                         })()}
                         {hasLiveFasting(bed.fasting) && (
                           <div
-                            className="flex items-center gap-0.5 px-1 h-3 md:h-3.5 rounded-full bg-amber-500 text-white text-[7px] md:text-[8px] font-black ring-1 ring-white shadow-sm"
+                            className="flex items-center gap-0.5 px-1 h-3 md:h-3.5 rounded-full bg-amber-500 text-white text-[7px] md:text-[8px] font-black ring-1 ring-white shadow-xs"
                             title="Ayuno programado"
                           >
                             <UtensilsCrossed className="w-2 h-2 md:w-2.5 md:h-2.5" strokeWidth={3} />
@@ -3166,7 +3166,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
               <div className="min-w-0">
                 {/* Header */}
                 <div className={cn("px-6 py-5 flex items-center gap-4", t.headerBg)}>
-                  <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm shrink-0", t.iconBg)}>
+                  <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center shadow-xs shrink-0", t.iconBg)}>
                     <BedDouble className={cn("w-6 h-6", t.icon)} />
                   </div>
                   <div className="flex-1 min-w-0">
@@ -3258,7 +3258,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                         <div className="flex flex-col gap-2">
                           {vueltaNota}
                           <button onClick={() => { onMarkClean(selectedBed); setSelectedBed(null); }}
-                            className="w-full flex items-center justify-center gap-2 h-12 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-sm">
+                            className="w-full flex items-center justify-center gap-2 h-12 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-xs">
                             <SprayCan className="w-4 h-4" /> Marcar habitación limpia
                           </button>
                         </div>
@@ -3417,7 +3417,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                                 className={cn(
                                   "shrink-0 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest whitespace-nowrap transition-all",
                                   isActive
-                                    ? "bg-white text-emerald-900 shadow-sm"
+                                    ? "bg-white text-emerald-900 shadow-xs"
                                     : "text-slate-500 hover:text-slate-700"
                                 )}
                               >
@@ -3597,7 +3597,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                                       {longDiets.map((d, idx) => (
                                         <div key={idx} className="space-y-0.5">
                                           <p className="text-[10px] font-semibold uppercase text-slate-500">{d.descripcion}</p>
-                                          <p className="text-[11px] text-slate-800 break-words whitespace-pre-wrap leading-snug">
+                                          <p className="text-[11px] text-slate-800 wrap-break-word whitespace-pre-wrap leading-snug">
                                             {(d.respuesta ?? '').trim() || '—'}
                                           </p>
                                         </div>
@@ -3701,7 +3701,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     return (
                       <>
                         <div className="bg-indigo-50 rounded-xl p-3 border border-indigo-100 flex items-center gap-2">
-                          <Info className="w-4 h-4 text-indigo-400 flex-shrink-0" />
+                          <Info className="w-4 h-4 text-indigo-400 shrink-0" />
                           <p className="text-xs font-bold text-indigo-800">Reservada — traslado en curso</p>
                         </div>
                         {assignedTicket && (
@@ -3735,7 +3735,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
 
                   {isPrep && (
                     <div className="bg-amber-50 rounded-xl p-3 border border-amber-100 flex items-center gap-2">
-                      <Info className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                      <Info className="w-4 h-4 text-amber-400 shrink-0" />
                       <p className="text-xs font-semibold text-amber-700">En preparación para nuevo ingreso</p>
                     </div>
                   )}
@@ -3752,7 +3752,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                       <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                       <div className="min-w-0">
                         <p className="text-[8px] font-bold uppercase text-amber-700 mb-0.5 tracking-wide">Motivo de Inhabilitación</p>
-                        <p className="text-sm font-medium text-amber-900 leading-snug break-words">{selectedBed.disabledReason}</p>
+                        <p className="text-sm font-medium text-amber-900 leading-snug wrap-break-word">{selectedBed.disabledReason}</p>
                       </div>
                     </div>
                   )}
@@ -3798,7 +3798,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                                   {isolationSigla(iso.name) && <span className="opacity-70">({isolationSigla(iso.name)})</span>}
                                 </span>
                                 {iso.observation && (
-                                  <span className="text-[11px] text-slate-600 italic break-words">— {iso.observation}</span>
+                                  <span className="text-[11px] text-slate-600 italic wrap-break-word">— {iso.observation}</span>
                                 )}
                               </div>
                             );
@@ -3809,13 +3809,13 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                   })()}
                   {blockedByIsolation.has(selectedBed.label) && (
                     <div className="bg-violet-50 rounded-2xl p-3.5 border border-violet-200 flex items-center gap-3">
-                      <ShieldAlert className="w-5 h-5 text-violet-400 flex-shrink-0" />
+                      <ShieldAlert className="w-5 h-5 text-violet-400 shrink-0" />
                       <p className="text-xs font-bold text-violet-700">Bloqueada — paciente aislado en esta habitación</p>
                     </div>
                   )}
                   {preventiveContactAdjacent.has(selectedBed.label) && (
                     <div className="bg-cyan-50 rounded-2xl p-3.5 border border-cyan-200 flex items-center gap-3">
-                      <ShieldAlert className="w-5 h-5 text-cyan-500 flex-shrink-0" />
+                      <ShieldAlert className="w-5 h-5 text-cyan-500 shrink-0" />
                       <p className="text-xs font-bold text-cyan-700">Contacto preventivo en esta habitación — cama habilitada, usar con precaución</p>
                     </div>
                   )}

@@ -971,7 +971,7 @@ export const useHospitalState = () => {
   const mealsWritingRef = React.useRef(0);
   // Lock anti doble-click por ticket (ver createActionLock). Instancia estable por sesión:
   // un 2º click sincrónico ve el lock en el acto — un guard por estado de React no alcanza.
-  const runTicketActionRef = React.useRef<ReturnType<typeof createActionLock>>();
+  const runTicketActionRef = React.useRef<ReturnType<typeof createActionLock> | undefined>(undefined);
   if (!runTicketActionRef.current) runTicketActionRef.current = createActionLock();
   const runTicketAction = runTicketActionRef.current;
   const ticketsEtagRef = React.useRef<string | null>(null); // ETag for smart polling

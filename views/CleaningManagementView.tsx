@@ -40,7 +40,7 @@ const DateRangeTrigger = React.forwardRef<
   { label: string; value: string } & React.ButtonHTMLAttributes<HTMLButtonElement>
 >(({ label, value, className, ...props }, ref) => (
   <button ref={ref} type="button"
-    className={cn("w-full h-full px-4 flex items-center gap-3 text-left hover:bg-slate-50 transition-colors outline-none", className)}
+    className={cn("w-full h-full px-4 flex items-center gap-3 text-left hover:bg-slate-50 transition-colors outline-hidden", className)}
     {...props}>
     <CalendarIcon className="w-3.5 h-3.5 text-slate-400" />
     <div className="flex flex-col justify-center pointer-events-none">
@@ -57,7 +57,7 @@ DateRangeTrigger.displayName = 'DateRangeTrigger';
 const MotivoPill: React.FC<{ label: string; explicacion?: string; className: string }> = ({ label, explicacion, className }) => {
   if (!explicacion) return <span className={className}>{label}</span>;
   return (
-    <span tabIndex={0} className="relative inline-flex group outline-none" aria-label={`${label}: ${explicacion}`}>
+    <span tabIndex={0} className="relative inline-flex group outline-hidden" aria-label={`${label}: ${explicacion}`}>
       <span className={cn(className, 'inline-flex items-center gap-1 cursor-help')}>
         {label}<Info className="w-3 h-3 opacity-60" />
       </span>
@@ -351,7 +351,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
               {/* Mobile — tarjetas */}
               <div className="grid grid-cols-1 gap-3 md:hidden">
                 {visibleHistory.map(h => (
-                  <div key={h.spItemId} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2">
+                  <div key={h.spItemId} className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <p className="font-black text-sm text-slate-800 leading-tight">{h.bedLabel}</p>
                       <MotivoPill label={reasonLabel(h.reason)} explicacion={reasonTitle(h)} className={cn("text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border shrink-0", reasonClass(h.reason))} />
@@ -367,7 +367,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
               </div>
 
               {/* Desktop — grilla */}
-              <Card className="hidden md:block shadow-sm border-slate-200 overflow-hidden bg-white rounded-2xl">
+              <Card className="hidden md:block shadow-xs border-slate-200 overflow-hidden bg-white rounded-2xl">
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
@@ -442,7 +442,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
               {/* Mobile — tarjetas */}
               <div className="grid grid-cols-1 gap-3 md:hidden">
                 {routineRows.map(x => (
-                  <div key={x.spItemId} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2">
+                  <div key={x.spItemId} className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <p className="font-black text-sm text-slate-800 leading-tight">{formatBedName(x.bedLabel)}</p>
                       <span className={cn("text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border shrink-0", routineEstadoClass(x.estado))}>{routineEstadoLabel(x.estado)}</span>
@@ -452,7 +452,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                       <p className="flex items-center gap-1.5"><UserIcon className="w-3.5 h-3.5 text-slate-400" />{x.operador || x.startedBy || '—'}</p>
                       <p className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-slate-400" />Inicio: {fmtWhen(x.startedAt)}</p>
                       <p className="flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-slate-400" />Fin: {fmtWhen(x.finishedAt)}</p>
-                      {x.estado === 'ANULADA' && x.motivoAnulacion && <p className="text-slate-500 italic break-words">Cancelada: {x.motivoAnulacion}</p>}
+                      {x.estado === 'ANULADA' && x.motivoAnulacion && <p className="text-slate-500 italic wrap-break-word">Cancelada: {x.motivoAnulacion}</p>}
                     </div>
                     {cancelable(x) && (
                       <Button size="sm" variant="outline" onClick={() => { setCancelError(null); setCancelandoRutina(x); }}
@@ -465,7 +465,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
               </div>
 
               {/* Desktop — grilla */}
-              <Card className="hidden md:block shadow-sm border-slate-200 overflow-hidden bg-white rounded-2xl">
+              <Card className="hidden md:block shadow-xs border-slate-200 overflow-hidden bg-white rounded-2xl">
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
@@ -491,7 +491,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                           <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{fmtWhen(x.finishedAt)}</td>
                           <td className="px-4 py-3">
                             <span className={cn("text-[10px] font-bold uppercase px-2.5 py-1 rounded-lg border", routineEstadoClass(x.estado))}>{routineEstadoLabel(x.estado)}</span>
-                            {x.estado === 'ANULADA' && x.motivoAnulacion && <p className="mt-1 max-w-[220px] text-[10px] text-slate-500 italic break-words">{x.motivoAnulacion}</p>}
+                            {x.estado === 'ANULADA' && x.motivoAnulacion && <p className="mt-1 max-w-[220px] text-[10px] text-slate-500 italic wrap-break-word">{x.motivoAnulacion}</p>}
                           </td>
                           {canCancelRutina && (
                             <td className="px-4 py-3 text-right">
@@ -537,7 +537,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
           {/* Mobile — tarjetas */}
           <div className="grid grid-cols-1 gap-3 md:hidden">
             {visibleRows.map(bed => (
-              <div key={bed.label} className="bg-white rounded-2xl border border-emerald-200 shadow-sm p-4 space-y-3">
+              <div key={bed.label} className="bg-white rounded-2xl border border-emerald-200 shadow-xs p-4 space-y-3">
                 <div className="flex items-start gap-2">
                   <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
                   <div className="min-w-0">
@@ -569,7 +569,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
             <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-medium text-red-700">{cancelActivaError}</div>
           )}
           {/* Desktop — grilla */}
-          <Card className="hidden md:block shadow-sm border-slate-200 overflow-hidden bg-white rounded-2xl">
+          <Card className="hidden md:block shadow-xs border-slate-200 overflow-hidden bg-white rounded-2xl">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>

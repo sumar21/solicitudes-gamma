@@ -42,7 +42,7 @@ export const ModuleHelp: React.FC<{ moduleKey: string; user: User | null }> = ({
       </button>
 
       {open && (
-        <div className="fixed inset-0 z-[60] flex items-end justify-center sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label={`Ayuda de ${mod.label}`}>
+        <div className="fixed inset-0 z-60 flex items-end justify-center sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label={`Ayuda de ${mod.label}`}>
           <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-[1px] animate-in fade-in duration-150" onClick={() => setOpen(false)} />
           <div className={cn(
             'relative bg-white shadow-2xl flex flex-col help-panel-in',
@@ -50,7 +50,7 @@ export const ModuleHelp: React.FC<{ moduleKey: string; user: User | null }> = ({
             'sm:w-[640px] sm:max-w-[92vw] sm:max-h-[85vh] sm:rounded-3xl',
           )}>
             {/* Header */}
-            <div className="shrink-0 px-5 pt-4 pb-3 border-b border-slate-100 flex items-start justify-between gap-3 bg-gradient-to-b from-emerald-50/70 to-white rounded-t-3xl">
+            <div className="shrink-0 px-5 pt-4 pb-3 border-b border-slate-100 flex items-start justify-between gap-3 bg-linear-to-b from-emerald-50/70 to-white rounded-t-3xl">
               <div className="min-w-0">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-700">Ayuda</p>
                 <h2 className="text-lg font-black text-slate-900 leading-tight truncate">{mod.label}</h2>

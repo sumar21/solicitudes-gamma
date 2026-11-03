@@ -68,7 +68,7 @@ export const AreaSelectionModal: React.FC<AreaSelectionModalProps> = ({
           
           <div className="grid grid-cols-1 gap-3 max-h-[60vh] overflow-y-auto pr-2">
             {Object.values(Area).map((area) => (
-              <div key={area} className="flex items-center space-x-2 p-2 rounded hover:bg-slate-50 border border-transparent hover:border-slate-100">
+              <div key={area} className="flex items-center space-x-2 p-2 rounded-sm hover:bg-slate-50 border border-transparent hover:border-slate-100">
                 <Checkbox 
                   id={`area-${area}`} 
                   checked={selectedAreas.includes(area)}

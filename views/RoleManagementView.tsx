@@ -441,7 +441,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
             <p className="text-xs font-black uppercase tracking-widest">Sin roles</p>
           </div>
         ) : filtered.map(role => (
-          <Card key={role.id} className="p-4 border-slate-200 bg-white shadow-sm">
+          <Card key={role.id} className="p-4 border-slate-200 bg-white shadow-xs">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-full bg-indigo-100 border border-indigo-200 flex items-center justify-center text-[10px] font-black text-indigo-600">
@@ -479,7 +479,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
       </div>
 
       {/* Desktop table */}
-      <Card className="hidden md:block shadow-sm border-slate-200 overflow-hidden bg-white rounded-2xl">
+      <Card className="hidden md:block shadow-xs border-slate-200 overflow-hidden bg-white rounded-2xl">
         <Table>
           <TableHeader className="bg-slate-50/50 border-b border-slate-200">
             <TableRow>
@@ -503,7 +503,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                 <TableRow key={role.id} className="hover:bg-slate-50/50 transition-colors border-b border-slate-100 last:border-0">
                   <TableCell className="px-6 py-4">
                     <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-[10px] font-black text-slate-600 shadow-sm">
+                      <div className="w-9 h-9 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-[10px] font-black text-slate-600 shadow-xs">
                         {role.name.slice(0, 2).toUpperCase()}
                       </div>
                       <span className="font-bold text-slate-900 text-sm">{role.name}</span>
@@ -583,7 +583,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                     onClick={() => setActiveTab(tab.key)}
                     className={cn(
                       "shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest whitespace-nowrap transition-all",
-                      active ? "bg-white text-emerald-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                      active ? "bg-white text-emerald-900 shadow-xs" : "text-slate-500 hover:text-slate-700"
                     )}
                   >
                     {tab.label}
@@ -668,7 +668,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                         yes: 'Pide el nombre al entrar; queda como responsable', no: 'Las operaciones van a nombre de la cuenta' },
                     ].map(t => (
                       <div key={t.key} className="grid gap-2 content-start">
-                        <Label className="text-[10px] font-semibold uppercase text-slate-400 tracking-wide sm:min-h-[2.5rem]">{t.title}</Label>
+                        <Label className="text-[10px] font-semibold uppercase text-slate-400 tracking-wide sm:min-h-10">{t.title}</Label>
                         <div className="grid grid-cols-2 gap-2">
                           {[{ val: true, label: 'Sí', sub: t.yes }, { val: false, label: 'No', sub: t.no }].map(opt => {
                             const selected = form[t.key] === opt.val;
@@ -723,7 +723,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                                 )}
                               >
                                 <div className={cn(
-                                  "w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors",
+                                  "w-4 h-4 rounded-sm border-2 flex items-center justify-center shrink-0 transition-colors",
                                   selected ? "bg-emerald-600 border-emerald-600" : "border-slate-300 bg-white"
                                 )}>
                                   {selected && <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />}

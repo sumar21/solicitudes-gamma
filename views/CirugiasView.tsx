@@ -107,7 +107,7 @@ const DateRangeTrigger = React.forwardRef<
   { label: string; value: string } & React.ButtonHTMLAttributes<HTMLButtonElement>
 >(({ label, value, className, ...props }, ref) => (
   <button ref={ref} type="button"
-    className={cn("w-full h-full px-4 flex items-center gap-3 text-left hover:bg-slate-50 transition-colors outline-none", className)}
+    className={cn("w-full h-full px-4 flex items-center gap-3 text-left hover:bg-slate-50 transition-colors outline-hidden", className)}
     {...props}>
     <CalendarIcon className="w-3.5 h-3.5 text-slate-400" />
     <div className="flex flex-col justify-center pointer-events-none">
@@ -350,7 +350,7 @@ export const CirugiasView: React.FC<Props> = ({
     const p = isPending(c.id);
     const camaChange = !!c.camaDestino && c.camaDestino !== c.camaOrigen;
     return (
-      <Card key={c.id} className="p-3.5 border-slate-200 bg-white shadow-sm">
+      <Card key={c.id} className="p-3.5 border-slate-200 bg-white shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center gap-3">
           {/* Info del paciente (ocupa el ancho disponible) */}
           <div className="min-w-0 flex-1 space-y-1">
@@ -425,7 +425,7 @@ export const CirugiasView: React.FC<Props> = ({
         <td className="pl-4 pr-1 py-3"><Pill estado={c.estado} short /></td>
         {/* Paciente + área/ingreso + tipo */}
         <td className="px-4 py-3">
-          <p className="font-black text-slate-800 leading-tight break-words uppercase">{c.pacienteNombre || 'Paciente s/nombre'}</p>
+          <p className="font-black text-slate-800 leading-tight wrap-break-word uppercase">{c.pacienteNombre || 'Paciente s/nombre'}</p>
           <p className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1 flex-wrap">
             <span>{areaLabel(c.area)}</span>
             <span className="text-slate-300">·</span>
@@ -509,7 +509,7 @@ export const CirugiasView: React.FC<Props> = ({
                 placeholder="Paciente o cama…"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="w-full pl-10 pr-8 h-10 rounded-xl border border-slate-200 text-xs focus:outline-none focus:border-emerald-400" />
+                className="w-full pl-10 pr-8 h-10 rounded-xl border border-slate-200 text-xs focus:outline-hidden focus:border-emerald-400" />
               {search && (
                 <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
                   <X className="w-3.5 h-3.5" />
@@ -536,7 +536,7 @@ export const CirugiasView: React.FC<Props> = ({
               </div>
 
               {/* Desktop — una sola tabla con columna Estado (concordancia con Traslados/Limpiezas/Comandas) */}
-              <Card className="hidden md:block shadow-sm border-slate-200 overflow-hidden bg-white rounded-2xl">
+              <Card className="hidden md:block shadow-xs border-slate-200 overflow-hidden bg-white rounded-2xl">
                 <div className="overflow-x-auto">
                 <table className="w-full text-sm table-fixed min-w-[720px]">
                   <colgroup>
@@ -574,7 +574,7 @@ export const CirugiasView: React.FC<Props> = ({
                 placeholder="Paciente, cama, código…"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="w-full pl-10 pr-8 h-10 rounded-xl border border-slate-200 text-xs focus:outline-none focus:border-emerald-400" />
+                className="w-full pl-10 pr-8 h-10 rounded-xl border border-slate-200 text-xs focus:outline-hidden focus:border-emerald-400" />
               {search && (
                 <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
                   <X className="w-3.5 h-3.5" />
@@ -622,7 +622,7 @@ export const CirugiasView: React.FC<Props> = ({
               {/* Mobile — tarjetas */}
               <div className="grid grid-cols-1 gap-3 md:hidden">
                 {visibleHistory.map(c => (
-                  <div key={c.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2">
+                  <div key={c.id} className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <p className="font-black text-sm text-slate-800 leading-tight uppercase">{c.pacienteNombre || 'Paciente'}</p>
                       <Pill estado={c.estado as CirugiaEstado} short hist />
@@ -646,7 +646,7 @@ export const CirugiasView: React.FC<Props> = ({
               </div>
 
               {/* Desktop — tabla */}
-              <Card className="hidden md:block shadow-sm border-slate-200 overflow-hidden bg-white rounded-2xl">
+              <Card className="hidden md:block shadow-xs border-slate-200 overflow-hidden bg-white rounded-2xl">
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
@@ -710,7 +710,7 @@ export const CirugiasView: React.FC<Props> = ({
                 value={cancelando?.motivo ?? ''}
                 onChange={e => setCancelando(s => (s ? { ...s, motivo: e.target.value } : s))}
                 placeholder="Ej: se suspendió la cirugía, alta del paciente…"
-                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-red-200" />
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm resize-none focus:outline-hidden focus:ring-2 focus:ring-red-200" />
               {rowError[cancelCx.id] && <p className="text-[11px] font-bold text-red-600">{rowError[cancelCx.id]}</p>}
             </div>
           )}

@@ -87,7 +87,7 @@ const IdentificationGate: React.FC<{
       </div>
       <Card className="w-full max-w-md -mt-20 mx-4 p-6 md:p-10 shadow-xl rounded-3xl border-none bg-white relative z-10">
         <div className="flex flex-col items-center mb-6">
-          <div className="w-14 h-14 rounded-full bg-emerald-50 border-2 border-emerald-100 flex items-center justify-center -mt-12 md:-mt-14 mb-4 shadow-sm">
+          <div className="w-14 h-14 rounded-full bg-emerald-50 border-2 border-emerald-100 flex items-center justify-center -mt-12 md:-mt-14 mb-4 shadow-xs">
             <User className="w-6 h-6 text-emerald-700" />
           </div>
           <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Cuenta compartida</p>
@@ -314,7 +314,7 @@ export default function App() {
         {/* Login card overlapping the header */}
         <Card className="w-full max-w-md -mt-20 mx-4 p-6 md:p-10 shadow-xl rounded-3xl border-none bg-white relative z-10">
           <div className="flex flex-col items-center mb-8">
-            <div className="w-14 h-14 rounded-full bg-emerald-50 border-2 border-emerald-100 flex items-center justify-center -mt-12 md:-mt-14 mb-4 shadow-sm">
+            <div className="w-14 h-14 rounded-full bg-emerald-50 border-2 border-emerald-100 flex items-center justify-center -mt-12 md:-mt-14 mb-4 shadow-xs">
               <User className="w-6 h-6 text-emerald-700" />
             </div>
             <h2 className="text-lg font-bold text-slate-900 tracking-tight">Iniciar Sesión</h2>
@@ -410,7 +410,7 @@ export default function App() {
 
           <div className="mt-6 pt-5 border-t border-slate-100 text-center">
             {IS_TESTING && (
-              <span className="mb-2 inline-flex items-center gap-1.5 rounded-md bg-slate-600 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-white shadow-sm">
+              <span className="mb-2 inline-flex items-center gap-1.5 rounded-md bg-slate-600 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-white shadow-xs">
                 <span className="h-1.5 w-1.5 rounded-full bg-slate-300 animate-pulse" />
                 Entorno de prueba
               </span>
@@ -431,7 +431,7 @@ export default function App() {
 
   return (
     <ActualizacionProvider retenida={state.ticketActionLoading}>
-    <div className="h-screen h-[100dvh] w-full flex flex-col md:flex-row bg-slate-50 overflow-hidden font-sans text-slate-900">
+    <div className="h-screen h-dvh w-full flex flex-col md:flex-row bg-slate-50 overflow-hidden font-sans text-slate-900">
       {/* Toast notifications */}
       <NotificationToasts
         toasts={state.toasts}
@@ -445,7 +445,7 @@ export default function App() {
 
       {/* Loading overlay */}
       {state.ticketActionLoading && (
-        <div className="fixed inset-0 z-[100] bg-black/30 backdrop-blur-sm flex items-center justify-center">
+        <div className="fixed inset-0 z-100 bg-black/30 backdrop-blur-xs flex items-center justify-center">
           <div className="bg-white rounded-2xl shadow-2xl px-8 py-6 flex flex-col items-center gap-3">
             <div className="w-10 h-10 border-4 border-slate-200 border-t-emerald-500 rounded-full animate-spin" />
             <span className="text-sm font-medium text-slate-600">Guardando en sistema...</span>
@@ -460,7 +460,7 @@ export default function App() {
           <GammaLogo size={22} className={cn("mr-3 shrink-0", IS_TESTING ? "text-slate-300" : "text-emerald-400")} />
           <div className="flex flex-col min-w-0">
             <span className="font-bold text-white tracking-tight leading-none text-lg">Gamma</span>
-            <span className={cn("text-[9px] font-bold uppercase tracking-widest mt-1 leading-snug break-words", IS_TESTING ? "text-slate-300" : "text-emerald-400")}>Sede {state.currentUser.sede}</span>
+            <span className={cn("text-[9px] font-bold uppercase tracking-widest mt-1 leading-snug wrap-break-word", IS_TESTING ? "text-slate-300" : "text-emerald-400")}>Sede {state.currentUser.sede}</span>
             {IS_TESTING && (
               <span className="mt-1 inline-flex items-center gap-1 self-start rounded-md bg-slate-600 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-white">
                 <span className="h-1.5 w-1.5 rounded-full bg-slate-300 animate-pulse" />
@@ -531,7 +531,7 @@ export default function App() {
 
       {/* Main Container */}
       <div className="flex-1 flex flex-col min-w-0 min-h-0 relative">
-        <header className="h-16 md:h-14 bg-white border-b border-slate-200 flex items-center justify-between px-2 md:px-8 shrink-0 z-20 shadow-sm relative">
+        <header className="h-16 md:h-14 bg-white border-b border-slate-200 flex items-center justify-between px-2 md:px-8 shrink-0 z-20 shadow-xs relative">
           <div className="flex items-center gap-1.5">
             <button
               className="md:hidden p-2 rounded-xl text-white hover:opacity-90 transition-colors shadow-lg active:scale-95"
@@ -555,7 +555,7 @@ export default function App() {
               user={state.currentUser}
             />
             {IS_TESTING && (
-              <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-600 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-white shadow-sm shrink-0">
+              <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-600 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-white shadow-xs shrink-0">
                 <span className="h-1.5 w-1.5 rounded-full bg-slate-300 animate-pulse" />
                 <span className="hidden xs:inline">Entorno de prueba</span>
                 <span className="xs:hidden">Test</span>
@@ -582,12 +582,12 @@ export default function App() {
                 <div className="flex flex-col min-w-0">
                   <span className="font-bold text-white tracking-tight leading-none text-lg">Gamma</span>
                   {IS_TESTING ? (
-                    <span className="inline-flex items-center gap-1 self-start rounded bg-slate-600 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-white mt-0.5">
+                    <span className="inline-flex items-center gap-1 self-start rounded-sm bg-slate-600 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-white mt-0.5">
                       <span className="h-1.5 w-1.5 rounded-full bg-slate-300 animate-pulse" />
                       Entorno de prueba
                     </span>
                   ) : (
-                    <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest mt-1 leading-snug break-words">Sede {state.currentUser.sede}</span>
+                    <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest mt-1 leading-snug wrap-break-word">Sede {state.currentUser.sede}</span>
                   )}
                 </div>
               </div>
@@ -681,7 +681,7 @@ export default function App() {
                   <PopoverContent 
                     align="end" 
                     sideOffset={-40} 
-                    className="p-0 w-[calc(100vw-1.5rem)] sm:w-[380px] border-none shadow-[0_20px_50px_rgba(0,0,0,0.3)] rounded-2xl z-[9999] outline-none animate-in fade-in zoom-in-95 duration-200 origin-top-right"
+                    className="p-0 w-[calc(100vw-1.5rem)] sm:w-[380px] border-none shadow-[0_20px_50px_rgba(0,0,0,0.3)] rounded-2xl z-9999 outline-hidden animate-in fade-in zoom-in-95 duration-200 origin-top-right"
                   >
                     <NotificationsDropdown
                       notifications={state.bellNotifications}
@@ -698,7 +698,7 @@ export default function App() {
                 </Popover>
               )}
               {hasAzafataAccess && (
-                <span className="h-10 sm:h-8 text-xs sm:text-[10px] font-black uppercase tracking-wider px-2 sm:px-2 rounded-xl border border-zinc-200 bg-zinc-50 shadow-sm flex items-center">
+                <span className="h-10 sm:h-8 text-xs sm:text-[10px] font-black uppercase tracking-wider px-2 sm:px-2 rounded-xl border border-zinc-200 bg-zinc-50 shadow-xs flex items-center">
                   SECTORES: {state.currentUser.assignedAreas?.length || 0}
                 </span>
               )}

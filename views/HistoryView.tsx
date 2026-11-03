@@ -46,7 +46,7 @@ const DateRangeTrigger = React.forwardRef<
     ref={ref}
     type="button"
     className={cn(
-      "w-full h-full px-4 flex items-center gap-3 text-left hover:bg-slate-50 transition-colors outline-none",
+      "w-full h-full px-4 flex items-center gap-3 text-left hover:bg-slate-50 transition-colors outline-hidden",
       className
     )}
     {...props}
@@ -505,7 +505,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
             <Card 
               key={t.id} 
               onClick={() => setSelectedTicketForAudit(t)}
-              className={cn("p-4 border-slate-200 bg-white shadow-sm flex flex-col gap-4 active:scale-[0.98] transition-all", t.status === TicketStatus.REJECTED && "border-l-4 border-l-red-500")}
+              className={cn("p-4 border-slate-200 bg-white shadow-xs flex flex-col gap-4 active:scale-[0.98] transition-all", t.status === TicketStatus.REJECTED && "border-l-4 border-l-red-500")}
             >
               <div className="flex justify-between items-start">
                 <div className="space-y-1">
@@ -532,9 +532,9 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
               </div>
 
               <div className="flex items-center justify-between gap-2">
-                <span className="flex-1 min-w-0 text-[10px] font-black text-slate-800 uppercase bg-slate-100 px-2 py-1 rounded-lg break-words leading-tight text-center">{formatBedName(t.origin)}</span>
+                <span className="flex-1 min-w-0 text-[10px] font-black text-slate-800 uppercase bg-slate-100 px-2 py-1 rounded-lg wrap-break-word leading-tight text-center">{formatBedName(t.origin)}</span>
                 <ArrowRightLeft className="w-3 h-3 text-slate-300 shrink-0" />
-                <span className="flex-1 min-w-0 text-[10px] font-black text-blue-700 uppercase bg-blue-50 px-2 py-1 rounded-lg break-words leading-tight text-center">{formatTicketDestination(t)}</span>
+                <span className="flex-1 min-w-0 text-[10px] font-black text-blue-700 uppercase bg-blue-50 px-2 py-1 rounded-lg wrap-break-word leading-tight text-center">{formatTicketDestination(t)}</span>
               </div>
             </Card>
           ))
@@ -542,7 +542,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
       </div>
 
       {/* Vista Desktop History */}
-      <Card className="hidden md:block shadow-sm border-slate-200 overflow-hidden bg-white rounded-2xl">
+      <Card className="hidden md:block shadow-xs border-slate-200 overflow-hidden bg-white rounded-2xl">
         <div className="overflow-x-auto">
           <Table>
             <TableHeader className="bg-slate-50/50 border-b border-slate-200">
@@ -609,7 +609,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
                         variant="outline" 
                         size="sm" 
                         onClick={() => setSelectedTicketForAudit(t)} 
-                        className="h-8 gap-2 bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:text-slate-900 hover:border-slate-300 font-bold text-[10px] uppercase tracking-wider shadow-sm rounded-lg transition-all"
+                        className="h-8 gap-2 bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:text-slate-900 hover:border-slate-300 font-bold text-[10px] uppercase tracking-wider shadow-xs rounded-lg transition-all"
                       >
                         <Settings className="w-3.5 h-3.5" />
                         Auditar

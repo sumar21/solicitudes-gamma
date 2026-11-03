@@ -47,7 +47,7 @@ export function SearchableSelect({
         <button
           type="button"
           className={cn(
-            "flex h-12 w-full min-w-0 items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white placeholder:text-slate-400 focus:outline-none focus:border-slate-400 focus:ring-1 focus:ring-slate-400 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200",
+            "flex h-12 w-full min-w-0 items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white placeholder:text-slate-400 focus:outline-hidden focus:border-slate-400 focus:ring-1 focus:ring-slate-400 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200",
             className
           )}
         >
@@ -66,12 +66,12 @@ export function SearchableSelect({
           <ChevronDown className="h-4 w-4 opacity-50 shrink-0" />
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0 rounded-xl" align="start">
+      <PopoverContent className="w-(--radix-popover-trigger-width) p-0 rounded-xl" align="start">
         {showSearch && (
           <div className="flex items-center border-b border-slate-100 px-3">
             <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
             <input
-              className="flex h-11 w-full rounded-md bg-transparent py-3 text-sm outline-none placeholder:text-slate-400 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-11 w-full rounded-md bg-transparent py-3 text-sm outline-hidden placeholder:text-slate-400 disabled:cursor-not-allowed disabled:opacity-50"
               placeholder={searchPlaceholder}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -87,7 +87,7 @@ export function SearchableSelect({
               <div
                 key={option.value}
                 className={cn(
-                  "relative flex w-full cursor-pointer select-none items-center rounded-sm py-2 pl-8 pr-2 text-sm outline-none transition-colors hover:bg-slate-100 hover:text-slate-900",
+                  "relative flex w-full cursor-pointer select-none items-center rounded-xs py-2 pl-8 pr-2 text-sm outline-hidden transition-colors hover:bg-slate-100 hover:text-slate-900",
                   value === option.value ? "bg-slate-50 font-medium" : ""
                 )}
                 onClick={() => {

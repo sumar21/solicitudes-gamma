@@ -323,7 +323,7 @@ export const PatientJourney: React.FC<PatientJourneyProps> = ({
                   {summary.locationLabel}
                 </span>
                 <span className={cn(
-                  "text-xs font-black uppercase tracking-tight leading-tight break-words",
+                  "text-xs font-black uppercase tracking-tight leading-tight wrap-break-word",
                   summary.currentTone === 'live' ? "text-blue-800"
                   : summary.currentTone === 'done' ? "text-emerald-800" : "text-slate-600",
                 )}>
@@ -342,7 +342,7 @@ export const PatientJourney: React.FC<PatientJourneyProps> = ({
               {([['traslados', 'Traslados'], ['cirugias', 'Cirugías']] as const).map(([key, label]) => (
                 <button key={key} type="button" onClick={() => setJourneyTab(key)}
                   className={cn('px-4 h-8 text-[10px] font-black uppercase tracking-widest rounded-lg transition-colors',
-                    journeyTab === key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>
+                    journeyTab === key ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-700')}>
                   {label}
                 </button>
               ))}
@@ -507,7 +507,7 @@ const EpisodeCard: React.FC<{
             <span className="inline-flex items-center gap-1 mb-1.5 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 text-[9px] font-bold uppercase tracking-wider">
               <MessageSquare className="w-2.5 h-2.5" /> Observación de la solicitud
             </span>
-            <p className="text-sm text-slate-800 leading-snug whitespace-pre-wrap break-words">{ticket.observations!.trim()}</p>
+            <p className="text-sm text-slate-800 leading-snug whitespace-pre-wrap wrap-break-word">{ticket.observations!.trim()}</p>
             <p className="text-[10px] text-slate-400 font-medium mt-2 flex items-center gap-1.5 flex-wrap">
               <span className="font-semibold text-slate-600">{ticket.createdBy ?? 'Admisión'}</span>
               <span>·</span>
@@ -521,7 +521,7 @@ const EpisodeCard: React.FC<{
         ) : sortedEvents.length === 0 ? (
           <p className="text-xs text-slate-400 py-2">Sin movimientos registrados</p>
         ) : (
-          <div className="relative pl-7 space-y-3 before:content-[''] before:absolute before:left-[9px] before:top-1.5 before:bottom-1.5 before:w-[1px] before:bg-slate-100">
+          <div className="relative pl-7 space-y-3 before:content-[''] before:absolute before:left-[9px] before:top-1.5 before:bottom-1.5 before:w-px before:bg-slate-100">
             {sortedEvents.map((evt) => {
               const mod = parseModification(evt.tipo);
               const config = eventConfigFor(evt.tipo, evt.operador || evt.usuario);
@@ -531,9 +531,9 @@ const EpisodeCard: React.FC<{
                 <div key={evt.id} className="relative">
                   <div className={cn(
                     "absolute -top-0.5 flex items-center justify-center z-10",
-                    isFinal ? "-left-[28px] w-5 h-5 rounded-full bg-emerald-950"
-                    : mod ? "-left-[27px] w-[18px] h-[18px] rounded-full bg-amber-500"
-                    : "-left-[26px] w-4 h-4 rounded-full bg-white border border-slate-200",
+                    isFinal ? "left-[-28px] w-5 h-5 rounded-full bg-emerald-950"
+                    : mod ? "left-[-27px] w-[18px] h-[18px] rounded-full bg-amber-500"
+                    : "left-[-26px] w-4 h-4 rounded-full bg-white border border-slate-200",
                   )}>
                     <Icon className={cn("w-2.5 h-2.5", isFinal || mod ? "text-white" : "text-slate-400")} />
                   </div>

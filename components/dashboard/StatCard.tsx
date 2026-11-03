@@ -24,7 +24,7 @@ export const StatCard: React.FC<StatCardProps> = ({ title, value, description, t
       {React.cloneElement(icon as React.ReactElement<any>, { size: 80 })}
     </div>
     <div className="flex justify-between items-start mb-4">
-      <div className="p-2 bg-slate-50 rounded-xl border border-slate-100 text-slate-900 shadow-sm">
+      <div className="p-2 bg-slate-50 rounded-xl border border-slate-100 text-slate-900 shadow-xs">
         {/* Fix: Use React.ReactElement<any> to satisfy TypeScript about the 'size' prop on cloned elements */}
         {React.cloneElement(icon as React.ReactElement<any>, { size: 20 })}
       </div>

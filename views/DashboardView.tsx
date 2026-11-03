@@ -193,7 +193,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ tickets, onRefresh
               onClick={() => { setStartDate(p.start); setEndDate(p.end); }}
               className={cn(
                 'px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wide transition-colors',
-                activePreset === p.key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700',
+                activePreset === p.key ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-700',
               )}
             >
               {p.label}
@@ -296,11 +296,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ tickets, onRefresh
           ) : (
             <div className="grid grid-cols-1 gap-3">
               {live.pending.map(t => (
-                <Card key={t.id} className="hover:border-slate-300 transition-colors border-slate-200 bg-white shadow-sm overflow-hidden">
+                <Card key={t.id} className="hover:border-slate-300 transition-colors border-slate-200 bg-white shadow-xs overflow-hidden">
                   <div className="p-4 flex items-center justify-between">
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-black font-mono text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100">{t.id}</span>
+                        <span className="text-[10px] font-black font-mono text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded-sm border border-slate-100">{t.id}</span>
                         <StatusBadge status={t.status} />
                       </div>
                       <h4 className="font-bold text-slate-900 text-sm tracking-tight">{t.patientName}</h4>
@@ -336,18 +336,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ tickets, onRefresh
           ) : (
             <div className="grid grid-cols-1 gap-3">
               {live.inProcess.map(t => (
-                <Card key={t.id} className="hover:border-slate-300 transition-colors border-slate-200 bg-white shadow-sm overflow-hidden border-l-4 border-l-blue-500">
+                <Card key={t.id} className="hover:border-slate-300 transition-colors border-slate-200 bg-white shadow-xs overflow-hidden border-l-4 border-l-blue-500">
                   <div className="p-4 flex items-center justify-between">
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-black font-mono text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100">{t.id}</span>
+                        <span className="text-[10px] font-black font-mono text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded-sm border border-slate-100">{t.id}</span>
                         <StatusBadge status={t.status} />
                       </div>
                       <h4 className="font-bold text-slate-900 text-sm tracking-tight">{t.patientName}</h4>
                       <div className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase">
                         <span>{formatBedName(t.origin)}</span>
                         <ArrowRightLeft className="w-2.5 h-2.5 text-slate-300" />
-                        <span className="text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">{t.destination ? formatBedName(t.destination) : 'Pendiente'}</span>
+                        <span className="text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded-sm">{t.destination ? formatBedName(t.destination) : 'Pendiente'}</span>
                       </div>
                     </div>
                     <div className="flex flex-col items-end gap-2">

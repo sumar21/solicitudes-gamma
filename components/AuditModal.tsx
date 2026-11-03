@@ -254,11 +254,11 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
             <div className="md:hidden mt-4 p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-2">
                <div className="min-w-0">
                  <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Origen</span>
-                 <p className="text-[11px] font-bold text-slate-700 break-words leading-tight">{ticket.origin}</p>
+                 <p className="text-[11px] font-bold text-slate-700 wrap-break-word leading-tight">{ticket.origin}</p>
                </div>
                <div className="min-w-0 pt-2 border-t border-slate-200/60">
                  <span className="text-[8px] font-bold text-blue-400 uppercase tracking-widest">Destino</span>
-                 <p className="text-[11px] font-black text-blue-900 break-words leading-tight">{formatTicketDestination(ticket)}</p>
+                 <p className="text-[11px] font-black text-blue-900 wrap-break-word leading-tight">{formatTicketDestination(ticket)}</p>
                </div>
             </div>
           </div>
@@ -387,7 +387,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
               ) : timeline.length === 0 ? (
                 <p className="text-sm text-slate-400 text-center py-12">Sin movimientos registrados</p>
               ) : (
-                <div className="relative pl-8 space-y-5 before:content-[''] before:absolute before:left-[11px] before:top-2 before:bottom-2 before:w-[1px] before:bg-slate-100">
+                <div className="relative pl-8 space-y-5 before:content-[''] before:absolute before:left-[11px] before:top-2 before:bottom-2 before:w-px before:bg-slate-100">
                   {timeline.map((item) => {
                     // ── Nodo de OBSERVACIÓN ───────────────────────────────────
                     if (item.kind === 'obs') {
@@ -397,7 +397,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                       return (
                         <div key={item.key} className="relative">
                           <div className={cn(
-                            "absolute -top-0.5 -left-[31px] flex items-center justify-center z-10 w-5 h-5 rounded-full border",
+                            "absolute -top-0.5 left-[-31px] flex items-center justify-center z-10 w-5 h-5 rounded-full border",
                             post ? "bg-violet-100 border-violet-200" : "bg-amber-100 border-amber-200"
                           )}>
                             <MessageSquare className={cn("w-2.5 h-2.5", post ? "text-violet-600" : "text-amber-600")} />
@@ -416,7 +416,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                                 Observación de la solicitud
                               </span>
                             )}
-                            <p className="text-sm text-slate-800 leading-snug whitespace-pre-wrap break-words">{o.texto}</p>
+                            <p className="text-sm text-slate-800 leading-snug whitespace-pre-wrap wrap-break-word">{o.texto}</p>
                             <p className="text-[10px] text-slate-400 font-medium mt-2 flex items-center gap-1.5 flex-wrap">
                               <span className="font-semibold text-slate-600">{o.operador || o.usuario || 'Usuario'}</span>
                               <span>·</span>
@@ -442,9 +442,9 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                       <div key={item.key} className="relative">
                         <div className={cn(
                           "absolute -top-0.5 flex items-center justify-center z-10",
-                          isFinal ? "-left-[36px] w-8 h-8 rounded-full bg-emerald-950 shadow-lg"
-                          : isModification ? "-left-[34px] w-7 h-7 rounded-full bg-amber-500 shadow-sm"
-                          : "-left-[32px] w-6 h-6 rounded-full bg-white border border-slate-200"
+                          isFinal ? "left-[-36px] w-8 h-8 rounded-full bg-emerald-950 shadow-lg"
+                          : isModification ? "left-[-34px] w-7 h-7 rounded-full bg-amber-500 shadow-xs"
+                          : "left-[-32px] w-6 h-6 rounded-full bg-white border border-slate-200"
                         )}>
                           <Icon className={cn("w-3.5 h-3.5", isFinal || isModification ? "text-white" : "text-slate-400")} />
                         </div>
@@ -495,7 +495,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                       maxLength={500}
                       rows={2}
                       placeholder="Agregar observación post-cierre… (ej.: faltó firma del parte)"
-                      className="w-full min-h-[44px] max-h-[120px] rounded-xl border border-slate-200 p-2.5 text-sm leading-relaxed focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-none resize-y"
+                      className="w-full min-h-[44px] max-h-[120px] rounded-xl border border-slate-200 p-2.5 text-sm leading-relaxed focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-hidden resize-y"
                     />
                     {obsError && <p className="text-red-500 text-xs font-bold">{obsError}</p>}
                     <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -550,7 +550,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
             rows={5}
             autoFocus
             placeholder="Nota post-cierre… (ej.: faltó firma del parte, corrección administrativa)"
-            className="w-full min-h-[120px] rounded-xl border border-slate-200 p-3 text-sm leading-relaxed focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-none resize-y"
+            className="w-full min-h-[120px] rounded-xl border border-slate-200 p-3 text-sm leading-relaxed focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-hidden resize-y"
           />
           <div className="flex items-center justify-between gap-2 px-0.5">
             <span className="text-[11px] text-slate-400">Queda en la auditoría del traslado.</span>

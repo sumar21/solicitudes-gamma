@@ -202,7 +202,7 @@ const DateRangeTrigger = React.forwardRef<
   { label: string; value: string } & React.ButtonHTMLAttributes<HTMLButtonElement>
 >(({ label, value, className, ...props }, ref) => (
   <button ref={ref} type="button"
-    className={cn("w-full h-full px-4 flex items-center gap-3 text-left hover:bg-slate-50 transition-colors outline-none", className)}
+    className={cn("w-full h-full px-4 flex items-center gap-3 text-left hover:bg-slate-50 transition-colors outline-hidden", className)}
     {...props}>
     <CalendarIcon className="w-3.5 h-3.5 text-slate-400" />
     <div className="flex flex-col justify-center pointer-events-none">
@@ -803,7 +803,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
               <button key={k} type="button" onClick={() => setVistaHoy(k)}
                 className={cn(
                   'px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wide transition-colors tabular-nums',
-                  vistaHoy === k ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700',
+                  vistaHoy === k ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-700',
                 )}>
                 {label}
               </button>
@@ -901,7 +901,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
               const tp = comandaTipoPill(r.tipo);
               const cp = comidaPill(r.slot, r.comida);
               return (
-                <div key={r.key} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2">
+                <div key={r.key} className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 space-y-2">
                   <div className="flex items-start justify-between gap-2">
                     <p className="font-black text-sm text-slate-800 leading-tight">{r.patientName}</p>
                     <div className="flex items-center gap-1 shrink-0">
@@ -932,7 +932,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
           </div>
 
           {/* Desktop — grilla */}
-          <Card className="hidden md:block shadow-sm border-slate-200 overflow-hidden bg-white rounded-2xl">
+          <Card className="hidden md:block shadow-xs border-slate-200 overflow-hidden bg-white rounded-2xl">
             {/* table-fixed + colgroup: los anchos los manda el diseño, no el contenido → sin
                 scroll horizontal y sin columnas que salten de ancho entre polls. */}
             <table className="w-full text-sm table-fixed">
@@ -970,7 +970,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
                             {r.comensal}
                           </span>
                         )}
-                        <p className="font-bold text-slate-800 leading-tight break-words">{r.patientName}</p>
+                        <p className="font-bold text-slate-800 leading-tight wrap-break-word">{r.patientName}</p>
                         <p className="text-[11px] text-slate-500 mt-0.5">
                           {formatBedName(r.bedLabel)}
                           {verSector && <span className="text-slate-400"> · {areaLabel(r.area)}</span>}
@@ -984,18 +984,18 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
                       </td>
                       {/* Comanda + observaciones */}
                       <td className="px-4 py-3">
-                        <p className={cn('text-slate-800 font-medium break-words leading-snug',
+                        <p className={cn('text-slate-800 font-medium wrap-break-word leading-snug',
                           r.status === COMANDA_STATUS.ANULADA && 'line-through')}>{r.detalle || <span className="text-slate-300">—</span>}</p>
                         {/* Siempre se dice algo: un hueco vacío no distingue "no tiene
                             observaciones" de "no se ve el dato". */}
-                        <p className={cn('text-[11px] break-words mt-0.5 leading-snug',
+                        <p className={cn('text-[11px] wrap-break-word mt-0.5 leading-snug',
                           r.observaciones ? 'text-slate-500' : 'text-slate-300 italic')}>
                           {r.observaciones || 'Sin observaciones'}
                         </p>
                         {/* Motivo de anulación: solo en las anuladas (auditoría). No usa
                             line-through — es la explicación, no parte del pedido tachado. */}
                         {r.status === COMANDA_STATUS.ANULADA && r.motivoAnulacion && (
-                          <p className="text-[11px] break-words mt-1 leading-snug text-red-500 font-medium">
+                          <p className="text-[11px] wrap-break-word mt-1 leading-snug text-red-500 font-medium">
                             Motivo anulación: {r.motivoAnulacion}
                           </p>
                         )}
@@ -1046,7 +1046,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
                 rows={3}
                 maxLength={500}
                 placeholder="Ej: el paciente pasó a ayuno, alta, cambio de dieta…"
-                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm resize-y min-h-[72px] focus:outline-none focus:ring-2 focus:ring-red-200"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm resize-y min-h-[72px] focus:outline-hidden focus:ring-2 focus:ring-red-200"
               />
             </div>
           </div>

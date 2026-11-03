@@ -284,7 +284,7 @@ export const PlanificacionMenuModal: React.FC<Props> = ({ open, onOpenChange, cu
         <input value={d.comanda} maxLength={COMANDA_MAX_LEN}
           onChange={e => setDraft({ ...d, comanda: e.target.value })}
           placeholder="Ej: Milanesa con puré / Ensalada / Fruta"
-          className="mt-1.5 w-full h-10 px-3 rounded-lg border border-slate-200 text-sm outline-none focus:border-emerald-400" />
+          className="mt-1.5 w-full h-10 px-3 rounded-lg border border-slate-200 text-sm outline-hidden focus:border-emerald-400" />
       </div>
 
       {formError && (
@@ -372,7 +372,7 @@ export const PlanificacionMenuModal: React.FC<Props> = ({ open, onOpenChange, cu
                       {ddmm(p.desde)} <span className="text-slate-300">→</span> {ddmm(p.hasta)}
                       {vencida && <span className="ml-1.5 text-[9px] uppercase font-bold text-slate-400">vencida</span>}
                     </td>
-                    <td className="px-2 py-2.5 text-slate-800 max-w-[260px] break-words">{p.comanda}</td>
+                    <td className="px-2 py-2.5 text-slate-800 max-w-[260px] wrap-break-word">{p.comanda}</td>
                     <td className="px-2 py-2.5">
                       <div className="flex items-center justify-end gap-1">
                         {confirmDelete === p.spItemId ? (

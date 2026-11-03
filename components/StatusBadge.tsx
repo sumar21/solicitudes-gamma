@@ -25,7 +25,7 @@ export const statusLabel = (status: TicketStatus): string => statusConfig[status
 export const StatusBadge: React.FC<Props> = ({ status, wrap = false }) => {
   const config = statusConfig[status];
   return (
-    <Badge variant={config.variant} className={wrap ? 'whitespace-normal leading-tight shadow-sm' : 'whitespace-nowrap shadow-sm'}>
+    <Badge variant={config.variant} className={wrap ? 'whitespace-normal leading-tight shadow-xs' : 'whitespace-nowrap shadow-xs'}>
       {config.label}
     </Badge>
   );

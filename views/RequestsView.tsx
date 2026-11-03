@@ -221,7 +221,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
         {n > 0 && (
           <span
             aria-label={`${n} observaciones`}
-            className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black leading-[18px] text-center tabular-nums shadow ring-2 ring-white"
+            className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black leading-[18px] text-center tabular-nums shadow-sm ring-2 ring-white"
           >
             {n > 9 ? '9+' : n}
           </span>
@@ -267,7 +267,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       // ensanchaba Origen ~55px y a 1280 con sidebar tapaba Observaciones. El min-w evita que en una
       // columna angosta ("517 - 01") quede una palabra por línea.
       <div
-        className="mt-1.5 min-w-[96px] rounded-md border border-red-200 bg-red-50 px-1.5 py-1 text-[10px] leading-tight text-red-800 break-words"
+        className="mt-1.5 min-w-[96px] rounded-md border border-red-200 bg-red-50 px-1.5 py-1 text-[10px] leading-tight text-red-800 wrap-break-word"
         title={orphan.patientNowAt
           ? `El paciente hoy está en ${formatBedName(orphan.patientNowAt)}: el ticket quedó apuntando a la cama anterior y traba cargar el del paciente nuevo. Hay que cancelarlo y volver a cargarlo desde la cama nueva.${enLaCama}`
           : `El paciente ya no figura ${orphan.patientNotInMap ? 'en ninguna cama del mapa' : 'en esta cama'}. Si se fue sin pasar por MediFlow, hay que cancelar este ticket: traba cargar el del paciente nuevo.${enLaCama}`}
@@ -645,7 +645,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
           {/* Tab switcher para "actuar como" otro rol. Visible solo si el user puede
               crear tickets (Admin/Admision) — los demás roles no tienen sentido. */}
           {can(currentUser, 'crear_ticket') && (
-            <div className="flex items-center gap-2 w-full sm:w-auto bg-white p-1 rounded-xl border border-slate-200 shadow-sm overflow-x-auto no-scrollbar">
+            <div className="flex items-center gap-2 w-full sm:w-auto bg-white p-1 rounded-xl border border-slate-200 shadow-xs overflow-x-auto no-scrollbar">
               {Object.entries(ROLE_LABELS)
                 .filter(([k]) => {
                   // Solo Admin (con todos los permisos) ve el tab Admin. Los demás (Admision)
@@ -667,7 +667,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
               ))}
             </div>
           )}
-          <div className="flex items-center gap-3 px-4 py-2 bg-emerald-50 border border-emerald-100 rounded-xl shadow-sm whitespace-nowrap w-full sm:w-auto">
+          <div className="flex items-center gap-3 px-4 py-2 bg-emerald-50 border border-emerald-100 rounded-xl shadow-xs whitespace-nowrap w-full sm:w-auto">
             <div className="p-1.5 bg-emerald-100 rounded-full text-emerald-600">
               <Timer className="w-3.5 h-3.5" />
             </div>
@@ -731,12 +731,12 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
           </div>
         ) : (
           sortedTickets.map((ticket) => (
-            <Card key={ticket.id} className={cn("p-4 border-slate-200 bg-white shadow-sm flex flex-col gap-4 relative overflow-hidden", ticket.status === TicketStatus.REJECTED && "bg-red-50/30")}>
+            <Card key={ticket.id} className={cn("p-4 border-slate-200 bg-white shadow-xs flex flex-col gap-4 relative overflow-hidden", ticket.status === TicketStatus.REJECTED && "bg-red-50/30")}>
               <div className="flex justify-between items-start">
                 <div className="space-y-1 flex-1">
                   <div className="flex items-center gap-2">
                     <StatusBadge status={ticket.status} />
-                    <span className="text-[9px] font-black font-mono text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100">{ticket.id}</span>
+                    <span className="text-[9px] font-black font-mono text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded-sm border border-slate-100">{ticket.id}</span>
                   </div>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <h3 className="font-black text-slate-950 text-base leading-tight tracking-tight uppercase">{ticket.patientName}</h3>
@@ -768,7 +768,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                   <p className="text-[8px] font-black uppercase text-slate-400 leading-none mb-1">Origen</p>
                   <div className="flex items-center gap-1.5 w-full">
                     <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <p className="text-xs font-bold text-slate-700 break-words leading-tight">{formatBedName(ticket.origin)}</p>
+                    <p className="text-xs font-bold text-slate-700 wrap-break-word leading-tight">{formatBedName(ticket.origin)}</p>
                   </div>
                   {renderOrphanTag(ticket, true)}
                 </div>
@@ -780,7 +780,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                 <div className="flex flex-col min-w-0 flex-1 items-end text-right">
                   <p className="text-[8px] font-black uppercase text-blue-400 leading-none mb-1">Destino</p>
                   <div className="flex items-center gap-1.5 justify-end w-full">
-                    <p className="text-xs font-black text-blue-900 break-words leading-tight text-right">{ticket.destination ? formatBedName(ticket.destination) : 'Pendiente'}</p>
+                    <p className="text-xs font-black text-blue-900 wrap-break-word leading-tight text-right">{ticket.destination ? formatBedName(ticket.destination) : 'Pendiente'}</p>
                     <BedDouble className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                   </div>
                   {ticket.targetBedOriginalStatus && (
@@ -836,7 +836,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       </div>
 
       {/* Vista Desktop (Table) */}
-      <Card className="hidden md:block shadow-sm border-slate-200 overflow-hidden bg-white rounded-2xl">
+      <Card className="hidden md:block shadow-xs border-slate-200 overflow-hidden bg-white rounded-2xl">
         <div className="overflow-x-auto">
           {/* Celdas con 12px por lado (no 16): a 1280 con el sidebar abierto quedan ~1020px y la grilla tiene que entrar entera. */}
           <Table className="[&_th]:px-3 [&_td]:px-3">
@@ -887,7 +887,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                             : "Pendiente consolidar en PROGAL.")}
                         </div>
                         {ticket.changeReason && (
-                          <div className="flex items-center gap-1.5 text-[9px] font-black text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200/50 uppercase mt-1">
+                          <div className="flex items-center gap-1.5 text-[9px] font-black text-amber-700 bg-amber-50 px-2 py-0.5 rounded-sm border border-amber-200/50 uppercase mt-1">
                             <Info className="w-3 h-3" /> {ticket.changeReason}
                           </div>
                         )}
@@ -918,7 +918,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                       {ticket.destination ? (
                         <div className="flex flex-col gap-1">
                           {/* Sin nowrap: destinos largos ("UNIDAD TERAPIA INTENSIVA HPR - CAMA 02") estiraban la columna a ~340px. */}
-                          <div className="text-slate-800 text-sm font-black uppercase tracking-tight break-words max-w-[150px]">{formatBedName(ticket.destination)}</div>
+                          <div className="text-slate-800 text-sm font-black uppercase tracking-tight wrap-break-word max-w-[150px]">{formatBedName(ticket.destination)}</div>
                           {renderSharedRoomTag(ticket)}
                         </div>
                       ) : (
@@ -951,9 +951,9 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                         ) : (
                           <>
                             {ticket.observations ? (
-                              <div className="flex items-start gap-1.5 text-[10px] font-medium text-amber-800 bg-amber-50 p-2 rounded border border-amber-200/50 max-w-[250px]">
+                              <div className="flex items-start gap-1.5 text-[10px] font-medium text-amber-800 bg-amber-50 p-2 rounded-sm border border-amber-200/50 max-w-[250px]">
                                 <Info className="w-3 h-3 shrink-0 mt-0.5 text-amber-600" /> 
-                                <span className="leading-tight break-words">{ticket.observations}</span>
+                                <span className="leading-tight wrap-break-word">{ticket.observations}</span>
                               </div>
                             ) : (
                               <span className="text-[10px] text-slate-400 italic">-</span>
@@ -1011,7 +1011,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
             ) : (
               obsList.map(o => (
                 <div key={o.id} className="p-3 bg-amber-50/60 border border-amber-100 rounded-xl">
-                  <p className="text-sm text-slate-800 leading-snug whitespace-pre-wrap break-words">{o.texto}</p>
+                  <p className="text-sm text-slate-800 leading-snug whitespace-pre-wrap wrap-break-word">{o.texto}</p>
                   <p className="text-[10px] text-slate-400 font-medium mt-2 flex items-center gap-1.5 flex-wrap">
                     <span className="font-semibold text-slate-600">{o.usuario || 'Usuario'}</span>
                     <span>·</span>
@@ -1042,7 +1042,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                 maxLength={500}
                 rows={3}
                 placeholder="Escribí una observación… (ej.: familiar ausente, faltan prendas)"
-                className="w-full min-h-[72px] rounded-xl border border-slate-200 p-3 text-sm leading-relaxed focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none resize-y"
+                className="w-full min-h-[72px] rounded-xl border border-slate-200 p-3 text-sm leading-relaxed focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-hidden resize-y"
               />
               {obsError && <p className="text-red-500 text-xs font-bold">{obsError}</p>}
               <div className="flex items-center justify-end gap-3">

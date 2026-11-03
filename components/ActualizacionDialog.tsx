@@ -34,7 +34,7 @@ export const ActualizacionDialog: React.FC = () => {
   return (
     // Por encima de los modales (z-50) y del overlay "Guardando en sistema..." (z-[100]); debajo de
     // AppAlertHost (z-[1000]): un error de la app se tiene que leer antes.
-    <div className="fixed inset-0 z-[900] flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-900 flex items-center justify-center p-4">
       <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px] animate-in fade-in" />
       <div
         role="alertdialog"

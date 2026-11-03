@@ -24,7 +24,7 @@
  * Para el placeholder usar `<SelectValue placeholder="…" />`, no un item vacío.
  */
 import * as React from "react"
-import * as SelectPrimitive from "@radix-ui/react-select"
+import { Select as SelectPrimitive } from "radix-ui"
 import { Check, ChevronDown, ChevronUp } from "lucide-react"
 import { cn } from "../../lib/utils"
 
@@ -40,7 +40,7 @@ const SelectTrigger = React.forwardRef<
     ref={ref}
     className={cn(
       "flex h-10 w-full items-center justify-between rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white",
-      "placeholder:text-slate-400 focus:outline-none focus:border-slate-400 focus:ring-1 focus:ring-slate-400",
+      "placeholder:text-slate-400 focus:outline-hidden focus:border-slate-400 focus:ring-1 focus:ring-slate-400",
       "disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-200",
       "[&>span]:line-clamp-1 [&>span]:text-left",
       className,
@@ -85,7 +85,7 @@ const SelectContent = React.forwardRef<
       ref={ref}
       // z por encima del Dialog (que usa z-[9998]/z-[9999] según el caso) — mismo criterio que PopoverContent.
       className={cn(
-        "relative z-[9999] max-h-96 min-w-[8rem] overflow-hidden rounded-md border border-slate-200 bg-white text-slate-950 shadow-md",
+        "relative z-9999 max-h-96 min-w-32 overflow-hidden rounded-md border border-slate-200 bg-white text-slate-950 shadow-md",
         "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
         "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
         "data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
@@ -101,7 +101,7 @@ const SelectContent = React.forwardRef<
         className={cn(
           "p-1",
           // Hace que la lista tenga el ancho del trigger (comportamiento esperado de un select).
-          position === "popper" && "h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]",
+          position === "popper" && "h-(--radix-select-trigger-height) w-full min-w-(--radix-select-trigger-width)",
         )}
       >
         {children}
@@ -127,8 +127,8 @@ const SelectItem = React.forwardRef<
   <SelectPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex w-full cursor-pointer select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none",
-      "focus:bg-slate-100 focus:text-slate-900 data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex w-full cursor-pointer select-none items-center rounded-xs py-1.5 pl-8 pr-2 text-sm outline-hidden",
+      "focus:bg-slate-100 focus:text-slate-900 data-disabled:pointer-events-none data-disabled:opacity-50",
       className,
     )}
     {...props}

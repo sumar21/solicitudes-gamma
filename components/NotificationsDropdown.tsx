@@ -113,7 +113,7 @@ export const NotificationsDropdown: React.FC<NotificationsDropdownProps> = ({
                   onClick={() => onNotificationClick(n)}
                 >
                   <div className={cn(
-                    "mt-0.5 shrink-0 w-10 h-10 rounded-2xl flex items-center justify-center border shadow-sm transition-transform group-hover:scale-105",
+                    "mt-0.5 shrink-0 w-10 h-10 rounded-2xl flex items-center justify-center border shadow-xs transition-transform group-hover:scale-105",
                     style.bg
                   )}>
                     {style.icon}
