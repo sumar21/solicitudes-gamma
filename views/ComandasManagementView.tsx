@@ -9,7 +9,8 @@ import { Card } from '../components/ui/card';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { Calendar } from '../components/ui/calendar';
 import { aIso, deIso } from '../lib/fechaIso';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { Textarea } from '../components/ui/textarea';
 import { Label } from '../components/ui/label';
 import { Utensils, User as UserIcon, Clock, RefreshCw, Calendar as CalendarIcon, FileDown, FileSpreadsheet, CalendarDays, Check, X, Undo2, Loader2, Search } from 'lucide-react';
 import { Input } from '../components/ui/input';
@@ -1025,21 +1026,25 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
 
       {/* Modal de motivo de anulación — obligatorio, queda en el histórico para auditoría. */}
       <Dialog open={!!anularTarget} onOpenChange={(v) => { if (!v) setAnularTarget(null); }}>
-        <DialogContent className="sm:max-w-[450px] rounded-3xl">
+        {/* Confirmación destructiva con motivo (DESIGN §4.2) dentro del modal canónico §4.1. */}
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-lg flex items-center gap-2 text-red-700">
-              <div className="p-2 bg-red-50 rounded-xl"><X className="w-5 h-5 text-red-400" /></div>
-              Anular comanda
-            </DialogTitle>
+            <DialogTitle>Anular comanda</DialogTitle>
+            <DialogDescription>
+              {anularTarget?.label && <><span className="font-medium text-foreground">{anularTarget.label}</span> · </>}
+              Es obligatorio documentar el motivo — queda en el histórico.
+            </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-3 py-1">
-            {anularTarget?.label && <p className="text-xs font-semibold text-slate-600">{anularTarget.label}</p>}
-            <p className="text-xs text-slate-400 font-medium">Es obligatorio documentar el motivo — queda en el histórico.</p>
-            <div className="grid gap-1.5">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Motivo de anulación</Label>
+          <DialogBody>
+            <div className="size-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center">
+              <X className="size-5" />
+            </div>
+            <div>
+              <Label htmlFor="anular-motivo" className="mb-1 block text-xs font-medium text-muted-foreground">Motivo de anulación <span className="text-destructive">*</span></Label>
               {/* textarea (no input de 1 línea): un motivo puede ser una frase larga.
                   Ctrl/⌘+Enter confirma; Enter solo hace salto de línea. */}
-              <textarea
+              <Textarea
+                id="anular-motivo"
                 autoFocus
                 value={motivoInput}
                 onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setMotivoInput(e.target.value)}
@@ -1047,14 +1052,13 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
                 rows={3}
                 maxLength={500}
                 placeholder="Ej: el paciente pasó a ayuno, alta, cambio de dieta…"
-                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm resize-y min-h-[72px] focus:outline-hidden focus:ring-2 focus:ring-red-200"
+                className="resize-y min-h-[72px]"
               />
             </div>
-          </div>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setAnularTarget(null)} className="rounded-xl h-10">Cancelar</Button>
-            <Button onClick={confirmAnular} disabled={!motivoInput.trim()}
-              className="rounded-xl h-10 bg-red-600 hover:bg-red-700 text-white font-bold disabled:opacity-50">
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setAnularTarget(null)}>Cancelar</Button>
+            <Button type="button" variant="destructive" onClick={confirmAnular} disabled={!motivoInput.trim()} className="min-w-[140px]">
               Anular comanda
             </Button>
           </DialogFooter>

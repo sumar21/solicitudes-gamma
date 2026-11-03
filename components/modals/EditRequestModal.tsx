@@ -5,7 +5,8 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Combobox } from '../ui/combobox';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
+import { AlertTriangle, Info, Loader2 } from 'lucide-react';
 import { ROOM_CHANGE_REASONS } from '../../lib/constants';
 import { formatBedName, isHitArea, isHraArea } from '../../lib/utils';
 import { roomCheckFor } from '../../lib/roomCheck';
@@ -19,6 +20,10 @@ const AREA_ORDER: Area[] = [
   Area.PISO_4, Area.PISO_5, Area.PISO_6, Area.PISO_7, Area.PISO_8,
   Area.HUC, Area.HUT, Area.HUQ, Area.HSS,
 ];
+// Label canónico de campo (DESIGN §3.3) y control de solo lectura (dato que no se edita acá).
+const claseLabel = 'mb-1 block text-xs font-medium text-muted-foreground';
+const claseSoloLectura = 'bg-muted/50 text-muted-foreground cursor-not-allowed focus-visible:ring-0 focus-visible:ring-offset-0';
+
 const areaRank = (a?: Area | string) => {
   const idx = AREA_ORDER.indexOf(a as Area);
   return idx === -1 ? AREA_ORDER.length : idx;
@@ -138,14 +143,16 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[550px] rounded-3xl max-h-[92vh] overflow-y-auto">
+      {/* Modal de formulario canónico (DESIGN §4.1); 2xl porque lleva filas de dos campos. */}
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle className="text-xl pr-6">Editar Traslado</DialogTitle>
-          <p className="text-[10px] font-mono font-bold text-slate-400 tracking-wide uppercase">{ticket.id}</p>
+          <DialogTitle>Editar traslado</DialogTitle>
+          <DialogDescription>Ticket <span className="font-mono font-medium text-foreground">{ticket.id}</span></DialogDescription>
         </DialogHeader>
-        <form id="edit-ticket-form" onSubmit={handleSubmit} className="grid gap-3 py-2">
-          <div className="grid gap-1.5">
-            <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Tipo de Escenario</Label>
+        <DialogBody>
+        <form id="edit-ticket-form" onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <Label className={claseLabel}>Tipo de escenario <span className="text-destructive">*</span></Label>
             <Combobox obligatorio
               value={workflow}
               onChange={(val) => {
@@ -165,31 +172,31 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="grid gap-1.5">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Origen</Label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="min-w-0">
+              <Label className={claseLabel}>Origen</Label>
               <Input
                 readOnly
                 tabIndex={-1}
                 value={ticket.origin}
                 title={ticket.origin}
-                className="h-10 rounded-xl bg-slate-50 text-slate-700 cursor-not-allowed focus-visible:ring-0 focus-visible:ring-offset-0 truncate"
+                className={`${claseSoloLectura} truncate`}
               />
             </div>
-            <div className="grid gap-1.5">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Paciente</Label>
+            <div className="min-w-0">
+              <Label className={claseLabel}>Paciente</Label>
               <Input
                 readOnly
                 tabIndex={-1}
                 value={ticket.patientName}
                 title={ticket.patientName}
-                className="h-10 rounded-xl bg-slate-50 text-slate-700 cursor-not-allowed focus-visible:ring-0 focus-visible:ring-offset-0 truncate"
+                className={`${claseSoloLectura} truncate`}
               />
             </div>
           </div>
 
-          <div className="grid gap-1.5">
-            <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Destino</Label>
+          <div className="space-y-2">
+            <Label className={claseLabel}>Destino <span className="text-destructive">*</span></Label>
             <Combobox obligatorio
               value={destination}
               onChange={setDestination}
@@ -203,63 +210,67 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
               buscar="Buscar cama de destino..."
             />
             {isolationBlocked.length > 0 && (
-              <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-300">
-                <span className="w-2 h-2 mt-1 rounded-full bg-emerald-800 shrink-0" />
-                <div className="text-[11px] text-emerald-900">
-                  <p className="font-bold">
+              // Banner info (§9.4): camas recortadas por aislamiento.
+              <div className="rounded-lg border p-3 flex items-start gap-2 text-sm bg-blue-50 border-blue-200 text-blue-700">
+                <Info className="size-4 mt-0.5 shrink-0" />
+                <div className="text-xs">
+                  <p className="font-semibold">
                     {isolationBlocked.length} cama{isolationBlocked.length > 1 ? 's' : ''} no se ofrece{isolationBlocked.length > 1 ? 'n' : ''} por reglas de aislamiento.
                   </p>
-                  <p className="font-medium opacity-90">{isolationBlocked[0].conflict.reason}</p>
+                  <p>{isolationBlocked[0].conflict.reason}</p>
                 </div>
               </div>
             )}
             {destinationChanged && (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200">
-                <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
-                <p className="text-[11px] font-medium text-amber-800">
+              <div className="rounded-lg border p-3 flex items-start gap-2 text-sm bg-amber-50 border-amber-200 text-amber-700">
+                <AlertTriangle className="size-4 mt-0.5 shrink-0" />
+                <p className="text-xs font-medium">
                   Al guardar, se liberará <b>{ticket.destination ?? '—'}</b> y se reservará <b>{destination}</b>.
                 </p>
               </div>
             )}
             <RoomCheckNotice check={roomCheck} />
             {currentDestBed && !destinationChanged && (
-              <p className="text-[10px] text-slate-400 px-1">Estado actual: {currentDestBed.status}</p>
+              <p className="text-xs text-muted-foreground">Estado actual: {currentDestBed.status}</p>
             )}
             {/* Pre-ticket configurado: liberar la cama sin cancelarlo (se la dieron a un paciente más urgente).
                 Vuelve a "Presolicitud" y a la grilla con "Configurar destino". */}
             {onResetDestino && puedeRestablecerDestino(ticket) && (confirmReset ? (
-              <div className="flex flex-col gap-2 px-3 py-2.5 rounded-xl bg-red-50 border border-red-200">
-                <p className="text-[11px] font-medium text-red-800">
-                  Se libera <b>{formatBedName(ticket.destination!)}</b> para otro paciente y el pre-ticket vuelve a <b>Configurar destino</b>. Si cargaste un motivo de modificación, queda en la trayectoria.
-                </p>
-                <div className="flex gap-2">
-                  <Button type="button" size="sm" disabled={resetting}
-                    onClick={async () => {
-                      setResetting(true);
-                      const ok = await onResetDestino(ticket.id, modificationReason, ticket.destination);
-                      setResetting(false);
-                      if (ok) onOpenChange(false); else setConfirmReset(false);
-                    }}
-                    className="h-8 rounded-lg bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold uppercase tracking-wide">
-                    {resetting ? 'Liberando…' : 'Sí, liberar la cama'}
-                  </Button>
-                  <Button type="button" size="sm" variant="outline" disabled={resetting} onClick={() => setConfirmReset(false)}
-                    className="h-8 rounded-lg text-[10px] font-bold uppercase tracking-wide">
-                    No
-                  </Button>
+              // Confirmación inline (banner de error §9.4), nunca confirm() nativo.
+              <div className="rounded-lg border p-3 flex items-start gap-2 text-sm bg-red-50 border-red-200 text-red-700">
+                <AlertTriangle className="size-4 mt-0.5 shrink-0" />
+                <div className="flex flex-col gap-2">
+                  <p className="text-xs font-medium">
+                    Se libera <b>{formatBedName(ticket.destination!)}</b> para otro paciente y el pre-ticket vuelve a <b>Configurar destino</b>. Si cargaste un motivo de modificación, queda en la trayectoria.
+                  </p>
+                  <div className="flex gap-2">
+                    <Button type="button" size="sm" variant="destructive" disabled={resetting}
+                      onClick={async () => {
+                        setResetting(true);
+                        const ok = await onResetDestino(ticket.id, modificationReason, ticket.destination);
+                        setResetting(false);
+                        if (ok) onOpenChange(false); else setConfirmReset(false);
+                      }}>
+                      {resetting && <Loader2 className="size-4 animate-spin" />}
+                      {resetting ? 'Liberando…' : 'Sí, liberar la cama'}
+                    </Button>
+                    <Button type="button" size="sm" variant="outline" disabled={resetting} onClick={() => setConfirmReset(false)}>
+                      No
+                    </Button>
+                  </div>
                 </div>
               </div>
             ) : (
               <button type="button" onClick={() => setConfirmReset(true)}
-                className="justify-self-start text-left px-1 text-[11px] font-bold text-red-600 underline underline-offset-2 hover:text-red-700">
+                className="text-left text-xs font-medium text-destructive underline underline-offset-2 hover:text-destructive/80">
                 Restablecer destino (liberar {formatBedName(ticket.destination!)})
               </button>
             ))}
           </div>
 
           {workflow === WorkflowType.INTERNAL && (
-            <div className="grid gap-1.5">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Motivo del Traslado <span className="text-red-500">*</span></Label>
+            <div>
+              <Label className={claseLabel}>Motivo del traslado <span className="text-destructive">*</span></Label>
               <Combobox obligatorio
                 value={reason}
                 onChange={setReason}
@@ -270,46 +281,47 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
           )}
 
           {workflow === WorkflowType.ITR_TO_FLOOR && (
-            <div className="grid gap-1.5">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Origen ITR / Financiador</Label>
+            <div>
+              <Label className={claseLabel}>Origen ITR / financiador</Label>
               <Input
                 readOnly
                 tabIndex={-1}
                 placeholder="Sin financiador registrado"
                 value={itrSource}
-                className="h-10 rounded-xl bg-slate-50 text-slate-700 cursor-not-allowed focus-visible:ring-0 focus-visible:ring-offset-0"
+                className={claseSoloLectura}
               />
             </div>
           )}
 
           {/* Los aislamientos ya no se editan desde la app: vienen de PROGAL y se ven en el mapa de camas. */}
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="grid gap-1.5">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Observaciones (Opcional)</Label>
-              <Input placeholder="Notas para la azafata o equipo..." value={observations} onChange={e => setObservations(e.target.value)} className="h-10 rounded-xl" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <Label className={claseLabel}>Observaciones (opcional)</Label>
+              <Input placeholder="Notas para la azafata o equipo..." value={observations} onChange={e => setObservations(e.target.value)} />
             </div>
-            <div className="grid gap-1.5">
-              <Label className="text-[10px] font-bold uppercase text-amber-600 tracking-widest">Motivo modificación <span className="text-red-500">*</span></Label>
+            <div>
+              <Label htmlFor="edit-motivo-modificacion" className={claseLabel}>Motivo de la modificación <span className="text-destructive">*</span></Label>
               <Input
+                id="edit-motivo-modificacion"
                 required
                 placeholder="Ej: Paciente no subió a la cama"
                 value={modificationReason}
                 onChange={e => setModificationReason(e.target.value)}
-                className="h-10 rounded-xl border-amber-200 bg-amber-50/40 focus-visible:ring-amber-200"
               />
             </div>
           </div>
         </form>
-        <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)} className="rounded-xl h-10 px-6">Cancelar</Button>
+        </DialogBody>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
           <Button
             type="submit"
             form="edit-ticket-form"
             disabled={!destination || !modificationReason.trim() || (workflow === WorkflowType.INTERNAL && !reason)}
-            className="bg-emerald-950 text-white rounded-xl h-10 px-8 disabled:opacity-50"
+            className="min-w-[140px]"
           >
-            Guardar Cambios
+            Guardar cambios
           </Button>
         </DialogFooter>
       </DialogContent>

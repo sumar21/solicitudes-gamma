@@ -4,7 +4,7 @@ import { User, Permission } from '../types';
 import { can } from '../lib/permissions';
 import { HELP_CONTENT } from '../lib/help-content';
 import { Button } from './ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 
 /**
@@ -48,14 +48,15 @@ export const ModuleHelp: React.FC<{ moduleKey: string; user: User | null }> = ({
       </Tooltip>
 
       <DialogContent
-        className="flex max-h-[88dvh] flex-col gap-0 overflow-hidden p-0 sm:max-h-[85vh] sm:max-w-[640px] max-sm:top-auto max-sm:bottom-0 max-sm:max-w-none max-sm:translate-y-0 max-sm:rounded-t-2xl max-sm:rounded-b-none max-sm:border-x-0 max-sm:border-b-0 max-sm:duration-300 max-sm:data-open:zoom-in-100 max-sm:data-open:slide-in-from-bottom max-sm:data-closed:zoom-out-100 max-sm:data-closed:slide-out-to-bottom"
+        className="max-h-[88dvh] sm:max-h-[85vh] sm:max-w-2xl max-sm:top-auto max-sm:bottom-0 max-sm:w-full max-sm:max-w-none max-sm:translate-y-0 max-sm:rounded-t-2xl max-sm:rounded-b-none max-sm:border-x-0 max-sm:border-b-0 max-sm:duration-300 max-sm:data-open:zoom-in-100 max-sm:data-open:slide-in-from-bottom max-sm:data-closed:zoom-out-100 max-sm:data-closed:slide-out-to-bottom"
       >
-        <DialogHeader className="shrink-0 gap-0.5 border-b bg-secondary/20 px-6 py-4 pr-14">
+        <DialogHeader>
           <p className="micro text-muted-foreground">Ayuda</p>
           <DialogTitle className="truncate">{mod.label}</DialogTitle>
         </DialogHeader>
 
-        <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+        {/* Cuerpo con scroll del kit; en mobile (bottom sheet) respeta el área segura de abajo. */}
+        <DialogBody className="flex flex-col gap-5 space-y-0 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <DialogDescription className="leading-relaxed">{mod.overview}</DialogDescription>
 
           {caps.length > 0 && (
@@ -120,7 +121,7 @@ export const ModuleHelp: React.FC<{ moduleKey: string; user: User | null }> = ({
               </ul>
             </section>
           )}
-        </div>
+        </DialogBody>
       </DialogContent>
     </Dialog>
   );

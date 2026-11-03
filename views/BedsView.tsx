@@ -5,10 +5,10 @@ import { hasLiveFasting, fastingOccurrences, formatFastingDateTime, fastingTimes
 import { isolationSigla, isolationRule } from '../lib/isolations';
 import { Input } from '../components/ui/input';
 import { cn, dietRequiresCustomComanda, suggestedRoomSex, formatBedName, formatDateReadable, bedEventKey, isIndividualBoxArea } from '../lib/utils';
-import { BedDouble, User as UserIcon, Info, Search, X, Plus, ChevronDown, ChevronRight, Check, AlertTriangle, AlertCircle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan, History, Lock, Activity, ArrowRight, Undo2, Calendar as CalendarIcon } from 'lucide-react';
+import { BedDouble, User as UserIcon, Info, Search, X, Plus, ChevronDown, ChevronRight, Check, AlertTriangle, AlertCircle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan, History, Lock, Activity, ArrowRight, Undo2, Calendar as CalendarIcon, Loader2 } from 'lucide-react';
 import { Calendar } from '../components/ui/calendar';
 import { aIso, deIso } from '../lib/fechaIso';
-import { Dialog, DialogContent, DialogTitle } from '../components/ui/dialog';
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import { PatientJourney } from '../components/PatientJourney';
@@ -1139,22 +1139,26 @@ const AdmissionDateFilter: React.FC<{
       <div className="md:hidden">
         <button type="button" onClick={() => setOpenMob(true)} className={chipClass}>{chipInner}</button>
         <Dialog open={openMob} onOpenChange={setOpenMob}>
-          <DialogContent className="max-w-[94vw] rounded-2xl p-4">
-            <DialogTitle className="text-sm font-bold text-slate-800">Fecha de internación</DialogTitle>
-            <div className="flex flex-col items-center gap-4 py-1">
+          {/* Modal canónico (DESIGN §4.1) — solo mobile: los dos calendarios apilados en el cuerpo con scroll. */}
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Fecha de internación</DialogTitle>
+              <DialogDescription>Elegí el rango desde / hasta.</DialogDescription>
+            </DialogHeader>
+            <DialogBody className="flex flex-col items-center gap-4 space-y-0">
               <div className="w-full">
-                <p className="text-[10px] font-bold uppercase text-slate-400 mb-1.5">Desde</p>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Desde</p>
                 <Calendar mode="single" required selected={deIso(from)} onSelect={(dia: Date) => setFrom(aIso(dia))} />
               </div>
               <div className="w-full">
-                <p className="text-[10px] font-bold uppercase text-slate-400 mb-1.5">Hasta</p>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Hasta</p>
                 <Calendar mode="single" required selected={deIso(to)} onSelect={(dia: Date) => setTo(aIso(dia))} />
               </div>
-            </div>
-            <div className="flex justify-end gap-2 pt-1">
-              {active && <Button variant="outline" onClick={clear} className="rounded-xl h-10">Limpiar</Button>}
-              <Button onClick={() => setOpenMob(false)} className="rounded-xl h-10">Listo</Button>
-            </div>
+            </DialogBody>
+            <DialogFooter>
+              {active && <Button type="button" variant="outline" onClick={clear}>Limpiar</Button>}
+              <Button type="button" onClick={() => setOpenMob(false)} className="min-w-[140px]">Listo</Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>
@@ -3145,7 +3149,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
 
       {/* Bed Details Modal */}
       <Dialog open={!!selectedBed} onOpenChange={(open) => !open && setSelectedBed(null)}>
-        <DialogContent className="gap-0 p-0 sm:max-w-[550px] rounded-3xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
+        {/* Modal canónico (DESIGN §4.1): el color del estado ya no pinta un header propio; vive en el
+            tile del ícono y en el pill del estado, dentro del DialogHeader del kit. */}
+        <DialogContent className="sm:max-w-lg">
           {selectedBed && (() => {
             type A = { headerBg: string; iconBg: string; icon: string; pill: string; dot: string; patientBg: string; patientBorder: string; label: string };
             const theme: Record<BedStatus, A> = {
@@ -3153,7 +3159,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
               [BedStatus.OCCUPIED]:    { headerBg: 'bg-red-50',      iconBg: 'bg-red-100',     icon: 'text-red-500',     pill: 'bg-red-100 text-red-600',         dot: 'bg-red-500',     patientBg: 'bg-red-50',      patientBorder: 'border-red-100',     label: 'text-red-400'     },
               [BedStatus.PREPARATION]: { headerBg: 'bg-amber-50',    iconBg: 'bg-amber-100',   icon: 'text-amber-600',   pill: 'bg-amber-100 text-amber-700',     dot: 'bg-amber-500',   patientBg: 'bg-amber-50',    patientBorder: 'border-amber-100',   label: 'text-amber-500'   },
               [BedStatus.ASSIGNED]:    { headerBg: 'bg-indigo-50',   iconBg: 'bg-indigo-100',  icon: 'text-indigo-600',  pill: 'bg-indigo-100 text-indigo-700',   dot: 'bg-indigo-500',  patientBg: 'bg-indigo-50',   patientBorder: 'border-indigo-100',  label: 'text-indigo-400'  },
-              [BedStatus.DISABLED]:    { headerBg: 'bg-slate-100',   iconBg: 'bg-slate-200',   icon: 'text-slate-500',   pill: 'bg-slate-200 text-slate-500',     dot: 'bg-slate-400',   patientBg: 'bg-slate-50',    patientBorder: 'border-slate-200',   label: 'text-slate-400'   },
+              [BedStatus.DISABLED]:    { headerBg: 'bg-muted',       iconBg: 'bg-muted',       icon: 'text-muted-foreground', pill: 'bg-muted text-muted-foreground', dot: 'bg-muted-foreground', patientBg: 'bg-muted/50', patientBorder: 'border-border', label: 'text-muted-foreground' },
             };
             const t = theme[selectedBed.status];
 
@@ -3164,23 +3170,27 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
             const isDisabled  = selectedBed.status === BedStatus.DISABLED;
 
             return (
-              <div className="min-w-0">
+              <>
                 {/* Header */}
-                <div className={cn("px-6 py-5 flex items-center gap-4", t.headerBg)}>
-                  <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center shadow-xs shrink-0", t.iconBg)}>
-                    <BedDouble className={cn("w-6 h-6", t.icon)} />
+                <DialogHeader>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={cn("size-10 rounded-lg flex items-center justify-center shrink-0", t.iconBg)}>
+                      <BedDouble className={cn("size-5", t.icon)} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <DialogTitle className="block truncate">Hab. {selectedBed.roomCode} — Cama {selectedBed.bedCode}</DialogTitle>
+                      <DialogDescription className="mt-1">
+                        <span className={cn("inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider", t.pill)}>
+                          <span className={cn("size-1.5 rounded-full", t.dot)} />
+                          {selectedBed.status}
+                        </span>
+                      </DialogDescription>
+                    </div>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <h2 className="text-base font-black tracking-tight text-slate-900 truncate">Hab. {selectedBed.roomCode} — Cama {selectedBed.bedCode}</h2>
-                    <span className={cn("inline-flex items-center gap-1.5 mt-1 px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest", t.pill)}>
-                      <span className={cn("w-1.5 h-1.5 rounded-full", t.dot)} />
-                      {selectedBed.status}
-                    </span>
-                  </div>
-                </div>
+                </DialogHeader>
 
                 {/* Content */}
-                <div className="p-5 space-y-3">
+                <DialogBody className="space-y-3">
 
                   {/* Limpieza por azafata (Opción B): overlay sobre cama "En preparación".
                       Si ya está limpia → chip + Deshacer; si está en prep y la azafata tiene
@@ -3196,19 +3206,19 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                         ? new Date(selectedBed.cleanedAt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })
                         : '';
                       return (
-                        <div className="bg-emerald-50 rounded-2xl p-3.5 border border-emerald-200 flex items-center gap-3">
+                        <div className="bg-emerald-50 rounded-lg p-3.5 border border-emerald-200 flex items-center gap-3">
                           <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
                           <div className="flex-1 min-w-0">
-                            <p className="text-xs font-black text-emerald-800 uppercase tracking-wide">Limpia ✓</p>
+                            <p className="text-xs font-bold text-emerald-800 uppercase tracking-wide">Limpia ✓</p>
                             <p className="text-[11px] text-emerald-700 font-medium truncate">
                               {selectedBed.cleanedBy ? `Por ${selectedBed.cleanedBy}` : 'Marcada limpia'}{when ? ` · ${when}` : ''}
                             </p>
                           </div>
                           {(canClean || canRevert) && onUndoClean && (
                             // Todavía sin consolidar: anula la limpieza y PROGAL ya la tiene En preparación.
-                            <Button variant="outline" size="sm" onClick={() => { onUndoClean(selectedBed.label); setSelectedBed(null); }}
+                            <Button type="button" variant="outline" size="sm" onClick={() => { onUndoClean(selectedBed.label); setSelectedBed(null); }}
                               title='Volver a "En preparación" (anula la limpieza)'
-                              className="h-8 px-3 text-[11px] font-bold rounded-lg border-emerald-200 text-emerald-700 hover:bg-emerald-100 shrink-0">
+                              className="shrink-0">
                               {canClean ? 'Deshacer' : 'Volver a En preparación'}
                             </Button>
                           )}
@@ -3218,14 +3228,14 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     // Volvió a "En preparación" por un rollback: quién y cuándo (+ deshacer para quien tiene el permiso).
                     const vuelta = selectedBed.vueltaPreparacion;
                     const vueltaNota = vuelta && (
-                      <div className="bg-amber-50 rounded-2xl p-3 border border-amber-200 flex items-center gap-2.5">
+                      <div className="bg-amber-50 rounded-lg p-3 border border-amber-200 flex items-center gap-2.5">
                         <Undo2 className="w-4 h-4 text-amber-600 shrink-0" />
                         <p className="flex-1 min-w-0 text-[11px] font-medium text-amber-900">
                           Volvió a <strong>En preparación</strong> (estaba sucia) · {vuelta.by}{vuelta.at ? ` · ${new Date(vuelta.at).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}` : ''}
                         </p>
                         {canRevert && onUndoClean && (
-                          <Button variant="outline" size="sm" onClick={() => { onUndoClean(selectedBed.label); setSelectedBed(null); }}
-                            className="h-8 px-3 text-[11px] font-bold rounded-lg border-amber-200 text-amber-700 hover:bg-amber-100 shrink-0">
+                          <Button type="button" variant="outline" size="sm" onClick={() => { onUndoClean(selectedBed.label); setSelectedBed(null); }}
+                            className="shrink-0">
                             Deshacer
                           </Button>
                         )}
@@ -3245,7 +3255,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                       const reservadaPor = bedTicketMap.get(selectedBed.label);
                       if (reservadaPor) {
                         return (
-                          <div className="bg-indigo-50 rounded-2xl p-3.5 border border-indigo-200 flex items-start gap-2.5">
+                          <div className="bg-indigo-50 rounded-lg p-3.5 border border-indigo-200 flex items-start gap-2.5">
                             <Info className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
                             <p className="text-[11px] leading-snug font-medium text-indigo-800">
                               Reservada por un traslado en curso ({reservadaPor.patientName}). La limpieza
@@ -3258,10 +3268,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                       return (
                         <div className="flex flex-col gap-2">
                           {vueltaNota}
-                          <button onClick={() => { onMarkClean(selectedBed); setSelectedBed(null); }}
-                            className="w-full flex items-center justify-center gap-2 h-12 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-xs">
-                            <SprayCan className="w-4 h-4" /> Marcar habitación limpia
-                          </button>
+                          <Button type="button" onClick={() => { onMarkClean(selectedBed); setSelectedBed(null); }} className="w-full">
+                            <SprayCan className="size-4" /> Marcar habitación limpia
+                          </Button>
                         </div>
                       );
                     }
@@ -3303,13 +3312,13 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     const sug = suggestedSexFor(selectedBed);
                     if (!sug) return null;
                     return (
-                      <div className="px-6 pb-4">
+                      <div>
                         <div className={cn(
-                          'flex items-start gap-2.5 px-3 py-2.5 rounded-xl border',
+                          'flex items-start gap-2.5 px-3 py-2.5 rounded-lg border',
                           sug === 'M' ? 'bg-sky-50 border-sky-200' : 'bg-pink-50 border-pink-200',
                         )}>
                           <div className={cn(
-                            'flex items-center justify-center w-6 h-6 rounded-full shrink-0 text-[11px] font-black bg-white ring-1',
+                            'flex items-center justify-center w-6 h-6 rounded-full shrink-0 text-[11px] font-bold bg-card ring-1',
                             sug === 'M' ? 'text-sky-600 ring-sky-400' : 'text-pink-600 ring-pink-400',
                           )}>{sug}</div>
                           <div className="min-w-0">
@@ -3327,7 +3336,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
 
                   {/* OCCUPIED — patient info organized in tabs */}
                   {isOccupied && (() => {
-                    const spinner = <span className="inline-block w-4 h-4 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" />;
+                    const spinner = <Loader2 className="inline-block size-4 animate-spin text-muted-foreground" />;
                     const fmtDate = (iso?: string) => {
                       if (!iso) return '—';
                       try {
@@ -3379,27 +3388,27 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     return (
                       <>
                         {/* Header paciente — siempre visible */}
-                        <div className={cn("rounded-2xl p-3.5 border", t.patientBg, t.patientBorder)}>
+                        <div className={cn("rounded-lg p-3.5 border", t.patientBg, t.patientBorder)}>
                           <div className="flex items-center gap-1.5 mb-1">
                             <UserIcon className={cn("w-3.5 h-3.5", t.label)} />
-                            <span className={cn("text-[9px] font-bold uppercase tracking-widest", t.label)}>Paciente</span>
+                            <span className={cn("text-[10px] font-semibold uppercase tracking-wider", t.label)}>Paciente</span>
                           </div>
                           <div className="flex items-center justify-between gap-2">
-                            <p className="text-base font-black text-slate-900 leading-snug min-w-0 truncate">{selectedBed.patientName}</p>
+                            <p className="text-lg font-bold text-foreground leading-snug min-w-0 truncate">{selectedBed.patientName}</p>
                             {selectedBed.patientName && (
                               (patientTickets.length > 0 || patientHasCirugias) ? (
                                 <button
                                   type="button"
                                   onClick={() => setJourneyOpen(true)}
-                                  className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-200 bg-white text-slate-600 text-[10px] font-bold uppercase tracking-wide whitespace-nowrap hover:bg-slate-50 transition-colors"
+                                  className="shrink-0 inline-flex items-center gap-1 px-2 h-7 rounded-md border bg-card text-muted-foreground text-xs font-medium whitespace-nowrap hover:bg-muted/50 hover:text-foreground transition-colors"
                                 >
                                   <History className="w-3 h-3" />
                                   Historial del paciente
                                 </button>
                               ) : (patientTicketsLoading || !patientCirugiasLoaded) ? (
-                                <span className="shrink-0 text-[10px] font-medium text-slate-400 whitespace-nowrap">Cargando…</span>
+                                <span className="shrink-0 text-[10px] font-medium text-muted-foreground whitespace-nowrap">Cargando…</span>
                               ) : patientTicketsLoaded ? (
-                                <span className="shrink-0 text-[10px] font-medium text-slate-400 italic whitespace-nowrap">Sin historial</span>
+                                <span className="shrink-0 text-[10px] font-medium text-muted-foreground italic whitespace-nowrap">Sin historial</span>
                               ) : null
                             )}
                           </div>
@@ -3407,7 +3416,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
 
                         {/* Tab bar — scrolleable en X para que en mobile los 4 tabs no
                             desborden el fondo gris (cada tab mantiene su ancho). */}
-                        <div className="flex gap-1 bg-slate-100 rounded-xl p-1 overflow-x-auto">
+                        <div className="flex gap-1 bg-muted rounded-md p-1 overflow-x-auto">
                           {tabs.map(tab => {
                             const isActive = tab.key === activeTab;
                             return (
@@ -3416,10 +3425,10 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                                 type="button"
                                 onClick={() => setDetailTab(tab.key)}
                                 className={cn(
-                                  "shrink-0 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest whitespace-nowrap transition-all",
+                                  "shrink-0 px-3 py-1.5 rounded-sm text-xs font-medium whitespace-nowrap transition-colors",
                                   isActive
-                                    ? "bg-white text-emerald-900 shadow-xs"
-                                    : "text-slate-500 hover:text-slate-700"
+                                    ? "bg-background text-foreground shadow-xs"
+                                    : "text-muted-foreground hover:text-foreground"
                                 )}
                               >
                                 {tab.label}
@@ -3432,21 +3441,21 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                         {activeTab === 'general' && (
                           <>
                             <div className="grid grid-cols-6 gap-2.5">
-                              <div className="col-span-2 bg-slate-50 rounded-xl p-3 border border-slate-100">
-                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">DNI</p>
-                                <p className="text-sm font-mono font-bold text-slate-700">{enrichLoading ? spinner : (displayBed?.dni || '—')}</p>
+                              <div className="col-span-2 bg-muted/50 rounded-lg p-3 border border-border">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">DNI</p>
+                                <p className="text-sm font-mono font-bold text-foreground">{enrichLoading ? spinner : (displayBed?.dni || '—')}</p>
                               </div>
-                              <div className="col-span-1 bg-slate-50 rounded-xl p-3 border border-slate-100">
-                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Edad</p>
-                                <p className="text-sm font-bold text-slate-700">{enrichLoading ? spinner : (displayBed?.age != null ? `${displayBed.age}` : '—')}</p>
+                              <div className="col-span-1 bg-muted/50 rounded-lg p-3 border border-border">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Edad</p>
+                                <p className="text-sm font-bold text-foreground">{enrichLoading ? spinner : (displayBed?.age != null ? `${displayBed.age}` : '—')}</p>
                               </div>
-                              <div className="col-span-1 bg-slate-50 rounded-xl p-3 border border-slate-100">
-                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Sexo</p>
-                                <p className="text-sm font-bold text-slate-700">{enrichLoading ? spinner : (displayBed?.sex === 'M' ? 'M' : displayBed?.sex === 'F' ? 'F' : '—')}</p>
+                              <div className="col-span-1 bg-muted/50 rounded-lg p-3 border border-border">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Sexo</p>
+                                <p className="text-sm font-bold text-foreground">{enrichLoading ? spinner : (displayBed?.sex === 'M' ? 'M' : displayBed?.sex === 'F' ? 'F' : '—')}</p>
                               </div>
-                              <div className="col-span-2 bg-slate-50 rounded-xl p-3 border border-slate-100">
-                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Evento</p>
-                                <p className="text-sm font-mono font-bold text-slate-700 whitespace-nowrap">
+                              <div className="col-span-2 bg-muted/50 rounded-lg p-3 border border-border">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Evento</p>
+                                <p className="text-sm font-mono font-bold text-foreground whitespace-nowrap">
                                   {selectedBed.eventOrigin && selectedBed.eventNumber
                                     ? `${selectedBed.eventOrigin}-${selectedBed.eventNumber}`
                                     : '—'}
@@ -3455,31 +3464,31 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                             </div>
 
                             <div className="grid grid-cols-2 gap-2.5">
-                              <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Financiador</p>
-                                <p className="text-sm font-semibold text-slate-700">{enrichLoading ? spinner : (displayBed?.institution || '—')}</p>
+                              <div className="bg-muted/50 rounded-lg p-3 border border-border">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Financiador</p>
+                                <p className="text-sm font-semibold text-foreground">{enrichLoading ? spinner : (displayBed?.institution || '—')}</p>
                                 {(displayBed?.medicalPlan || displayBed?.medicalPlanCode || displayBed?.medicalPlanDescription) && (
-                                  <p className="text-[10px] text-slate-500 mt-0.5 leading-tight">
+                                  <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">
                                     Plan: {displayBed?.medicalPlan ?? displayBed?.medicalPlanCode}
                                     {displayBed?.medicalPlanDescription && ` · ${displayBed.medicalPlanDescription}`}
                                   </p>
                                 )}
                               </div>
-                              <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">ID Paciente</p>
-                                <p className="text-sm font-mono font-bold text-slate-700">{selectedBed.patientCode || '—'}</p>
+                              <div className="bg-muted/50 rounded-lg p-3 border border-border">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">ID Paciente</p>
+                                <p className="text-sm font-mono font-bold text-foreground">{selectedBed.patientCode || '—'}</p>
                               </div>
                             </div>
 
-                            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                              <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Profesional</p>
-                              <p className="text-sm font-semibold text-slate-700">{enrichLoading ? spinner : (displayBed?.prescribingPhysician || displayBed?.attendingPhysician || '—')}</p>
+                            <div className="bg-muted/50 rounded-lg p-3 border border-border">
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Profesional</p>
+                              <p className="text-sm font-semibold text-foreground">{enrichLoading ? spinner : (displayBed?.prescribingPhysician || displayBed?.attendingPhysician || '—')}</p>
                             </div>
 
                             {(displayBed?.diagnosis || enrichLoading) && (
-                              <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Diagnóstico</p>
-                                <p className="text-sm font-semibold text-slate-700">{enrichLoading ? spinner : displayBed?.diagnosis}</p>
+                              <div className="bg-muted/50 rounded-lg p-3 border border-border">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Diagnóstico</p>
+                                <p className="text-sm font-semibold text-foreground">{enrichLoading ? spinner : displayBed?.diagnosis}</p>
                               </div>
                             )}
                           </>
@@ -3489,26 +3498,26 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                         {activeTab === 'internacion' && (
                           <>
                             <div className="grid grid-cols-3 gap-2.5">
-                              <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Tipo</p>
-                                <p className="text-sm font-bold text-slate-700">
+                              <div className="bg-muted/50 rounded-lg p-3 border border-border">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Tipo</p>
+                                <p className="text-sm font-bold text-foreground">
                                   {enrichLoading
                                     ? spinner
                                     : (displayBed?.admissionType
-                                        ? <><span>{displayBed.admissionType}</span>{displayBed.admissionTypeCode && <span className="text-[10px] font-mono text-slate-400 ml-1">({displayBed.admissionTypeCode})</span>}</>
+                                        ? <><span>{displayBed.admissionType}</span>{displayBed.admissionTypeCode && <span className="text-[10px] font-mono text-muted-foreground ml-1">({displayBed.admissionTypeCode})</span>}</>
                                         : '—')}
                                 </p>
                               </div>
-                              <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Ingreso</p>
-                                <p className="text-sm font-semibold text-slate-700">{enrichLoading ? spinner : fmtDate(displayBed?.admissionDate)}</p>
+                              <div className="bg-muted/50 rounded-lg p-3 border border-border">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Ingreso</p>
+                                <p className="text-sm font-semibold text-foreground">{enrichLoading ? spinner : fmtDate(displayBed?.admissionDate)}</p>
                                 {stayDays != null && stayDays > 0 && !enrichLoading && (
-                                  <p className="text-[10px] text-slate-400 mt-0.5">hace {stayDays} día{stayDays === 1 ? '' : 's'}</p>
+                                  <p className="text-[10px] text-muted-foreground mt-0.5">hace {stayDays} día{stayDays === 1 ? '' : 's'}</p>
                                 )}
                               </div>
-                              <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-1">Días Autorizados</p>
-                                <p className="text-sm font-bold text-slate-700">
+                              <div className="bg-muted/50 rounded-lg p-3 border border-border">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Días Autorizados</p>
+                                <p className="text-sm font-bold text-foreground">
                                   {enrichLoading
                                     ? spinner
                                     : (displayBed?.authorizedDays != null ? displayBed.authorizedDays : '—')}
@@ -3516,7 +3525,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                                 {displayBed?.authorizedDays != null && stayDays != null && !enrichLoading && (
                                   <p className={cn("text-[10px] mt-0.5 font-semibold",
                                     stayDays > displayBed.authorizedDays ? "text-red-600" :
-                                    stayDays >= displayBed.authorizedDays ? "text-amber-600" : "text-slate-400")}>
+                                    stayDays >= displayBed.authorizedDays ? "text-amber-600" : "text-muted-foreground")}>
                                     {stayDays > displayBed.authorizedDays
                                       ? `Excede ${stayDays - displayBed.authorizedDays}`
                                       : `${displayBed.authorizedDays - stayDays} restantes`}
@@ -3525,8 +3534,8 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                               </div>
                             </div>
                             {displayBed?.expectedSurgeryDate && (
-                              <div className="bg-blue-50 rounded-xl p-3 border border-blue-100">
-                                <p className="text-[8px] font-bold uppercase text-blue-500 mb-1">Fecha Probable de Cirugía</p>
+                              <div className="bg-blue-50 rounded-lg p-3 border border-blue-100">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-blue-500 mb-1">Fecha Probable de Cirugía</p>
                                 <p className="text-sm font-bold text-blue-900">{fmtDateOnly(displayBed.expectedSurgeryDate)}</p>
                               </div>
                             )}
@@ -3542,7 +3551,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                                 onMarcar={onMarcarVaCirugia} onDesmarcar={onDesmarcarVaCirugia} />
                             )}
                             {!enrichLoading && !hasInternacionData && (
-                              <p className="text-xs text-slate-400 italic text-center py-2">Sin datos de internación disponibles</p>
+                              <p className="text-xs text-muted-foreground italic text-center py-2">Sin datos de internación disponibles</p>
                             )}
                           </>
                         )}
@@ -3553,11 +3562,11 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                             {/* Dieta del paciente PRIMERO (tipo + condiciones + formulario) para que
                                 Nutrición sepa qué dieta tiene ANTES de cargar el menú (abajo). */}
                             {displayBed?.dietTags && displayBed.dietTags.length > 0 && (
-                              <div className="bg-emerald-50/60 rounded-xl p-3 border border-emerald-100">
-                                <p className="text-[8px] font-bold uppercase text-emerald-700 mb-2">Condiciones y Tipo</p>
+                              <div className="bg-emerald-50/60 rounded-lg p-3 border border-emerald-100">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700 mb-2">Condiciones y Tipo</p>
                                 <div className="flex flex-wrap gap-1.5">
                                   {displayBed.dietTags.map(tag => (
-                                    <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded-full bg-white border border-emerald-300 text-[10px] font-bold text-emerald-800">
+                                    <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded-full bg-card border border-emerald-300 text-[10px] font-bold text-emerald-800">
                                       {tag}
                                     </span>
                                   ))}
@@ -3571,18 +3580,18 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                               return (
                                 <>
                                   {shortDiets.length > 0 && (
-                                    <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                                      <p className="text-[8px] font-bold uppercase text-slate-400 mb-2">Formulario completo</p>
+                                    <div className="bg-muted/50 rounded-lg p-3 border border-border">
+                                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Formulario completo</p>
                                       <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
                                         {shortDiets.map((d, idx) => {
                                           const resp = (d.respuesta ?? '').trim();
                                           const isNo = resp.toLowerCase() === 'no';
                                           return (
                                             <div key={idx} className="flex items-center justify-between gap-2 text-[11px] min-w-0">
-                                              <span className="text-slate-500 truncate">{d.descripcion}</span>
+                                              <span className="text-muted-foreground truncate">{d.descripcion}</span>
                                               <span className={cn(
                                                 "font-bold shrink-0",
-                                                isNo ? "text-slate-400" : "text-emerald-700"
+                                                isNo ? "text-muted-foreground" : "text-emerald-700"
                                               )}>
                                                 {resp || '—'}
                                               </span>
@@ -3593,12 +3602,12 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                                     </div>
                                   )}
                                   {longDiets.length > 0 && (
-                                    <div className="bg-amber-50/40 rounded-xl p-3 border border-amber-100 space-y-2">
-                                      <p className="text-[8px] font-bold uppercase text-amber-700">Notas</p>
+                                    <div className="bg-amber-50/40 rounded-lg p-3 border border-amber-100 space-y-2">
+                                      <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-700">Notas</p>
                                       {longDiets.map((d, idx) => (
                                         <div key={idx} className="space-y-0.5">
-                                          <p className="text-[10px] font-semibold uppercase text-slate-500">{d.descripcion}</p>
-                                          <p className="text-[11px] text-slate-800 wrap-break-word whitespace-pre-wrap leading-snug">
+                                          <p className="text-[10px] font-semibold uppercase text-muted-foreground">{d.descripcion}</p>
+                                          <p className="text-[11px] text-foreground wrap-break-word whitespace-pre-wrap leading-snug">
                                             {(d.respuesta ?? '').trim() || '—'}
                                           </p>
                                         </div>
@@ -3609,10 +3618,10 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                               );
                             })()}
                             {!enrichLoading && !hasDietData && (
-                              <p className="text-xs text-slate-400 italic text-center py-2">Sin datos de dieta disponibles</p>
+                              <p className="text-xs text-muted-foreground italic text-center py-2">Sin datos de dieta disponibles</p>
                             )}
                             {enrichLoading && (
-                              <p className="text-xs text-slate-400 italic text-center py-2">Cargando...</p>
+                              <p className="text-xs text-muted-foreground italic text-center py-2">Cargando...</p>
                             )}
                             {/* Carga de menú por Nutrición (15.CargasDieta) — DEBAJO del detalle de
                                 dieta: se carga el menú sabiendo qué dieta/condiciones tiene el paciente.
@@ -3634,10 +3643,10 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                               if (!canViewComanda) return null;              // sin permiso → no ve la sección
                               if (!canEditAny && !hasAnyMeal) return null;   // solo-lectura y nada cargado → nada
                               return (
-                                <div className="rounded-xl p-3 border border-indigo-100 bg-indigo-50/40 space-y-2">
+                                <div className="rounded-lg p-3 border border-indigo-100 bg-indigo-50/40 space-y-2">
                                   <div className="flex items-center gap-1.5">
                                     <UtensilsCrossed className="w-3.5 h-3.5 text-indigo-500" />
-                                    <p className="text-[8px] font-bold uppercase text-indigo-700 tracking-widest">Menú{canEditAny ? ' — Nutrición' : ''}</p>
+                                    <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-700 tracking-wider">Menú{canEditAny ? ' — Nutrición' : ''}</p>
                                   </div>
                                   {MEAL_SLOTS.map(({ slot, label }) => (
                                     <MealSlotEditor key={slot} bed={liveBed} slot={slot} label={label}
@@ -3667,16 +3676,16 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                             {hasFastingData && (
                               <div className="space-y-2">
                                 {liveFastingInds.map(({ ind, occ }) => (
-                                  <div key={ind.indicationId} className="bg-amber-50/60 rounded-xl p-3 border border-amber-100">
+                                  <div key={ind.indicationId} className="bg-amber-50/60 rounded-lg p-3 border border-amber-100">
                                     <div className="flex items-center justify-between mb-1.5">
-                                      <p className="text-[8px] font-bold uppercase text-amber-700">Indicación #{ind.indicationId}</p>
+                                      <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-700">Indicación #{ind.indicationId}</p>
                                       <span className="text-[10px] font-bold text-amber-800">
                                         {occ.length} ayuno{occ.length === 1 ? '' : 's'}
                                       </span>
                                     </div>
                                     <ul className="space-y-0.5">
                                       {occ.map((iso, idx) => (
-                                        <li key={idx} className="text-[11px] text-slate-700">
+                                        <li key={idx} className="text-[11px] text-foreground">
                                           {formatFastingDateTime(iso)}
                                         </li>
                                       ))}
@@ -3686,10 +3695,10 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                               </div>
                             )}
                             {!enrichLoading && !hasFastingData && (
-                              <p className="text-xs text-slate-400 italic text-center py-2">Sin ayunos vigentes</p>
+                              <p className="text-xs text-muted-foreground italic text-center py-2">Sin ayunos vigentes</p>
                             )}
                             {enrichLoading && (
-                              <p className="text-xs text-slate-400 italic text-center py-2">Cargando...</p>
+                              <p className="text-xs text-muted-foreground italic text-center py-2">Cargando...</p>
                             )}
                           </>
                         )}
@@ -3701,24 +3710,24 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     const assignedTicket = bedTicketMap.get(selectedBed.label);
                     return (
                       <>
-                        <div className="bg-indigo-50 rounded-xl p-3 border border-indigo-100 flex items-center gap-2">
+                        <div className="bg-indigo-50 rounded-lg p-3 border border-indigo-100 flex items-center gap-2">
                           <Info className="w-4 h-4 text-indigo-400 shrink-0" />
                           <p className="text-xs font-bold text-indigo-800">Reservada — traslado en curso</p>
                         </div>
                         {assignedTicket && (
                           <>
-                            <div className={cn("rounded-xl p-3 border", t.patientBg, t.patientBorder)}>
-                              <span className={cn("text-[8px] font-bold uppercase", t.label)}>Paciente en traslado</span>
-                              <p className="text-sm font-black text-slate-900">{assignedTicket.patientName}</p>
+                            <div className={cn("rounded-lg p-3 border", t.patientBg, t.patientBorder)}>
+                              <span className={cn("text-[10px] font-semibold uppercase tracking-wider", t.label)}>Paciente en traslado</span>
+                              <p className="text-sm font-bold text-foreground">{assignedTicket.patientName}</p>
                             </div>
                             <div className="grid grid-cols-2 gap-2">
-                              <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-100">
-                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-0.5">Origen</p>
-                                <p className="text-xs font-bold text-slate-700 truncate">{assignedTicket.origin}</p>
+                              <div className="bg-muted/50 rounded-lg p-2.5 border border-border">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-0.5">Origen</p>
+                                <p className="text-xs font-bold text-foreground truncate">{assignedTicket.origin}</p>
                               </div>
-                              <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-100">
-                                <p className="text-[8px] font-bold uppercase text-slate-400 mb-0.5">Estado</p>
-                                <p className="text-xs font-bold text-slate-700">{assignedTicket.status}</p>
+                              <div className="bg-muted/50 rounded-lg p-2.5 border border-border">
+                                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-0.5">Estado</p>
+                                <p className="text-xs font-bold text-foreground">{assignedTicket.status}</p>
                               </div>
                             </div>
                           </>
@@ -3728,31 +3737,31 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                   })()}
 
                   {isAvailable && (
-                    <div className="bg-emerald-50 rounded-xl p-3 border border-emerald-100 flex items-center justify-center gap-2">
+                    <div className="bg-emerald-50 rounded-lg p-3 border border-emerald-100 flex items-center justify-center gap-2">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                       <p className="text-xs font-semibold text-emerald-700">Lista para recibir paciente</p>
                     </div>
                   )}
 
                   {isPrep && (
-                    <div className="bg-amber-50 rounded-xl p-3 border border-amber-100 flex items-center gap-2">
+                    <div className="bg-amber-50 rounded-lg p-3 border border-amber-100 flex items-center gap-2">
                       <Info className="w-4 h-4 text-amber-400 shrink-0" />
                       <p className="text-xs font-semibold text-amber-700">En preparación para nuevo ingreso</p>
                     </div>
                   )}
 
                   {isDisabled && (
-                    <div className="bg-slate-100 rounded-xl p-3 border border-slate-200 flex items-center justify-center gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-                      <p className="text-xs font-semibold text-slate-500">Fuera de servicio</p>
+                    <div className="bg-muted rounded-lg p-3 border border-border flex items-center justify-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground" />
+                      <p className="text-xs font-semibold text-muted-foreground">Fuera de servicio</p>
                     </div>
                   )}
 
                   {isDisabled && selectedBed.disabledReason && (
-                    <div className="bg-amber-50 rounded-xl p-3 border border-amber-200 flex items-start gap-2">
+                    <div className="bg-amber-50 rounded-lg p-3 border border-amber-200 flex items-start gap-2">
                       <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                       <div className="min-w-0">
-                        <p className="text-[8px] font-bold uppercase text-amber-700 mb-0.5 tracking-wide">Motivo de Inhabilitación</p>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-700 mb-0.5 tracking-wide">Motivo de Inhabilitación</p>
                         <p className="text-sm font-medium text-amber-900 leading-snug wrap-break-word">{selectedBed.disabledReason}</p>
                       </div>
                     </div>
@@ -3770,14 +3779,14 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     // no se bloquean (solo se señalizan). Sino, la habitación queda bloqueada.
                     const onlyPreventive = isPreventiveOnlyBed(bed);
                     return (
-                      <div className="rounded-2xl p-3.5 border border-slate-200 bg-slate-50 space-y-2.5">
+                      <div className="rounded-lg p-3.5 border border-border bg-muted/50 space-y-2.5">
                         <div className="flex items-start gap-3">
                           <span className={cn("w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5", isoC.bg)}>
-                            <ShieldAlert className="w-3 h-3 text-white" strokeWidth={3} />
+                            <ShieldAlert className="size-3 text-background" strokeWidth={3} />
                           </span>
                           <div className="flex-1 min-w-0">
-                            <p className="text-xs font-bold text-slate-700">Aislamiento{plural ? 's' : ''} activo{plural ? 's' : ''}</p>
-                            <p className="text-[10px] text-slate-400">{
+                            <p className="text-xs font-bold text-foreground">Aislamiento{plural ? 's' : ''} activo{plural ? 's' : ''}</p>
+                            <p className="text-[10px] text-muted-foreground">{
                               onlyPreventive ? 'Camas contiguas señalizadas (no bloqueadas)'
                               // Quemado: el mapa igual bloquea (no sabe a quién van a traer), pero el
                               // selector de destino SÍ deja convivir Q con Q. Se aclara para que no
@@ -3799,7 +3808,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                                   {isolationSigla(iso.name) && <span className="opacity-70">({isolationSigla(iso.name)})</span>}
                                 </span>
                                 {iso.observation && (
-                                  <span className="text-[11px] text-slate-600 italic wrap-break-word">— {iso.observation}</span>
+                                  <span className="text-[11px] text-muted-foreground italic wrap-break-word">— {iso.observation}</span>
                                 )}
                               </div>
                             );
@@ -3809,20 +3818,23 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     );
                   })()}
                   {blockedByIsolation.has(selectedBed.label) && (
-                    <div className="bg-violet-50 rounded-2xl p-3.5 border border-violet-200 flex items-center gap-3">
+                    <div className="bg-violet-50 rounded-lg p-3.5 border border-violet-200 flex items-center gap-3">
                       <ShieldAlert className="w-5 h-5 text-violet-400 shrink-0" />
                       <p className="text-xs font-bold text-violet-700">Bloqueada — paciente aislado en esta habitación</p>
                     </div>
                   )}
                   {preventiveContactAdjacent.has(selectedBed.label) && (
-                    <div className="bg-cyan-50 rounded-2xl p-3.5 border border-cyan-200 flex items-center gap-3">
+                    <div className="bg-cyan-50 rounded-lg p-3.5 border border-cyan-200 flex items-center gap-3">
                       <ShieldAlert className="w-5 h-5 text-cyan-500 shrink-0" />
                       <p className="text-xs font-bold text-cyan-700">Contacto preventivo en esta habitación — cama habilitada, usar con precaución</p>
                     </div>
                   )}
 
-                </div>
-              </div>
+                </DialogBody>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setSelectedBed(null)}>Cerrar</Button>
+                </DialogFooter>
+              </>
             );
           })()}
         </DialogContent>

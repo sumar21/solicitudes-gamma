@@ -8,7 +8,9 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table';
 import { Combobox } from '../components/ui/combobox';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { Checkbox } from '../components/ui/checkbox';
+import { Loader2 } from 'lucide-react';
 import { Badge } from '../components/ui/badge';
 import { cn } from '../lib/utils';
 
@@ -435,18 +437,21 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
 
       {/* Create/Edit Modal */}
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="sm:max-w-[700px] rounded-3xl max-h-[90vh] overflow-y-auto">
+        {/* Modal de formulario canónico (DESIGN §4.1), extenso (2xl). */}
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle className="text-xl pr-6">
-              {editingUser ? 'Editar Usuario' : 'Nuevo Usuario'}
+            <DialogTitle>
+              {editingUser ? 'Editar usuario' : 'Nuevo usuario'}
             </DialogTitle>
+            <DialogDescription>Datos de acceso, rol y sectores del usuario.</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-3 py-2">
+          <DialogBody>
             {/* Row 1: Nombre, Apellido */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-1.5">
-                <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Nombre *</Label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="usr-nombre" className="mb-1 block text-xs font-medium text-muted-foreground">Nombre <span className="text-destructive">*</span></Label>
                 <Input
+                  id="usr-nombre"
                   required
                   placeholder="Nombre"
                   value={form.firstName}
@@ -454,27 +459,26 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
                     const firstName = e.target.value;
                     setForm(f => ({ ...f, firstName, username: generateUsername(firstName, f.lastName) }));
                   }}
-                  className="h-10 rounded-xl"
                 />
               </div>
-              <div className="grid gap-1.5">
-                <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Apellido</Label>
+              <div>
+                <Label htmlFor="usr-apellido" className="mb-1 block text-xs font-medium text-muted-foreground">Apellido</Label>
                 <Input
+                  id="usr-apellido"
                   placeholder="Opcional"
                   value={form.lastName}
                   onChange={e => {
                     const lastName = e.target.value;
                     setForm(f => ({ ...f, lastName, username: generateUsername(f.firstName, lastName) }));
                   }}
-                  className="h-10 rounded-xl"
                 />
               </div>
             </div>
 
             {/* Row 2: Rol, Usuario, Contraseña */}
-            <div className="grid grid-cols-3 gap-3">
-              <div className="grid gap-1.5">
-                <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Rol / Perfil *</Label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <Label className="mb-1 block text-xs font-medium text-muted-foreground">Rol / perfil <span className="text-destructive">*</span></Label>
                 <Combobox obligatorio
                   value={form.role}
                   onChange={val => setForm(f => ({
@@ -487,104 +491,107 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
                   placeholder="Seleccionar rol"
                 />
               </div>
-              <div className="grid gap-1.5">
-                <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Usuario (Login)</Label>
+              <div>
+                <Label htmlFor="usr-login" className="mb-1 block text-xs font-medium text-muted-foreground">Usuario (login)</Label>
                 <Input
+                  id="usr-login"
                   required
                   placeholder="auto"
                   value={form.username}
                   onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
-                  className="h-10 rounded-xl bg-slate-50"
+                  className="bg-muted/50"
                 />
               </div>
-              <div className="grid gap-1.5">
-                <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">
-                  {editingUser ? 'Contraseña' : 'Contraseña *'}
+              <div>
+                <Label htmlFor="usr-password" className="mb-1 block text-xs font-medium text-muted-foreground">
+                  Contraseña {!editingUser && <span className="text-destructive">*</span>}
                 </Label>
                 <div className="relative">
                   <Input
+                    id="usr-password"
                     required={!editingUser}
                     type={showPassword ? 'text' : 'password'}
                     placeholder={editingUser ? 'Vacío = sin cambio' : '••••••••'}
                     value={form.password}
                     onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                    className="h-10 rounded-xl pr-10"
+                    className="pr-10"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(v => !v)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                   >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                   </button>
                 </div>
               </div>
             </div>
 
             {/* Row 3: Email */}
-            <div className="grid gap-1.5">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Email</Label>
+            <div>
+              <Label htmlFor="usr-email" className="mb-1 block text-xs font-medium text-muted-foreground">Email</Label>
               <Input
+                id="usr-email"
                 type="email"
                 placeholder="usuario@grupogamma.com"
                 value={form.email}
                 onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                className="h-10 rounded-xl"
               />
             </div>
 
             {/* Row 4: Sectores — visible si el rol tiene FiltrarPisos_RT=Sí. Cubre Azafata,
                 Catering y cualquier rol nuevo con el flag. */}
             {roleFiltersByFloors(form.role) && (
-                <div className="grid gap-1.5">
+                <div>
                   <div className="flex items-center justify-between">
-                    <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Sectores Asignados</Label>
+                    <Label className="mb-1 block text-xs font-medium text-muted-foreground">Sectores asignados</Label>
                     <button
                       type="button"
                       onClick={() => {
                         const allSelected = AREA_OPTIONS.every(o => form.assignedFloors.includes(o.value));
                         setForm(f => ({ ...f, assignedFloors: allSelected ? [] : AREA_OPTIONS.map(o => o.value) }));
                       }}
-                      className="text-[10px] font-bold text-emerald-600 hover:text-emerald-800 transition-colors"
+                      className="mb-1 text-xs font-medium text-primary hover:underline underline-offset-2"
                     >
                       {AREA_OPTIONS.every(o => form.assignedFloors.includes(o.value)) ? 'Deseleccionar todo' : 'Seleccionar todo'}
                     </button>
                   </div>
-                  <div className="border border-slate-200 rounded-xl p-2 grid grid-cols-2 gap-1.5">
+                  <div className="border rounded-lg p-2 grid grid-cols-2 gap-1.5">
                     {AREA_OPTIONS.map(opt => (
                       <label
                         key={opt.value}
                         className={cn(
-                          "flex items-center gap-2 px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors text-xs",
+                          "flex items-center gap-2 px-2.5 py-1.5 rounded-md border cursor-pointer transition-colors text-xs",
                           form.assignedFloors.includes(opt.value)
-                            ? 'bg-emerald-50 border border-emerald-200 text-emerald-800 font-bold'
-                            : 'hover:bg-slate-50 text-slate-600'
+                            ? 'bg-primary/5 border-primary/40 text-foreground font-medium'
+                            : 'border-transparent hover:bg-muted/50 text-muted-foreground'
                         )}
                       >
-                        <input
-                          type="checkbox"
+                        <Checkbox
                           checked={form.assignedFloors.includes(opt.value)}
-                          onChange={() => toggleFloor(opt.value)}
-                          className="accent-emerald-600 w-3.5 h-3.5"
+                          onCheckedChange={() => toggleFloor(opt.value)}
                         />
                         {opt.label.replace(' HPR', '')}
                       </label>
                     ))}
                   </div>
                   {form.assignedFloors.length > 0 && (
-                    <p className="text-[10px] text-slate-400 font-bold">{form.assignedFloors.length} de {AREA_OPTIONS.length} sectores</p>
+                    <p className="text-xs text-muted-foreground mt-1">{form.assignedFloors.length} de {AREA_OPTIONS.length} sectores</p>
                   )}
                 </div>
               )}
-          </div>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setModalOpen(false)} className="rounded-xl h-10 px-6">Cancelar</Button>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setModalOpen(false)}>Cancelar</Button>
             <Button
+              type="button"
               onClick={handleSave}
               disabled={saving || !form.firstName || !form.role || (!editingUser && !form.password)}
-              className="bg-emerald-950 text-white rounded-xl h-10 px-8 disabled:opacity-50"
+              className="min-w-[140px]"
             >
-              {saving ? 'Guardando...' : editingUser ? 'Guardar Cambios' : 'Crear Usuario'}
+              {saving && <Loader2 className="size-4 animate-spin" />}
+              {saving ? 'Guardando...' : editingUser ? 'Guardar cambios' : 'Crear usuario'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -592,17 +599,25 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
 
       {/* Delete confirmation */}
       <Dialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}>
-        <DialogContent className="sm:max-w-[400px] rounded-3xl">
+        {/* Confirmación destructiva (DESIGN §4.2) dentro del modal canónico §4.1. */}
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-lg">Desactivar Usuario</DialogTitle>
+            <DialogTitle>Desactivar usuario</DialogTitle>
+            <DialogDescription>Usuario <span className="font-medium text-foreground">{deleteConfirm?.name}</span></DialogDescription>
           </DialogHeader>
-          <p className="text-sm text-slate-600 py-4">
-            ¿Estás seguro de que querés desactivar a <strong>{deleteConfirm?.name}</strong>?
-            El usuario no podrá iniciar sesión pero se mantendrá en el historial.
-          </p>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setDeleteConfirm(null)} className="rounded-xl h-10">Cancelar</Button>
-            <Button onClick={handleDelete} disabled={saving} className="bg-red-600 hover:bg-red-700 text-white rounded-xl h-10">
+          <DialogBody>
+            <div className="size-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center">
+              <Trash2 className="size-5" />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              ¿Estás seguro de que querés desactivar a <strong className="text-foreground">{deleteConfirm?.name}</strong>?
+              El usuario no podrá iniciar sesión pero se mantendrá en el historial.
+            </p>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDeleteConfirm(null)}>Cancelar</Button>
+            <Button type="button" variant="destructive" onClick={handleDelete} disabled={saving} className="min-w-[140px]">
+              {saving && <Loader2 className="size-4 animate-spin" />}
               {saving ? 'Desactivando...' : 'Desactivar'}
             </Button>
           </DialogFooter>

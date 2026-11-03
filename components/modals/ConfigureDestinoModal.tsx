@@ -4,7 +4,8 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Combobox } from '../ui/combobox';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
+import { AlertTriangle, Info } from 'lucide-react';
 import { isHitArea, isHraArea, roomSexConflict, formatBedName } from '../../lib/utils';
 import { roomCheckFor } from '../../lib/roomCheck';
 import { RoomCheckNotice } from '../RoomCheckNotice';
@@ -68,36 +69,41 @@ export const ConfigureDestinoModal: React.FC<ConfigureDestinoModalProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[550px] rounded-3xl max-h-[92vh] overflow-y-auto">
-        <DialogHeader><DialogTitle className="text-xl pr-6">Configurar Destino</DialogTitle></DialogHeader>
-        <form id="configure-destino-form" onSubmit={handleSubmit} className="grid gap-4 py-2">
+      {/* Modal de formulario canónico (DESIGN §4.1). */}
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Configurar destino</DialogTitle>
+          <DialogDescription>Pre-ticket de <span className="font-medium text-foreground">{ticket.patientName}</span></DialogDescription>
+        </DialogHeader>
+        <DialogBody>
+        <form id="configure-destino-form" onSubmit={handleSubmit} className="space-y-4">
 
-          {/* Datos del pre-ticket (solo lectura) */}
-          <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3 grid gap-2">
+          {/* Datos del pre-ticket (solo lectura): caja de agrupación §6.1. */}
+          <div className="space-y-3 p-4 bg-secondary/20 rounded-lg border border-border/50">
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-0.5 min-w-0">
-                <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Paciente</span>
-                <span className="text-sm font-semibold text-slate-800 truncate">{ticket.patientName}</span>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Paciente</span>
+                <span className="text-sm font-semibold text-foreground truncate">{ticket.patientName}</span>
               </div>
               <div className="grid gap-0.5 min-w-0">
-                <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Obra Social</span>
-                <span className="text-sm text-slate-700 truncate">{ticket.financier || '—'}</span>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Obra social</span>
+                <span className="text-sm text-foreground truncate">{ticket.financier || '—'}</span>
               </div>
               <div className="grid gap-0.5 min-w-0">
-                <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Origen</span>
-                <span className="text-sm text-slate-700 truncate">{formatBedName(ticket.origin)}</span>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Origen</span>
+                <span className="text-sm text-foreground truncate">{formatBedName(ticket.origin)}</span>
               </div>
               <div className="grid gap-0.5 min-w-0">
-                <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Movimiento</span>
-                <span className="text-sm text-slate-700 truncate">{ticket.changeReason || '—'}</span>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Movimiento</span>
+                <span className="text-sm text-foreground truncate">{ticket.changeReason || '—'}</span>
               </div>
             </div>
             {requisitos.length > 0 && (
               <div className="grid gap-1">
-                <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Requisitos</span>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Requisitos</span>
                 <div className="flex flex-wrap gap-1.5">
                   {requisitos.map(r => (
-                    <span key={r} className="inline-flex items-center px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-medium">
+                    <span key={r} className="inline-flex items-center px-2 py-0.5 rounded-full border bg-card text-foreground text-[11px] font-medium">
                       {r}
                     </span>
                   ))}
@@ -106,8 +112,8 @@ export const ConfigureDestinoModal: React.FC<ConfigureDestinoModalProps> = ({
             )}
           </div>
 
-          <div className="grid gap-2">
-            <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Destino (Disponible/Prep) <span className="text-red-500">*</span></Label>
+          <div className="space-y-2">
+            <Label className="mb-1 block text-xs font-medium text-muted-foreground">Destino (disponible / en preparación) <span className="text-destructive">*</span></Label>
             <Combobox obligatorio
               value={destination}
               onChange={setDestination}
@@ -116,20 +122,21 @@ export const ConfigureDestinoModal: React.FC<ConfigureDestinoModalProps> = ({
               buscar="Buscar cama de destino..."
             />
             {isolationBlocked.length > 0 && (
-              <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-300">
-                <span className="w-2 h-2 mt-1 rounded-full bg-emerald-800 shrink-0" />
-                <div className="text-xs text-emerald-900">
-                  <p className="font-bold">
+              // Banner info (§9.4): camas recortadas por aislamiento.
+              <div className="rounded-lg border p-3 flex items-start gap-2 text-sm bg-blue-50 border-blue-200 text-blue-700">
+                <Info className="size-4 mt-0.5 shrink-0" />
+                <div className="text-xs">
+                  <p className="font-semibold">
                     {isolationBlocked.length} cama{isolationBlocked.length > 1 ? 's' : ''} no se ofrece{isolationBlocked.length > 1 ? 'n' : ''} por reglas de aislamiento.
                   </p>
-                  <p className="font-medium opacity-90">{isolationBlocked[0].conflict.reason}</p>
+                  <p>{isolationBlocked[0].conflict.reason}</p>
                 </div>
               </div>
             )}
             {sexWarning && (
-              <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200">
-                <span className="w-2 h-2 mt-1 rounded-full bg-amber-500 shrink-0" />
-                <p className="text-xs font-medium text-amber-800">
+              <div className="rounded-lg border p-3 flex items-start gap-2 text-sm bg-amber-50 border-amber-200 text-amber-700">
+                <AlertTriangle className="size-4 mt-0.5 shrink-0" />
+                <p className="text-xs font-medium">
                   Incompatibilidad de sexo: el paciente es {sexLabel(sexWarning.patientSex)}, pero la habitación destino ya tiene pacientes de sexo {sexLabel(sexWarning.patientSex === 'M' ? 'F' : 'M')}
                   {' '}({sexWarning.roommates.map(b => `${b.label} — ${b.patientName}`).join(', ')}). No bloquea, verificá antes de confirmar.
                 </p>
@@ -138,20 +145,21 @@ export const ConfigureDestinoModal: React.FC<ConfigureDestinoModalProps> = ({
             <RoomCheckNotice check={roomCheck} />
           </div>
 
-          <div className="grid gap-2">
-            <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Observación</Label>
-            <Input placeholder="Requisitos / notas..." value={observations} onChange={e => setObservations(e.target.value)} className="h-10 rounded-xl" />
+          <div>
+            <Label className="mb-1 block text-xs font-medium text-muted-foreground">Observación</Label>
+            <Input placeholder="Requisitos / notas..." value={observations} onChange={e => setObservations(e.target.value)} />
           </div>
         </form>
-        <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)} className="rounded-xl h-10 px-6">Cancelar</Button>
+        </DialogBody>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
           <Button
             type="submit"
             form="configure-destino-form"
             disabled={!destination}
-            className="bg-emerald-950 text-white rounded-xl h-10 px-8 disabled:opacity-50"
+            className="min-w-[140px]"
           >
-            Confirmar Solicitud
+            Confirmar solicitud
           </Button>
         </DialogFooter>
       </DialogContent>

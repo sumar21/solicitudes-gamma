@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../ui/dialog";
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "../ui/dialog";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Label } from "../ui/label";
@@ -54,21 +54,25 @@ export const AreaSelectionModal: React.FC<AreaSelectionModalProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[425px]">
+      {/* Modal de formulario canónico (DESIGN §4.1): la lista scrollea dentro del DialogBody. */}
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Selección de Áreas Asignadas</DialogTitle>
+          <DialogTitle>Selección de áreas asignadas</DialogTitle>
+          <DialogDescription>
+            <span className="font-medium text-foreground">{selectedAreas.length}</span> de {Object.values(Area).length} seleccionadas
+          </DialogDescription>
         </DialogHeader>
-        
-        <div className="py-4">
-          <div className="flex justify-end mb-4">
-            <Button variant="ghost" size="sm" onClick={handleSelectAll} className="text-xs">
-              {selectedAreas.length === Object.values(Area).length ? "Deseleccionar Todas" : "Seleccionar Todas"}
+
+        <DialogBody className="space-y-2">
+          <div className="flex justify-end">
+            <Button type="button" variant="ghost" size="sm" onClick={handleSelectAll}>
+              {selectedAreas.length === Object.values(Area).length ? "Deseleccionar todas" : "Seleccionar todas"}
             </Button>
           </div>
-          
-          <div className="grid grid-cols-1 gap-3 max-h-[60vh] overflow-y-auto pr-2">
+
+          <div className="grid grid-cols-1 gap-1">
             {Object.values(Area).map((area) => (
-              <div key={area} className="flex items-center space-x-2 p-2 rounded-sm hover:bg-slate-50 border border-transparent hover:border-slate-100">
+              <div key={area} className="flex items-center gap-2 p-2 rounded-md hover:bg-muted/50">
                 <Checkbox 
                   id={`area-${area}`} 
                   checked={selectedAreas.includes(area)}
@@ -76,18 +80,19 @@ export const AreaSelectionModal: React.FC<AreaSelectionModalProps> = ({
                 />
                 <Label 
                   htmlFor={`area-${area}`} 
-                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer flex-1"
+                  className="text-sm font-medium leading-none cursor-pointer flex-1"
                 >
                   {area}
                 </Label>
               </div>
             ))}
           </div>
-        </div>
+        </DialogBody>
 
         <DialogFooter>
-          <Button onClick={handleConfirm} disabled={selectedAreas.length === 0}>
-            Confirmar Asignación
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+          <Button type="button" onClick={handleConfirm} disabled={selectedAreas.length === 0} className="min-w-[140px]">
+            Confirmar asignación
           </Button>
         </DialogFooter>
       </DialogContent>

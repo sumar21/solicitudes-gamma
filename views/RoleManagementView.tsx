@@ -6,7 +6,8 @@ import { Card } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { Loader2 } from 'lucide-react';
 import { Badge } from '../components/ui/badge';
 import { cn } from '../lib/utils';
 
@@ -558,22 +559,25 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
           modal de detalle de cama): General + una solapa por módulo habilitado + Notificaciones.
           El panel usa el ancho completo y crece según la solapa; header y barra quedan fijos arriba. */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-        <DialogContent className="gap-0 p-0 sm:max-w-[900px] rounded-3xl">
-         <div className="flex flex-col max-h-[85vh] min-w-0">
-          <DialogHeader className="px-6 pt-6 pb-4 text-left shrink-0">
-            <DialogTitle className="text-xl">{editingRole ? 'Editar Rol' : 'Nuevo Rol'}</DialogTitle>
-            {form.name.trim() && (
-              <span className="text-xs font-bold text-emerald-600">{form.name.trim()}</span>
-            )}
+        {/* Modal canónico (DESIGN §4.1), 4xl por las solapas de permisos: header → barra de solapas fija →
+            cuerpo con scroll → footer. */}
+        <DialogContent className="sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>{editingRole ? 'Editar rol' : 'Nuevo rol'}</DialogTitle>
+            <DialogDescription>
+              {form.name.trim()
+                ? <span className="font-medium text-foreground">{form.name.trim()}</span>
+                : 'Nombre, módulos de acceso y permisos del rol.'}
+            </DialogDescription>
           </DialogHeader>
 
           {/* Barra de solapas — segmented control, scrolleable en X cuando hay muchos módulos.
               El overflow-x-auto va en un contenedor EXTERNO transparente para que el scrollbar quede
               en una franja DEBAJO del pill gris (fuera de él), sin tapar el texto de los tabs.
               min-w-0: sin esto la fila (whitespace-nowrap) estira el modal en vez de scrollear. */}
-          <div className="px-6 shrink-0 min-w-0">
+          <div className="px-6 pt-4 shrink-0 min-w-0">
             <div className="overflow-x-auto tabs-x-scroll">
-            <div className="inline-flex gap-1 bg-slate-100 rounded-xl p-1 min-w-full">
+            <div className="inline-flex gap-1 bg-muted rounded-md p-1 min-w-full">
               {modalTabs.map(tab => {
                 const active = activeTab === tab.key;
                 return (
@@ -582,16 +586,15 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                     type="button"
                     onClick={() => setActiveTab(tab.key)}
                     className={cn(
-                      "shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest whitespace-nowrap transition-all",
-                      active ? "bg-white text-emerald-900 shadow-xs" : "text-slate-500 hover:text-slate-700"
+                      "shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-sm text-xs font-medium whitespace-nowrap transition-colors",
+                      active ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
                     )}
                   >
                     {tab.label}
                     {tab.badge && (
                       <span className={cn(
-                        "text-[9px] font-bold px-1.5 py-0.5 rounded-full tracking-normal",
-                        tab.badge.startsWith('0/') ? "bg-slate-200 text-slate-500"
-                          : active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"
+                        "text-[10px] font-semibold px-1.5 py-0.5 rounded-full tabular-nums",
+                        !tab.badge.startsWith('0/') && active ? "bg-primary/10 text-primary" : "bg-muted-foreground/10 text-muted-foreground"
                       )}>
                         {tab.badge}
                       </span>
@@ -604,24 +607,24 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
           </div>
 
           {/* Panel de la solapa activa — ancho completo, scrollea solo si excede el alto */}
-          <div className="flex-1 overflow-y-auto px-6 py-5 min-h-0">
+          <DialogBody>
               {/* ── General: nombre + módulos de acceso + comportamiento ── */}
               {activeTab === '__general__' && (
                 <div className="space-y-5">
-                  <div className="grid gap-2">
-                    <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Nombre del Rol</Label>
+                  <div>
+                    <Label htmlFor="rol-nombre" className="mb-1 block text-xs font-medium text-muted-foreground">Nombre del rol <span className="text-destructive">*</span></Label>
                     <Input
+                      id="rol-nombre"
                       placeholder="Ej: Enfermería, Catering..."
                       value={form.name}
                       onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
-                      className="h-10 rounded-xl"
                     />
                   </div>
 
-                  <div className="grid gap-2">
+                  <div>
                     <div className="flex items-center justify-between">
-                      <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Módulos de Acceso</Label>
-                      <button onClick={toggleAll} className="text-[10px] font-bold text-emerald-600 hover:text-emerald-700">
+                      <Label className="mb-1 block text-xs font-medium text-muted-foreground">Módulos de acceso</Label>
+                      <button type="button" onClick={toggleAll} className="mb-1 text-xs font-medium text-primary hover:underline underline-offset-2">
                         {MODULES.every(m => form.selectedModules.has(m.value)) ? 'Deseleccionar todo' : 'Seleccionar todo'}
                       </button>
                     </div>
@@ -632,17 +635,17 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                           <label
                             key={mod.value}
                             className={cn(
-                              "flex items-center gap-3 p-2.5 rounded-xl border cursor-pointer transition-all",
-                              selected ? "bg-emerald-50 border-emerald-200" : "bg-white border-slate-100 hover:border-slate-200"
+                              "flex items-center gap-3 p-2.5 rounded-md border cursor-pointer transition-colors",
+                              selected ? "bg-primary/5 border-primary/40" : "bg-card hover:bg-muted/50"
                             )}
                           >
                             <div className={cn(
-                              "w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors",
-                              selected ? "bg-emerald-600 border-emerald-600" : "border-slate-300 bg-white"
+                              "size-4 rounded-sm border flex items-center justify-center shrink-0 transition-colors",
+                              selected ? "bg-primary border-primary text-primary-foreground" : "border-muted-foreground bg-background"
                             )}>
-                              {selected && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
+                              {selected && <Check className="size-3" strokeWidth={3} />}
                             </div>
-                            <span className={cn("text-sm font-medium", selected ? "text-emerald-700" : "text-slate-700")}>
+                            <span className={cn("text-sm", selected ? "font-medium text-foreground" : "text-foreground")}>
                               {mod.label}
                             </span>
                             <input type="checkbox" className="sr-only" checked={selected} onChange={() => toggleModule(mod.value)} />
@@ -650,15 +653,15 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                         );
                       })}
                     </div>
-                    <p className="text-[10px] text-slate-400 leading-tight mt-0.5">
+                    <p className="text-xs text-muted-foreground mt-1">
                       Cada módulo habilitado suma su solapa de permisos arriba.
                     </p>
                   </div>
 
                   {/* Comportamiento: los 3 toggles del rol, en fila en desktop */}
-                  <div className="grid gap-3">
-                    <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Comportamiento</Label>
-                    <div className="grid gap-3 sm:grid-cols-3">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Comportamiento</p>
+                    <div className="grid gap-4 sm:grid-cols-3">
                     {[
                       { key: 'filterByFloors' as const, title: 'Filtrado por pisos asignados',
                         yes: 'Solo ve traslados/camas de los pisos del usuario', no: 'Ve todo' },
@@ -667,8 +670,8 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                       { key: 'requiresIdentification' as const, title: 'Requiere identificación del operador (cuenta compartida)',
                         yes: 'Pide el nombre al entrar; queda como responsable', no: 'Las operaciones van a nombre de la cuenta' },
                     ].map(t => (
-                      <div key={t.key} className="grid gap-2 content-start">
-                        <Label className="text-[10px] font-semibold uppercase text-slate-400 tracking-wide sm:min-h-10">{t.title}</Label>
+                      <div key={t.key} className="grid gap-1 content-start">
+                        <Label className="mb-1 block text-xs font-medium text-muted-foreground sm:min-h-8">{t.title}</Label>
                         <div className="grid grid-cols-2 gap-2">
                           {[{ val: true, label: 'Sí', sub: t.yes }, { val: false, label: 'No', sub: t.no }].map(opt => {
                             const selected = form[t.key] === opt.val;
@@ -676,14 +679,15 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                               <button
                                 key={String(opt.val)}
                                 type="button"
+                                aria-pressed={selected}
                                 onClick={() => setForm(prev => ({ ...prev, [t.key]: opt.val }))}
                                 className={cn(
-                                  "p-3 rounded-xl border text-left transition-all",
-                                  selected ? "bg-emerald-50 border-emerald-300" : "bg-white border-slate-200 hover:border-slate-300"
+                                  "p-3 rounded-md border text-left transition-colors",
+                                  selected ? "bg-primary/5 border-primary/40" : "bg-card hover:bg-muted/50"
                                 )}
                               >
-                                <div className={cn("text-sm font-black mb-0.5", selected ? "text-emerald-700" : "text-slate-700")}>{opt.label}</div>
-                                <div className="text-[9px] text-slate-500 leading-tight">{opt.sub}</div>
+                                <div className={cn("text-sm font-semibold mb-0.5", selected ? "text-primary" : "text-foreground")}>{opt.label}</div>
+                                <div className="text-[11px] text-muted-foreground leading-tight">{opt.sub}</div>
                               </button>
                             );
                           })}
@@ -701,12 +705,12 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                   {groupsForActiveTab.map(group => {
                     const activeCount = group.perms.filter(p => form.selectedPermissions.has(p.code)).length;
                     return (
-                      <div key={group.label} className="border border-slate-100 rounded-2xl bg-slate-50/40 overflow-hidden">
-                        <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-slate-100">
-                          <span className="text-[11px] font-black uppercase tracking-widest text-slate-600">{group.label}</span>
+                      <div key={group.label} className="border border-border/50 rounded-lg bg-secondary/20 overflow-hidden">
+                        <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b">
+                          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{group.label}</span>
                           <span className={cn(
-                            "text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0",
-                            activeCount > 0 ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"
+                            "text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 tabular-nums",
+                            activeCount > 0 ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
                           )}>
                             {activeCount}/{group.perms.length}
                           </span>
@@ -718,17 +722,17 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                               <label
                                 key={p.code}
                                 className={cn(
-                                  "flex items-center gap-2.5 px-2 py-1.5 rounded-lg cursor-pointer transition-all",
-                                  selected ? "bg-emerald-50" : "hover:bg-white"
+                                  "flex items-center gap-2.5 px-2 py-1.5 rounded-md cursor-pointer transition-colors",
+                                  selected ? "bg-primary/5" : "hover:bg-background"
                                 )}
                               >
                                 <div className={cn(
-                                  "w-4 h-4 rounded-sm border-2 flex items-center justify-center shrink-0 transition-colors",
-                                  selected ? "bg-emerald-600 border-emerald-600" : "border-slate-300 bg-white"
+                                  "size-4 rounded-sm border flex items-center justify-center shrink-0 transition-colors",
+                                  selected ? "bg-primary border-primary text-primary-foreground" : "border-muted-foreground bg-background"
                                 )}>
-                                  {selected && <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />}
+                                  {selected && <Check className="size-2.5" strokeWidth={3} />}
                                 </div>
-                                <span className={cn("text-xs leading-tight", selected ? "text-emerald-700 font-bold" : "text-slate-700")}>{p.label}</span>
+                                <span className={cn("text-xs leading-tight text-foreground", selected && "font-medium")}>{p.label}</span>
                                 <input type="checkbox" className="sr-only" checked={selected} onChange={() => togglePermission(p.code)} />
                               </label>
                             );
@@ -739,40 +743,49 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                   })}
                 </div>
               )}
-          </div>
+          </DialogBody>
 
-          <DialogFooter className="px-6 py-4 border-t border-slate-100 gap-2 shrink-0">
-            <Button variant="outline" onClick={() => setIsModalOpen(false)} className="rounded-xl h-10">Cancelar</Button>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setIsModalOpen(false)}>Cancelar</Button>
             <Button
+              type="button"
               onClick={handleSave}
               disabled={saving || !form.name.trim()}
-              className="bg-emerald-950 text-white rounded-xl h-10 px-6"
+              className="min-w-[140px]"
             >
-              {saving ? 'Guardando...' : editingRole ? 'Guardar Cambios' : 'Crear Rol'}
+              {saving && <Loader2 className="size-4 animate-spin" />}
+              {saving ? 'Guardando...' : editingRole ? 'Guardar cambios' : 'Crear rol'}
             </Button>
           </DialogFooter>
-         </div>
         </DialogContent>
       </Dialog>
 
       {/* Delete confirmation */}
       <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
-        <DialogContent className="sm:max-w-[400px] rounded-3xl">
+        {/* Confirmación destructiva (DESIGN §4.2) dentro del modal canónico §4.1. */}
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-xl text-red-600 flex items-center gap-2">
-              <Trash2 className="w-5 h-5" /> Eliminar Rol
-            </DialogTitle>
+            <DialogTitle>Eliminar rol</DialogTitle>
+            <DialogDescription>Rol <span className="font-medium text-foreground">{deleteTarget?.name}</span></DialogDescription>
           </DialogHeader>
-          <p className="text-sm text-slate-600 py-2">
-            ¿Estás seguro de que querés eliminar el rol <strong>"{deleteTarget?.name}"</strong>? Los usuarios con este rol no se verán afectados.
-          </p>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setDeleteTarget(null)} className="rounded-xl h-10">Cancelar</Button>
+          <DialogBody>
+            <div className="size-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center">
+              <Trash2 className="size-5" />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              ¿Estás seguro de que querés eliminar el rol <strong className="text-foreground">"{deleteTarget?.name}"</strong>? Los usuarios con este rol no se verán afectados.
+            </p>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDeleteTarget(null)}>Cancelar</Button>
             <Button
+              type="button"
+              variant="destructive"
               onClick={handleDelete}
               disabled={saving}
-              className="bg-red-600 hover:bg-red-700 text-white rounded-xl h-10 px-6"
+              className="min-w-[140px]"
             >
+              {saving && <Loader2 className="size-4 animate-spin" />}
               {saving ? 'Eliminando...' : 'Eliminar'}
             </Button>
           </DialogFooter>

@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import { Ticket } from '../../types';
 import { Button } from '../ui/button';
 import { Label } from '../ui/label';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
+import { Textarea } from '../ui/textarea';
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
+import { AlertTriangle, Loader2, RotateCcw } from 'lucide-react';
 import { formatBedName } from '../../lib/utils';
 
 // "Restablecer destino" desde la fila de la grilla (26/10/2026): para cuando "Editar" no está, sobre todo con
@@ -31,34 +33,44 @@ export const RestablecerDestinoModal: React.FC<RestablecerDestinoModalProps> = (
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) setMotivo(''); onOpenChange(v); }}>
-      <DialogContent className="sm:max-w-[460px] rounded-3xl">
+      {/* Confirmación destructiva (DESIGN §4.2) dentro del modal canónico §4.1. */}
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="text-xl text-red-700 pr-6">Restablecer destino</DialogTitle>
-          <p className="text-[10px] font-mono font-bold text-slate-400 tracking-wide uppercase">{t.id}</p>
+          <DialogTitle>Restablecer destino</DialogTitle>
+          <DialogDescription>Ticket <span className="font-mono font-medium text-foreground">{t.id}</span></DialogDescription>
         </DialogHeader>
-        <div className="grid gap-3 py-2">
-          <p className="text-[12px] text-slate-700">
+        <DialogBody>
+          <div className="size-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center">
+            <RotateCcw className="size-5" />
+          </div>
+          <p className="text-sm text-foreground">
             Se libera <b>{cama}</b> para otro paciente y el pre-ticket de <b>{t.patientName}</b> vuelve a <b>Configurar destino</b>. Las azafatas que lo tenían en la grilla reciben el aviso "Destino liberado".
           </p>
           {t.intervenedByHostess === 'SI' && (
-            <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-              La azafata ya marcó la habitación lista. Si la cama queda libre, revisen su estado en PROGAL para que el mapa la muestre como corresponde.
-            </p>
+            <div className="rounded-lg border p-3 flex items-start gap-2 text-sm bg-amber-50 border-amber-200 text-amber-700">
+              <AlertTriangle className="size-4 mt-0.5 shrink-0" />
+              <p className="text-xs">
+                La azafata ya marcó la habitación lista. Si la cama queda libre, revisen su estado en PROGAL para que el mapa la muestre como corresponde.
+              </p>
+            </div>
           )}
-          <div className="grid gap-1.5">
-            <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Motivo (opcional, queda en la trayectoria)</Label>
-            <textarea
+          <div>
+            <Label htmlFor="restablecer-motivo" className="mb-1 block text-xs font-medium text-muted-foreground">Motivo (opcional, queda en la trayectoria)</Label>
+            <Textarea
+              id="restablecer-motivo"
               placeholder="Ej: la cama se asignó a un paciente de guardia"
               value={motivo}
               onChange={e => setMotivo(e.target.value)}
               rows={2}
-              className="w-full px-3 py-2.5 text-sm rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-red-200 focus:border-red-300 resize-none"
+              className="resize-none"
             />
           </div>
-        </div>
-        <DialogFooter className="gap-2">
-          <Button variant="outline" disabled={saving} onClick={cerrar} className="rounded-xl h-10 px-6">Cancelar</Button>
+        </DialogBody>
+        <DialogFooter>
+          <Button type="button" variant="outline" disabled={saving} onClick={cerrar}>Cancelar</Button>
           <Button
+            type="button"
+            variant="destructive"
             disabled={saving}
             onClick={async () => {
               setSaving(true);
@@ -66,8 +78,9 @@ export const RestablecerDestinoModal: React.FC<RestablecerDestinoModalProps> = (
               setSaving(false);
               if (ok) cerrar();
             }}
-            className="bg-red-600 hover:bg-red-700 text-white rounded-xl h-10 px-6"
+            className="min-w-[140px]"
           >
+            {saving && <Loader2 className="size-4 animate-spin" />}
             {saving ? 'Liberando…' : 'Sí, liberar la cama'}
           </Button>
         </DialogFooter>

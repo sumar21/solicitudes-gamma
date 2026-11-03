@@ -5,13 +5,14 @@ import { cn, formatBedName, formatDateTime, formatDateReadable } from '../lib/ut
 import { CIRUGIA_ESTADO_LABEL, CIRUGIA_ESTADO_SHORT, CIRUGIA_PILL_CLASS, cirugiaRetrocesoDe } from '../lib/constants';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { Textarea } from '../components/ui/textarea';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { Calendar } from '../components/ui/calendar';
 import { aIso, deIso } from '../lib/fechaIso';
 import {
   Activity, ArrowRight, BedDouble, CheckCircle2, Clock, RefreshCw, Search, X, XCircle, AlertTriangle,
-  Calendar as CalendarIcon, Eye, User as UserIcon, Undo2,
+  Calendar as CalendarIcon, Eye, User as UserIcon, Undo2, Loader2,
 } from 'lucide-react';
 import { cirugiaEventoLabel, esRetroceso } from '../lib/cirugiaEventos';
 
@@ -699,32 +700,46 @@ export const CirugiasView: React.FC<Props> = ({
 
       {/* Modal: cancelar con motivo obligatorio. */}
       <Dialog open={!!cancelando} onOpenChange={o => { if (!o) setCancelando(null); }}>
-        <DialogContent className="sm:max-w-[440px] rounded-3xl">
-          <DialogHeader><DialogTitle className="text-xl">Cancelar cirugía</DialogTitle></DialogHeader>
-          {cancelCx && (
-            <div className="grid gap-3 py-2">
-              <p className="text-sm text-slate-500">
-                Vas a cancelar la operatoria de <span className="font-bold text-slate-700 uppercase">{cancelCx.pacienteNombre || 'el paciente'}</span>. Contanos por qué.
-              </p>
-              <textarea
-                autoFocus rows={3} maxLength={500}
-                value={cancelando?.motivo ?? ''}
-                onChange={e => setCancelando(s => (s ? { ...s, motivo: e.target.value } : s))}
-                placeholder="Ej: se suspendió la cirugía, alta del paciente…"
-                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm resize-none focus:outline-hidden focus:ring-2 focus:ring-red-200" />
-              {rowError[cancelCx.id] && <p className="text-[11px] font-bold text-red-600">{rowError[cancelCx.id]}</p>}
+        {/* Confirmación destructiva con motivo (DESIGN §4.2) dentro del modal canónico §4.1. */}
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Cancelar cirugía</DialogTitle>
+            <DialogDescription>
+              Operatoria de <span className="font-medium text-foreground">{cancelCx?.pacienteNombre || 'el paciente'}</span>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody>
+            <div className="size-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center">
+              <XCircle className="size-5" />
             </div>
-          )}
+            {cancelCx && (
+              <div>
+                <label htmlFor="cx-cancelar-motivo" className="mb-1 block text-xs font-medium text-muted-foreground">Motivo de la cancelación <span className="text-destructive">*</span></label>
+                <Textarea
+                  id="cx-cancelar-motivo"
+                  autoFocus rows={3} maxLength={500}
+                  value={cancelando?.motivo ?? ''}
+                  onChange={e => setCancelando(s => (s ? { ...s, motivo: e.target.value } : s))}
+                  placeholder="Ej: se suspendió la cirugía, alta del paciente…"
+                  aria-invalid={!!rowError[cancelCx.id]}
+                  className="resize-none" />
+                {rowError[cancelCx.id] && <p role="alert" className="text-xs text-destructive mt-1">{rowError[cancelCx.id]}</p>}
+              </div>
+            )}
+          </DialogBody>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCancelando(null)} className="rounded-xl h-11">Volver</Button>
+            <Button type="button" variant="outline" onClick={() => setCancelando(null)}>Volver</Button>
             <Button
+              type="button"
+              variant="destructive"
               disabled={!cancelCx || isPending(cancelCx.id) || !cancelando?.motivo.trim()}
               onClick={async () => {
                 if (!cancelCx || !cancelando?.motivo.trim()) return;
                 const r = await withPending(cancelCx.id, () => onCancelar(cancelCx.id, cancelando.motivo.trim()));
                 if (r.ok) setCancelando(null);
               }}
-              className="bg-red-600 hover:bg-red-700 text-white rounded-xl h-11 px-6 disabled:opacity-40">
+              className="min-w-[140px]">
+              {cancelCx && isPending(cancelCx.id) && <Loader2 className="size-4 animate-spin" />}
               Confirmar cancelación
             </Button>
           </DialogFooter>
@@ -733,38 +748,41 @@ export const CirugiasView: React.FC<Props> = ({
 
       {/* Modal: detalle de una operatoria — timeline de pasos con la duración de cada uno. */}
       <Dialog open={!!detalleCx} onOpenChange={o => { if (!o) { setDetalleCx(null); setEventos([]); } }}>
-        <DialogContent className="sm:max-w-[560px] rounded-3xl max-h-[85vh] overflow-y-auto">
+        {/* Modal canónico (DESIGN §4.1) de solo lectura: header → cuerpo con scroll → footer. */}
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle className="text-xl flex items-center gap-2"><Activity className="w-5 h-5 text-violet-600" /> Detalle de cirugía</DialogTitle>
+            <DialogTitle><Activity className="size-5 text-violet-600" /> Detalle de cirugía</DialogTitle>
+            <DialogDescription>Pasos de la operatoria y la duración de cada uno.</DialogDescription>
           </DialogHeader>
+          <DialogBody>
           {detalleCx && (
-            <div className="space-y-4 py-1">
-              {/* Resumen */}
-              <div className="rounded-2xl border border-slate-100 bg-slate-50/60 p-3.5 space-y-2">
+            <>
+              {/* Resumen: caja de agrupación (§6.1). */}
+              <div className="rounded-lg border border-border/50 bg-secondary/20 p-4 space-y-2">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <span className="font-black text-slate-800 uppercase text-sm leading-tight">{detalleCx.pacienteNombre || 'Paciente'}</span>
+                  <span className="font-bold text-foreground uppercase text-sm leading-tight">{detalleCx.pacienteNombre || 'Paciente'}</span>
                   <Pill estado={detalleCx.estado as CirugiaEstado} short hist />
                 </div>
-                <div className="flex items-center gap-1.5 text-[12px] font-bold text-slate-600 flex-wrap">
-                  <BedDouble className="w-3.5 h-3.5 text-slate-400" />
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground flex-wrap">
+                  <BedDouble className="size-3.5" />
                   {formatBedName(detalleCx.camaOrigen)}
-                  {detalleCx.camaDestino && detalleCx.camaDestino !== detalleCx.camaOrigen && (<><ArrowRight className="w-3 h-3 text-violet-500" />{formatBedName(detalleCx.camaDestino)}</>)}
-                  {detalleCx.tipo && (<><span className="text-slate-300">·</span><span className="text-cyan-800">{detalleCx.tipo}</span></>)}
+                  {detalleCx.camaDestino && detalleCx.camaDestino !== detalleCx.camaOrigen && (<><ArrowRight className="size-3 text-violet-500" />{formatBedName(detalleCx.camaDestino)}</>)}
+                  {detalleCx.tipo && (<><span className="text-muted-foreground/60">·</span><span className="text-cyan-800">{detalleCx.tipo}</span></>)}
                 </div>
                 <div className="grid grid-cols-3 gap-2 text-[11px]">
-                  <div><span className="block text-[9px] uppercase font-semibold text-slate-400">Inicio</span><span className="font-bold text-slate-700">{fmtWhen(detalleCx.createdAt)}</span></div>
-                  <div><span className="block text-[9px] uppercase font-semibold text-slate-400">Cierre</span><span className="font-bold text-slate-700">{fmtWhen(detalleCx.fechaCierre)}</span></div>
-                  <div><span className="block text-[9px] uppercase font-semibold text-slate-400">Duración</span><span className="font-bold text-violet-700">{fmtDuracion(detalleCx.createdAt, detalleCx.fechaCierre)}</span></div>
+                  <div><span className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Inicio</span><span className="font-bold text-foreground">{fmtWhen(detalleCx.createdAt)}</span></div>
+                  <div><span className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Cierre</span><span className="font-bold text-foreground">{fmtWhen(detalleCx.fechaCierre)}</span></div>
+                  <div><span className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Duración</span><span className="font-bold text-violet-700">{fmtDuracion(detalleCx.createdAt, detalleCx.fechaCierre)}</span></div>
                 </div>
               </div>
 
               {/* Timeline de pasos: cada paso con la duración desde el anterior y quién lo hizo. */}
               <div>
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Pasos</p>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Pasos</p>
                 {loadingEventos ? (
-                  <p className="text-xs text-slate-400 py-4 text-center">Cargando pasos…</p>
+                  <p className="text-xs text-muted-foreground py-4 text-center">Cargando pasos…</p>
                 ) : eventos.length === 0 ? (
-                  <p className="text-xs text-slate-400 py-4 text-center">Sin pasos registrados para esta operatoria.</p>
+                  <p className="text-xs text-muted-foreground py-4 text-center">Sin pasos registrados para esta operatoria.</p>
                 ) : (
                   <div className="pl-1">
                     {eventos.map((e, i) => {
@@ -774,17 +792,17 @@ export const CirugiasView: React.FC<Props> = ({
                       return (
                         <div key={i} className="flex gap-3">
                           <div className="flex flex-col items-center">
-                            <div className={cn("w-2.5 h-2.5 rounded-full mt-1.5 shrink-0", esRetroceso(e) ? "bg-amber-500" : "bg-violet-500")} />
-                            {!last && <div className="w-px flex-1 bg-slate-200 my-0.5" />}
+                            <div className={cn("size-2.5 rounded-full mt-1.5 shrink-0", esRetroceso(e) ? "bg-amber-500" : "bg-violet-500")} />
+                            {!last && <div className="w-px flex-1 bg-border my-0.5" />}
                           </div>
                           <div className={cn("min-w-0", last ? "pb-1" : "pb-4")}>
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className={cn("text-xs font-black uppercase tracking-tight", esRetroceso(e) ? "text-amber-700" : "text-slate-700")}>{cirugiaEventoLabel(e as { tipo: string; meta?: { de?: unknown; a?: unknown } })}</span>
+                              <span className={cn("text-xs font-semibold uppercase tracking-tight", esRetroceso(e) ? "text-amber-700" : "text-foreground")}>{cirugiaEventoLabel(e as { tipo: string; meta?: { de?: unknown; a?: unknown } })}</span>
                               {dur && <span className="text-[10px] font-bold text-violet-600" title="Tiempo desde el paso anterior">+{dur}</span>}
                             </div>
-                            <p className="text-[11px] text-slate-500 flex items-center gap-1.5 mt-0.5 flex-wrap">
-                              <Clock className="w-3 h-3 text-slate-400" />{fmtWhen(e.at)}
-                              {quien && (<><span className="text-slate-300">·</span><UserIcon className="w-3 h-3 text-slate-400" />{quien}</>)}
+                            <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5 flex-wrap">
+                              <Clock className="size-3" />{fmtWhen(e.at)}
+                              {quien && (<><span className="text-muted-foreground/60">·</span><UserIcon className="size-3" />{quien}</>)}
                             </p>
                           </div>
                         </div>
@@ -793,10 +811,11 @@ export const CirugiasView: React.FC<Props> = ({
                   </div>
                 )}
               </div>
-            </div>
+            </>
           )}
+          </DialogBody>
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setDetalleCx(null); setEventos([]); }} className="rounded-xl h-11">Cerrar</Button>
+            <Button type="button" variant="outline" onClick={() => { setDetalleCx(null); setEventos([]); }}>Cerrar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

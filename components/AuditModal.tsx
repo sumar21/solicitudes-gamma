@@ -2,10 +2,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Ticket, WorkflowType, TicketStatus, BedStatus } from '../types';
 import {
-  X, MapPin, Plus, TrendingUp, Activity, CheckCircle2, Calendar, Info, SprayCan, Hash, XCircle, ArrowRightLeft, Pencil
+  MapPin, Plus, TrendingUp, Activity, CheckCircle2, Calendar, Info, SprayCan, Hash, XCircle, ArrowRightLeft, Pencil
 } from './Icons';
-import { MessageSquare, Siren } from 'lucide-react';
-import { Dialog, DialogContent, DialogTitle, DialogHeader, DialogFooter } from './ui/dialog';
+import { Loader2, MessageSquare, Siren } from 'lucide-react';
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogTitle, DialogHeader, DialogFooter } from './ui/dialog';
+import { Textarea } from './ui/textarea';
+import { Cargando } from './ui/estados';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { cn, formatDateTime, formatTime, formatTicketDestination } from '../lib/utils';
@@ -217,83 +219,78 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
   return (
     <>
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-[1000px] w-[94vw] md:w-full max-h-[92vh] p-0 overflow-hidden border border-slate-200 shadow-2xl rounded-2xl md:rounded-3xl bg-white [&>button]:hidden">
-        <div className="flex flex-col max-h-[92vh] min-h-0 min-w-0 overflow-hidden">
+      {/* Modal canónico (DESIGN §4.1) en variante split-view densa (5xl): header → cuerpo partido
+          (sidebar + trazabilidad con su propio scroll y el redactor fijo abajo) → footer. */}
+      <DialogContent className="sm:max-w-5xl">
 
           {/* HEADER */}
-          <div className="bg-white px-5 py-3 md:px-6 md:py-4 flex flex-col border-b border-slate-100 shrink-0">
-            <div className="flex items-start justify-between">
-              <div className="space-y-1 min-w-0 flex-1">
+          <DialogHeader className="gap-1">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <Badge variant={isRejected ? "destructive" : "outline"} className="text-[9px] font-semibold uppercase tracking-wider px-2 py-0 border-slate-200">
+                  <Badge variant={isRejected ? "destructive" : "outline"} className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0">
                     {isRejected ? 'Ticket Cancelado' : 'Auditoría Operativa'}
                   </Badge>
                   {!isRejected && (
-                    <Badge variant={isDirectTransfer ? "secondary" : "default"} className={cn("text-[9px] font-semibold uppercase tracking-wider px-2 py-0 border-none", isDirectTransfer ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700")}>
+                    <Badge variant={isDirectTransfer ? "secondary" : "default"} className={cn("text-[10px] font-semibold uppercase tracking-wider px-2 py-0 border-none", isDirectTransfer ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700")}>
                       {isDirectTransfer ? 'Traslado Directo (Cama Limpia)' : 'Ciclo Completo (Cama en Prep.)'}
                     </Badge>
                   )}
-                  <span className="text-[10px] font-medium text-slate-300 uppercase tracking-widest">Sede {ticket.sede}</span>
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Sede {ticket.sede}</span>
                 </div>
-                <DialogTitle className="text-lg md:text-2xl font-bold text-slate-900 tracking-tight truncate">
+                <DialogTitle className="block truncate">
                   {ticket.patientName}
                 </DialogTitle>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 md:gap-x-4 text-[10px] md:text-[11px] text-slate-400 font-medium">
-                  <span className="flex items-center gap-1 min-w-0"><Hash className="w-3 h-3 shrink-0" /> <span className="truncate">{ticket.id}</span></span>
-                  <span className="flex items-center gap-1"><Calendar className="w-3 h-3 shrink-0" /> {formatDateTime(ticket.createdAt)}</span>
-                  <span className="flex items-center gap-1 font-semibold text-slate-900"><Activity className="w-3 h-3 shrink-0" /> {workflowLabels[ticket.workflow]}</span>
-                </div>
-              </div>
-              <button onClick={onClose} className="h-9 w-9 md:h-10 md:w-10 bg-slate-50 hover:bg-slate-100 text-slate-400 rounded-xl transition-colors border border-slate-100 flex items-center justify-center shrink-0 ml-2">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+                <DialogDescription className="flex flex-wrap items-center gap-x-3 gap-y-1 md:gap-x-4">
+                  <span className="flex items-center gap-1 min-w-0"><Hash className="size-3 shrink-0" /> <span className="truncate">{ticket.id}</span></span>
+                  <span className="flex items-center gap-1"><Calendar className="size-3 shrink-0" /> {formatDateTime(ticket.createdAt)}</span>
+                  <span className="flex items-center gap-1 font-medium text-foreground"><Activity className="size-3 shrink-0" /> {workflowLabels[ticket.workflow]}</span>
+                </DialogDescription>
 
             {/* SOLO MÓVIL: TRAYECTORIA — doble fila apilada (origen arriba, destino abajo).
                 Texto completo que envuelve; nada de truncar ni cruzarse en pantallas chicas. */}
-            <div className="md:hidden mt-4 p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-2">
+            <div className="md:hidden mt-3 p-3 bg-card rounded-lg border space-y-2">
                <div className="min-w-0">
-                 <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Origen</span>
-                 <p className="text-[11px] font-bold text-slate-700 wrap-break-word leading-tight">{ticket.origin}</p>
+                 <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Origen</span>
+                 <p className="text-xs font-semibold text-foreground wrap-break-word leading-tight">{ticket.origin}</p>
                </div>
-               <div className="min-w-0 pt-2 border-t border-slate-200/60">
-                 <span className="text-[8px] font-bold text-blue-400 uppercase tracking-widest">Destino</span>
-                 <p className="text-[11px] font-black text-blue-900 wrap-break-word leading-tight">{formatTicketDestination(ticket)}</p>
+               <div className="min-w-0 pt-2 border-t">
+                 <span className="text-[11px] font-semibold uppercase tracking-wider text-blue-700">Destino</span>
+                 <p className="text-xs font-bold text-foreground wrap-break-word leading-tight">{formatTicketDestination(ticket)}</p>
                </div>
             </div>
-          </div>
+          </DialogHeader>
 
-          <div className="flex flex-col md:flex-row overflow-hidden flex-1 min-h-0">
+          {/* Cuerpo partido: el DialogBody no scrollea entero; scrollean la sidebar y la trazabilidad. */}
+          <DialogBody className="flex flex-col md:flex-row overflow-hidden p-0 space-y-0">
 
             {/* SIDEBAR DESKTOP */}
-            <div className="hidden md:block md:w-[300px] bg-slate-50/50 border-r border-slate-100 p-5 space-y-5 overflow-y-auto shrink-0">
+            <div className="hidden md:block md:w-[300px] bg-muted/20 border-r p-5 space-y-5 overflow-y-auto shrink-0">
               <div>
-                <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest block mb-2">Tiempo Total en Sistema</span>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground block mb-2">Tiempo total en sistema</span>
                 <div className="flex items-baseline gap-2">
-                  <span className={cn("text-4xl font-light tracking-tighter tabular-nums leading-none", isRejected ? "text-red-600" : "text-emerald-950")}>
+                  <span className={cn("text-4xl font-bold tracking-tight tabular-nums leading-none", isRejected ? "text-red-600" : "text-foreground")}>
                     {loading ? '...' : totalCycleTime}
                   </span>
                 </div>
               </div>
 
-              <div className="space-y-4 pt-4 border-t border-slate-100">
+              <div className="space-y-4 pt-4 border-t">
                 <div className="flex gap-4">
-                  <div className="mt-1 shrink-0"><MapPin className="w-4 h-4 text-slate-300" /></div>
+                  <div className="mt-1 shrink-0"><MapPin className="size-4 text-muted-foreground" /></div>
                   <div>
-                    <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mb-1">Trayectoria</p>
-                    <p className="text-sm font-medium text-slate-700">{ticket.origin} → <span className="text-slate-900 font-semibold">{ticket.destination || (isRejected ? 'CANCELADO' : 'Pendiente')}</span></p>
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Trayectoria</p>
+                    <p className="text-sm font-medium text-muted-foreground">{ticket.origin} → <span className="text-foreground font-semibold">{ticket.destination || (isRejected ? 'CANCELADO' : 'Pendiente')}</span></p>
                   </div>
                 </div>
 
                 {ticket.urgencia && (
-                  <div className="p-4 bg-red-50 rounded-xl border border-red-100">
-                    <p className="text-[9px] uppercase font-black text-red-600 tracking-widest mb-1.5 flex items-center gap-1">
-                      <Siren className="w-3 h-3" /> Ingreso por urgencia
+                  <div className="p-3 bg-red-50 rounded-lg border border-red-200 text-red-700">
+                    <p className="text-[11px] uppercase font-semibold tracking-wider mb-1.5 flex items-center gap-1">
+                      <Siren className="size-3" /> Ingreso por urgencia
                     </p>
                     {ticket.pacienteDeclarado
-                      ? <p className="text-xs text-red-900 leading-relaxed">Declarado por Coordinación: <b>{ticket.pacienteDeclarado}</b></p>
-                      : <p className="text-xs text-red-900 leading-relaxed">Paciente ya internado (elegido del mapa de camas)</p>}
-                    <p className="text-xs text-red-900 leading-relaxed">
+                      ? <p className="text-xs leading-relaxed">Declarado por Coordinación: <b>{ticket.pacienteDeclarado}</b></p>
+                      : <p className="text-xs leading-relaxed">Paciente ya internado (elegido del mapa de camas)</p>}
+                    <p className="text-xs leading-relaxed">
                       {ticket.patientCode
                         ? `Vinculado al paciente ${ticket.patientCode}${ticket.eventoInternacion ? ` · evento ${ticket.eventoInternacion}` : ''}`
                         : 'Sin vincular a un paciente de PROGAL'}
@@ -302,48 +299,48 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                 )}
 
                 {isRejected && ticket.rejectionReason && (
-                  <div className="p-4 bg-red-50 rounded-xl border border-red-100">
-                    <p className="text-[9px] uppercase font-black text-red-600 tracking-widest mb-1.5 flex items-center gap-1">
-                      <XCircle className="w-3 h-3" /> Motivo de Cancelación
+                  <div className="p-3 bg-red-50 rounded-lg border border-red-200 text-red-700">
+                    <p className="text-[11px] uppercase font-semibold tracking-wider mb-1.5 flex items-center gap-1">
+                      <XCircle className="size-3" /> Motivo de cancelación
                     </p>
-                    <p className="text-xs font-bold text-red-900 leading-relaxed italic">"{ticket.rejectionReason}"</p>
+                    <p className="text-xs font-medium leading-relaxed italic">"{ticket.rejectionReason}"</p>
                   </div>
                 )}
 
                 {(ticket.workflow === WorkflowType.INTERNAL || ticket.workflow === WorkflowType.ROOM_CHANGE) && ticket.changeReason && (
-                  <div className="p-4 bg-amber-50 rounded-xl border border-amber-100">
-                    <p className="text-[9px] uppercase font-bold text-amber-600 tracking-widest mb-1.5 flex items-center gap-1">
-                      <Info className="w-3 h-3" /> Motivo del Traslado
+                  <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-amber-700">
+                    <p className="text-[11px] uppercase font-semibold tracking-wider mb-1.5 flex items-center gap-1">
+                      <Info className="size-3" /> Motivo del traslado
                     </p>
-                    <p className="text-xs font-semibold text-amber-900 leading-relaxed">{ticket.changeReason}</p>
+                    <p className="text-xs font-medium leading-relaxed">{ticket.changeReason}</p>
                   </div>
                 )}
               </div>
 
               {!isRejected && (
-                <div className="space-y-2 pt-4 border-t border-slate-100">
-                  <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Tiempos por Servicio</p>
+                <div className="space-y-2 pt-4 border-t">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Tiempos por servicio</p>
                   {loading ? (
-                    <p className="text-xs text-slate-400">Cargando...</p>
+                    <p className="text-xs text-muted-foreground">Cargando...</p>
                   ) : (
                     <div className="space-y-1.5">
                       <div className="flex justify-between items-center text-xs">
-                        <span className="text-slate-500 font-medium">Asignación (Admisión)</span>
-                        <span className="font-semibold text-slate-900 tabular-nums">{waitAdmission}</span>
+                        <span className="text-muted-foreground font-medium">Asignación (Admisión)</span>
+                        <span className="font-semibold text-foreground tabular-nums">{waitAdmission}</span>
                       </div>
                       {!isDirectTransfer && (
                         <div className="flex justify-between items-center text-xs">
-                          <span className="text-slate-500 font-medium">Preparación (Higiene)</span>
-                          <span className="font-semibold text-slate-900 tabular-nums">{cleaningTime}</span>
+                          <span className="text-muted-foreground font-medium">Preparación (Higiene)</span>
+                          <span className="font-semibold text-foreground tabular-nums">{cleaningTime}</span>
                         </div>
                       )}
                       <div className="flex justify-between items-center text-xs">
-                        <span className="text-slate-500 font-medium">Traslado (Camillería)</span>
-                        <span className="font-semibold text-slate-900 tabular-nums">{transportTime}</span>
+                        <span className="text-muted-foreground font-medium">Traslado (Camillería)</span>
+                        <span className="font-semibold text-foreground tabular-nums">{transportTime}</span>
                       </div>
                       <div className="flex justify-between items-center text-xs">
-                        <span className="text-slate-500 font-medium">Administrativo (Cierre)</span>
-                        <span className="font-semibold text-slate-900 tabular-nums">{adminTime}</span>
+                        <span className="text-muted-foreground font-medium">Administrativo (Cierre)</span>
+                        <span className="font-semibold text-foreground tabular-nums">{adminTime}</span>
                       </div>
                     </div>
                   )}
@@ -352,42 +349,40 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
             </div>
 
             {/* CONTENIDO PRINCIPAL: trazabilidad scrolleable + redactor fijo abajo */}
-            <div className="flex-1 flex flex-col min-h-0 min-w-0 bg-white">
+            <div className="flex-1 flex flex-col min-h-0 min-w-0">
 
               {/* SCROLL — sólo la trazabilidad (y métricas en móvil) scrollea */}
               <div ref={auditScrollRef} className="flex-1 overflow-y-auto overflow-x-hidden p-5 md:p-6 min-h-0 min-w-0">
 
               {/* SOLO MÓVIL: MÉTRICAS */}
               <div className="md:hidden grid grid-cols-2 gap-3 mb-6">
-                 <div className={cn("bg-slate-50 p-3 rounded-xl border border-slate-100", isRejected && "col-span-2")}>
-                    <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1">Tiempo Total</span>
-                    <span className={cn("text-2xl font-bold tabular-nums", isRejected ? "text-red-600" : "text-slate-900")}>{loading ? '...' : totalCycleTime}</span>
+                 <div className={cn("bg-card p-3 rounded-lg border", isRejected && "col-span-2")}>
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground block mb-1">Tiempo total</span>
+                    <span className={cn("text-2xl font-bold tabular-nums", isRejected ? "text-red-600" : "text-foreground")}>{loading ? '...' : totalCycleTime}</span>
                  </div>
                  {!isRejected && (
-                   <div className="bg-blue-50 p-3 rounded-xl border border-blue-100 flex flex-col justify-center">
-                      <span className="text-[8px] font-black text-blue-400 uppercase tracking-widest block mb-1">Traslado</span>
-                      <span className="text-2xl font-bold text-blue-900 tabular-nums">{loading ? '...' : transportTime}</span>
+                   <div className="bg-blue-50 p-3 rounded-lg border border-blue-200 flex flex-col justify-center">
+                      <span className="text-[11px] font-semibold text-blue-700 uppercase tracking-wider block mb-1">Traslado</span>
+                      <span className="text-2xl font-bold text-blue-800 tabular-nums">{loading ? '...' : transportTime}</span>
                    </div>
                  )}
                  {isRejected && ticket.rejectionReason && (
-                    <div className="col-span-2 p-3 bg-red-50 rounded-xl border border-red-100 text-[11px] font-medium text-red-900 italic">
+                    <div className="col-span-2 p-3 bg-red-50 rounded-lg border border-red-200 text-xs font-medium text-red-700 italic">
                        "{ticket.rejectionReason}"
                     </div>
                  )}
               </div>
 
-              <h4 className="text-[10px] uppercase font-bold text-emerald-950 tracking-[0.2em] mb-5 flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 opacity-30" /> Trazabilidad de Hitos
+              <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-5 flex items-center gap-2">
+                <TrendingUp className="size-4" /> Trazabilidad de hitos
               </h4>
 
               {loading ? (
-                <div className="flex items-center justify-center py-12">
-                  <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
-                </div>
+                <Cargando texto="Cargando trazabilidad…" className="py-12" />
               ) : timeline.length === 0 ? (
-                <p className="text-sm text-slate-400 text-center py-12">Sin movimientos registrados</p>
+                <p className="text-sm text-muted-foreground text-center py-12">Sin movimientos registrados</p>
               ) : (
-                <div className="relative pl-8 space-y-5 before:content-[''] before:absolute before:left-[11px] before:top-2 before:bottom-2 before:w-px before:bg-slate-100">
+                <div className="relative pl-8 space-y-5 before:content-[''] before:absolute before:left-[11px] before:top-2 before:bottom-2 before:w-px before:bg-border">
                   {timeline.map((item) => {
                     // ── Nodo de OBSERVACIÓN ───────────────────────────────────
                     if (item.kind === 'obs') {
@@ -397,28 +392,28 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                       return (
                         <div key={item.key} className="relative">
                           <div className={cn(
-                            "absolute -top-0.5 left-[-31px] flex items-center justify-center z-10 w-5 h-5 rounded-full border",
+                            "absolute -top-0.5 left-[-31px] flex items-center justify-center size-5 rounded-full border",
                             post ? "bg-violet-100 border-violet-200" : "bg-amber-100 border-amber-200"
                           )}>
-                            <MessageSquare className={cn("w-2.5 h-2.5", post ? "text-violet-600" : "text-amber-600")} />
+                            <MessageSquare className={cn("size-2.5", post ? "text-violet-600" : "text-amber-600")} />
                           </div>
                           <div className={cn(
-                            "rounded-xl border p-3",
-                            post ? "bg-violet-50/70 border-violet-200" : "bg-amber-50/60 border-amber-100"
+                            "rounded-lg border p-3",
+                            post ? "bg-violet-50 border-violet-200" : "bg-amber-50 border-amber-200"
                           )}>
                             {post && (
-                              <span className="inline-flex items-center gap-1 mb-1.5 px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200 text-[9px] font-bold uppercase tracking-wider">
+                              <span className="inline-flex items-center gap-1 mb-1.5 px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200 text-[10px] font-semibold uppercase tracking-wider">
                                 Post cierre
                               </span>
                             )}
                             {isOriginal && (
-                              <span className="inline-flex items-center gap-1 mb-1.5 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 text-[9px] font-bold uppercase tracking-wider">
+                              <span className="inline-flex items-center gap-1 mb-1.5 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 text-[10px] font-semibold uppercase tracking-wider">
                                 Observación de la solicitud
                               </span>
                             )}
-                            <p className="text-sm text-slate-800 leading-snug whitespace-pre-wrap wrap-break-word">{o.texto}</p>
-                            <p className="text-[10px] text-slate-400 font-medium mt-2 flex items-center gap-1.5 flex-wrap">
-                              <span className="font-semibold text-slate-600">{o.operador || o.usuario || 'Usuario'}</span>
+                            <p className="text-sm text-foreground leading-snug whitespace-pre-wrap wrap-break-word">{o.texto}</p>
+                            <p className="text-[11px] text-muted-foreground font-medium mt-2 flex items-center gap-1.5 flex-wrap">
+                              <span className="font-semibold text-foreground">{o.operador || o.usuario || 'Usuario'}</span>
                               <span>·</span>
                               <span>{formatDateTime(o.fecha)}</span>
                               {o.status && !post && (<><span>·</span><span className="italic">{o.status}</span></>)}
@@ -441,26 +436,26 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                     return (
                       <div key={item.key} className="relative">
                         <div className={cn(
-                          "absolute -top-0.5 flex items-center justify-center z-10",
-                          isFinal ? "left-[-36px] w-8 h-8 rounded-full bg-emerald-950 shadow-lg"
-                          : isModification ? "left-[-34px] w-7 h-7 rounded-full bg-amber-500 shadow-xs"
-                          : "left-[-32px] w-6 h-6 rounded-full bg-white border border-slate-200"
+                          "absolute -top-0.5 flex items-center justify-center rounded-full",
+                          isFinal ? "left-[-36px] size-8 bg-primary text-primary-foreground shadow-sm"
+                          : isModification ? "left-[-34px] size-7 bg-amber-100 border border-amber-200 text-amber-600"
+                          : "left-[-32px] size-6 bg-card border text-muted-foreground"
                         )}>
-                          <Icon className={cn("w-3.5 h-3.5", isFinal || isModification ? "text-white" : "text-slate-400")} />
+                          <Icon className="size-3.5" />
                         </div>
                         <div className="flex justify-between items-start">
                           <div className="flex-1 min-w-0 pr-3">
-                            <p className={cn("text-sm font-semibold", isFinal ? "text-emerald-950" : isModification ? "text-amber-700" : "text-slate-900")}>{config.label}</p>
-                            <p className="text-xs text-slate-400 font-medium">{evt.operador || evt.usuario || config.sublabel}</p>
+                            <p className={cn("text-sm font-semibold", isFinal ? "text-primary" : isModification ? "text-amber-700" : "text-foreground")}>{config.label}</p>
+                            <p className="text-xs text-muted-foreground font-medium">{evt.operador || evt.usuario || config.sublabel}</p>
                             {modification && (
-                              <div className="mt-2 p-3 bg-amber-50/70 border border-amber-100 rounded-lg space-y-1">
+                              <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-1">
                                 {modification.changes.map((c, ix) => (
-                                  <p key={ix} className="text-xs text-slate-700 font-medium leading-snug">
+                                  <p key={ix} className="text-xs text-foreground font-medium leading-snug">
                                     <span className="text-amber-600 font-bold">·</span> {c}
                                   </p>
                                 ))}
                                 {modification.motivo && (
-                                  <p className="text-[11px] text-amber-800 font-semibold italic mt-2 pt-2 border-t border-amber-100/80">
+                                  <p className="text-[11px] text-amber-700 font-semibold italic mt-2 pt-2 border-t border-amber-200">
                                     Motivo: {modification.motivo}
                                   </p>
                                 )}
@@ -468,11 +463,11 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                             )}
                           </div>
                           {isFinal ? (
-                            <Badge className="bg-emerald-950 text-white font-mono font-medium px-2 py-0.5 rounded-md tabular-nums border-none text-[11px] shrink-0">
+                            <Badge className="bg-primary text-primary-foreground font-mono font-medium px-2 py-0.5 rounded-md tabular-nums border-none text-[11px] shrink-0">
                               {formatTime(evt.fecha)}
                             </Badge>
                           ) : (
-                            <span className={cn("text-xs font-medium tabular-nums shrink-0", isModification ? "text-amber-600" : "text-slate-400")}>{formatTime(evt.fecha)}</span>
+                            <span className={cn("text-xs font-medium tabular-nums shrink-0", isModification ? "text-amber-600" : "text-muted-foreground")}>{formatTime(evt.fecha)}</span>
                           )}
                         </div>
                       </div>
@@ -486,84 +481,90 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
               {/* BARRA FIJA abajo. Desktop: composer inline (hay espacio). Mobile: botón
                   que abre un modal → libera alto y se ve más trazabilidad. */}
               {!loading && (
-                <div className="shrink-0 border-t border-slate-100 px-5 py-3 md:px-6 md:py-4 bg-white">
+                <div className="shrink-0 border-t px-5 py-3 md:px-6 md:py-4">
                   {/* DESKTOP: composer inline */}
                   <div className="hidden md:block space-y-2">
-                    <textarea
+                    <Textarea
                       value={obsText}
                       onChange={e => setObsText(e.target.value)}
                       maxLength={500}
                       rows={2}
+                      aria-label="Observación post-cierre"
+                      aria-invalid={!!obsError}
                       placeholder="Agregar observación post-cierre… (ej.: faltó firma del parte)"
-                      className="w-full min-h-[44px] max-h-[120px] rounded-xl border border-slate-200 p-2.5 text-sm leading-relaxed focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-hidden resize-y"
+                      className="min-h-[44px] max-h-[120px] leading-relaxed resize-y"
                     />
-                    {obsError && <p className="text-red-500 text-xs font-bold">{obsError}</p>}
+                    {obsError && <p role="alert" className="text-xs text-destructive">{obsError}</p>}
                     <div className="flex items-center justify-between gap-3 flex-wrap">
-                      <span className="text-[10px] text-slate-400">Quedará marcada como <span className="font-semibold text-violet-600">post cierre</span>.</span>
+                      <span className="text-xs text-muted-foreground">Quedará marcada como <span className="font-semibold text-violet-600">post cierre</span>.</span>
                       <div className="flex items-center gap-3">
-                        <span className="text-[11px] text-slate-300 tabular-nums">{obsText.length}/500</span>
-                        <Button onClick={submitObs} disabled={obsSaving || !obsText.trim()} className="rounded-xl h-9 px-5 bg-violet-600 hover:bg-violet-700 text-white">
+                        <span className="text-[11px] text-muted-foreground tabular-nums">{obsText.length}/500</span>
+                        <Button type="button" size="sm" onClick={submitObs} disabled={obsSaving || !obsText.trim()}>
+                          {obsSaving && <Loader2 className="size-4 animate-spin" />}
                           {obsSaving ? 'Guardando…' : 'Agregar'}
                         </Button>
                       </div>
                     </div>
                   </div>
                   {/* MOBILE: botón compacto → abre el modal de carga */}
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
                     onClick={() => { setObsError(''); setObsComposerOpen(true); }}
-                    className="md:hidden w-full flex items-center justify-center gap-2 h-11 rounded-xl border border-violet-200 bg-violet-50 text-violet-700 font-bold text-xs uppercase tracking-wide active:scale-[0.98] transition-transform"
+                    className="md:hidden w-full"
                   >
-                    <MessageSquare className="w-4 h-4" /> Agregar observación
-                  </button>
+                    <MessageSquare className="size-4" /> Agregar observación
+                  </Button>
                 </div>
               )}
             </div>
-          </div>
+          </DialogBody>
 
-          <div className="bg-slate-50/80 px-4 py-2.5 flex items-center justify-center md:justify-end border-t border-slate-100 shrink-0">
-             <Button onClick={onClose} variant="outline" className="w-full md:w-auto h-8 px-5 rounded-xl font-semibold text-xs uppercase tracking-widest bg-white hover:bg-slate-50 border-slate-200 text-slate-600 transition-all">
-               Cerrar Auditoría
+          <DialogFooter>
+             <Button type="button" onClick={onClose} variant="outline">
+               Cerrar auditoría
              </Button>
-          </div>
-        </div>
+          </DialogFooter>
       </DialogContent>
     </Dialog>
 
     {/* MOBILE: modal de carga de observación post-cierre (se abre desde el botón) */}
     <Dialog open={obsComposerOpen} onOpenChange={(open) => { if (!open && !obsSaving) setObsComposerOpen(false); }}>
-      <DialogContent className="sm:max-w-[440px] rounded-2xl">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="text-base font-bold text-slate-900 flex items-center gap-2 pr-6">
-            <MessageSquare className="w-4 h-4 text-violet-600" /> Agregar observación
+          <DialogTitle>
+            <MessageSquare className="size-5 text-violet-600" /> Agregar observación
           </DialogTitle>
-          <p className="text-[11px] text-slate-400 font-medium">
-            <span className="font-semibold text-violet-600">Post cierre</span> · {ticket.patientName}
-          </p>
+          <DialogDescription>
+            <span className="font-semibold text-violet-600">Post cierre</span> · <span className="font-medium text-foreground">{ticket.patientName}</span>
+          </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-2">
-          <textarea
+        <DialogBody className="space-y-2">
+          <Textarea
             value={obsText}
             onChange={e => setObsText(e.target.value)}
             maxLength={500}
             rows={5}
             autoFocus
+            aria-label="Observación post-cierre"
+            aria-invalid={!!obsError}
             placeholder="Nota post-cierre… (ej.: faltó firma del parte, corrección administrativa)"
-            className="w-full min-h-[120px] rounded-xl border border-slate-200 p-3 text-sm leading-relaxed focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 outline-hidden resize-y"
+            className="min-h-[120px] leading-relaxed resize-y"
           />
-          <div className="flex items-center justify-between gap-2 px-0.5">
-            <span className="text-[11px] text-slate-400">Queda en la auditoría del traslado.</span>
-            <span className="text-[11px] text-slate-300 tabular-nums shrink-0">{obsText.length}/500</span>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-muted-foreground">Queda en la auditoría del traslado.</span>
+            <span className="text-[11px] text-muted-foreground tabular-nums shrink-0">{obsText.length}/500</span>
           </div>
-          {obsError && <p className="text-red-500 text-xs font-bold">{obsError}</p>}
-        </div>
+          {obsError && <p role="alert" className="text-xs text-destructive">{obsError}</p>}
+        </DialogBody>
 
-        <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={() => setObsComposerOpen(false)} disabled={obsSaving} className="rounded-xl h-10 px-6">
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => setObsComposerOpen(false)} disabled={obsSaving}>
             Cancelar
           </Button>
-          <Button onClick={submitObs} disabled={obsSaving || !obsText.trim()} className="rounded-xl h-10 px-6 bg-violet-600 hover:bg-violet-700 text-white">
+          <Button type="button" onClick={submitObs} disabled={obsSaving || !obsText.trim()} className="min-w-[140px]">
+            {obsSaving && <Loader2 className="size-4 animate-spin" />}
             {obsSaving ? 'Guardando…' : 'Agregar'}
           </Button>
         </DialogFooter>

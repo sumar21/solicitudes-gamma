@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Info } from './Icons';
 import { Button } from './ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from './ui/dialog';
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogTitle } from './ui/dialog';
 import { cn } from '../lib/utils';
 import { AppAlertRequest, AppAlertTone, subscribeAppAlerts } from '../lib/appDialog';
 
@@ -65,7 +65,8 @@ export const AppAlertHost: React.FC = () => {
         className="sm:max-w-md"
         onOpenAutoFocus={e => { e.preventDefault(); buttonRef.current?.focus(); }}
       >
-        <div className="flex flex-col items-center gap-4 text-center sm:flex-row sm:items-start sm:text-left">
+        {/* El DialogContent ya no trae padding (§4.1): el cuerpo del aviso va en DialogBody. */}
+        <DialogBody className="flex flex-col items-center gap-4 space-y-0 text-center sm:flex-row sm:items-start sm:text-left">
           <div className={cn('flex size-10 shrink-0 items-center justify-center rounded-full', tone.circulo)}>
             <tone.Icon className="size-5" aria-hidden="true" />
           </div>
@@ -75,7 +76,7 @@ export const AppAlertHost: React.FC = () => {
               {mostrado.message}
             </DialogDescription>
           </div>
-        </div>
+        </DialogBody>
         <DialogFooter>
           <Button ref={buttonRef} type="button" onClick={close} className="sm:min-w-24">
             {mostrado.confirmLabel ?? 'Aceptar'}

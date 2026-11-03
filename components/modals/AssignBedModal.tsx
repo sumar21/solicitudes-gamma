@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { Button } from '../ui/button';
 import { Label } from '../ui/label';
 import { Combobox } from '../ui/combobox';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { HOSPITAL_LOCATIONS } from '../../lib/constants';
 
 interface AssignBedModalProps {
@@ -31,12 +31,15 @@ export const AssignBedModal: React.FC<AssignBedModalProps> = ({ open, onOpenChan
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[400px] rounded-3xl">
-        <DialogHeader><DialogTitle className="text-2xl">Asignación de Cama</DialogTitle></DialogHeader>
-        <div className="grid gap-4 py-4">
-          <p className="text-sm text-slate-500">Seleccione la cama de destino para el paciente.</p>
-          <div className="grid gap-2">
-            <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Cama / Habitación</Label>
+      {/* Modal de formulario canónico (DESIGN §4.1), formulario simple de un campo. */}
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Asignación de cama</DialogTitle>
+          <DialogDescription>Seleccione la cama de destino para el paciente.</DialogDescription>
+        </DialogHeader>
+        <DialogBody>
+          <div>
+            <Label className="mb-1 block text-xs font-medium text-muted-foreground">Cama / habitación <span className="text-destructive">*</span></Label>
             <Combobox obligatorio
               value={bedInput}
               onChange={setBedInput}
@@ -48,10 +51,10 @@ export const AssignBedModal: React.FC<AssignBedModalProps> = ({ open, onOpenChan
               buscar="Buscar cama..."
             />
           </div>
-        </div>
+        </DialogBody>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} className="rounded-xl h-12">Cancelar</Button>
-          <Button onClick={handleConfirm} className="bg-emerald-950 text-white rounded-xl h-12 px-8">Confirmar Cama</Button>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+          <Button type="button" onClick={handleConfirm} className="min-w-[140px]">Confirmar cama</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

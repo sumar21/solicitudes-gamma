@@ -6,7 +6,8 @@ import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Combobox } from '../ui/combobox';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
+import { AlertTriangle, Info } from 'lucide-react';
 import { ITR_SOURCES, ROOM_CHANGE_REASONS } from '../../lib/constants';
 import { isHitArea, isHraArea, roomSexConflict } from '../../lib/utils';
 import { roomCheckFor } from '../../lib/roomCheck';
@@ -20,6 +21,10 @@ const AREA_ORDER: Area[] = [
   Area.PISO_4, Area.PISO_5, Area.PISO_6, Area.PISO_7, Area.PISO_8,
   Area.HUC, Area.HUT, Area.HUQ, Area.HSS,
 ];
+// Label canónico de campo (DESIGN §3.3) y control de solo lectura (dato que viene de la cama).
+const claseLabel = 'mb-1 block text-xs font-medium text-muted-foreground';
+const claseSoloLectura = 'bg-muted/50 text-muted-foreground cursor-not-allowed focus-visible:ring-0 focus-visible:ring-offset-0';
+
 const areaRank = (a?: Area | string) => {
   const idx = AREA_ORDER.indexOf(a as Area);
   return idx === -1 ? AREA_ORDER.length : idx;
@@ -154,11 +159,16 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[550px] rounded-3xl max-h-[92vh] overflow-y-auto">
-        <DialogHeader><DialogTitle className="text-xl pr-6">Nueva Solicitud de Traslado</DialogTitle></DialogHeader>
-        <form id="create-ticket-form" onSubmit={handleSubmit} className="grid gap-4 py-2">
-          <div className="grid gap-2">
-            <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Tipo de Escenario</Label>
+      {/* Modal de formulario canónico (DESIGN §4.1): header → cuerpo con scroll → footer con las acciones. */}
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Nueva solicitud de traslado</DialogTitle>
+          <DialogDescription>Elegí el escenario, la cama de origen y la de destino.</DialogDescription>
+        </DialogHeader>
+        <DialogBody>
+        <form id="create-ticket-form" onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <Label className={claseLabel}>Tipo de escenario <span className="text-destructive">*</span></Label>
             <Combobox obligatorio
               value={workflow}
               onChange={(val) => {
@@ -182,9 +192,9 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
               placeholder="Seleccione flujo"
             />
           </div>
-          
-          <div className="grid gap-2">
-            <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Origen (Cama Ocupada)</Label>
+
+          <div className="space-y-2">
+            <Label className={claseLabel}>Origen (cama ocupada) <span className="text-destructive">*</span></Label>
             <Combobox obligatorio
               value={origin}
               onChange={(val) => {
@@ -205,20 +215,20 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
             )}
           </div>
 
-          <div className="grid gap-2">
-            <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Paciente</Label>
+          <div>
+            <Label className={claseLabel}>Paciente</Label>
             <Input
               required
               readOnly
               tabIndex={-1}
               placeholder={origin ? 'Sin nombre registrado' : 'Seleccione una cama de origen'}
               value={patientName}
-              className="h-10 rounded-xl bg-slate-50 text-slate-700 cursor-not-allowed focus-visible:ring-0 focus-visible:ring-offset-0"
+              className={claseSoloLectura}
             />
           </div>
 
-          <div className="grid gap-2">
-            <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Destino (Disponible/Prep)</Label>
+          <div className="space-y-2">
+            <Label className={claseLabel}>Destino (disponible / en preparación) <span className="text-destructive">*</span></Label>
             <Combobox obligatorio
               value={destination}
               onChange={setDestination}
@@ -230,20 +240,21 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
               buscar="Buscar cama de destino..."
             />
             {isolationBlocked.length > 0 && (
-              <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-300">
-                <span className="w-2 h-2 mt-1 rounded-full bg-emerald-800 shrink-0" />
-                <div className="text-xs text-emerald-900">
-                  <p className="font-bold">
+              // Banner info (§9.4): avisa que hay camas recortadas por aislamiento, nunca en silencio.
+              <div className="rounded-lg border p-3 flex items-start gap-2 text-sm bg-blue-50 border-blue-200 text-blue-700">
+                <Info className="size-4 mt-0.5 shrink-0" />
+                <div className="text-xs">
+                  <p className="font-semibold">
                     {isolationBlocked.length} cama{isolationBlocked.length > 1 ? 's' : ''} no se ofrece{isolationBlocked.length > 1 ? 'n' : ''} por reglas de aislamiento.
                   </p>
-                  <p className="font-medium opacity-90">{isolationBlocked[0].conflict.reason}</p>
+                  <p>{isolationBlocked[0].conflict.reason}</p>
                 </div>
               </div>
             )}
             {sexWarning && (
-              <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200">
-                <span className="w-2 h-2 mt-1 rounded-full bg-amber-500 shrink-0" />
-                <p className="text-xs font-medium text-amber-800">
+              <div className="rounded-lg border p-3 flex items-start gap-2 text-sm bg-amber-50 border-amber-200 text-amber-700">
+                <AlertTriangle className="size-4 mt-0.5 shrink-0" />
+                <p className="text-xs font-medium">
                   Incompatibilidad de sexo: el paciente a trasladar es {sexLabel(sexWarning.patientSex)}, pero la habitación destino ya tiene pacientes de sexo {sexLabel(sexWarning.patientSex === 'M' ? 'F' : 'M')}
                   {' '}({sexWarning.roommates.map(b => `${b.label} — ${b.patientName}`).join(', ')}). No bloquea, verificá antes de confirmar.
                 </p>
@@ -253,8 +264,8 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
           </div>
 
           {workflow === WorkflowType.INTERNAL && (
-            <div className="grid gap-2">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Motivo del Traslado <span className="text-red-500">*</span></Label>
+            <div>
+              <Label className={claseLabel}>Motivo del traslado <span className="text-destructive">*</span></Label>
               <Combobox obligatorio
                 value={reason}
                 onChange={setReason}
@@ -265,27 +276,28 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
           )}
 
           {workflow === WorkflowType.ITR_TO_FLOOR && (
-            <div className="grid gap-2">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Origen ITR / Financiador</Label>
+            <div>
+              <Label className={claseLabel}>Origen ITR / financiador</Label>
               <Input
                 readOnly
                 tabIndex={-1}
                 placeholder={origin ? 'Sin financiador registrado' : 'Seleccione una cama de origen'}
                 value={itrSource}
-                className="h-10 rounded-xl bg-slate-50 text-slate-700 cursor-not-allowed focus-visible:ring-0 focus-visible:ring-offset-0"
+                className={claseSoloLectura}
               />
             </div>
           )}
 
           {/* Los aislamientos ya no se cargan desde la app: vienen de PROGAL y se ven en el mapa de camas. */}
 
-          <div className="grid gap-2">
-            <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Observaciones (Opcional)</Label>
-            <Input placeholder="Notas para la azafata o equipo..." value={observations} onChange={e => setObservations(e.target.value)} className="h-10 rounded-xl" />
+          <div>
+            <Label className={claseLabel}>Observaciones (opcional)</Label>
+            <Input placeholder="Notas para la azafata o equipo..." value={observations} onChange={e => setObservations(e.target.value)} />
           </div>
         </form>
-        <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)} className="rounded-xl h-10 px-6">Cancelar</Button>
+        </DialogBody>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
           <Button
             type="submit"
             form="create-ticket-form"
@@ -295,9 +307,9 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
               (workflow === WorkflowType.INTERNAL && !reason) ||
               !!(origin && activeTicketByOrigin.has(origin))
             }
-            className="bg-emerald-950 text-white rounded-xl h-10 px-8 disabled:opacity-50"
+            className="min-w-[140px]"
           >
-            Generar Ticket
+            Generar ticket
           </Button>
         </DialogFooter>
       </DialogContent>

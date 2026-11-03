@@ -4,7 +4,7 @@ import type { UrgenciaLink } from '../../hooks/useHospitalState';
 import { Button } from '../ui/button';
 import { Label } from '../ui/label';
 import { Combobox } from '../ui/combobox';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { bedEventKey, formatBedName } from '../../lib/utils';
 import { Siren, UserCheck, AlertTriangle } from 'lucide-react';
 
@@ -76,33 +76,37 @@ export const ConsolidarUrgenciaModal: React.FC<Props> = ({ open, onOpenChange, t
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[550px] rounded-3xl max-h-[92vh] overflow-y-auto">
+      {/* Modal de formulario canónico (DESIGN §4.1). */}
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle className="text-xl pr-6 flex items-center gap-2">
-            <Siren className="h-5 w-5 text-red-600" /> Vincular paciente y consolidar
+          <DialogTitle>
+            <Siren className="size-5 text-red-600" /> Vincular paciente y consolidar
           </DialogTitle>
+          <DialogDescription>Urgencia / ingreso directo de <span className="font-medium text-foreground">{declarado}</span></DialogDescription>
         </DialogHeader>
-        <form id="consolidar-urgencia-form" onSubmit={handleSubmit} className="grid gap-4 py-2">
+        <DialogBody>
+        <form id="consolidar-urgencia-form" onSubmit={handleSubmit} className="space-y-4">
 
-          <div className="rounded-2xl border border-red-200 bg-red-50/60 p-3 grid gap-2">
+          {/* Lo que cargó Coordinación + la indicación: caja con tinte de urgencia (rojo semántico §1.4). */}
+          <div className="space-y-3 p-4 rounded-lg border border-red-200 bg-red-50">
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-0.5 min-w-0">
-                <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Cargado por Coordinación</span>
-                <span className="text-sm font-semibold text-slate-800 truncate" title={declarado}>{declarado}</span>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Cargado por Coordinación</span>
+                <span className="text-sm font-semibold text-foreground truncate" title={declarado}>{declarado}</span>
               </div>
               <div className="grid gap-0.5 min-w-0">
-                <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Destino</span>
-                <span className="text-sm text-slate-700 truncate">{ticket.destination ? formatBedName(ticket.destination) : '—'}</span>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Destino</span>
+                <span className="text-sm text-foreground truncate">{ticket.destination ? formatBedName(ticket.destination) : '—'}</span>
               </div>
             </div>
-            <p className="text-xs text-red-800 leading-snug">
+            <p className="text-xs text-red-700 leading-snug">
               Ingresá al paciente en PROGAL y elegilo acá. Así el traslado y su trayectoria quedan asociados a una persona
               y a un evento de internación reales.
             </p>
           </div>
 
-          <div className="grid gap-2">
-            <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Paciente en PROGAL <span className="text-red-500">*</span></Label>
+          <div className="space-y-2">
+            <Label className="mb-1 block text-xs font-medium text-muted-foreground">Paciente en PROGAL <span className="text-destructive">*</span></Label>
             <Combobox obligatorio
               value={patientCode}
               onChange={(v) => { pickedByUser.current = true; setPatientCode(v); }}
@@ -114,21 +118,21 @@ export const ConsolidarUrgenciaModal: React.FC<Props> = ({ open, onOpenChange, t
               buscar="Buscar por nombre, cama o DNI..."
             />
             {!picked && !suggested && (
-              <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200">
-                <AlertTriangle className="w-3.5 h-3.5 mt-0.5 text-amber-600 shrink-0" />
-                <p className="text-xs font-medium text-amber-800">
+              <div className="rounded-lg border p-3 flex items-start gap-2 text-sm bg-amber-50 border-amber-200 text-amber-700">
+                <AlertTriangle className="size-4 mt-0.5 shrink-0" />
+                <p className="text-xs font-medium">
                   Todavía no figura internado en la cama destino. Ingresalo en PROGAL: el mapa se actualiza solo en
                   unos instantes y vas a poder elegirlo.
                 </p>
               </div>
             )}
             {picked && suggested === patientCode && (
-              <p className="text-[11px] text-emerald-700 font-medium px-1">Sugerido: es quien PROGAL tiene internado en la cama destino.</p>
+              <p className="text-xs text-emerald-700 font-medium">Sugerido: es quien PROGAL tiene internado en la cama destino.</p>
             )}
             {pickedElsewhere && (
-              <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200">
-                <AlertTriangle className="w-3.5 h-3.5 mt-0.5 text-amber-600 shrink-0" />
-                <p className="text-xs font-medium text-amber-800">
+              <div className="rounded-lg border p-3 flex items-start gap-2 text-sm bg-amber-50 border-amber-200 text-amber-700">
+                <AlertTriangle className="size-4 mt-0.5 shrink-0" />
+                <p className="text-xs font-medium">
                   Ese paciente está en {formatBedName(picked!.label)}, no en {formatBedName(ticket.destination!)}. Verificá que sea el correcto.
                 </p>
               </div>
@@ -136,35 +140,36 @@ export const ConsolidarUrgenciaModal: React.FC<Props> = ({ open, onOpenChange, t
           </div>
 
           {picked && (
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3 grid grid-cols-2 gap-3">
+            <div className="p-4 bg-secondary/20 rounded-lg border border-border/50 grid grid-cols-2 gap-3">
               <div className="grid gap-0.5 min-w-0">
-                <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Paciente</span>
-                <span className="text-sm font-semibold text-slate-800 truncate">{picked.patientName}</span>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Paciente</span>
+                <span className="text-sm font-semibold text-foreground truncate">{picked.patientName}</span>
               </div>
               <div className="grid gap-0.5 min-w-0">
-                <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Código</span>
-                <span className="text-sm text-slate-700 tabular-nums">{String(picked.patientCode).trim()}</span>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Código</span>
+                <span className="text-sm text-foreground tabular-nums">{String(picked.patientCode).trim()}</span>
               </div>
               <div className="grid gap-0.5 min-w-0">
-                <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Evento de internación</span>
-                <span className="text-sm text-slate-700 truncate">{bedEventKey(picked) || '—'}</span>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Evento de internación</span>
+                <span className="text-sm text-foreground truncate">{bedEventKey(picked) || '—'}</span>
               </div>
               <div className="grid gap-0.5 min-w-0">
-                <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Obra social</span>
-                <span className="text-sm text-slate-700 truncate">{picked.institution || '—'}</span>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Obra social</span>
+                <span className="text-sm text-foreground truncate">{picked.institution || '—'}</span>
               </div>
             </div>
           )}
         </form>
-        <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)} className="rounded-xl h-10 px-6">Cancelar</Button>
+        </DialogBody>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
           <Button
             type="submit"
             form="consolidar-urgencia-form"
             disabled={!picked}
-            className="bg-purple-600 hover:bg-purple-700 text-white rounded-xl h-10 px-8 disabled:opacity-50"
+            className="min-w-[140px]"
           >
-            <UserCheck className="w-4 h-4 mr-2" /> Vincular y consolidar
+            <UserCheck className="size-4" /> Vincular y consolidar
           </Button>
         </DialogFooter>
       </DialogContent>

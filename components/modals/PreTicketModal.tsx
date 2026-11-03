@@ -4,7 +4,8 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Combobox } from '../ui/combobox';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
+import { Checkbox } from '../ui/checkbox';
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { MOVIMIENTOS_PRETICKET, REQUISITOS_CAMA, REQUISITO_SIN } from '../../lib/constants';
 import { formatBedName, isHitArea, isHraArea, cn } from '../../lib/utils';
 import { Check, Siren } from 'lucide-react';
@@ -17,6 +18,10 @@ const AREA_ORDER: Area[] = [
   Area.PISO_4, Area.PISO_5, Area.PISO_6, Area.PISO_7, Area.PISO_8,
   Area.HUC, Area.HUT, Area.HUQ, Area.HSS,
 ];
+// Label canónico de campo (DESIGN §3.3) y caja de dato precargado (solo lectura, mismo alto que un input).
+const claseLabel = 'mb-1 block text-xs font-medium text-muted-foreground';
+const claseSoloLectura = 'h-10 px-3 flex items-center rounded-md border bg-muted/50 text-sm min-w-0';
+
 const areaRank = (a?: Area | string) => {
   const idx = AREA_ORDER.indexOf(a as Area);
   return idx === -1 ? AREA_ORDER.length : idx;
@@ -151,29 +156,35 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[550px] rounded-3xl max-h-[92vh] overflow-y-auto">
-        <DialogHeader><DialogTitle className="text-xl pr-6">{urgencia ? 'Traslado directo por urgencia' : 'Nuevo Pre-ticket de Traslado'}</DialogTitle></DialogHeader>
-        <form id="create-pre-ticket-form" onSubmit={handleSubmit} className="grid gap-4 py-2">
+      {/* Modal de formulario canónico (DESIGN §4.1). */}
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{urgencia ? 'Traslado directo por urgencia' : 'Nuevo pre-ticket de traslado'}</DialogTitle>
+          <DialogDescription>
+            {urgencia ? 'El ticket queda "Por Consolidar" para Admisión.' : 'Admisión configura el destino después.'}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody>
+        <form id="create-pre-ticket-form" onSubmit={handleSubmit} className="space-y-4">
 
           {/* Urgencia / ingreso directo: el paciente va directo a la cama y todavía no está internado. */}
           <label
             className={cn(
-              'flex items-start gap-3 rounded-2xl border p-3 cursor-pointer transition-colors',
-              urgencia ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-white hover:bg-slate-50',
+              'flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors',
+              urgencia ? 'border-red-200 bg-red-50' : 'bg-card hover:bg-muted/50',
             )}
           >
-            <input
-              type="checkbox"
+            <Checkbox
               checked={urgencia}
-              onChange={e => setUrgencia(e.target.checked)}
-              className="mt-0.5 h-4 w-4 shrink-0 accent-red-600"
+              onCheckedChange={v => setUrgencia(v === true)}
+              className="mt-0.5"
               aria-label="Urgencia / ingreso directo"
             />
             <span className="grid gap-0.5">
-              <span className={cn('flex items-center gap-1.5 text-sm font-bold', urgencia ? 'text-red-800' : 'text-slate-700')}>
-                <Siren className="h-3.5 w-3.5" /> Urgencia / ingreso directo
+              <span className={cn('flex items-center gap-1.5 text-sm font-semibold', urgencia ? 'text-red-700' : 'text-foreground')}>
+                <Siren className="size-3.5" /> Urgencia / ingreso directo
               </span>
-              <span className={cn('text-xs leading-snug', urgencia ? 'text-red-700' : 'text-slate-500')}>
+              <span className={cn('text-xs leading-snug', urgencia ? 'text-red-700' : 'text-muted-foreground')}>
                 El paciente va directo a la cama, sin pasar por la azafata. El ticket queda "Por Consolidar" para Admisión.
               </span>
             </span>
@@ -181,8 +192,8 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
 
           {urgencia ? (
             <>
-              <div className="grid gap-2">
-                <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">¿El paciente ya está internado? <span className="text-red-500">*</span></Label>
+              <div>
+                <Label className={claseLabel}>¿El paciente ya está internado? <span className="text-destructive">*</span></Label>
                 <div role="radiogroup" aria-label="¿El paciente ya está internado?" className="grid grid-cols-2 gap-2">
                   {([
                     ['NO_INTERNADO', 'No internado', 'Viene de guardia / afuera'],
@@ -197,17 +208,17 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
                         aria-checked={on}
                         onClick={() => { setUrgenciaPaciente(v); setOriginBedLabel(''); setPacienteNombre(''); }}
                         className={cn(
-                          'flex flex-col items-start gap-0.5 rounded-xl border px-3 py-2 text-left transition-colors',
-                          on ? 'border-red-300 bg-red-50 text-red-900' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+                          'flex flex-col items-start gap-0.5 rounded-lg border px-3 py-2 text-left transition-colors',
+                          on ? 'border-red-200 bg-red-50 text-red-700' : 'bg-card text-foreground hover:bg-muted/50',
                         )}
                       >
-                        <span className="flex items-center gap-2 text-sm font-bold">
-                          <span className={cn('flex h-4 w-4 shrink-0 items-center justify-center rounded-full border', on ? 'border-red-600' : 'border-slate-300')}>
-                            {on && <span className="h-2 w-2 rounded-full bg-red-600" />}
+                        <span className="flex items-center gap-2 text-sm font-semibold">
+                          <span className={cn('flex size-4 shrink-0 items-center justify-center rounded-full border', on ? 'border-red-600' : 'border-muted-foreground')}>
+                            {on && <span className="size-2 rounded-full bg-red-600" />}
                           </span>
                           {label}
                         </span>
-                        <span className={cn('pl-6 text-[11px] leading-snug', on ? 'text-red-700' : 'text-slate-400')}>{hint}</span>
+                        <span className={cn('pl-6 text-[11px] leading-snug', on ? 'text-red-700' : 'text-muted-foreground')}>{hint}</span>
                       </button>
                     );
                   })}
@@ -215,8 +226,8 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
               </div>
               {internado ? (
                 <>
-                  <div className="grid gap-2">
-                    <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Paciente internado <span className="text-red-500">*</span></Label>
+                  <div>
+                    <Label className={claseLabel}>Paciente internado <span className="text-destructive">*</span></Label>
                     <Combobox obligatorio
                       value={originBedLabel}
                       onChange={setOriginBedLabel}
@@ -227,16 +238,16 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
                   </div>
                   {blockingTicket && <OriginBedBusyNotice ticket={blockingTicket} beds={beds} />}
                   {selectedBed && (
-                    <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3">
-                      <div className="grid gap-1">
-                        <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Obra Social</Label>
-                        <div className="h-10 px-3 flex items-center rounded-xl bg-slate-50 text-slate-700 text-sm min-w-0" title={selectedBed.institution || ''}>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="min-w-0">
+                        <Label className={claseLabel}>Obra social</Label>
+                        <div className={claseSoloLectura} title={selectedBed.institution || ''}>
                           <span className="truncate">{selectedBed.institution || '—'}</span>
                         </div>
                       </div>
-                      <div className="grid gap-1">
-                        <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Cama actual</Label>
-                        <div className="h-10 px-3 flex items-center rounded-xl bg-slate-50 text-slate-700 text-sm min-w-0" title={formatBedName(selectedBed.label)}>
+                      <div className="min-w-0">
+                        <Label className={claseLabel}>Cama actual</Label>
+                        <div className={claseSoloLectura} title={formatBedName(selectedBed.label)}>
                           <span className="truncate">{formatBedName(selectedBed.label)}</span>
                         </div>
                       </div>
@@ -244,24 +255,25 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
                   )}
                 </>
               ) : (
-              <div className="grid gap-2">
-                <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Nombre y apellido del paciente <span className="text-red-500">*</span></Label>
+              <div>
+                <Label htmlFor="preticket-paciente-nombre" className={claseLabel}>Nombre y apellido del paciente <span className="text-destructive">*</span></Label>
                 <Input
+                  id="preticket-paciente-nombre"
                   value={pacienteNombre}
                   onChange={e => setPacienteNombre(e.target.value)}
                   placeholder="Ej.: Pérez, Juan"
                   maxLength={120}
                   autoComplete="off"
-                  className="h-10 rounded-xl"
+                  aria-invalid={pacienteNombre.trim().length > 0 && !nombreOk}
                 />
                 {pacienteNombre.trim().length > 0 && !nombreOk && (
-                  <p className="text-[11px] text-red-600">Cargá nombre y apellido.</p>
+                  <p className="text-xs text-destructive mt-1">Cargá nombre y apellido.</p>
                 )}
-                <p className="text-[11px] text-slate-400">Admisión lo ingresa en PROGAL y lo vincula al paciente real al consolidar.</p>
+                <p className="text-xs text-muted-foreground mt-1">Admisión lo ingresa en PROGAL y lo vincula al paciente real al consolidar.</p>
               </div>
               )}
-              <div className="grid gap-2">
-                <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Destino (Disponible/Prep) <span className="text-red-500">*</span></Label>
+              <div>
+                <Label className={claseLabel}>Destino (disponible / en preparación) <span className="text-destructive">*</span></Label>
                 <Combobox obligatorio
                   value={destinoBedLabel}
                   onChange={setDestinoBedLabel}
@@ -273,8 +285,8 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
             </>
           ) : (
           <>
-          <div className="grid gap-2">
-            <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Paciente</Label>
+          <div>
+            <Label className={claseLabel}>Paciente <span className="text-destructive">*</span></Label>
             <Combobox obligatorio
               value={originBedLabel}
               onChange={setOriginBedLabel}
@@ -287,24 +299,24 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
 
           {/* Precarga desde el paciente: obra social + origen (la Coordinadora no los carga). */}
           {selectedBed && (
-            <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3">
-              <div className="grid gap-1">
-                <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Obra Social</Label>
-                <div className="h-10 px-3 flex items-center rounded-xl bg-slate-50 text-slate-700 text-sm min-w-0" title={selectedBed.institution || ''}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="min-w-0">
+                <Label className={claseLabel}>Obra social</Label>
+                <div className={claseSoloLectura} title={selectedBed.institution || ''}>
                   <span className="truncate">{selectedBed.institution || '—'}</span>
                 </div>
               </div>
-              <div className="grid gap-1">
-                <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Origen</Label>
-                <div className="h-10 px-3 flex items-center rounded-xl bg-slate-50 text-slate-700 text-sm min-w-0" title={formatBedName(selectedBed.label)}>
+              <div className="min-w-0">
+                <Label className={claseLabel}>Origen</Label>
+                <div className={claseSoloLectura} title={formatBedName(selectedBed.label)}>
                   <span className="truncate">{formatBedName(selectedBed.label)}</span>
                 </div>
               </div>
             </div>
           )}
 
-          <div className="grid gap-2">
-            <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Movimiento <span className="text-red-500">*</span></Label>
+          <div>
+            <Label className={claseLabel}>Movimiento <span className="text-destructive">*</span></Label>
             <Combobox obligatorio
               value={movimiento}
               onChange={setMovimiento}
@@ -317,8 +329,8 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
           )}
 
           {/* Requisitos: también en una urgencia (el paciente puede necesitar colchón, autólisis…). */}
-          <div className="grid gap-2">
-            <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Requisitos de la nueva cama</Label>
+          <div>
+            <Label className={claseLabel}>Requisitos de la nueva cama</Label>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {REQUISITOS_CAMA.map(r => {
                 const active = requisitos.includes(r);
@@ -326,19 +338,18 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
                   <button
                     key={r}
                     type="button"
+                    aria-pressed={active}
                     onClick={() => toggleRequisito(r)}
-                    className={
-                      'flex items-center gap-2 px-3 h-10 rounded-xl border text-sm text-left transition-colors ' +
-                      (active
-                        ? 'bg-emerald-50 border-emerald-300 text-emerald-900 font-medium'
-                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50')
-                    }
+                    className={cn(
+                      'flex items-center gap-2 px-3 h-10 rounded-md border text-sm text-left transition-colors',
+                      active ? 'bg-primary/5 border-primary/40 text-foreground font-medium' : 'bg-card text-muted-foreground hover:bg-muted/50',
+                    )}
                   >
-                    <span className={
-                      'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border ' +
-                      (active ? 'bg-emerald-600 border-emerald-600 text-white' : 'border-slate-300')
-                    }>
-                      {active && <Check className="h-3 w-3" strokeWidth={3} />}
+                    <span className={cn(
+                      'flex size-4 shrink-0 items-center justify-center rounded-sm border',
+                      active ? 'bg-primary border-primary text-primary-foreground' : 'border-muted-foreground',
+                    )}>
+                      {active && <Check className="size-3" strokeWidth={3} />}
                     </span>
                     <span className="min-w-0 truncate">{r}</span>
                   </button>
@@ -347,18 +358,20 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
             </div>
           </div>
 
-          <div className="grid gap-2">
-            <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Observación (Opcional)</Label>
-            <Input placeholder="Información adicional para Admisión..." value={observations} onChange={e => setObservations(e.target.value)} className="h-10 rounded-xl" />
+          <div>
+            <Label className={claseLabel}>Observación (opcional)</Label>
+            <Input placeholder="Información adicional para Admisión..." value={observations} onChange={e => setObservations(e.target.value)} />
           </div>
         </form>
-        <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)} className="rounded-xl h-10 px-6">Cancelar</Button>
+        </DialogBody>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
           <Button
             type="submit"
             form="create-pre-ticket-form"
             disabled={!canSubmit}
-            className={cn('text-white rounded-xl h-10 px-8 disabled:opacity-50', urgencia ? 'bg-red-700 hover:bg-red-800' : 'bg-emerald-950')}
+            variant={urgencia ? 'destructive' : 'default'}
+            className="min-w-[140px]"
           >
             {urgencia ? 'Registrar urgencia' : 'Enviar a Admisión'}
           </Button>

@@ -5,7 +5,7 @@ import { cn, formatBedName, formatDateReadable, normalizeText } from '../lib/uti
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Input } from '../components/ui/input';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { Calendar } from '../components/ui/calendar';
 import { aIso, deIso } from '../lib/fechaIso';
@@ -622,22 +622,26 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
 
       {/* Confirmación de consolidado */}
       <Dialog open={!!confirmBed} onOpenChange={() => setConfirmBed(null)}>
-        <DialogContent className="sm:max-w-[420px] rounded-3xl">
+        {/* Confirmación (DESIGN §4.2) dentro del modal canónico §4.1; no es destructiva → tile de marca. */}
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-lg flex items-center gap-2">
-              <DoorClosed className="w-5 h-5 text-emerald-600" /> Consolidar contra PROGAL
-            </DialogTitle>
+            <DialogTitle>Consolidar contra PROGAL</DialogTitle>
+            <DialogDescription>Cama <span className="font-medium text-foreground">{confirmBed?.label}</span></DialogDescription>
           </DialogHeader>
-          <p className="text-sm text-slate-600">
-            Se cerrará el ticket de limpieza de <strong>{confirmBed?.label}</strong> y la cama
-            volverá a reflejar el estado real de <strong>PROGAL</strong>. Esta acción quita el overlay
-            "Limpia" del mapa.
-          </p>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setConfirmBed(null)} className="rounded-xl h-10">Cancelar</Button>
-            <Button onClick={() => confirmBed && consolidate(confirmBed.label)}
-              className="rounded-xl h-10 bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-2">
-              <DoorClosed className="w-4 h-4" /> Consolidar
+          <DialogBody>
+            <div className="size-10 rounded-full bg-primary/10 text-primary flex items-center justify-center">
+              <DoorClosed className="size-5" />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Se cerrará el ticket de limpieza de <strong className="text-foreground">{confirmBed?.label}</strong> y la cama
+              volverá a reflejar el estado real de <strong className="text-foreground">PROGAL</strong>. Esta acción quita el overlay
+              "Limpia" del mapa.
+            </p>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setConfirmBed(null)}>Cancelar</Button>
+            <Button type="button" onClick={() => confirmBed && consolidate(confirmBed.label)} className="min-w-[140px]">
+              <DoorClosed className="size-4" /> Consolidar
             </Button>
           </DialogFooter>
         </DialogContent>
