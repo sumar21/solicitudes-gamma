@@ -16,29 +16,18 @@ interface NotificationToastProps {
   onTap?: (notification: Notification) => void;
 }
 
-const iconFor = (type: NotificationType) => {
+// Tono semántico por tipo (DESIGN §1.1): nuevo traslado = info, cambio de estado = éxito,
+// por consolidar = aviso. El resto, neutro.
+const tonoFor = (type: NotificationType) => {
   switch (type) {
     case NotificationType.NEW_TICKET:
-      return <AlertCircle className="w-5 h-5 text-blue-500 shrink-0" />;
+      return { Icon: AlertCircle, icono: 'text-info', acento: 'border-l-info', barra: 'bg-info' };
     case NotificationType.STATUS_UPDATE:
-      return <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />;
+      return { Icon: CheckCircle2, icono: 'text-success', acento: 'border-l-success', barra: 'bg-success' };
     case NotificationType.POR_CONSOLIDAR:
-      return <Clock className="w-5 h-5 text-amber-500 shrink-0" />;
+      return { Icon: Clock, icono: 'text-warning', acento: 'border-l-warning', barra: 'bg-warning' };
     default:
-      return <Bell className="w-5 h-5 text-slate-500 shrink-0" />;
-  }
-};
-
-const bgFor = (type: NotificationType) => {
-  switch (type) {
-    case NotificationType.NEW_TICKET:
-      return 'border-l-blue-500 bg-blue-50/95';
-    case NotificationType.STATUS_UPDATE:
-      return 'border-l-emerald-500 bg-emerald-50/95';
-    case NotificationType.POR_CONSOLIDAR:
-      return 'border-l-amber-500 bg-amber-50/95';
-    default:
-      return 'border-l-slate-500 bg-white/95';
+      return { Icon: Bell, icono: 'text-muted-foreground', acento: 'border-l-muted-foreground', barra: 'bg-muted-foreground' };
   }
 };
 
@@ -72,40 +61,41 @@ const SingleToast: React.FC<{
   }, [onDismiss]);
 
   const n = toast.notification;
+  const tono = tonoFor(n.type);
 
   return (
+    // Superficie de lo que flota (popover) con acento a la izquierda del color del tipo.
     <div
       className={cn(
-        'relative w-full max-w-sm mx-auto rounded-xl shadow-lg border border-slate-200/50 border-l-4 overflow-hidden cursor-pointer',
-        'transition-all duration-300 ease-out',
+        'relative w-full max-w-sm mx-auto overflow-hidden rounded-lg border border-l-4 bg-popover text-popover-foreground shadow-md cursor-pointer',
+        'transition-all duration-300 ease-out motion-reduce:transition-none',
         visible ? 'translate-y-0 opacity-100' : '-translate-y-4 opacity-0',
-        bgFor(n.type),
+        tono.acento,
       )}
       onClick={() => { onTap?.(); setVisible(false); setTimeout(onDismiss, 300); }}
     >
-      <div className="flex items-start gap-3 p-3 pr-8">
-        {iconFor(n.type)}
+      <div className="flex items-start gap-3 p-3 pr-9">
+        <tono.Icon className={cn('size-4 mt-0.5 shrink-0', tono.icono)} aria-hidden="true" />
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-bold text-slate-900 leading-tight">{n.title}</p>
-          <p className="text-xs text-slate-600 mt-0.5 leading-snug line-clamp-2">{n.message}</p>
+          <p className="text-sm font-semibold leading-tight text-foreground">{n.title}</p>
+          <p className="mt-0.5 text-xs leading-snug text-muted-foreground line-clamp-2">{n.message}</p>
         </div>
       </div>
 
-      {/* Close button */}
+      {/* Cerrar */}
       <button
-        className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded-full hover:bg-black/10 transition-colors"
+        type="button"
+        aria-label="Cerrar notificación"
+        className="absolute top-2 right-2 flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         onClick={(e) => { e.stopPropagation(); setVisible(false); setTimeout(onDismiss, 300); }}
       >
-        <X className="w-3.5 h-3.5 text-slate-400" />
+        <X className="size-3.5" aria-hidden="true" />
       </button>
 
-      {/* Progress bar */}
-      <div className="h-0.5 bg-slate-200/50">
+      {/* Barra de tiempo hasta que se cierra sola */}
+      <div className="h-0.5 bg-muted">
         <div
-          className={cn(
-            'h-full transition-[width] ease-linear',
-            n.type === NotificationType.NEW_TICKET ? 'bg-blue-400' : 'bg-emerald-400',
-          )}
+          className={cn('h-full transition-[width] ease-linear', tono.barra)}
           style={{ width: `${progress}%`, transitionDuration: '50ms' }}
         />
       </div>
@@ -117,7 +107,7 @@ export const NotificationToasts: React.FC<NotificationToastProps> = ({ toasts, o
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed top-4 left-0 right-0 z-99999 flex flex-col items-center gap-2 px-4 pointer-events-none">
+    <div className="fixed top-4 left-0 right-0 z-toast flex flex-col items-center gap-2 px-4 pointer-events-none">
       {toasts.map((t) => (
         <div key={t.id} className="pointer-events-auto w-full max-w-sm">
           <SingleToast

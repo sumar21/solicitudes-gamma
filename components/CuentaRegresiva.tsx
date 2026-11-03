@@ -12,6 +12,7 @@ export const CuentaRegresivaDeActualizacion: React.FC = () => {
   return <Chip recargaEn={recargaEn} />;
 };
 
+// Chip de aviso (tono warning, DESIGN §1.1): falta algo, la recarga.
 // Aparte para que el reloj de cada segundo corra solo con una cuenta en curso.
 const Chip: React.FC<{ recargaEn: number }> = ({ recargaEn }) => {
   const { retenida, actualizarAhora } = useActualizacion();
@@ -28,7 +29,7 @@ const Chip: React.FC<{ recargaEn: number }> = ({ recargaEn }) => {
       title="Actualizar ahora"
       aria-label="Actualizar ahora"
       aria-describedby={idDelTiempo}
-      className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-3 text-xs font-medium text-amber-900 transition-colors hover:bg-amber-100"
+      className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-warning/30 bg-warning/10 px-3 text-xs font-medium text-warning transition-colors hover:bg-warning/20 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
     >
       <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
       <span id={idDelTiempo}>
