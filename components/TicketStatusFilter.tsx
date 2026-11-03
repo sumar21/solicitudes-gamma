@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import { TicketStatus } from '../types';
 import { Filter, ChevronDown, X } from './Icons';
 import { Siren } from 'lucide-react';
-import { statusLabel } from '../lib/estados';
+import { statusLabel, tonoTicket } from '../lib/estados';
+import { PUNTO_TONO } from './ui/status-badge';
+import { Button } from './ui/button';
 import { cn } from '../lib/utils';
 
 /**
@@ -13,16 +15,6 @@ import { cn } from '../lib/utils';
  * Mobile: un chip por estado ocupa mucho y taparía la lista, así que ahí colapsa detrás de un botón
  * "Filtros" (con la cantidad de estados activos) y se despliega al tocarlo. En desktop va siempre visible.
  */
-const STYLE: Record<TicketStatus, { dot: string; on: string }> = {
-  [TicketStatus.PRESOLICITUD]:           { dot: 'bg-fuchsia-500', on: 'bg-fuchsia-100 border-fuchsia-300 text-fuchsia-800' },
-  [TicketStatus.WAITING_ROOM]:           { dot: 'bg-amber-500',   on: 'bg-amber-100 border-amber-300 text-amber-800' },
-  [TicketStatus.IN_TRANSIT]:             { dot: 'bg-blue-500',    on: 'bg-blue-100 border-blue-300 text-blue-800' },
-  [TicketStatus.IN_TRANSPORT]:           { dot: 'bg-slate-500',   on: 'bg-slate-200 border-slate-400 text-slate-800' },
-  [TicketStatus.WAITING_CONSOLIDATION]:  { dot: 'bg-purple-500',  on: 'bg-purple-100 border-purple-300 text-purple-800' },
-  [TicketStatus.COMPLETED]:              { dot: 'bg-emerald-500', on: 'bg-emerald-100 border-emerald-300 text-emerald-800' },
-  [TicketStatus.REJECTED]:               { dot: 'bg-red-500',     on: 'bg-red-100 border-red-300 text-red-800' },
-};
-
 interface Props {
   statuses: TicketStatus[];
   counts: Partial<Record<TicketStatus, number>>;
@@ -39,36 +31,42 @@ export const TicketStatusFilter: React.FC<Props> = ({ statuses, counts, total, s
   const [open, setOpen] = useState(false); // sólo afecta a mobile
   const active = selected.size + (urgencias?.on ? 1 : 0);
 
-  const chipBase = 'inline-flex items-center gap-1.5 h-9 md:h-8 pl-2.5 pr-2 rounded-full border text-[11px] font-bold transition-colors whitespace-nowrap';
-  const chipOff = 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50';
+  // Chip de filtro rápido: el punto lleva el tono del estado (lib/estados.ts); elegido = primary, como
+  // toda selección del Estilo 1 (DESIGN §1.1).
+  const chipBase = 'inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-full border pr-2 pl-2.5 text-xs font-medium transition-colors outline-hidden focus-visible:ring-2 focus-visible:ring-ring md:h-8';
+  const chipOff = 'bg-card text-foreground hover:bg-accent';
+  const chipOn = 'border-primary bg-primary text-primary-foreground';
+  const contador = (on: boolean, n: number) => cn(
+    'rounded-full px-1.5 text-[10px] tabular-nums',
+    on ? 'bg-primary-foreground/20' : 'bg-muted text-muted-foreground',
+    n === 0 && !on && 'opacity-60',
+  );
 
   return (
     <div className="space-y-2" data-testid="ticket-status-filter">
       {/* Mobile: botón de filtro */}
       <div className="flex items-center gap-2 md:hidden">
-        <button
+        <Button
           type="button"
+          variant="outline"
           aria-expanded={open}
           aria-controls="ticket-status-chips"
           onClick={() => setOpen(o => !o)}
-          className={cn(
-            'inline-flex items-center gap-2 h-10 px-3 rounded-xl border text-xs font-bold transition-colors',
-            active > 0 ? 'bg-emerald-950 border-emerald-950 text-white' : 'bg-white border-slate-200 text-slate-700',
-          )}
+          className={cn('gap-2 px-3', active > 0 && 'border-primary/40 bg-primary/5')}
         >
-          <Filter className="w-3.5 h-3.5" />
+          <Filter className="size-4" />
           Filtrar
           {active > 0 && (
-            <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-white text-emerald-950 text-[10px] font-black flex items-center justify-center tabular-nums">
+            <span className="flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground tabular-nums">
               {active}
             </span>
           )}
-          <ChevronDown className={cn('w-3.5 h-3.5 transition-transform', open && 'rotate-180')} />
-        </button>
+          <ChevronDown className={cn('size-4 transition-transform', open && 'rotate-180')} />
+        </Button>
         {active > 0 && (
-          <button type="button" onClick={onClear} className="inline-flex items-center gap-1 h-10 px-2 text-xs font-bold text-slate-500">
-            <X className="w-3.5 h-3.5" /> Limpiar
-          </button>
+          <Button type="button" variant="ghost" size="sm" onClick={onClear} className="text-muted-foreground">
+            <X /> Limpiar
+          </Button>
         )}
       </div>
 
@@ -81,10 +79,10 @@ export const TicketStatusFilter: React.FC<Props> = ({ statuses, counts, total, s
           type="button"
           aria-pressed={active === 0}
           onClick={onClear}
-          className={cn(chipBase, active === 0 ? 'bg-emerald-950 border-emerald-950 text-white' : chipOff)}
+          className={cn(chipBase, active === 0 ? chipOn : chipOff)}
         >
           Todos
-          <span className={cn('tabular-nums rounded-full px-1.5 text-[10px]', active === 0 ? 'bg-white/20' : 'bg-slate-100 text-slate-500')}>{total}</span>
+          <span className={contador(active === 0, total)}>{total}</span>
         </button>
         {statuses.map(s => {
           const on = selected.has(s);
@@ -95,11 +93,11 @@ export const TicketStatusFilter: React.FC<Props> = ({ statuses, counts, total, s
               type="button"
               aria-pressed={on}
               onClick={() => onToggle(s)}
-              className={cn(chipBase, on ? STYLE[s].on : chipOff)}
+              className={cn(chipBase, on ? chipOn : chipOff)}
             >
-              <span className={cn('w-2 h-2 rounded-full shrink-0', STYLE[s].dot)} />
+              <span className={cn('size-2 shrink-0 rounded-full', PUNTO_TONO[tonoTicket(s)], on && 'ring-2 ring-primary-foreground/60')} aria-hidden="true" />
               {statusLabel(s)}
-              <span className={cn('tabular-nums rounded-full px-1.5 text-[10px]', on ? 'bg-white/70' : 'bg-slate-100 text-slate-500', n === 0 && 'opacity-50')}>{n}</span>
+              <span className={contador(on, n)}>{n}</span>
             </button>
           );
         })}
@@ -109,17 +107,17 @@ export const TicketStatusFilter: React.FC<Props> = ({ statuses, counts, total, s
             aria-pressed={urgencias.on}
             onClick={urgencias.onToggle}
             title="Urgencias / ingresos directos (se combina con los estados)"
-            className={cn(chipBase, urgencias.on ? 'bg-red-100 border-red-300 text-red-800' : chipOff)}
+            className={cn(chipBase, urgencias.on ? chipOn : chipOff)}
           >
-            <Siren className="w-3 h-3 text-red-600 shrink-0" strokeWidth={2.5} />
+            <Siren className={cn('size-3 shrink-0', !urgencias.on && 'text-destructive')} strokeWidth={2.5} aria-hidden="true" />
             Urgencias
-            <span className={cn('tabular-nums rounded-full px-1.5 text-[10px]', urgencias.on ? 'bg-white/70' : 'bg-slate-100 text-slate-500', urgencias.count === 0 && 'opacity-50')}>{urgencias.count}</span>
+            <span className={contador(urgencias.on, urgencias.count)}>{urgencias.count}</span>
           </button>
         )}
         {active > 0 && (
-          <button type="button" onClick={onClear} className="hidden md:inline-flex items-center gap-1 h-8 px-2 text-[11px] font-bold text-slate-500 hover:text-slate-700">
-            <X className="w-3 h-3" /> Limpiar filtro
-          </button>
+          <Button type="button" variant="ghost" size="sm" onClick={onClear} className="hidden h-8 text-xs text-muted-foreground md:inline-flex">
+            <X /> Limpiar
+          </Button>
         )}
       </div>
     </div>

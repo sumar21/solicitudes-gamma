@@ -16,6 +16,8 @@ export interface Columna<T> {
   ocultarEn?: "md" | "lg"
   /** Si está, la columna se puede ordenar por este valor. */
   ordenar?(f: T): string | number
+  /** Clases extra para el encabezado y las celdas de la columna (ancho mínimo, columna fija). */
+  clase?: string
 }
 
 // El tipo de fila se infiere solo de `filas` (NoInfer en el resto), así
@@ -32,10 +34,19 @@ export interface DataTableProps<T> {
   cargando?: boolean
   /** Si la carga falló: muestra ErrorEstado con "Reintentar". */
   error?: { mensaje?: string; onReintentar(): void }
+  /**
+   * Orden controlado: si viene `onOrden`, la tabla no ordena sola (las filas llegan ordenadas) y solo
+   * muestra el indicador de `orden` y avisa el clic. Para cuando el orden vive en un store o tiene reglas
+   * propias (filas fijas arriba).
+   */
+  orden?: Orden
+  onOrden?(id: string): void
+  /** Clases extra por fila (y por tarjeta en mobile): una fila cancelada, una destacada. */
+  claseFila?(f: NoInfer<T>): string | undefined
   className?: string
 }
 
-type Orden = { id: string; dir: "asc" | "desc" } | null
+export type Orden = { id: string; dir: "asc" | "desc" } | null
 
 const OCULTAR: Record<NonNullable<Columna<unknown>["ocultarEn"]>, string> = {
   md: "hidden lg:table-cell",
@@ -75,18 +86,23 @@ export function DataTable<T>({
   vacio,
   cargando = false,
   error,
+  orden: ordenControlado,
+  onOrden,
+  claseFila,
   className,
 }: DataTableProps<T>) {
-  const [orden, setOrden] = React.useState<Orden>(null)
+  const [ordenPropio, setOrden] = React.useState<Orden>(null)
   const [pagina, setPagina] = React.useState(0)
+  const orden = onOrden ? (ordenControlado ?? null) : ordenPropio
 
   const ordenadas = React.useMemo(() => {
+    if (onOrden) return filas
     const col = orden && columnas.find((c) => c.id === orden.id)
     if (!col?.ordenar || !orden) return filas
     const valor = col.ordenar
     const signo = orden.dir === "asc" ? 1 : -1
     return [...filas].sort((a, b) => signo * comparar(valor(a), valor(b)))
-  }, [filas, columnas, orden])
+  }, [filas, columnas, orden, onOrden])
 
   const total = ordenadas.length
   const paginas = Math.max(1, Math.ceil(total / porPagina))
@@ -97,6 +113,7 @@ export function DataTable<T>({
 
   const cambiarOrden = (id: string) => {
     setPagina(0)
+    if (onOrden) return onOrden(id)
     setOrden((o) => (o?.id !== id ? { id, dir: "asc" } : o.dir === "asc" ? { id, dir: "desc" } : null))
   }
 
@@ -118,12 +135,15 @@ export function DataTable<T>({
                   tabIndex={0}
                   onClick={() => onFila(f)}
                   onKeyDown={alTeclado(() => onFila(f))}
-                  className="block w-full rounded-lg border bg-card p-3 text-left text-card-foreground shadow-xs ring-offset-background transition-all outline-hidden active:scale-[0.99] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  className={cn(
+                    "block w-full rounded-lg border bg-card p-3 text-left text-card-foreground shadow-xs ring-offset-background transition-all outline-hidden active:scale-[0.99] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                    claseFila?.(f)
+                  )}
                 >
                   {contenido}
                 </div>
               ) : (
-                <div className="rounded-lg border bg-card p-3 text-card-foreground shadow-xs">{contenido}</div>
+                <div className={cn("rounded-lg border bg-card p-3 text-card-foreground shadow-xs", claseFila?.(f))}>{contenido}</div>
               )}
             </li>
           )
@@ -141,7 +161,7 @@ export function DataTable<T>({
                   <TableHead
                     key={c.id}
                     aria-sort={c.ordenar ? (activo === "asc" ? "ascending" : activo === "desc" ? "descending" : "none") : undefined}
-                    className={cn(der(c) && "text-right", c.ocultarEn && OCULTAR[c.ocultarEn])}
+                    className={cn(der(c) && "text-right", c.ocultarEn && OCULTAR[c.ocultarEn], c.clase)}
                   >
                     {c.ordenar ? (
                       <button
@@ -179,13 +199,14 @@ export function DataTable<T>({
                 onKeyDown={onFila ? alTeclado(() => onFila(f)) : undefined}
                 className={cn(
                   onFila &&
-                    "cursor-pointer outline-hidden focus-visible:bg-muted/50 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+                    "cursor-pointer outline-hidden focus-visible:bg-muted/50 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
+                  claseFila?.(f)
                 )}
               >
                 {columnas.map((c) => (
                   <TableCell
                     key={c.id}
-                    className={cn(der(c) && "text-right tabular-nums", c.ocultarEn && OCULTAR[c.ocultarEn])}
+                    className={cn(der(c) && "text-right tabular-nums", c.ocultarEn && OCULTAR[c.ocultarEn], c.clase)}
                   >
                     {c.celda(f)}
                   </TableCell>

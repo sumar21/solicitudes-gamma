@@ -15,6 +15,16 @@ const TONOS: Record<Tono, string> = {
   marca: "bg-brand/10 text-brand",
 }
 
+/** Punto del color de un tono (chips de filtro, leyendas): mismo color que el texto del badge. */
+export const PUNTO_TONO: Record<Tono, string> = {
+  neutro: "bg-muted-foreground",
+  info: "bg-info",
+  exito: "bg-success",
+  aviso: "bg-warning",
+  peligro: "bg-destructive",
+  marca: "bg-brand",
+}
+
 export function StatusBadge({ tono, children, className }: { tono: Tono; children: ReactNode; className?: string }) {
   return (
     <span

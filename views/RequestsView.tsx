@@ -3,23 +3,25 @@ import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Ticket, Role, TicketStatus, SortConfig, SortKey, WorkflowType, User, Bed, BedStatus, Area, IsolationEntry } from '../types';
 import { can } from '../lib/permissions';
 import {
-  Search, Plus, Timer, Clock, ArrowRightLeft,
-  ChevronUp, ChevronDown, CheckCircle2, BedDouble, Users, ClipboardCheck, AlertCircle, X, XCircle, Info, MapPin, Pencil, UserCheck
+  Search, Plus, Timer, ArrowRightLeft,
+  CheckCircle2, BedDouble, Users, ClipboardCheck, AlertCircle, X, XCircle, Info, MapPin, Pencil, UserCheck
 } from '../components/Icons';
-import { ShieldAlert, MessageSquare, Siren, Undo2 } from 'lucide-react';
+import { ArrowRight, Loader2, ShieldAlert, MessageSquare, Siren, Undo2 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
-import { Card } from '../components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Badge } from '../components/ui/badge';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table';
-import { Dialog, DialogContent, DialogTitle, DialogHeader, DialogFooter } from '../components/ui/dialog';
+import { DataTable, type Columna } from '../components/ui/data-table';
+import { Cargando, Vacio } from '../components/ui/estados';
+import { Field, FieldError, FieldLabel } from '../components/ui/field';
+import { Textarea } from '../components/ui/textarea';
+import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogHeader } from '../components/ui/dialog';
 import { StatusBadge } from '../components/ui/status-badge';
 import { ESTADOS_TICKET } from '../lib/estados';
 import { TicketStatusFilter } from '../components/TicketStatusFilter';
 import { visibleStatusChips, countByStatus, applyStatusFilter, toggleStatus, showUrgenciasChip, applyUrgenciaFilter } from '../lib/ticketFilters';
-import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
-import { cn, formatBedName, formatDateTime, effectiveHostessAreas } from '../lib/utils';
+import { cn, formatBedName, effectiveHostessAreas } from '../lib/utils';
+import { fechaHora } from '../lib/formato';
 import { realRequisitos } from '../lib/roomCheck';
 import { puedeRestablecerDestino, type OrphanTicket } from '../lib/originBed';
 
@@ -68,6 +70,9 @@ interface ObsItem {
   usuario: string;
   fecha: string;
 }
+
+// Botones de acción dentro de una fila de la tabla: más bajos que sm para que tres apilados no estiren la fila.
+const BOTON_FILA = 'h-8 px-2.5 text-xs';
 
 const ROLE_LABELS: Partial<Record<Role, string>> = {
   [Role.ADMIN]: 'Admin',
@@ -204,25 +209,21 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   const renderObsButton = (ticket: Ticket, isMobile = false) => {
     const active = ticket.status !== TicketStatus.COMPLETED && ticket.status !== TicketStatus.REJECTED;
     if (!active || !onAddObservation) return null;
-    const size = isMobile ? 'default' : 'sm';
-    const btnClass = isMobile
-      ? 'w-full h-11 text-xs font-black uppercase tracking-widest rounded-xl'
-      : 'h-7 px-2 text-[10px] uppercase font-bold tracking-tight [&>svg]:mr-1.5';
-
     const n = obsCounts[ticket.id] ?? 0;
     return (
       <Button
-        size={size}
+        type="button"
+        size={isMobile ? 'default' : 'sm'}
         variant="outline"
-        className={cn(btnClass, 'relative border-slate-200 text-slate-600 hover:bg-slate-50', n > 0 && 'border-red-200')}
+        className={cn('relative', isMobile ? 'w-full' : BOTON_FILA)}
         onClick={() => openObs(ticket)}
         title={n > 0 ? `${n} observación${n === 1 ? '' : 'es'} cargada${n === 1 ? '' : 's'}` : undefined}
       >
-        <MessageSquare className="w-3.5 h-3.5 mr-2" /> Observaciones
+        <MessageSquare /> Observaciones
         {n > 0 && (
           <span
             aria-label={`${n} observaciones`}
-            className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-black leading-[18px] text-center tabular-nums shadow-sm ring-2 ring-white"
+            className="absolute -top-1.5 -right-1.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-semibold text-destructive-foreground tabular-nums ring-2 ring-card"
           >
             {n > 9 ? '9+' : n}
           </span>
@@ -240,11 +241,8 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   const needsRoomCheck = (ticket: Ticket) =>
     ticket.status === TicketStatus.WAITING_ROOM && (!!ticket.habCompartida || realRequisitos(ticket.requisitosCama).length > 0);
   const renderSharedRoomTag = (ticket: Ticket) => (ticket.status === TicketStatus.WAITING_ROOM && ticket.habCompartida) ? (
-    <span
-      className="inline-flex items-center gap-1 w-fit rounded-full border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-sky-700"
-      title="La otra cama de la habitación está ocupada: la cama libre puede no estar armada"
-    >
-      <Users className="w-3 h-3" /> Compartida
+    <span title="La otra cama de la habitación está ocupada: la cama libre puede no estar armada">
+      <StatusBadge tono="info"><Users className="size-3" aria-hidden="true" /> Compartida</StatusBadge>
     </span>
   ) : null;
 
@@ -268,17 +266,17 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       // ensanchaba Origen ~55px y a 1280 con sidebar tapaba Observaciones. El min-w evita que en una
       // columna angosta ("517 - 01") quede una palabra por línea.
       <div
-        className="mt-1.5 min-w-[96px] rounded-md border border-red-200 bg-red-50 px-1.5 py-1 text-[10px] leading-tight text-red-800 wrap-break-word"
+        className="recuadro mt-1.5 min-w-[96px] border-destructive/30 bg-destructive/10 px-2 py-1.5 text-[11px] leading-tight text-destructive wrap-break-word"
         title={orphan.patientNowAt
           ? `El paciente hoy está en ${formatBedName(orphan.patientNowAt)}: el ticket quedó apuntando a la cama anterior y traba cargar el del paciente nuevo. Hay que cancelarlo y volver a cargarlo desde la cama nueva.${enLaCama}`
           : `El paciente ya no figura ${orphan.patientNotInMap ? 'en ninguna cama del mapa' : 'en esta cama'}. Si se fue sin pasar por MediFlow, hay que cancelar este ticket: traba cargar el del paciente nuevo.${enLaCama}`}
       >
-        <div className="flex items-start gap-1 text-[9px] font-black uppercase tracking-wide text-red-700">
-          <AlertCircle className="w-3 h-3 shrink-0" /> <span>Ya no está en la cama</span>
+        <div className="micro flex items-start gap-1">
+          <AlertCircle className="size-3 shrink-0" aria-hidden="true" /> <span>Ya no está en la cama</span>
         </div>
-        {orphan.patientNowAt && <div className="mt-0.5 font-bold">Ahora en {shortNowAt(ticket.origin, orphan.patientNowAt)}</div>}
-        {orphan.patientNotInMap && <div className="mt-0.5 font-bold">No figura en el mapa</div>}
-        {mobile && orphan.occupantName && <div className="mt-0.5 text-red-700/80">En la cama: {orphan.occupantName}</div>}
+        {orphan.patientNowAt && <div className="mt-0.5 font-medium">Ahora en {shortNowAt(ticket.origin, orphan.patientNowAt)}</div>}
+        {orphan.patientNotInMap && <div className="mt-0.5 font-medium">No figura en el mapa</div>}
+        {mobile && orphan.occupantName && <div className="mt-0.5">En la cama: {orphan.occupantName}</div>}
       </div>
     );
   };
@@ -289,24 +287,29 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     if (!ticket.urgencia) return null;
     return (
       <>
+        {/* Lleno (no al 10 %): es lo único de la fila que tiene que saltar a la vista. */}
         <span
-          className="inline-flex items-center gap-1 rounded-full bg-red-600 px-1.5 py-0.5 text-white shrink-0"
+          className="inline-flex shrink-0 items-center gap-1 rounded-full bg-destructive px-2 py-0.5 text-[11px] leading-4 font-semibold tracking-wide text-destructive-foreground uppercase"
           title="Ingreso por urgencia / ingreso directo"
         >
-          <Siren className="w-3 h-3" strokeWidth={3} />
-          <span className="text-[9px] font-black uppercase tracking-wide leading-none">Urgencia</span>
+          <Siren className="size-3" aria-hidden="true" /> Urgencia
         </span>
         {!ticket.patientCode && (
-          <span
-            className="inline-flex items-center rounded-full border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-amber-800 shrink-0"
-            title="Todavía no está vinculado a un paciente de PROGAL: se vincula al consolidar"
-          >
-            <span className="text-[9px] font-black uppercase tracking-wide leading-none">Sin vincular</span>
+          <span title="Todavía no está vinculado a un paciente de PROGAL: se vincula al consolidar">
+            <StatusBadge tono="aviso">Sin vincular</StatusBadge>
           </span>
         )}
       </>
     );
   };
+
+  // Aislamientos (PROGAL): alerta clínica, en tono aviso con el escudo.
+  const renderAislamientos = (ticket: Ticket) =>
+    getTicketIsolationTypes(ticket).map((iso: IsolationEntry, i: number) => (
+      <span key={`${iso.name}-${i}`} title={`Aislamiento: ${iso.name}${iso.observation ? ` — ${iso.observation}` : ''}`}>
+        <StatusBadge tono="aviso"><ShieldAlert className="size-3" aria-hidden="true" /> {iso.name}</StatusBadge>
+      </span>
+    ));
 
   // Aislamientos del paciente del ticket, leídos del enrich de la cama (PROGAL).
   // Se busca por la cama de origen y, si no, por patientCode en cualquier cama.
@@ -425,7 +428,9 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
 
   const renderActionButtons = (ticket: Ticket, isMobile = false) => {
     const size = isMobile ? "default" : "sm";
-    const btnClass = isMobile ? "w-full h-11 text-xs font-black uppercase tracking-widest rounded-xl" : "h-7 px-2 text-[10px] uppercase font-bold tracking-tight [&>svg]:mr-1.5";
+    const btnClass = isMobile ? "w-full" : BOTON_FILA;
+    // Cancelar / restablecer: contorno con texto rojo (el rojo lleno queda para confirmar en el modal).
+    const peligro = "text-destructive hover:bg-destructive/10 hover:text-destructive";
 
     // ── Pre-ticket (Presolicitud): Admisión configura el destino + (si el rol lo tiene) Cancelar ──
     // No aplican las acciones de azafata/admisión de un traslado normal (todavía no tiene destino).
@@ -439,17 +444,15 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       // sacaban la columna de Acciones de la pantalla. Apilados, con el mismo ancho, la columna queda en ~200px.
       // En mobile se conserva el espaciado de siempre (cada botón es un bloque de la card).
       return (
-        <div className={cn("flex flex-col", isMobile ? "gap-4" : "gap-1 items-stretch")}>
+        <div className={cn("flex flex-col", isMobile ? "gap-2" : "gap-1 items-stretch")}>
           {canConfig && (
-            <Button size={size} onClick={() => onConfigureDestino!(ticket.id)}
-              className={cn(btnClass, "bg-emerald-950 hover:bg-emerald-900 text-white rounded-xl px-4")}>
-              <MapPin className="w-3.5 h-3.5 mr-1.5" /> Configurar destino
+            <Button type="button" size={size} onClick={() => onConfigureDestino!(ticket.id)} className={btnClass}>
+              <MapPin /> Configurar destino
             </Button>
           )}
           {canCancelPre && (
-            <Button size={size} variant="outline" className={cn(btnClass, "border-red-200 text-red-600 hover:bg-red-50")}
-              onClick={() => onReject!(ticket.id)}>
-              <XCircle className="w-3.5 h-3.5 mr-2" /> Cancelar
+            <Button type="button" size={size} variant="outline" className={cn(btnClass, peligro)} onClick={() => onReject!(ticket.id)}>
+              <XCircle /> Cancelar
             </Button>
           )}
         </div>
@@ -472,18 +475,18 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
         <div className={cn("flex flex-col", isMobile ? "gap-1.5" : "gap-1 items-stretch")}>
           {canLink && (
             yaVinculada ? (
-              <Button size={size} className={cn(btnClass, "bg-purple-600 hover:bg-purple-700 text-white")} onClick={() => onConsolidate(ticket.id)}>
-                <BedDouble className="w-3.5 h-3.5 mr-2" /> Consolidar PROGAL
+              <Button type="button" size={size} className={btnClass} onClick={() => onConsolidate(ticket.id)}>
+                <BedDouble /> Consolidar PROGAL
               </Button>
             ) : (
-              <Button size={size} className={cn(btnClass, "bg-purple-600 hover:bg-purple-700 text-white")} onClick={() => onConsolidateUrgencia!(ticket.id)}>
-                <UserCheck className="w-3.5 h-3.5 mr-2" /> Vincular y consolidar
+              <Button type="button" size={size} className={btnClass} onClick={() => onConsolidateUrgencia!(ticket.id)}>
+                <UserCheck /> Vincular y consolidar
               </Button>
             )
           )}
           {canCancelUrg && (
-            <Button size={size} variant="outline" className={cn(btnClass, "border-red-200 text-red-600 hover:bg-red-50")} onClick={() => onReject!(ticket.id)}>
-              <XCircle className="w-3.5 h-3.5 mr-2" /> Cancelar
+            <Button type="button" size={size} variant="outline" className={cn(btnClass, peligro)} onClick={() => onReject!(ticket.id)}>
+              <XCircle /> Cancelar
             </Button>
           )}
         </div>
@@ -540,36 +543,36 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       if (ticket.status === TicketStatus.WAITING_ROOM) {
         if (isDestHostess && can(currentUser, 'confirmar_limpieza'))
           return (
-            <Button size={size} className={cn(btnClass, "bg-blue-600 hover:bg-blue-700 text-white")} onClick={() => onRoomReady(ticket.id)}>
-              <ClipboardCheck className="w-3.5 h-3.5 mr-2" /> Habitación Lista
+            <Button type="button" size={size} className={btnClass} onClick={() => onRoomReady(ticket.id)}>
+              <ClipboardCheck /> Habitación lista
             </Button>
           );
         if (isOriginHostess)
-          return <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50">Esperando preparación destino</Badge>;
+          return <StatusBadge tono="aviso" className="whitespace-normal">Esperando preparación destino</StatusBadge>;
       }
 
       // Estado 2: IN_TRANSIT — azafata de origen inicia el traslado
       if (ticket.status === TicketStatus.IN_TRANSIT) {
         if (isOriginHostess && can(currentUser, 'iniciar_traslado'))
           return (
-            <Button size={size} className={cn(btnClass, "bg-emerald-600 hover:bg-emerald-700 text-white")} onClick={() => onStartTransport(ticket.id)}>
-              <ArrowRightLeft className="w-3.5 h-3.5 mr-2" /> Iniciar Traslado
+            <Button type="button" size={size} className={btnClass} onClick={() => onStartTransport(ticket.id)}>
+              <ArrowRightLeft /> Iniciar traslado
             </Button>
           );
         if (isDestHostess)
-          return <Badge variant="outline" className="text-blue-600 border-blue-200 bg-blue-50">Esperando inicio de traslado</Badge>;
+          return <StatusBadge tono="info" className="whitespace-normal">Esperando inicio de traslado</StatusBadge>;
       }
 
       // Estado 3: IN_TRANSPORT — azafata destino confirma recepción
       if (ticket.status === TicketStatus.IN_TRANSPORT) {
         if (isDestHostess && can(currentUser, 'confirmar_recepcion'))
           return (
-            <Button size={size} className={cn(btnClass, "bg-emerald-600 hover:bg-emerald-700 text-white")} onClick={() => onConfirmReception(ticket.id)}>
-              <CheckCircle2 className="w-3.5 h-3.5 mr-2" /> Recepción OK
+            <Button type="button" size={size} className={btnClass} onClick={() => onConfirmReception(ticket.id)}>
+              <CheckCircle2 /> Recepción OK
             </Button>
           );
         if (isOriginHostess)
-          return <Badge variant="outline" className="text-slate-500 border-slate-200 bg-slate-50">Traslado en curso...</Badge>;
+          return <StatusBadge tono="info" className="whitespace-normal">Traslado en curso…</StatusBadge>;
       }
 
       return null;
@@ -596,24 +599,24 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       return (
         <div className={cn("flex flex-col", isMobile ? "gap-1.5" : "gap-1 items-stretch")}>
           {showConsolidate && (
-            <Button size={size} className={cn(btnClass, "bg-purple-600 hover:bg-purple-700 text-white")} onClick={() => onConsolidate(ticket.id)}>
-              <BedDouble className="w-3.5 h-3.5 mr-2" /> Consolidar PROGAL
+            <Button type="button" size={size} className={btnClass} onClick={() => onConsolidate(ticket.id)}>
+              <BedDouble /> Consolidar PROGAL
             </Button>
           )}
           {showEdit && (
-            <Button size={size} variant="outline" className={cn(btnClass, "border-amber-200 text-amber-700 hover:bg-amber-50")} onClick={() => onEdit!(ticket.id)}>
-              <Pencil className="w-3.5 h-3.5 mr-2" /> Editar
+            <Button type="button" size={size} variant="outline" className={btnClass} onClick={() => onEdit!(ticket.id)}>
+              <Pencil /> Editar
             </Button>
           )}
           {showReset && (
-            <Button size={size} variant="outline" className={cn(btnClass, "border-red-200 text-red-700 hover:bg-red-50")} onClick={() => onResetDestino!(ticket.id)}
+            <Button type="button" size={size} variant="outline" className={cn(btnClass, peligro)} onClick={() => onResetDestino!(ticket.id)}
               title="Liberar la cama destino: el pre-ticket vuelve a 'Configurar destino'">
-              <Undo2 className="w-3.5 h-3.5 mr-2" /> Restablecer destino
+              <Undo2 /> Restablecer destino
             </Button>
           )}
           {showCancel && (
-            <Button size={size} variant="outline" className={cn(btnClass, "border-red-200 text-red-600 hover:bg-red-50")} onClick={() => onReject!(ticket.id)}>
-              <XCircle className="w-3.5 h-3.5 mr-2" /> Cancelar
+            <Button type="button" size={size} variant="outline" className={cn(btnClass, peligro)} onClick={() => onReject!(ticket.id)}>
+              <XCircle /> Cancelar
             </Button>
           )}
         </div>
@@ -623,77 +626,258 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     return null;
   };
 
-  const SortHeader = ({ label, sortKey }: { label: string; sortKey: SortKey }) => {
-    const isActive = sortConfig.key === sortKey;
-    return (
-      <TableHead className="cursor-pointer hover:bg-slate-100 transition-colors group" onClick={() => onSort(sortKey)}>
-        <div className="flex items-center gap-1">
-          {label}
-          <div className="flex flex-col opacity-50 group-hover:opacity-100 transition-opacity">
-            <ChevronUp className={cn("w-2.5 h-2.5 -mb-1", isActive && sortConfig.direction === 'asc' ? "text-slate-900" : "text-slate-400")} />
-            <ChevronDown className={cn("w-2.5 h-2.5", isActive && sortConfig.direction === 'desc' ? "text-slate-900" : "text-slate-400")} />
+  // Texto de ayuda por estado ("qué falta"), el mismo en la tabla y en la tarjeta mobile.
+  const ayudaEstado = (ticket: Ticket, corto: boolean) => {
+    switch (ticket.status) {
+      case TicketStatus.PRESOLICITUD:
+        return corto ? null : 'Pre-ticket: falta que Admisión configure el destino.';
+      case TicketStatus.WAITING_ROOM:
+        return needsRoomCheck(ticket)
+          ? <span className="font-medium text-info">Verificar la habitación antes de marcarla lista{!corto && ticket.habCompartida ? ' (habitación compartida)' : ''}.</span>
+          : corto ? 'Esperando habitación lista.' : 'Esperando que la habitación de destino esté lista.';
+      case TicketStatus.IN_TRANSIT:
+        return corto ? 'Esperando inicio de traslado.' : 'Habitación lista. Esperando inicio de traslado.';
+      case TicketStatus.IN_TRANSPORT:
+        return corto ? 'Esperando confirmación de recepción.' : 'Traslado en curso. Esperando confirmación de recepción.';
+      case TicketStatus.WAITING_CONSOLIDATION:
+        if (ticket.urgencia && !ticket.patientCode) return corto ? 'Ingresar al paciente en PROGAL y vincularlo.' : 'Urgencia: ingresar al paciente en PROGAL y vincularlo para consolidar.';
+        if (ticket.urgencia) return corto ? 'Pendiente consolidar en PROGAL.' : 'Urgencia de un paciente internado: registrar el movimiento en PROGAL y consolidar.';
+        return corto ? 'Pendiente consolidar en PROGAL.' : 'Paciente recibido. Pendiente consolidar en sistema.';
+      default:
+        return null;
+    }
+  };
+
+  const observacion = (ticket: Ticket) =>
+    ticket.status === TicketStatus.REJECTED && ticket.rejectionReason ? (
+      <div className="recuadro flex max-w-[240px] items-start gap-1.5 border-destructive/30 bg-destructive/10 px-2 py-1.5 text-[11px] leading-tight text-destructive">
+        <AlertCircle className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+        <span className="line-clamp-3 italic">{ticket.rejectionReason}</span>
+      </div>
+    ) : ticket.observations ? (
+      <div className="recuadro flex max-w-[250px] items-start gap-1.5 border-warning/30 bg-warning/10 px-2 py-1.5 text-[11px] leading-tight text-warning">
+        <Info className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+        <span className="wrap-break-word">{ticket.observations}</span>
+      </div>
+    ) : (
+      <span className="text-muted-foreground">—</span>
+    );
+
+  const columnas: Columna<Ticket>[] = [
+    {
+      id: 'status',
+      titulo: 'Estado',
+      ordenar: (t) => t.status,
+      clase: 'max-w-[140px]',
+      celda: (t) => (
+        <div className="flex flex-col gap-1.5">
+          <StatusBadge tono={ESTADOS_TICKET[t.status].tono} className="whitespace-normal">{ESTADOS_TICKET[t.status].label}</StatusBadge>
+          <span className="text-[11px] text-muted-foreground tabular-nums">{fechaHora(t.createdAt)}</span>
+        </div>
+      ),
+    },
+    {
+      id: 'tarea',
+      titulo: 'Tarea',
+      clase: 'min-w-[130px]',
+      celda: (t) => (
+        <div className="flex flex-col items-start gap-1.5">
+          <Badge variant="outline" className="text-[10px]">{WORKFLOW_LABEL_BADGE[t.workflow] ?? 'Interno'}</Badge>
+          {ayudaEstado(t, true) && <div className="text-[11px] leading-snug text-muted-foreground">{ayudaEstado(t, true)}</div>}
+          {t.changeReason && <StatusBadge tono="aviso" className="whitespace-normal"><Info className="size-3" aria-hidden="true" /> {t.changeReason}</StatusBadge>}
+        </div>
+      ),
+    },
+    {
+      id: 'patientName',
+      titulo: 'Paciente',
+      ordenar: (t) => t.patientName,
+      celda: (t) => (
+        <div className="flex flex-col gap-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-sm font-semibold">{t.patientName}</span>
+            {renderUrgenciaTags(t)}
+            {renderAislamientos(t)}
+          </div>
+          <span className="font-mono text-[10px] text-muted-foreground">{t.id}</span>
+        </div>
+      ),
+    },
+    {
+      id: 'origin',
+      titulo: 'Origen',
+      ordenar: (t) => t.origin,
+      celda: (t) => (
+        <>
+          <div className="font-medium leading-tight">{formatBedName(t.origin)}</div>
+          {renderOrphanTag(t)}
+        </>
+      ),
+    },
+    {
+      id: 'destino',
+      titulo: 'Destino',
+      clase: 'min-w-[90px]',
+      celda: (t) =>
+        t.destination ? (
+          <div className="flex flex-col gap-1">
+            {/* Sin nowrap: destinos largos ("UNIDAD TERAPIA INTENSIVA HPR - CAMA 02") estiraban la columna a ~340px. */}
+            <div className="max-w-[150px] font-medium leading-tight wrap-break-word">{formatBedName(t.destination)}</div>
+            {renderSharedRoomTag(t)}
+          </div>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        ),
+    },
+    {
+      id: 'estadoDestino',
+      titulo: 'Estado destino',
+      ocultarEn: 'lg',
+      clase: 'min-w-[90px]',
+      celda: (t) => (
+        <div className="flex flex-col gap-1">
+          <span className="text-[11px] leading-tight text-muted-foreground">{t.targetBedOriginalStatus || '—'}</span>
+          {t.bedAssignedAt && <StatusBadge tono="exito">Cama: {t.bedAssignedAt}</StatusBadge>}
+        </div>
+      ),
+    },
+    { id: 'observaciones', titulo: 'Observaciones', clase: 'min-w-[110px]', celda: observacion },
+    {
+      id: 'acciones',
+      titulo: 'Acciones',
+      alinear: 'der',
+      // Fija a la derecha: a 1280 con la sidebar abierta la grilla scrollea en x y las acciones tienen que verse.
+      clase: 'sticky right-0 border-l bg-card',
+      celda: (t) => (
+        // Acciones SIEMPRE en columna, del ancho del botón más ancho (w-max) y alineadas a la derecha.
+        // En fila (2-3 botones + Observaciones) la columna llegaba a 300-470px y empujaba la tabla
+        // fuera de pantalla a 1280px.
+        <div className="ml-auto flex w-max flex-col items-stretch gap-1">
+          {renderActionButtons(t)}
+          {renderObsButton(t)}
+        </div>
+      ),
+    },
+  ];
+
+  // Tarjeta mobile (DESIGN §3.9): identidad + estado arriba, origen → destino, avisos y acciones.
+  const tarjeta = (ticket: Ticket) => (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 space-y-1.5">
+          <StatusBadge tono={ESTADOS_TICKET[ticket.status].tono}>{ESTADOS_TICKET[ticket.status].label}</StatusBadge>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <h3 className="text-sm font-semibold leading-tight">{ticket.patientName}</h3>
+            {renderUrgenciaTags(ticket)}
+            {renderAislamientos(ticket)}
+          </div>
+          <div className="font-mono text-[10px] text-muted-foreground">{ticket.id}</div>
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <Badge variant="outline" className="text-[10px]">{WORKFLOW_SHORT[ticket.workflow]}</Badge>
+          <span className="text-[11px] text-muted-foreground tabular-nums">{fechaHora(ticket.createdAt)}</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-2 rounded-md bg-muted/50 p-3">
+        <div className="min-w-0">
+          <p className="micro mb-1 text-muted-foreground">Origen</p>
+          <p className="text-[13px] font-medium leading-tight wrap-break-word">{formatBedName(ticket.origin)}</p>
+          {renderOrphanTag(ticket, true)}
+        </div>
+        <ArrowRight className="mt-4 size-4 text-muted-foreground" aria-hidden="true" />
+        <div className="min-w-0 text-right">
+          <p className="micro mb-1 text-muted-foreground">Destino</p>
+          <p className="text-[13px] font-medium leading-tight wrap-break-word">{ticket.destination ? formatBedName(ticket.destination) : 'Pendiente'}</p>
+          {ticket.targetBedOriginalStatus && <p className="mt-1 text-[11px] text-muted-foreground">{ticket.targetBedOriginalStatus}</p>}
+        </div>
+      </div>
+
+      {ticket.observations && (
+        <div className="recuadro flex items-start gap-2 border-warning/30 bg-warning/10 text-warning">
+          <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+          <div className="min-w-0">
+            <p className="micro mb-0.5">Observaciones</p>
+            <p className="text-xs leading-snug">{ticket.observations}</p>
           </div>
         </div>
-      </TableHead>
-    );
-  };
+      )}
+
+      {/* Qué falta — solo si el estado tiene algo que decir (antes quedaba un recuadro vacío en Presolicitud) */}
+      {ayudaEstado(ticket, false) && (
+        <p className="flex items-start gap-2 text-xs text-muted-foreground">
+          <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+          <span>{ayudaEstado(ticket, false)}</span>
+        </p>
+      )}
+
+      {ticket.rejectionReason && (
+        <div className="recuadro flex items-start gap-2 border-destructive/30 bg-destructive/10 text-xs text-destructive">
+          <AlertCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+          <p className="italic">"{ticket.rejectionReason}"</p>
+        </div>
+      )}
+
+      {renderActionButtons(ticket, true)}
+      {renderObsButton(ticket, true)}
+    </div>
+  );
+
+  const rolesVisibles = Object.entries(ROLE_LABELS).filter(([k]) => {
+    // Solo Admin (con todos los permisos) ve el tab Admin. Los demás (Admision) ven Admision + Azafata.
+    if (can(currentUser, 'abm_usuarios')) return true;
+    return k === Role.ADMISSION || k === Role.HOSTESS;
+  });
 
   // 24px de margen hasta 1536px (no 32): a 1280 con el sidebar abierto cada píxel cuenta para que la grilla entre.
   return (
-    <div className="p-4 md:p-6 2xl:p-8 animate-in slide-in-from-right-4 duration-300 max-w-full space-y-4 md:space-y-6">
-      <div className="flex flex-col lg:flex-row items-center justify-between gap-4">
-        <div className="flex flex-col sm:flex-row items-center gap-3 w-full lg:w-auto">
-          {/* Tab switcher para "actuar como" otro rol. Visible solo si el user puede
-              crear tickets (Admin/Admision) — los demás roles no tienen sentido. */}
+    <div className="flex max-w-full flex-col gap-4 p-4 md:p-6 2xl:p-8">
+      {/* Toolbar (DESIGN §3.1): a la izquierda "ver como" y la espera media; a la derecha búsqueda y altas. */}
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* "Ver como" otro rol: solo quien puede crear tickets (Admin/Admisión). */}
           {can(currentUser, 'crear_ticket') && (
-            <div className="flex items-center gap-2 w-full sm:w-auto bg-white p-1 rounded-xl border border-slate-200 shadow-xs overflow-x-auto no-scrollbar">
-              {Object.entries(ROLE_LABELS)
-                .filter(([k]) => {
-                  // Solo Admin (con todos los permisos) ve el tab Admin. Los demás (Admision)
-                  // ven Admision + Azafata pero no Admin.
-                  if (can(currentUser, 'abm_usuarios')) return true;
-                  return k === Role.ADMISSION || k === Role.HOSTESS;
-                })
-                .map(([k, v]) => (
-                <button
-                  key={k}
-                  onClick={() => setActiveRole(k as Role)}
-                  className={cn(
-                    "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-tight whitespace-nowrap transition-all",
-                    activeRole === k ? "bg-emerald-950 text-white shadow-md scale-105" : "text-slate-400 hover:bg-slate-100"
-                  )}
-                >
-                  {v}
-                </button>
-              ))}
+            <div className="flex items-center gap-2">
+              <span className="micro text-muted-foreground">Ver como</span>
+              <Tabs value={activeRole} onValueChange={(v) => setActiveRole(v as Role)}>
+                <TabsList>
+                  {rolesVisibles.map(([k, v]) => (
+                    <TabsTrigger key={k} value={k}>{v}</TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
             </div>
           )}
-          <div className="flex items-center gap-3 px-4 py-2 bg-emerald-50 border border-emerald-100 rounded-xl shadow-xs whitespace-nowrap w-full sm:w-auto">
-            <div className="p-1.5 bg-emerald-100 rounded-full text-emerald-600">
-              <Timer className="w-3.5 h-3.5" />
-            </div>
-            <div className="flex items-baseline gap-2">
-              <span className="text-[10px] uppercase font-bold text-emerald-600">Espera:</span>
-              <span className="text-sm font-black text-emerald-900">{typeof averageWaitTime === 'number' && averageWaitTime > 0 ? `${averageWaitTime}m` : '--'}</span>
-            </div>
+          <div className="flex h-9 items-center gap-2 rounded-md border bg-card px-3 shadow-xs">
+            <Timer className="size-4 text-muted-foreground" aria-hidden="true" />
+            <span className="micro text-muted-foreground">Espera media</span>
+            <span className="cifra text-sm">{typeof averageWaitTime === 'number' && averageWaitTime > 0 ? `${averageWaitTime} min` : '—'}</span>
           </div>
         </div>
-        <div className="flex items-center gap-2 w-full lg:w-auto">
-          <div className="relative flex-1 lg:w-64">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <Input placeholder="Paciente o ID..." className="pl-10 h-10 rounded-xl text-xs" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-            {searchTerm && <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="w-3.5 h-3.5" /></button>}
+        <div className="flex items-center gap-2">
+          <div className="relative min-w-28 flex-1 lg:w-64 lg:flex-none">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+            <Input
+              placeholder="Paciente o ID…"
+              aria-label="Buscar por paciente o ID"
+              className="pr-9 pl-8 md:h-9"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+            {searchTerm && (
+              <Button type="button" variant="ghost" size="icon-sm" className="absolute top-1/2 right-1 size-7 -translate-y-1/2 text-muted-foreground" onClick={() => setSearchTerm('')} aria-label="Limpiar búsqueda">
+                <X />
+              </Button>
+            )}
           </div>
           {can(currentUser, 'crear_pre_ticket') && onNewPreTicket && (
-            <Button onClick={onNewPreTicket} variant="outline" className="h-10 border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-xl px-3 sm:px-4 flex items-center gap-1.5 sm:gap-2 shrink-0">
-              <Plus className="w-4 h-4" />
-              <span className="text-xs font-bold">Pre-ticket</span>
+            <Button type="button" variant="outline" onClick={onNewPreTicket} className="shrink-0 gap-1.5 px-3 md:h-9">
+              <Plus /> Pre-ticket
             </Button>
           )}
           {can(currentUser, 'crear_ticket') && (
-            <Button onClick={onNewRequest} className="h-10 bg-emerald-950 hover:bg-emerald-900 rounded-xl shadow-lg px-3 sm:px-4 flex items-center gap-1.5 sm:gap-2 shrink-0">
-              <Plus className="w-4 h-4 text-white" />
-              <span className="text-xs font-bold">Solicitud</span>
+            <Button type="button" onClick={onNewRequest} className="shrink-0 gap-1.5 px-3 md:h-9">
+              <Plus /> Solicitud
             </Button>
           )}
         </div>
@@ -702,12 +886,12 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       {/* La carga de traslados falló: se avisa en vez de mostrar una grilla vacía (o vieja) sin explicación.
           El hook reintenta solo con espera creciente. Ver fetchTickets en useHospitalState. */}
       {ticketsError && (
-        <div role="alert" className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
+        <div role="alert" className="recuadro flex items-start gap-2 border-destructive/30 bg-destructive/10 text-xs text-destructive">
+          <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
           <span>
-            <span className="font-bold">No pudimos {ticketsLoaded ? 'actualizar' : 'cargar'} los traslados.</span>{' '}
+            <span className="font-semibold">No pudimos {ticketsLoaded ? 'actualizar' : 'cargar'} los traslados.</span>{' '}
             Reintentamos solos en unos segundos{ticketsLoaded ? '; lo que ves puede estar desactualizado' : ''}.{' '}
-            <span className="font-mono text-[10px] opacity-60">({ticketsError})</span>
+            <span className="font-mono text-[10px] opacity-70">({ticketsError})</span>
           </span>
         </div>
       )}
@@ -723,301 +907,51 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
         urgencias={urgenciasChip ? { count: urgenciasCount, on: onlyUrgencias, onToggle: () => setOnlyUrgencias(v => !v) } : undefined}
       />
 
-      {/* Vista Mobile (Cards) */}
-      <div className="grid grid-cols-1 gap-3 md:hidden">
-        {sortedTickets.length === 0 ? (
-          <div className="py-20 text-center opacity-30">
-            <Search className="w-12 h-12 mx-auto mb-3" />
-            <p className="text-xs font-black uppercase tracking-widest">{emptyLabel}</p>
-          </div>
-        ) : (
-          sortedTickets.map((ticket) => (
-            <Card key={ticket.id} className={cn("p-4 border-slate-200 bg-white shadow-xs flex flex-col gap-4 relative overflow-hidden", ticket.status === TicketStatus.REJECTED && "bg-red-50/30")}>
-              <div className="flex justify-between items-start">
-                <div className="space-y-1 flex-1">
-                  <div className="flex items-center gap-2">
-                    <StatusBadge tono={ESTADOS_TICKET[ticket.status].tono}>{ESTADOS_TICKET[ticket.status].label}</StatusBadge>
-                    <span className="text-[9px] font-black font-mono text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded-sm border border-slate-100">{ticket.id}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <h3 className="font-black text-slate-950 text-base leading-tight tracking-tight uppercase">{ticket.patientName}</h3>
-                    {renderUrgenciaTags(ticket)}
-                    {getTicketIsolationTypes(ticket).map((iso: IsolationEntry, i: number) => (
-                      <span
-                        key={`${iso.name}-${i}`}
-                        className="inline-flex items-center gap-1 rounded-full bg-violet-500 px-1.5 py-0.5 text-white shrink-0"
-                        title={`Aislamiento: ${iso.name}${iso.observation ? ` — ${iso.observation}` : ''}`}
-                      >
-                        <ShieldAlert className="w-3 h-3" strokeWidth={3} />
-                        <span className="text-[9px] font-black uppercase tracking-wide leading-none">{iso.name}</span>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex flex-col items-end gap-1">
-                  <Badge variant="outline" className="text-[9px] bg-slate-50 text-slate-500 border-slate-200 font-black py-0">
-                    {WORKFLOW_SHORT[ticket.workflow]}
-                  </Badge>
-                  <div className="text-[10px] font-bold text-slate-400 tabular-nums flex items-center gap-1">
-                    <Clock className="w-3 h-3" /> {formatDateTime(ticket.createdAt)}
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between p-3 bg-slate-50/50 rounded-xl border border-slate-100">
-                <div className="flex flex-col min-w-0 flex-1">
-                  <p className="text-[8px] font-black uppercase text-slate-400 leading-none mb-1">Origen</p>
-                  <div className="flex items-center gap-1.5 w-full">
-                    <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <p className="text-xs font-bold text-slate-700 wrap-break-word leading-tight">{formatBedName(ticket.origin)}</p>
-                  </div>
-                  {renderOrphanTag(ticket, true)}
-                </div>
-                
-                <div className="flex flex-col items-center justify-center px-2 shrink-0">
-                  <ArrowRightLeft className="w-3.5 h-3.5 text-slate-300" />
-                </div>
-
-                <div className="flex flex-col min-w-0 flex-1 items-end text-right">
-                  <p className="text-[8px] font-black uppercase text-blue-400 leading-none mb-1">Destino</p>
-                  <div className="flex items-center gap-1.5 justify-end w-full">
-                    <p className="text-xs font-black text-blue-900 wrap-break-word leading-tight text-right">{ticket.destination ? formatBedName(ticket.destination) : 'Pendiente'}</p>
-                    <BedDouble className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                  </div>
-                  {ticket.targetBedOriginalStatus && (
-                    <p className="text-[9px] font-bold text-slate-500 mt-1 uppercase">
-                      Est: {ticket.targetBedOriginalStatus}
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {ticket.observations && (
-                <div className="p-2.5 bg-amber-50 border border-amber-100 rounded-xl flex items-start gap-2">
-                  <Info className="w-3.5 h-3.5 text-amber-600 mt-0.5 shrink-0" />
-                  <div>
-                    <p className="text-[9px] font-black uppercase text-amber-800 mb-0.5">Observaciones</p>
-                    <p className="text-xs font-medium text-amber-900 leading-tight">{ticket.observations}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Status Context Helper — solo si el estado tiene algo que decir (antes quedaba un recuadro vacío, p.ej. en Presolicitud) */}
-              {ticket.status !== TicketStatus.COMPLETED && ticket.status !== TicketStatus.REJECTED && (
-              <div className="text-[10px] font-medium text-slate-500 bg-slate-50 px-3 py-2 rounded-lg border border-slate-100 flex items-center gap-2">
-                <Info className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                <span>
-                  {ticket.status === TicketStatus.PRESOLICITUD && "Pre-ticket: falta que Admisión configure el destino."}
-                  {ticket.status === TicketStatus.WAITING_ROOM && (needsRoomCheck(ticket)
-                    ? <span className="font-semibold text-sky-700">Verificar la habitación antes de marcarla lista{ticket.habCompartida ? ' (habitación compartida)' : ''}.</span>
-                    : "Esperando que la habitación de destino esté lista.")}
-                  {ticket.status === TicketStatus.IN_TRANSIT && "Habitación lista. Esperando inicio de traslado."}
-                  {ticket.status === TicketStatus.IN_TRANSPORT && "Traslado en curso. Esperando confirmación de recepción."}
-                  {ticket.status === TicketStatus.WAITING_CONSOLIDATION && (ticket.urgencia
-                    ? (ticket.patientCode
-                      ? "Urgencia de un paciente internado: registrar el movimiento en PROGAL y consolidar."
-                      : "Urgencia: ingresar al paciente en PROGAL y vincularlo para consolidar.")
-                    : "Paciente recibido. Pendiente consolidar en sistema.")}
-                </span>
-              </div>
-              )}
-
-              {ticket.rejectionReason && (
-                <div className="p-2.5 bg-red-100/50 border border-red-200 rounded-xl flex items-start gap-2">
-                  <AlertCircle className="w-3.5 h-3.5 text-red-600 mt-0.5" />
-                  <p className="text-[10px] font-bold text-red-900 italic leading-tight">"{ticket.rejectionReason}"</p>
-                </div>
-              )}
-
-              {renderActionButtons(ticket, true)}
-              {renderObsButton(ticket, true)}
-            </Card>
-          ))
-        )}
-      </div>
-
-      {/* Vista Desktop (Table) */}
-      <Card className="hidden md:block shadow-xs border-slate-200 overflow-hidden bg-white rounded-2xl">
-        <div className="overflow-x-auto">
-          {/* Celdas con 12px por lado (no 16): a 1280 con el sidebar abierto quedan ~1020px y la grilla tiene que entrar entera. */}
-          <Table className="[&_th]:px-3 [&_td]:px-3">
-            <TableHeader className="bg-slate-50 border-b border-slate-200">
-              <TableRow>
-                <SortHeader label="Estado" sortKey="status" />
-                <TableHead className="min-w-[120px]">Tarea</TableHead>
-                <SortHeader label="Paciente" sortKey="patientName" />
-                <SortHeader label="Origen" sortKey="origin" />
-                <TableHead className="min-w-[90px] whitespace-nowrap">Destino</TableHead>
-                <TableHead className="min-w-[80px] leading-tight">Estado Destino</TableHead>
-                <TableHead className="min-w-[100px]">Observaciones</TableHead>
-                <TableHead className="text-right whitespace-nowrap sticky right-0 z-10 bg-slate-50">Acciones</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {sortedTickets.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={8} className="h-48 text-center text-slate-500 bg-white">
-                    <div className="flex flex-col items-center justify-center gap-3 opacity-20">
-                      <Search className={cn("w-10 h-10", loadingTickets && "animate-pulse")} />
-                      <p className="text-sm font-black uppercase tracking-widest">{emptyLabel}</p>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ) : (
-                sortedTickets.map((ticket) => (
-                  <TableRow key={ticket.id} className={cn("group hover:bg-slate-50/60 transition-colors", ticket.status === TicketStatus.REJECTED && "bg-red-50/40")}>
-                    <TableCell className="max-w-[130px]">
-                      <StatusBadge tono={ESTADOS_TICKET[ticket.status].tono} className="whitespace-normal leading-tight">{ESTADOS_TICKET[ticket.status].label}</StatusBadge>
-                      <div className="flex items-center gap-1.5 text-slate-400 text-[10px] font-bold tabular-nums mt-2">
-                        <Clock className="w-3 h-3 opacity-50" /> {formatDateTime(ticket.createdAt)}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-col gap-1.5 items-start">
-                        <Badge variant="outline" className="text-[9px] bg-white text-slate-400 border-slate-200 font-black uppercase tracking-tight">
-                          {WORKFLOW_LABEL_BADGE[ticket.workflow] ?? 'Interno'}
-                        </Badge>
-                        <div className="text-[10px] text-slate-500 mt-1">
-                          {ticket.status === TicketStatus.WAITING_ROOM && (needsRoomCheck(ticket)
-                            ? <span className="font-semibold text-sky-700">Verificar la habitación antes de marcarla lista.</span>
-                            : "Esperando habitación lista.")}
-                          {ticket.status === TicketStatus.IN_TRANSIT && "Esperando inicio de traslado."}
-                          {ticket.status === TicketStatus.IN_TRANSPORT && "Esperando confirmación de recepción."}
-                          {ticket.status === TicketStatus.WAITING_CONSOLIDATION && (ticket.urgencia && !ticket.patientCode
-                            ? "Ingresar al paciente en PROGAL y vincularlo."
-                            : "Pendiente consolidar en PROGAL.")}
-                        </div>
-                        {ticket.changeReason && (
-                          <div className="flex items-center gap-1.5 text-[9px] font-black text-amber-700 bg-amber-50 px-2 py-0.5 rounded-sm border border-amber-200/50 uppercase mt-1">
-                            <Info className="w-3 h-3" /> {ticket.changeReason}
-                          </div>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-black text-slate-950 text-base uppercase tracking-tight">{ticket.patientName}</span>
-                        {renderUrgenciaTags(ticket)}
-                        {getTicketIsolationTypes(ticket).map((iso: IsolationEntry, i: number) => (
-                          <span
-                            key={`${iso.name}-${i}`}
-                            className="inline-flex items-center gap-1 rounded-full bg-violet-500 px-1.5 py-0.5 text-white shrink-0"
-                            title={`Aislamiento: ${iso.name}${iso.observation ? ` — ${iso.observation}` : ''}`}
-                          >
-                            <ShieldAlert className="w-3 h-3" strokeWidth={3} />
-                            <span className="text-[9px] font-black uppercase tracking-wide leading-none">{iso.name}</span>
-                          </span>
-                        ))}
-                      </div>
-                      <div className="text-[11px] text-slate-400 font-mono mt-0.5 uppercase">{ticket.id}</div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="text-slate-800 text-sm font-black uppercase tracking-tight leading-tight">{formatBedName(ticket.origin)}</div>
-                      {renderOrphanTag(ticket)}
-                    </TableCell>
-                    <TableCell>
-                      {ticket.destination ? (
-                        <div className="flex flex-col gap-1">
-                          {/* Sin nowrap: destinos largos ("UNIDAD TERAPIA INTENSIVA HPR - CAMA 02") estiraban la columna a ~340px. */}
-                          <div className="text-slate-800 text-sm font-black uppercase tracking-tight wrap-break-word max-w-[150px]">{formatBedName(ticket.destination)}</div>
-                          {renderSharedRoomTag(ticket)}
-                        </div>
-                      ) : (
-                        <span className="text-xs text-slate-400 italic">-</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-col gap-1">
-                        {ticket.targetBedOriginalStatus ? (
-                          <span className="text-[10px] font-bold text-slate-500 uppercase leading-tight">
-                            {ticket.targetBedOriginalStatus}
-                          </span>
-                        ) : (
-                          <span className="text-[10px] font-bold text-slate-400 uppercase">
-                            -
-                          </span>
-                        )}
-                        {ticket.bedAssignedAt && <Badge variant="outline" className="text-[8px] py-0 px-1 border-emerald-100 bg-emerald-50 text-emerald-600 font-black uppercase w-fit whitespace-nowrap">Cama: {ticket.bedAssignedAt}</Badge>}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-col gap-1.5 items-start">
-                        {ticket.status === TicketStatus.REJECTED && ticket.rejectionReason ? (
-                          <div className="flex items-start gap-2 p-2 bg-red-100/30 border border-red-200 rounded-lg max-w-[220px]">
-                            <AlertCircle className="w-3 h-3 text-red-600 shrink-0 mt-0.5" />
-                            <p className="text-[10px] font-bold text-red-900 leading-tight line-clamp-2 italic">
-                              {ticket.rejectionReason}
-                            </p>
-                          </div>
-                        ) : (
-                          <>
-                            {ticket.observations ? (
-                              <div className="flex items-start gap-1.5 text-[10px] font-medium text-amber-800 bg-amber-50 p-2 rounded-sm border border-amber-200/50 max-w-[250px]">
-                                <Info className="w-3 h-3 shrink-0 mt-0.5 text-amber-600" /> 
-                                <span className="leading-tight wrap-break-word">{ticket.observations}</span>
-                              </div>
-                            ) : (
-                              <span className="text-[10px] text-slate-400 italic">-</span>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right pr-4 sticky right-0 z-10 bg-white shadow-[-8px_0_8px_-8px_rgba(15,23,42,0.18)]">
-                      {/* Acciones SIEMPRE en columna, del ancho del botón más ancho (w-max) y alineadas a la derecha.
-                          En fila (2-3 botones + Observaciones) la columna llegaba a 300-470px y empujaba la tabla
-                          fuera de pantalla a 1280px; estirados al ancho de la celda, en pantallas anchas quedaban
-                          botones de ~360px. */}
-                      <div className="flex flex-col items-stretch gap-1 w-max ml-auto">
-                        {renderActionButtons(ticket)}
-                        {renderObsButton(ticket)}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      </Card>
+      <DataTable
+        filas={sortedTickets}
+        columnas={columnas}
+        clave={(t) => t.id}
+        tarjeta={tarjeta}
+        // Todos los activos en una página: es una grilla operativa, no un archivo.
+        porPagina={Number.POSITIVE_INFINITY}
+        cargando={loadingTickets}
+        // El orden vive en el hook (sortConfig) y los pre-tickets van siempre arriba: la tabla no ordena sola.
+        orden={{ id: sortConfig.key, dir: sortConfig.direction }}
+        onOrden={(id) => onSort(id as SortKey)}
+        claseFila={(t) => (t.status === TicketStatus.REJECTED ? 'bg-destructive/5' : undefined)}
+        vacio={<Vacio icono={ticketsError && !ticketsLoaded ? AlertCircle : Search} titulo={emptyLabel} />}
+        className="[&_td]:px-3 [&_th]:px-3"
+      />
 
       {/* Modal único de Observaciones: hilo (historial) arriba + redactor abajo.
           Mismo lugar para leer y cargar; la nota queda ligada al status actual. */}
       <Dialog open={!!obsTicket} onOpenChange={(open) => { if (!open) closeObs(); }}>
-        <DialogContent className="sm:max-w-[480px] rounded-2xl">
-          <DialogHeader>
-            <DialogTitle className="text-base font-bold text-slate-900 flex items-center gap-2 pr-6">
-              <MessageSquare className="w-4 h-4 text-emerald-600" /> Observaciones
-              {!obsLoading && obsList.length > 0 && (
-                <span className="text-[11px] font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5 tabular-nums">{obsList.length}</span>
-              )}
+        <DialogContent className="flex max-h-[85dvh] flex-col gap-0 p-0 sm:max-w-[480px]">
+          <DialogHeader className="shrink-0 border-b px-6 py-4">
+            <DialogTitle className="flex items-center gap-2 pr-6">
+              Observaciones
+              {!obsLoading && obsList.length > 0 && <StatusBadge tono="neutro">{obsList.length}</StatusBadge>}
             </DialogTitle>
-            {obsTicket && (
-              <p className="text-[11px] text-slate-400 font-medium">
-                {obsTicket.patientName} · <span className="font-semibold text-slate-600">{obsTicket.status}</span>
-              </p>
-            )}
+            <DialogDescription>
+              {obsTicket ? <>{obsTicket.patientName} · {ESTADOS_TICKET[obsTicket.status].label}</> : null}
+            </DialogDescription>
           </DialogHeader>
 
           {/* HILO — historial cronológico (lo más nuevo abajo, pegado al redactor) */}
-          <div ref={obsThreadRef} className="grid gap-2 content-start max-h-[42vh] min-h-[88px] overflow-y-auto pr-0.5">
+          <div ref={obsThreadRef} className="grid min-h-[88px] flex-1 content-start gap-2 overflow-y-auto px-6 py-4">
             {obsLoading ? (
-              <p className="text-sm text-slate-400 text-center py-6">Cargando…</p>
+              <Cargando />
             ) : obsList.length === 0 ? (
-              <div className="text-center py-6">
-                <MessageSquare className="w-7 h-7 text-slate-200 mx-auto mb-2" />
-                <p className="text-sm text-slate-400">Todavía no hay observaciones.</p>
-                <p className="text-xs text-slate-300">Escribí la primera abajo.</p>
-              </div>
+              <Vacio icono={MessageSquare} titulo="Todavía no hay observaciones" descripcion="Escribí la primera abajo." />
             ) : (
               obsList.map(o => (
-                <div key={o.id} className="p-3 bg-amber-50/60 border border-amber-100 rounded-xl">
-                  <p className="text-sm text-slate-800 leading-snug whitespace-pre-wrap wrap-break-word">{o.texto}</p>
-                  <p className="text-[10px] text-slate-400 font-medium mt-2 flex items-center gap-1.5 flex-wrap">
-                    <span className="font-semibold text-slate-600">{o.usuario || 'Usuario'}</span>
-                    <span>·</span>
-                    <span>{formatDateTime(o.fecha)}</span>
-                    {o.status && (<><span>·</span><span className="italic">{o.status}</span></>)}
+                <div key={o.id} className="rounded-lg border bg-muted/30 p-3">
+                  <p className="text-sm leading-snug whitespace-pre-wrap wrap-break-word">{o.texto}</p>
+                  <p className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <span className="font-medium text-foreground">{o.usuario || 'Usuario'}</span>
+                    <span aria-hidden="true">·</span>
+                    <span className="tabular-nums">{fechaHora(o.fecha)}</span>
+                    {o.status && (<><span aria-hidden="true">·</span><span className="italic">{o.status}</span></>)}
                   </p>
                 </div>
               ))
@@ -1027,32 +961,32 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
           {/* REDACTOR — disponible mientras el ticket esté activo. La Azafata deja de cargar
               al llegar a "Por Consolidar" (su parte operativa terminó); igual lee el hilo. */}
           {activeRole === Role.HOSTESS && obsTicket?.status === TicketStatus.WAITING_CONSOLIDATION ? (
-            <p className="text-[11px] text-slate-400 border-t border-slate-100 pt-3 text-center">
-              El traslado ya está <span className="font-semibold text-slate-600">Por Consolidar</span>. La carga de observaciones se cierra para la azafata.
+            <p className="shrink-0 border-t bg-muted/20 p-4 text-center text-xs text-muted-foreground">
+              El traslado ya está <span className="font-medium text-foreground">Por Consolidar</span>. La carga de observaciones se cierra para la azafata.
             </p>
           ) : (
-            <div className="grid gap-2 border-t border-slate-100 pt-3">
-              {obsTicket && (
-                <p className="text-[10px] text-slate-400">
-                  Se guardará en: <span className="font-semibold text-slate-600">{obsTicket.status}</span>
-                </p>
-              )}
-              <textarea
-                value={obsText}
-                onChange={e => setObsText(e.target.value)}
-                maxLength={500}
-                rows={3}
-                placeholder="Escribí una observación… (ej.: familiar ausente, faltan prendas)"
-                className="w-full min-h-[72px] rounded-xl border border-slate-200 p-3 text-sm leading-relaxed focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-hidden resize-y"
-              />
-              {obsError && <p className="text-red-500 text-xs font-bold">{obsError}</p>}
-              <div className="flex items-center justify-end gap-3">
-                <span className="text-[11px] text-slate-300 tabular-nums">{obsText.length}/500</span>
-                <Button
-                  onClick={submitObs}
-                  disabled={obsSaving || !obsText.trim()}
-                  className="rounded-xl h-10 px-6"
-                >
+            <div className="grid shrink-0 gap-2 border-t bg-muted/20 p-4">
+              <Field data-invalid={!!obsError || undefined}>
+                <FieldLabel htmlFor="obs-texto" className="sr-only">Nueva observación</FieldLabel>
+                <Textarea
+                  id="obs-texto"
+                  value={obsText}
+                  onChange={e => setObsText(e.target.value)}
+                  maxLength={500}
+                  rows={3}
+                  aria-invalid={!!obsError || undefined}
+                  placeholder="Escribí una observación… (ej.: familiar ausente, faltan prendas)"
+                  className="min-h-[72px] resize-y bg-background"
+                />
+                {obsError && <FieldError>{obsError}</FieldError>}
+              </Field>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[11px] text-muted-foreground">
+                  {obsTicket && <>Se guarda en <span className="font-medium text-foreground">{ESTADOS_TICKET[obsTicket.status].label}</span> · </>}
+                  <span className="tabular-nums">{obsText.length}/500</span>
+                </span>
+                <Button type="button" onClick={submitObs} disabled={obsSaving || !obsText.trim()}>
+                  {obsSaving && <Loader2 className="animate-spin" aria-hidden="true" />}
                   {obsSaving ? 'Guardando…' : 'Agregar'}
                 </Button>
               </div>

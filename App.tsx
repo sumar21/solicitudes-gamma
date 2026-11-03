@@ -8,6 +8,7 @@ import { BedDouble, Globe, Loader2, MapPin as MapPinIcon, RefreshCw, Utensils } 
 import { AppShell, type ItemNav } from './components/layout/app-shell';
 import { Aviso, EntornoDePrueba, MenuUsuario } from './components/layout/partes-shell';
 import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
+import { Tabs, TabsList, TabsTrigger } from './components/ui/tabs';
 import { StatusBadge } from './components/ui/status-badge';
 import { Vacio } from './components/ui/estados';
 import { fechaHora } from './lib/formato';
@@ -457,7 +458,7 @@ export default function App() {
 
   const ubicacion = (
     <div className="flex min-w-0 items-center gap-1.5">
-      <h1 className="truncate text-lg font-bold tracking-tight md:text-base md:font-semibold">{tituloVista}</h1>
+      <h1 className="truncate text-lg font-bold tracking-tight md:text-sm md:font-semibold md:tracking-normal">{tituloVista}</h1>
       <ModuleHelp
         moduleKey={
           state.currentView === 'HOME' ? 'Monitor'
@@ -651,19 +652,13 @@ export default function App() {
           {canViewOperativa && state.currentView === 'REQUESTS' && (
             <>
               {showOperativaTabs && (
-                <div className="px-4 md:px-8 pt-4 md:pt-8">
-                  <div className="flex items-center gap-1 border-b border-slate-200">
+                <Tabs value={operativaTab} onValueChange={(v) => actions.setOperativaSubview(v as typeof operativaTab)} className="px-4 pt-4 md:px-6 md:pt-6 2xl:px-8 2xl:pt-8">
+                  <TabsList variant="line" className="w-full justify-start">
                     {operativaTabDefs.map(([val, label]) => (
-                      <button key={val} onClick={() => actions.setOperativaSubview(val)}
-                        className={cn(
-                          'px-4 py-2 text-xs font-bold uppercase tracking-wide border-b-2 -mb-px transition-colors',
-                          operativaTab === val ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-400 hover:text-slate-600',
-                        )}>
-                        {label}
-                      </button>
+                      <TabsTrigger key={val} value={val}>{label}</TabsTrigger>
                     ))}
-                  </div>
-                </div>
+                  </TabsList>
+                </Tabs>
               )}
               {operativaTab === 'limpiezas' ? (
                 canSeeLimpiezas && (
