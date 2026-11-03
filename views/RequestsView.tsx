@@ -6,19 +6,21 @@ import {
   Search, Plus, Timer, ArrowRightLeft,
   CheckCircle2, BedDouble, Users, ClipboardCheck, AlertCircle, X, XCircle, Info, MapPin, Pencil, UserCheck
 } from '../components/Icons';
-import { ArrowRight, Loader2, ShieldAlert, MessageSquare, Siren, Undo2 } from 'lucide-react';
+import { ArrowRight, CircleDot, ClipboardPlus, Eye, Loader2, ShieldAlert, MessageSquare, Siren, Undo2 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Badge } from '../components/ui/badge';
 import { DataTable, type Columna } from '../components/ui/data-table';
 import { Cargando, Vacio } from '../components/ui/estados';
-import { Field, FieldError, FieldLabel } from '../components/ui/field';
 import { Textarea } from '../components/ui/textarea';
-import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogHeader } from '../components/ui/dialog';
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogTitle, DialogHeader } from '../components/ui/dialog';
 import { StatusBadge } from '../components/ui/status-badge';
-import { ESTADOS_TICKET } from '../lib/estados';
-import { TicketStatusFilter } from '../components/TicketStatusFilter';
+import { ESTADOS_TICKET, statusLabel } from '../lib/estados';
+import { BarraFiltros, BotonFiltros, CampoFiltro } from '../components/ui/filtros';
+import { MultiCombobox } from '../components/ui/combobox';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip';
 import { visibleStatusChips, countByStatus, applyStatusFilter, toggleStatus, showUrgenciasChip, applyUrgenciaFilter } from '../lib/ticketFilters';
 import { cn, formatBedName, effectiveHostessAreas } from '../lib/utils';
 import { fechaHora } from '../lib/formato';
@@ -72,7 +74,7 @@ interface ObsItem {
 }
 
 // Botones de acción dentro de una fila de la tabla: más bajos que sm para que tres apilados no estiren la fila.
-const BOTON_FILA = 'h-8 px-2.5 text-xs';
+const BOTON_FILA = 'h-8 gap-1.5 px-3 text-xs';
 
 const ROLE_LABELS: Partial<Record<Role, string>> = {
   [Role.ADMIN]: 'Admin',
@@ -108,6 +110,9 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   // propósito — un filtro viejo escondiendo traslados al día siguiente parecería que "no hay nada".
   const [statusFilter, setStatusFilter] = useState<Set<TicketStatus>>(new Set());
   const [onlyUrgencias, setOnlyUrgencias] = useState(false);
+  // Barra de filtros (§4.7): abierta de entrada desde tablet (los conteos por estado se ven sin un clic);
+  // en el celular arranca cerrada para no empujar la grilla.
+  const [verFiltros, setVerFiltros] = useState(() => typeof window === 'undefined' || window.innerWidth >= 768);
 
   // Observaciones por traslado: UN solo modal (hilo + redactor). Todos los roles ven el
   // historial y pueden cargar una nota nueva en el mismo lugar. La nota queda ligada al
@@ -203,6 +208,33 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     }
   };
 
+  // Acción secundaria de una fila (DESIGN §7.6): en desktop, botón-ícono `ghost` con tooltip y color semántico;
+  // en mobile, botón a lo ancho con texto (es la card entera).
+  const accionSecundaria = (
+    icono: React.ReactNode, label: string, onClick: () => void, isMobile: boolean,
+    { peligro = false, extra }: { peligro?: boolean; extra?: React.ReactNode } = {},
+  ) => isMobile ? (
+    <Button type="button" variant="outline" className={cn('relative w-full', peligro && 'text-destructive hover:bg-destructive/10 hover:text-destructive')} onClick={onClick}>
+      {icono} {label}{extra}
+    </Button>
+  ) : (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={label}
+          onClick={onClick}
+          className={cn('relative text-muted-foreground', peligro ? 'hover:bg-destructive/10 hover:text-destructive' : 'hover:text-foreground')}
+        >
+          {icono}{extra}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+
   // Botón "Observaciones" — único para todos los roles. Abre el modal con el hilo + redactor.
   // Disponible en tickets activos (no consolidados ni cancelados); en cerrados se consulta
   // desde Historial → Auditar (solo-lectura).
@@ -210,26 +242,16 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     const active = ticket.status !== TicketStatus.COMPLETED && ticket.status !== TicketStatus.REJECTED;
     if (!active || !onAddObservation) return null;
     const n = obsCounts[ticket.id] ?? 0;
-    return (
-      <Button
-        type="button"
-        size={isMobile ? 'default' : 'sm'}
-        variant="outline"
-        className={cn('relative', isMobile ? 'w-full' : BOTON_FILA)}
-        onClick={() => openObs(ticket)}
-        title={n > 0 ? `${n} observación${n === 1 ? '' : 'es'} cargada${n === 1 ? '' : 's'}` : undefined}
+    const contador = n > 0 ? (
+      <span
+        aria-hidden="true"
+        className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] leading-none font-bold text-white tabular-nums ring-2 ring-card"
       >
-        <MessageSquare /> Observaciones
-        {n > 0 && (
-          <span
-            aria-label={`${n} observaciones`}
-            className="absolute -top-1.5 -right-1.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-semibold text-destructive-foreground tabular-nums ring-2 ring-card"
-          >
-            {n > 9 ? '9+' : n}
-          </span>
-        )}
-      </Button>
-    );
+        {n > 9 ? '9+' : n}
+      </span>
+    ) : null;
+    const label = n > 0 ? `Observaciones (${n})` : 'Observaciones';
+    return accionSecundaria(<MessageSquare className="size-4" />, label, () => openObs(ticket), isMobile, { extra: contador });
   };
 
   // "Solicitar limpieza OK": un traslado "Esperando Habitación" con requisitos de cama o habitación
@@ -429,8 +451,9 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   const renderActionButtons = (ticket: Ticket, isMobile = false) => {
     const size = isMobile ? "default" : "sm";
     const btnClass = isMobile ? "w-full" : BOTON_FILA;
-    // Cancelar / restablecer: contorno con texto rojo (el rojo lleno queda para confirmar en el modal).
-    const peligro = "text-destructive hover:bg-destructive/10 hover:text-destructive";
+    // Desktop: el paso del circuito con texto + lo secundario en íconos, en una fila a la derecha (§7.6).
+    const fila = isMobile ? "flex flex-col gap-2" : "flex items-center justify-end gap-1";
+    const cancelar = (id: string) => accionSecundaria(<XCircle className="size-4" />, 'Cancelar', () => onReject!(id), isMobile, { peligro: true });
 
     // ── Pre-ticket (Presolicitud): Admisión configura el destino + (si el rol lo tiene) Cancelar ──
     // No aplican las acciones de azafata/admisión de un traslado normal (todavía no tiene destino).
@@ -444,17 +467,13 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       // sacaban la columna de Acciones de la pantalla. Apilados, con el mismo ancho, la columna queda en ~200px.
       // En mobile se conserva el espaciado de siempre (cada botón es un bloque de la card).
       return (
-        <div className={cn("flex flex-col", isMobile ? "gap-2" : "gap-1 items-stretch")}>
+        <div className={fila}>
           {canConfig && (
             <Button type="button" size={size} onClick={() => onConfigureDestino!(ticket.id)} className={btnClass}>
               <MapPin /> Configurar destino
             </Button>
           )}
-          {canCancelPre && (
-            <Button type="button" size={size} variant="outline" className={cn(btnClass, peligro)} onClick={() => onReject!(ticket.id)}>
-              <XCircle /> Cancelar
-            </Button>
-          )}
+          {canCancelPre && cancelar(ticket.id)}
         </div>
       );
     }
@@ -472,7 +491,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       const canCancelUrg = (can(currentUser, 'cancelar_ticket') || can(currentUser, 'cancelar_pre_ticket')) && !!onReject;
       if (!canLink && !canCancelUrg) return null;
       return (
-        <div className={cn("flex flex-col", isMobile ? "gap-1.5" : "gap-1 items-stretch")}>
+        <div className={fila}>
           {canLink && (
             yaVinculada ? (
               <Button type="button" size={size} className={btnClass} onClick={() => onConsolidate(ticket.id)}>
@@ -484,11 +503,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
               </Button>
             )
           )}
-          {canCancelUrg && (
-            <Button type="button" size={size} variant="outline" className={cn(btnClass, peligro)} onClick={() => onReject!(ticket.id)}>
-              <XCircle /> Cancelar
-            </Button>
-          )}
+          {canCancelUrg && cancelar(ticket.id)}
         </div>
       );
     }
@@ -548,7 +563,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
             </Button>
           );
         if (isOriginHostess)
-          return <StatusBadge tono="aviso" className="whitespace-normal">Esperando preparación destino</StatusBadge>;
+          return <span className="text-xs text-muted-foreground">Esperando preparación del destino</span>;
       }
 
       // Estado 2: IN_TRANSIT — azafata de origen inicia el traslado
@@ -560,7 +575,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
             </Button>
           );
         if (isDestHostess)
-          return <StatusBadge tono="info" className="whitespace-normal">Esperando inicio de traslado</StatusBadge>;
+          return <span className="text-xs text-muted-foreground">Esperando inicio del traslado</span>;
       }
 
       // Estado 3: IN_TRANSPORT — azafata destino confirma recepción
@@ -572,7 +587,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
             </Button>
           );
         if (isOriginHostess)
-          return <StatusBadge tono="info" className="whitespace-normal">Traslado en curso…</StatusBadge>;
+          return <span className="text-xs text-muted-foreground">Traslado en curso…</span>;
       }
 
       return null;
@@ -597,28 +612,15 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       // Desktop en columna (no fila): Consolidar + Editar + Cancelar en fila medían ~380px y empujaban la columna
       // de Acciones fuera de pantalla a 1280px.
       return (
-        <div className={cn("flex flex-col", isMobile ? "gap-1.5" : "gap-1 items-stretch")}>
+        <div className={fila}>
           {showConsolidate && (
             <Button type="button" size={size} className={btnClass} onClick={() => onConsolidate(ticket.id)}>
               <BedDouble /> Consolidar PROGAL
             </Button>
           )}
-          {showEdit && (
-            <Button type="button" size={size} variant="outline" className={btnClass} onClick={() => onEdit!(ticket.id)}>
-              <Pencil /> Editar
-            </Button>
-          )}
-          {showReset && (
-            <Button type="button" size={size} variant="outline" className={cn(btnClass, peligro)} onClick={() => onResetDestino!(ticket.id)}
-              title="Liberar la cama destino: el pre-ticket vuelve a 'Configurar destino'">
-              <Undo2 /> Restablecer destino
-            </Button>
-          )}
-          {showCancel && (
-            <Button type="button" size={size} variant="outline" className={cn(btnClass, peligro)} onClick={() => onReject!(ticket.id)}>
-              <XCircle /> Cancelar
-            </Button>
-          )}
+          {showEdit && accionSecundaria(<Pencil className="size-4" />, 'Editar', () => onEdit!(ticket.id), isMobile)}
+          {showReset && accionSecundaria(<Undo2 className="size-4" />, 'Restablecer destino (libera la cama)', () => onResetDestino!(ticket.id), isMobile, { peligro: true })}
+          {showCancel && cancelar(ticket.id)}
         </div>
       );
     }
@@ -630,10 +632,10 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
   const ayudaEstado = (ticket: Ticket, corto: boolean) => {
     switch (ticket.status) {
       case TicketStatus.PRESOLICITUD:
-        return corto ? null : 'Pre-ticket: falta que Admisión configure el destino.';
+        return corto ? 'Falta configurar el destino.' : 'Pre-ticket: falta que Admisión configure el destino.';
       case TicketStatus.WAITING_ROOM:
         return needsRoomCheck(ticket)
-          ? <span className="font-medium text-info">Verificar la habitación antes de marcarla lista{!corto && ticket.habCompartida ? ' (habitación compartida)' : ''}.</span>
+          ? <span className="font-medium text-sky-700">Verificar la habitación antes de marcarla lista{!corto && ticket.habCompartida ? ' (habitación compartida)' : ''}.</span>
           : corto ? 'Esperando habitación lista.' : 'Esperando que la habitación de destino esté lista.';
       case TicketStatus.IN_TRANSIT:
         return corto ? 'Esperando inicio de traslado.' : 'Habitación lista. Esperando inicio de traslado.';
@@ -648,47 +650,34 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     }
   };
 
+  // Observación o motivo de cancelación: banner suave (DESIGN §9.4).
   const observacion = (ticket: Ticket) =>
     ticket.status === TicketStatus.REJECTED && ticket.rejectionReason ? (
-      <div className="recuadro flex max-w-[240px] items-start gap-1.5 border-destructive/30 bg-destructive/10 px-2 py-1.5 text-[11px] leading-tight text-destructive">
-        <AlertCircle className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+      <div className="flex max-w-[260px] items-start gap-1.5 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] leading-tight text-red-700">
+        <AlertCircle className="mt-px size-3 shrink-0" aria-hidden="true" />
         <span className="line-clamp-3 italic">{ticket.rejectionReason}</span>
       </div>
     ) : ticket.observations ? (
-      <div className="recuadro flex max-w-[250px] items-start gap-1.5 border-warning/30 bg-warning/10 px-2 py-1.5 text-[11px] leading-tight text-warning">
-        <Info className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+      <div className="flex max-w-[260px] items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] leading-tight text-amber-700">
+        <Info className="mt-px size-3 shrink-0" aria-hidden="true" />
         <span className="wrap-break-word">{ticket.observations}</span>
       </div>
-    ) : (
-      <span className="text-muted-foreground">—</span>
-    );
+    ) : null;
 
+  // Columnas AGRUPADAS (DESIGN §7.2 "2 líneas" + §5.4 disclosure progresivo): datos que se leen juntos
+  // van en una celda, valor arriba y metadato `text-[10px] text-muted-foreground` abajo.
   const columnas: Columna<Ticket>[] = [
     {
       id: 'status',
       titulo: 'Estado',
       ordenar: (t) => t.status,
-      clase: 'max-w-[140px]',
+      clase: 'w-[150px]',
       celda: (t) => (
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col items-start gap-1">
           <StatusBadge tono={ESTADOS_TICKET[t.status].tono} className="whitespace-normal">{ESTADOS_TICKET[t.status].label}</StatusBadge>
-          <span className="text-[11px] text-muted-foreground tabular-nums">{fechaHora(t.createdAt)}</span>
-        </div>
-      ),
-    },
-    {
-      id: 'tarea',
-      titulo: 'Tarea',
-      clase: 'min-w-[130px]',
-      celda: (t) => (
-        <div className="flex flex-col items-start gap-1.5">
-          <Badge variant="outline" className="text-[10px]">{WORKFLOW_LABEL_BADGE[t.workflow] ?? 'Interno'}</Badge>
-          {ayudaEstado(t, true) && <div className="text-[11px] leading-snug text-muted-foreground">{ayudaEstado(t, true)}</div>}
-          {t.changeReason && (
-            <span className="flex items-start gap-1 text-[11px] leading-snug font-medium text-warning">
-              <Info className="mt-0.5 size-3 shrink-0" aria-hidden="true" /> {t.changeReason}
-            </span>
-          )}
+          <span className="text-[10px] text-muted-foreground tabular-nums">{fechaHora(t.createdAt)}</span>
+          {/* Sin la columna Tarea (< lg), el "qué falta" va acá. */}
+          {ayudaEstado(t, true) && <span className="text-[10px] leading-snug text-muted-foreground lg:hidden">{ayudaEstado(t, true)}</span>}
         </div>
       ),
     },
@@ -699,7 +688,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       celda: (t) => (
         <div className="flex flex-col gap-1">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-sm font-semibold">{t.patientName}</span>
+            <span className="font-medium">{t.patientName}</span>
             {renderUrgenciaTags(t)}
             {renderAislamientos(t)}
           </div>
@@ -709,46 +698,52 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     },
     {
       id: 'origin',
-      titulo: 'Origen',
+      titulo: 'Traslado',
       ordenar: (t) => t.origin,
       celda: (t) => (
-        <>
-          <div className="font-medium leading-tight">{formatBedName(t.origin)}</div>
+        <div className="flex max-w-[260px] flex-col gap-0.5">
+          <span className="font-medium leading-tight wrap-break-word">{formatBedName(t.origin)}</span>
           {renderOrphanTag(t)}
-        </>
+          <span className="flex items-start gap-1 leading-tight">
+            <ArrowRight className="mt-0.5 size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+            {t.destination
+              ? <span className="font-medium wrap-break-word">{formatBedName(t.destination)}</span>
+              : <span className="text-muted-foreground">Destino pendiente</span>}
+          </span>
+          {(t.targetBedOriginalStatus || t.bedAssignedAt) && (
+            <span className="pl-4 text-[10px] text-muted-foreground">
+              {t.targetBedOriginalStatus}{t.targetBedOriginalStatus && t.bedAssignedAt ? ' · ' : ''}{t.bedAssignedAt ? `cama ${t.bedAssignedAt}` : ''}
+            </span>
+          )}
+          {renderSharedRoomTag(t) && <span className="pl-4 pt-0.5">{renderSharedRoomTag(t)}</span>}
+        </div>
       ),
     },
     {
-      id: 'destino',
-      titulo: 'Destino',
-      clase: 'min-w-[100px]',
-      // Valor + metadato (DESIGN §3.9): el estado que tenía la cama destino va debajo, no en otra columna
-      // (a 1280 con la sidebar abierta la grilla tiene que entrar entera).
-      celda: (t) =>
-        t.destination ? (
-          <div className="flex flex-col gap-1">
-            {/* Sin nowrap: destinos largos ("UNIDAD TERAPIA INTENSIVA HPR - CAMA 02") estiraban la columna a ~340px. */}
-            <div className="max-w-[150px] font-medium leading-tight wrap-break-word">{formatBedName(t.destination)}</div>
-            {t.targetBedOriginalStatus && <span className="text-[11px] leading-tight text-muted-foreground">{t.targetBedOriginalStatus}</span>}
-            {t.bedAssignedAt && <StatusBadge tono="exito">Cama: {t.bedAssignedAt}</StatusBadge>}
-            {renderSharedRoomTag(t)}
+      id: 'tarea',
+      titulo: 'Tarea y observaciones',
+      ocultarEn: 'md',
+      celda: (t) => (
+        <div className="flex max-w-[280px] flex-col items-start gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge variant="outline" className="px-2 py-0 text-[10px] font-medium">{WORKFLOW_LABEL_BADGE[t.workflow] ?? 'Interno'}</Badge>
+            {ayudaEstado(t, true) && <span className="text-xs text-muted-foreground">{ayudaEstado(t, true)}</span>}
           </div>
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        ),
+          {t.changeReason && (
+            <span className="flex items-start gap-1 text-[11px] leading-snug font-medium text-amber-700">
+              <Info className="mt-px size-3 shrink-0" aria-hidden="true" /> {t.changeReason}
+            </span>
+          )}
+          {observacion(t)}
+        </div>
+      ),
     },
-    { id: 'observaciones', titulo: 'Observaciones', clase: 'min-w-[110px]', celda: observacion },
     {
       id: 'acciones',
       titulo: 'Acciones',
       alinear: 'der',
-      // Fija a la derecha: a 1280 con la sidebar abierta la grilla scrollea en x y las acciones tienen que verse.
-      clase: 'sticky right-0 border-l bg-card',
       celda: (t) => (
-        // Acciones SIEMPRE en columna, del ancho del botón más ancho (w-max) y alineadas a la derecha.
-        // En fila (2-3 botones + Observaciones) la columna llegaba a 300-470px y empujaba la tabla
-        // fuera de pantalla a 1280px.
-        <div className="ml-auto flex w-max flex-col items-stretch gap-1">
+        <div className="flex items-center justify-end gap-1">
           {renderActionButtons(t)}
           {renderObsButton(t)}
         </div>
@@ -756,50 +751,39 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     },
   ];
 
-  // Tarjeta mobile (DESIGN §3.9): identidad + estado arriba, origen → destino, avisos y acciones.
+  // Card mobile de fila (DESIGN §5.4b): identidad + estado arriba, el traslado, notas y acciones al pie.
   const tarjeta = (ticket: Ticket) => (
     <div className="flex flex-col gap-3">
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 space-y-1.5">
-          <StatusBadge tono={ESTADOS_TICKET[ticket.status].tono}>{ESTADOS_TICKET[ticket.status].label}</StatusBadge>
+        <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-1.5">
-            <h3 className="text-sm font-semibold leading-tight">{ticket.patientName}</h3>
+            <span className="font-medium">{ticket.patientName}</span>
             {renderUrgenciaTags(ticket)}
             {renderAislamientos(ticket)}
           </div>
-          <div className="font-mono text-[10px] text-muted-foreground">{ticket.id}</div>
+          <div className="font-mono text-[10px] text-muted-foreground">{ticket.id} · {WORKFLOW_SHORT[ticket.workflow]}</div>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
-          <Badge variant="outline" className="text-[10px]">{WORKFLOW_SHORT[ticket.workflow]}</Badge>
-          <span className="text-[11px] text-muted-foreground tabular-nums">{fechaHora(ticket.createdAt)}</span>
+          <StatusBadge tono={ESTADOS_TICKET[ticket.status].tono}>{ESTADOS_TICKET[ticket.status].label}</StatusBadge>
+          <span className="text-[10px] text-muted-foreground tabular-nums">{fechaHora(ticket.createdAt)}</span>
         </div>
       </div>
 
-      <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-2 rounded-md bg-muted/50 p-3">
+      <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-2 rounded-md bg-muted/40 p-2.5">
         <div className="min-w-0">
-          <p className="micro mb-1 text-muted-foreground">Origen</p>
+          <p className="mb-0.5 text-[10px] tracking-wider text-muted-foreground uppercase">Origen</p>
           <p className="text-[13px] font-medium leading-tight wrap-break-word">{formatBedName(ticket.origin)}</p>
           {renderOrphanTag(ticket, true)}
         </div>
         <ArrowRight className="mt-4 size-4 text-muted-foreground" aria-hidden="true" />
         <div className="min-w-0 text-right">
-          <p className="micro mb-1 text-muted-foreground">Destino</p>
+          <p className="mb-0.5 text-[10px] tracking-wider text-muted-foreground uppercase">Destino</p>
           <p className="text-[13px] font-medium leading-tight wrap-break-word">{ticket.destination ? formatBedName(ticket.destination) : 'Pendiente'}</p>
-          {ticket.targetBedOriginalStatus && <p className="mt-1 text-[11px] text-muted-foreground">{ticket.targetBedOriginalStatus}</p>}
+          {ticket.targetBedOriginalStatus && <p className="mt-0.5 text-[10px] text-muted-foreground">{ticket.targetBedOriginalStatus}</p>}
         </div>
       </div>
 
-      {ticket.observations && (
-        <div className="recuadro flex items-start gap-2 border-warning/30 bg-warning/10 text-warning">
-          <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-          <div className="min-w-0">
-            <p className="micro mb-0.5">Observaciones</p>
-            <p className="text-xs leading-snug">{ticket.observations}</p>
-          </div>
-        </div>
-      )}
-
-      {/* Qué falta — solo si el estado tiene algo que decir (antes quedaba un recuadro vacío en Presolicitud) */}
+      {observacion(ticket)}
       {ayudaEstado(ticket, false) && (
         <p className="flex items-start gap-2 text-xs text-muted-foreground">
           <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
@@ -807,15 +791,12 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
         </p>
       )}
 
-      {ticket.rejectionReason && (
-        <div className="recuadro flex items-start gap-2 border-destructive/30 bg-destructive/10 text-xs text-destructive">
-          <AlertCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-          <p className="italic">"{ticket.rejectionReason}"</p>
+      {(renderActionButtons(ticket, true) || renderObsButton(ticket, true)) && (
+        <div className="flex flex-col gap-2 border-t pt-3">
+          {renderActionButtons(ticket, true)}
+          {renderObsButton(ticket, true)}
         </div>
       )}
-
-      {renderActionButtons(ticket, true)}
-      {renderObsButton(ticket, true)}
     </div>
   );
 
@@ -825,65 +806,103 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     return k === Role.ADMISSION || k === Role.HOSTESS;
   });
 
-  // 24px de margen hasta 1536px (no 32): a 1280 con el sidebar abierto cada píxel cuenta para que la grilla entre.
+  const filtrosActivos = statusFilter.size + (urgenciaFilterOn ? 1 : 0);
+  const limpiarFiltros = () => { setStatusFilter(new Set()); setOnlyUrgencias(false); };
+  const esperaMedia = typeof averageWaitTime === 'number' && averageWaitTime > 0 ? `${averageWaitTime} min` : '—';
+
   return (
-    <div className="flex max-w-full flex-col gap-4 p-4 md:p-6 2xl:p-8">
-      {/* Toolbar (DESIGN §3.1): a la izquierda "ver como" y la espera media; a la derecha búsqueda y altas. */}
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex flex-wrap items-center gap-3">
-          {/* "Ver como" otro rol: solo quien puede crear tickets (Admin/Admisión). */}
-          {can(currentUser, 'crear_ticket') && (
-            <div className="flex items-center gap-2">
-              <span className="micro text-muted-foreground">Ver como</span>
-              <Tabs value={activeRole} onValueChange={(v) => setActiveRole(v as Role)}>
-                <TabsList>
-                  {rolesVisibles.map(([k, v]) => (
-                    <TabsTrigger key={k} value={k}>{v}</TabsTrigger>
-                  ))}
-                </TabsList>
-              </Tabs>
-            </div>
-          )}
-          <div className="flex h-9 items-center gap-2 rounded-md border bg-card px-3 shadow-xs">
-            <Timer className="size-4 text-muted-foreground" aria-hidden="true" />
-            <span className="micro text-muted-foreground">Espera media</span>
-            <span className="cifra text-sm">{typeof averageWaitTime === 'number' && averageWaitTime > 0 ? `${averageWaitTime} min` : '—'}</span>
-          </div>
+    <div className="flex w-full flex-col gap-4 px-3 pb-3 md:px-8 md:pb-8">
+      {/* HEADER + TOOLBAR (DESIGN §4.4 y §5.2) */}
+      <div className="flex shrink-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="hidden shrink-0 md:block">
+          <h2 className="text-2xl font-bold tracking-tight">Traslados</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            <span className="font-medium text-foreground tabular-nums">{scopedTickets.length}</span> activos · espera media{' '}
+            <span className="font-medium text-foreground tabular-nums">{esperaMedia}</span>
+          </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
-          {/* En mobile la búsqueda va sola en su fila; las altas, abajo a lo ancho. */}
-          <div className="relative min-w-28 basis-full sm:basis-auto sm:flex-1 lg:w-64 lg:flex-none">
-            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+          <div className="relative min-w-[7rem] flex-1 sm:w-56 sm:flex-none">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
             <Input
               placeholder="Paciente o ID…"
               aria-label="Buscar por paciente o ID"
-              className="pr-9 pl-8 md:h-9"
+              className="h-9 pr-8 pl-8 text-sm"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
             {searchTerm && (
-              <Button type="button" variant="ghost" size="icon-sm" className="absolute top-1/2 right-1 size-7 -translate-y-1/2 text-muted-foreground" onClick={() => setSearchTerm('')} aria-label="Limpiar búsqueda">
-                <X />
-              </Button>
+              <button type="button" onClick={() => setSearchTerm('')} aria-label="Limpiar búsqueda" className="absolute top-1/2 right-2 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground hover:text-foreground">
+                <X className="size-3.5" />
+              </button>
             )}
           </div>
+          <BotonFiltros abierto={verFiltros} activos={filtrosActivos} onClick={() => setVerFiltros(v => !v)} />
           {can(currentUser, 'crear_pre_ticket') && onNewPreTicket && (
-            <Button type="button" variant="outline" onClick={onNewPreTicket} className="flex-1 gap-1.5 px-3 sm:flex-none md:h-9">
-              <Plus /> Pre-ticket
+            <Button type="button" variant="outline" onClick={onNewPreTicket} className="h-9 shrink-0 gap-1.5 px-3" aria-label="Nuevo pre-ticket">
+              <ClipboardPlus className="size-3.5" /><span className="hidden sm:inline">Pre-ticket</span>
             </Button>
           )}
           {can(currentUser, 'crear_ticket') && (
-            <Button type="button" onClick={onNewRequest} className="flex-1 gap-1.5 px-3 sm:flex-none md:h-9">
-              <Plus /> Solicitud
+            <Button type="button" onClick={onNewRequest} className="h-9 shrink-0 gap-1.5 px-3" aria-label="Nueva solicitud">
+              <Plus className="size-3.5" /><span className="hidden sm:inline">Solicitud</span>
             </Button>
           )}
         </div>
       </div>
 
+      {/* FILTROS (DESIGN §4.7): barra inline, no un modal. */}
+      {verFiltros && (
+        <BarraFiltros activos={filtrosActivos} onLimpiar={limpiarFiltros}>
+          {/* "Ver como" otro rol (control segmentado, §6.6): cambia qué se ve y qué botones aparecen. Solo
+              quien puede crear tickets. */}
+          {can(currentUser, 'crear_ticket') && (
+            <CampoFiltro icono={Eye} label="Ver como" className="sm:w-auto">
+              <div className="flex h-10 w-full items-center rounded-lg bg-muted p-1 sm:w-auto" role="group" aria-label="Ver como">
+                {rolesVisibles.map(([k, v]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    aria-pressed={activeRole === k}
+                    onClick={() => setActiveRole(k as Role)}
+                    className={cn(
+                      'h-full flex-1 rounded-md px-3 text-sm font-medium transition-all outline-hidden focus-visible:ring-2 focus-visible:ring-ring sm:flex-none',
+                      activeRole === k ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </CampoFiltro>
+          )}
+          <CampoFiltro icono={CircleDot} label="Estado" className="sm:w-64">
+            <MultiCombobox
+              opciones={statusChips.map(st => ({ value: st, label: `${statusLabel(st)} (${statusCounts[st] ?? 0})` }))}
+              value={[...statusFilter]}
+              onChange={(v) => setStatusFilter(new Set(v as TicketStatus[]))}
+              placeholder={`Todos (${scopedTickets.length})`}
+              buscar="Buscar estado…"
+            />
+          </CampoFiltro>
+          {urgenciasChip && (
+            <CampoFiltro icono={Siren} label="Prioridad">
+              <Select value={onlyUrgencias ? 'urgencias' : 'todas'} onValueChange={(v) => setOnlyUrgencias(v === 'urgencias')}>
+                <SelectTrigger className="w-full" aria-label="Prioridad"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todas">Todas</SelectItem>
+                  <SelectItem value="urgencias">Solo urgencias ({urgenciasCount})</SelectItem>
+                </SelectContent>
+              </Select>
+            </CampoFiltro>
+          )}
+        </BarraFiltros>
+      )}
+
       {/* La carga de traslados falló: se avisa en vez de mostrar una grilla vacía (o vieja) sin explicación.
           El hook reintenta solo con espera creciente. Ver fetchTickets en useHospitalState. */}
       {ticketsError && (
-        <div role="alert" className="recuadro flex items-start gap-2 border-destructive/30 bg-destructive/10 text-xs text-destructive">
+        <div role="alert" className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
           <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
           <span>
             <span className="font-semibold">No pudimos {ticketsLoaded ? 'actualizar' : 'cargar'} los traslados.</span>{' '}
@@ -893,17 +912,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
         </div>
       )}
 
-      {/* Botonera de estados: un chip por estado visible para el rol (colapsada tras "Filtrar" en mobile) */}
-      <TicketStatusFilter
-        statuses={statusChips}
-        counts={statusCounts}
-        total={scopedTickets.length}
-        selected={statusFilter}
-        onToggle={(s) => setStatusFilter(prev => toggleStatus(prev, s))}
-        onClear={() => { setStatusFilter(new Set()); setOnlyUrgencias(false); }}
-        urgencias={urgenciasChip ? { count: urgenciasCount, on: onlyUrgencias, onToggle: () => setOnlyUrgencias(v => !v) } : undefined}
-      />
-
+      {/* TABLA (desktop) + CARDS (mobile) sobre el mismo array (§4.4, §7.1) */}
       <DataTable
         filas={sortedTickets}
         columnas={columnas}
@@ -915,34 +924,33 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
         // El orden vive en el hook (sortConfig) y los pre-tickets van siempre arriba: la tabla no ordena sola.
         orden={{ id: sortConfig.key, dir: sortConfig.direction }}
         onOrden={(id) => onSort(id as SortKey)}
-        claseFila={(t) => (t.status === TicketStatus.REJECTED ? 'bg-destructive/5' : undefined)}
+        claseFila={(t) => (t.status === TicketStatus.REJECTED ? 'bg-red-50/40' : undefined)}
         vacio={<Vacio icono={ticketsError && !ticketsLoaded ? AlertCircle : Search} titulo={emptyLabel} />}
-        className="[&_td]:px-3 [&_th]:px-3"
       />
 
-      {/* Modal único de Observaciones: hilo (historial) arriba + redactor abajo.
+      {/* Modal único de Observaciones (§4.1): hilo en el cuerpo, redactor en el pie.
           Mismo lugar para leer y cargar; la nota queda ligada al status actual. */}
       <Dialog open={!!obsTicket} onOpenChange={(open) => { if (!open) closeObs(); }}>
-        <DialogContent className="flex max-h-[85dvh] flex-col gap-0 p-0 sm:max-w-[480px]">
-          <DialogHeader className="shrink-0 border-b px-6 py-4">
-            <DialogTitle className="flex items-center gap-2 pr-6">
-              Observaciones
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              <MessageSquare className="size-5 text-brand" aria-hidden="true" /> Observaciones
               {!obsLoading && obsList.length > 0 && <StatusBadge tono="neutro">{obsList.length}</StatusBadge>}
             </DialogTitle>
             <DialogDescription>
-              {obsTicket ? <>{obsTicket.patientName} · {ESTADOS_TICKET[obsTicket.status].label}</> : null}
+              {obsTicket ? <><span className="font-medium text-foreground">{obsTicket.patientName}</span> · {ESTADOS_TICKET[obsTicket.status].label}</> : null}
             </DialogDescription>
           </DialogHeader>
 
           {/* HILO — historial cronológico (lo más nuevo abajo, pegado al redactor) */}
-          <div ref={obsThreadRef} className="grid min-h-[88px] flex-1 content-start gap-2 overflow-y-auto px-6 py-4">
+          <DialogBody ref={obsThreadRef} className="min-h-[120px] space-y-2">
             {obsLoading ? (
               <Cargando />
             ) : obsList.length === 0 ? (
-              <Vacio icono={MessageSquare} titulo="Todavía no hay observaciones" descripcion="Escribí la primera abajo." />
+              <Vacio icono={MessageSquare} titulo="Todavía no hay observaciones" descripcion="Escribí la primera abajo." className="py-8" />
             ) : (
               obsList.map(o => (
-                <div key={o.id} className="rounded-lg border bg-muted/30 p-3">
+                <div key={o.id} className="rounded-lg border bg-card p-3 shadow-xs">
                   <p className="text-sm leading-snug whitespace-pre-wrap wrap-break-word">{o.texto}</p>
                   <p className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
                     <span className="font-medium text-foreground">{o.usuario || 'Usuario'}</span>
@@ -953,37 +961,34 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                 </div>
               ))
             )}
-          </div>
+          </DialogBody>
 
           {/* REDACTOR — disponible mientras el ticket esté activo. La Azafata deja de cargar
               al llegar a "Por Consolidar" (su parte operativa terminó); igual lee el hilo. */}
           {activeRole === Role.HOSTESS && obsTicket?.status === TicketStatus.WAITING_CONSOLIDATION ? (
-            <p className="shrink-0 border-t bg-muted/20 p-4 text-center text-xs text-muted-foreground">
+            <div className="shrink-0 border-t bg-muted/20 p-4 text-center text-xs text-muted-foreground">
               El traslado ya está <span className="font-medium text-foreground">Por Consolidar</span>. La carga de observaciones se cierra para la azafata.
-            </p>
+            </div>
           ) : (
-            <div className="grid shrink-0 gap-2 border-t bg-muted/20 p-4">
-              <Field data-invalid={!!obsError || undefined}>
-                <FieldLabel htmlFor="obs-texto" className="sr-only">Nueva observación</FieldLabel>
-                <Textarea
-                  id="obs-texto"
-                  value={obsText}
-                  onChange={e => setObsText(e.target.value)}
-                  maxLength={500}
-                  rows={3}
-                  aria-invalid={!!obsError || undefined}
-                  placeholder="Escribí una observación… (ej.: familiar ausente, faltan prendas)"
-                  className="min-h-[72px] resize-y bg-background"
-                />
-                {obsError && <FieldError>{obsError}</FieldError>}
-              </Field>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-[11px] text-muted-foreground">
-                  {obsTicket && <>Se guarda en <span className="font-medium text-foreground">{ESTADOS_TICKET[obsTicket.status].label}</span> · </>}
-                  <span className="tabular-nums">{obsText.length}/500</span>
-                </span>
-                <Button type="button" onClick={submitObs} disabled={obsSaving || !obsText.trim()}>
-                  {obsSaving && <Loader2 className="animate-spin" aria-hidden="true" />}
+            <div className="shrink-0 space-y-2 border-t bg-muted/20 p-4">
+              <label htmlFor="obs-texto" className="mb-1 block text-xs font-medium text-muted-foreground">
+                Nueva observación{obsTicket && <> · se guarda en <span className="text-foreground">{ESTADOS_TICKET[obsTicket.status].label}</span></>}
+              </label>
+              <Textarea
+                id="obs-texto"
+                value={obsText}
+                onChange={e => setObsText(e.target.value)}
+                maxLength={500}
+                rows={3}
+                aria-invalid={!!obsError || undefined}
+                placeholder="Ej.: familiar ausente, faltan prendas"
+                className="min-h-[72px] resize-y bg-background"
+              />
+              {obsError && <p role="alert" className="text-xs text-destructive">{obsError}</p>}
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <span className="text-[11px] text-muted-foreground tabular-nums">{obsText.length}/500</span>
+                <Button type="button" onClick={submitObs} disabled={obsSaving || !obsText.trim()} className="w-full sm:w-auto sm:min-w-[140px]">
+                  {obsSaving && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
                   {obsSaving ? 'Guardando…' : 'Agregar'}
                 </Button>
               </div>

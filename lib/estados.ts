@@ -2,13 +2,16 @@ import type { Tono } from "@/components/ui/status-badge";
 import { TicketStatus } from "../types";
 
 /**
- * Estados del traslado y su tono en el StatusBadge (BASE §4, DESIGN §1.1).
- * Un tono por etapa del circuito, no uno por estado: los distingue el texto.
- *   neutro  → todavía no es un traslado (pre-ticket)
- *   aviso   → falta que otro haga algo (habitación, consolidar)
- *   info    → en curso (habitación lista, en traslado)
- *   exito / peligro → terminado bien / cancelado
- * La marca no va en estados (BASE §3).
+ * Estados del traslado y su tono en el StatusBadge (DESIGN.md §3.11). Un tono por etapa, con los
+ * significados del mapa canónico del kit:
+ *   cielo    → todavía no empezó (pre-ticket: falta configurar el destino)
+ *   aviso    → pendiente (esperando que la habitación esté lista)
+ *   exito    → listo para moverse (habitación lista)
+ *   info     → en curso (en traslado)
+ *   violeta  → físicamente hecho, falta el cierre (por consolidar ≈ "despachado")
+ *   neutro   → cerrado (consolidado)
+ *   peligro  → cancelado
+ * Azul (~225°) y violeta (~263°) conviven en la grilla: 38° de matiz, se distinguen.
  */
 interface InfoEstado {
   label: string;
@@ -16,12 +19,12 @@ interface InfoEstado {
 }
 
 export const ESTADOS_TICKET: Record<TicketStatus, InfoEstado> = {
-  [TicketStatus.PRESOLICITUD]: { label: "Presolicitud", tono: "neutro" },
+  [TicketStatus.PRESOLICITUD]: { label: "Presolicitud", tono: "cielo" },
   [TicketStatus.WAITING_ROOM]: { label: "Esperando Habitación", tono: "aviso" },
-  [TicketStatus.IN_TRANSIT]: { label: "Habitación Lista", tono: "info" },
+  [TicketStatus.IN_TRANSIT]: { label: "Habitación Lista", tono: "exito" },
   [TicketStatus.IN_TRANSPORT]: { label: "En Traslado", tono: "info" },
-  [TicketStatus.WAITING_CONSOLIDATION]: { label: "Por Consolidar", tono: "aviso" },
-  [TicketStatus.COMPLETED]: { label: "Consolidado", tono: "exito" },
+  [TicketStatus.WAITING_CONSOLIDATION]: { label: "Por Consolidar", tono: "violeta" },
+  [TicketStatus.COMPLETED]: { label: "Consolidado", tono: "neutro" },
   [TicketStatus.REJECTED]: { label: "Cancelado", tono: "peligro" },
 };
 

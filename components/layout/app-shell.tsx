@@ -16,6 +16,8 @@ export interface ItemNav {
   icon: LucideIcon
   grupo?: string
   badge?: number
+  /** Va anclado al pie de la sidebar, arriba de las acciones de sesión (Configuración, DESIGN §8.5). */
+  abajo?: boolean
 }
 
 export interface AppShellProps {
@@ -27,8 +29,10 @@ export interface AppShellProps {
   /** Avatar solo (con su menú) para la sidebar colapsada. Si no viene, colapsada no muestra usuario. */
   usuarioCompacto?: React.ReactNode
   acciones?: React.ReactNode
-  /** Dónde está el usuario (título de la pantalla + ayuda), a la izquierda del header (DESIGN §4.2). */
+  /** Dónde está el usuario: breadcrumb "Sede / Vista" + ayuda, a la izquierda del header desktop (DESIGN §8.6). */
   ubicacion?: React.ReactNode
+  /** Nombre del módulo en el header mobile (DESIGN §5.10: `truncate text-lg font-bold`). */
+  tituloMobile?: React.ReactNode
   /** Avisos de toda la app (sesión por vencer, notificaciones), a lo ancho debajo del header. */
   avisos?: React.ReactNode
   /** Columna derecha opcional (el celular del portal). Se muestra desde xl. */
@@ -156,6 +160,7 @@ export function AppShell({
   usuarioCompacto,
   acciones,
   ubicacion,
+  tituloMobile,
   avisos,
   lateral,
   activo,
@@ -164,6 +169,8 @@ export function AppShell({
   children,
 }: AppShellProps) {
   const [colapsado, setColapsado] = React.useState(leerColapsado)
+  const navArriba = nav.filter((i) => !i.abajo)
+  const navAbajo = nav.filter((i) => i.abajo)
   const [menuAbierto, setMenuAbierto] = React.useState(false)
   const contenido = React.useRef<HTMLElement>(null)
 
@@ -202,10 +209,10 @@ export function AppShell({
         data-colapsado={colapsado}
         className={cn(
           "z-nav hidden shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width] duration-300 ease-in-out motion-reduce:transition-none md:flex",
-          colapsado ? "w-16" : "w-60"
+          colapsado ? "w-16" : "w-64"
         )}
       >
-        <div className={cn("flex h-14 shrink-0 items-center gap-2 border-b border-sidebar-border", colapsado ? "justify-center px-2" : "px-4")}>
+        <div className={cn("flex h-16 shrink-0 items-center gap-2 border-b border-sidebar-border", colapsado ? "justify-center px-2" : "px-4")}>
           {colapsado ? (
             (marcaCompacta ?? botonColapsar)
           ) : (
@@ -216,8 +223,13 @@ export function AppShell({
           )}
         </div>
         <div className={cn("flex-1 overflow-x-hidden overflow-y-auto py-4", colapsado ? "px-2" : "px-3")}>
-          <Navegacion nav={nav} activo={activo} colapsado={colapsado} onNavegar={onNavegar} />
+          <Navegacion nav={navArriba} activo={activo} colapsado={colapsado} onNavegar={onNavegar} />
         </div>
+        {navAbajo.length > 0 && (
+          <div className={cn("shrink-0 border-t border-sidebar-border py-3", colapsado ? "px-2" : "px-3")}>
+            <Navegacion nav={navAbajo} activo={activo} colapsado={colapsado} onNavegar={onNavegar} />
+          </div>
+        )}
         {colapsado
           ? (marcaCompacta || usuarioCompacto) && (
               <div className="flex shrink-0 flex-col items-center gap-2 border-t border-sidebar-border p-3">
@@ -235,17 +247,17 @@ export function AppShell({
 
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Header mobile */}
-        <header className="z-header flex h-14 shrink-0 items-center gap-2 border-b bg-background px-3 md:hidden">
-          <Button variant="ghost" size="icon" onClick={() => setMenuAbierto(true)} aria-label="Abrir menú" className="-ml-1">
-            <MenuIcon className="size-5" />
+        <header className="z-header flex h-16 shrink-0 items-center gap-2 border-b bg-background px-4 md:hidden">
+          <Button variant="ghost" size="icon" onClick={() => setMenuAbierto(true)} aria-label="Abrir menú" className="-ml-2">
+            <MenuIcon className="size-6" />
           </Button>
-          <div className="min-w-0 flex-1 truncate">{ubicacion ?? marca}</div>
+          <div className="min-w-0 flex-1 truncate">{tituloMobile ?? ubicacion ?? marca}</div>
           {acciones && <div className="flex shrink-0 items-center gap-1">{acciones}</div>}
         </header>
 
         {/* Header desktop: ubicación a la izquierda, acciones a la derecha */}
         {(ubicacion || acciones) && (
-          <header className="z-nav hidden h-14 shrink-0 items-center justify-between gap-4 border-b bg-background px-6 md:flex">
+          <header className="z-nav hidden h-16 shrink-0 items-center justify-between gap-4 border-b bg-background px-6 md:flex">
             <div className="min-w-0 flex-1">{ubicacion}</div>
             {acciones && <div className="flex shrink-0 items-center gap-2">{acciones}</div>}
           </header>
@@ -274,12 +286,12 @@ export function AppShell({
         >
           <SheetTitle className="sr-only">Menú</SheetTitle>
           <SheetDescription className="sr-only">Navegación principal</SheetDescription>
-          <div className="flex h-14 shrink-0 items-center border-b border-sidebar-border px-4 pr-12">
+          <div className="flex h-16 shrink-0 items-center border-b border-sidebar-border px-4 pr-12">
             <div className="min-w-0 truncate">{marca}</div>
           </div>
           <div className="flex-1 overflow-y-auto px-3 py-4">
             <Navegacion
-              nav={nav}
+              nav={navArriba}
               activo={activo}
               onNavegar={(id) => {
                 onNavegar(id)
@@ -287,6 +299,18 @@ export function AppShell({
               }}
             />
           </div>
+          {navAbajo.length > 0 && (
+            <div className="shrink-0 border-t border-sidebar-border px-3 py-3">
+              <Navegacion
+                nav={navAbajo}
+                activo={activo}
+                onNavegar={(id) => {
+                  onNavegar(id)
+                  setMenuAbierto(false)
+                }}
+              />
+            </div>
+          )}
           {usuario && <div className="shrink-0 border-t border-sidebar-border p-3">{usuario}</div>}
         </SheetContent>
       </Sheet>

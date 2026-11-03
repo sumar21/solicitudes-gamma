@@ -1,15 +1,9 @@
 import * as React from "react"
-import { Download, LogOut, RefreshCw, UserRound } from "lucide-react"
+import { Download, LogOut, RefreshCw, UserRound, type LucideIcon } from "lucide-react"
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { APP_VERSION } from "@/lib/version"
 import { cn } from "@/lib/utils"
 
@@ -23,13 +17,66 @@ const iniciales = (nombre: string) =>
     .toUpperCase()
 
 /**
- * Menú del usuario al pie de la sidebar (DESIGN §4.1): avatar + nombre + sede (u operador) y las
- * acciones de sesión. `compacto` = solo el avatar, para la sidebar colapsada.
+ * Bloque de usuario del header desktop (DESIGN §8.6): nombre + sede (u operador) a la derecha, con
+ * borde a la izquierda, y el avatar. En mobile queda solo el avatar.
  */
-export function MenuUsuario({
+export function BloqueUsuario({ nombre, detalle }: { nombre: string; detalle: string }) {
+  return (
+    <div className="flex items-center gap-3 md:border-l md:pl-4">
+      <div className="hidden text-right leading-tight lg:block">
+        <div className="text-sm font-medium">{nombre}</div>
+        <div className="text-xs text-muted-foreground">{detalle}</div>
+      </div>
+      <Avatar className="size-9">
+        <AvatarFallback className="bg-brand/10 text-xs font-semibold text-brand">{iniciales(nombre)}</AvatarFallback>
+      </Avatar>
+    </div>
+  )
+}
+
+function AccionPie({
+  icono: Icono,
+  label,
   compacto,
-  nombre,
-  detalle,
+  peligro,
+  girando,
+  ...props
+}: React.ComponentProps<"button"> & { icono: LucideIcon; label: string; compacto: boolean; peligro?: boolean; girando?: boolean }) {
+  const boton = (
+    <Button
+      type="button"
+      variant="ghost"
+      aria-label={compacto ? label : undefined}
+      className={cn(
+        "h-9 w-full gap-3 px-3 text-sm font-normal",
+        compacto ? "justify-center px-0" : "justify-start",
+        // Sidebar oscura (verde / pizarra): el rojo de `destructive` da 2,6:1 encima; el 300 pasa 5:1 en las dos.
+        peligro
+          ? "text-red-300 hover:bg-sidebar-accent hover:text-red-200"
+          : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground"
+      )}
+      {...props}
+    >
+      <Icono className={cn("size-4 shrink-0", girando && "animate-spin")} aria-hidden="true" />
+      {!compacto && <span className="truncate">{label}</span>}
+    </Button>
+  )
+  if (!compacto) return boton
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{boton}</TooltipTrigger>
+      <TooltipContent side="right">{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+/**
+ * Pie de la sidebar (DESIGN §8.5): las acciones de sesión como botones directos —cambio de turno,
+ * actualizar accesos, instalar, salir en `text-destructive`— y la versión. Colapsada: solo íconos.
+ */
+export function PieSesion({
+  compacto,
+  operador,
   sincronizando,
   onActualizarAccesos,
   onCambioTurno,
@@ -37,67 +84,32 @@ export function MenuUsuario({
   onSalir,
 }: {
   compacto: boolean
-  nombre: string
-  detalle: string
+  operador?: string | null
   sincronizando: boolean
   onActualizarAccesos: () => void
   onCambioTurno?: () => void
   onInstalar?: () => void
   onSalir: () => void
 }) {
-  const avatar = (
-    <Avatar className="size-8">
-      <AvatarFallback className="bg-sidebar-accent text-xs text-sidebar-accent-foreground">{iniciales(nombre)}</AvatarFallback>
-    </Avatar>
-  )
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          aria-label={`Menú de usuario: ${nombre}`}
-          className={cn(
-            "rounded-md text-left outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring",
-            compacto ? "rounded-full" : "flex w-full min-w-0 items-center gap-2 p-1 hover:bg-sidebar-accent"
-          )}
-        >
-          {avatar}
-          {!compacto && (
-            <div className="min-w-0 leading-tight">
-              <div className="truncate text-sm font-medium">{nombre}</div>
-              <div className="truncate text-xs text-sidebar-foreground/70">{detalle}</div>
-            </div>
-          )}
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align={compacto ? "end" : "start"} side={compacto ? "right" : "top"} className="w-60">
-        <DropdownMenuLabel className="font-normal tracking-normal normal-case">
-          <div className="truncate text-sm font-medium">{nombre}</div>
-          <div className="truncate text-xs text-muted-foreground">{detalle}</div>
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        {onCambioTurno && (
-          <DropdownMenuItem onSelect={onCambioTurno}>
-            <UserRound /> Cambio de turno
-          </DropdownMenuItem>
-        )}
-        <DropdownMenuItem disabled={sincronizando} onSelect={(e) => { e.preventDefault(); onActualizarAccesos() }}>
-          <RefreshCw className={cn(sincronizando && "animate-spin")} /> Actualizar accesos
-        </DropdownMenuItem>
-        {onInstalar && (
-          <DropdownMenuItem onSelect={onInstalar}>
-            <Download /> Instalar app
-          </DropdownMenuItem>
-        )}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem variant="destructive" onSelect={onSalir}>
-          <LogOut /> Salir
-        </DropdownMenuItem>
-        <div className="px-2 pt-1 pb-0.5 font-mono text-[10px] text-muted-foreground select-all" title="Versión del cliente">
+    <div className="flex w-full flex-col gap-0.5">
+      {onCambioTurno && (
+        <AccionPie
+          icono={UserRound}
+          label={operador ? `Cambio de turno · ${operador}` : "Cambio de turno"}
+          compacto={compacto}
+          onClick={onCambioTurno}
+        />
+      )}
+      <AccionPie icono={RefreshCw} label="Actualizar accesos" compacto={compacto} girando={sincronizando} disabled={sincronizando} onClick={onActualizarAccesos} />
+      {onInstalar && <AccionPie icono={Download} label="Instalar app" compacto={compacto} onClick={onInstalar} />}
+      <AccionPie icono={LogOut} label="Salir" compacto={compacto} peligro onClick={onSalir} />
+      {!compacto && (
+        <div className="px-3 pt-1 font-mono text-[10px] text-sidebar-foreground/50 select-all" title="Versión del cliente">
           {APP_VERSION}
         </div>
-      </DropdownMenuContent>
-    </DropdownMenu>
+      )}
+    </div>
   )
 }
 

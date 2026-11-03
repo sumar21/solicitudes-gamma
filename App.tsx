@@ -6,7 +6,7 @@ import {
 } from './components/Icons';
 import { BedDouble, Globe, Loader2, MapPin as MapPinIcon, RefreshCw, Utensils } from 'lucide-react';
 import { AppShell, type ItemNav } from './components/layout/app-shell';
-import { Aviso, EntornoDePrueba, MenuUsuario } from './components/layout/partes-shell';
+import { Aviso, BloqueUsuario, EntornoDePrueba, PieSesion } from './components/layout/partes-shell';
 import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
 import { Tabs, TabsList, TabsTrigger } from './components/ui/tabs';
 import { StatusBadge } from './components/ui/status-badge';
@@ -443,8 +443,9 @@ export default function App() {
     canViewHistorial && { id: 'HISTORY', label: 'Historial', icon: History },
     canViewBeds && { id: 'BEDS', label: 'Mapa de Camas', icon: BedDouble },
     canViewComandas && { id: 'COMANDAS', label: 'Comandas', icon: Utensils },
-    canSeeUsers && { id: 'USERS', label: 'Usuarios', icon: Users, grupo: 'Configuración' },
-    canSeeRoles && { id: 'ROLES', label: 'Roles', icon: Settings, grupo: 'Configuración' },
+    // Configuración va siempre abajo, anclada al pie de la sidebar (DESIGN §8.5).
+    canSeeUsers && { id: 'USERS', label: 'Usuarios', icon: Users, grupo: 'Configuración', abajo: true },
+    canSeeRoles && { id: 'ROLES', label: 'Roles', icon: Settings, grupo: 'Configuración', abajo: true },
   ].filter(Boolean)) as ItemNav[];
 
   const tituloVista =
@@ -456,20 +457,38 @@ export default function App() {
     : (state.currentView as string) === 'ROLES' ? 'Roles'
     : 'Historial';
 
+  const ayudaModulo = (
+    <ModuleHelp
+      moduleKey={
+        state.currentView === 'HOME' ? 'Monitor'
+        : state.currentView === 'REQUESTS' ? 'Operativa'
+        : state.currentView === 'BEDS' ? 'MapaCamas'
+        : state.currentView === 'COMANDAS' ? 'Comandas'
+        : (state.currentView === 'USERS' || (state.currentView as string) === 'ROLES') ? 'Configuracion'
+        : 'Historial'
+      }
+      user={state.currentUser}
+    />
+  );
+
+  // Header desktop: breadcrumb "Sede / Vista" (DESIGN §8.6). El título grande vive en la página.
   const ubicacion = (
+    <div className="flex min-w-0 items-center gap-2">
+      <span className="flex min-w-0 items-center gap-2 text-sm font-medium">
+        <span className="truncate text-muted-foreground">Sede {state.currentUser.sede}</span>
+        <span className="text-muted-foreground/50" aria-hidden="true">/</span>
+        <span className="truncate">{tituloVista}</span>
+      </span>
+      {ayudaModulo}
+      {IS_TESTING && <EntornoDePrueba />}
+    </div>
+  );
+
+  // Header mobile: el nombre del módulo (DESIGN §5.10).
+  const tituloMobile = (
     <div className="flex min-w-0 items-center gap-1.5">
-      <h1 className="truncate text-lg font-bold tracking-tight md:text-sm md:font-semibold md:tracking-normal">{tituloVista}</h1>
-      <ModuleHelp
-        moduleKey={
-          state.currentView === 'HOME' ? 'Monitor'
-          : state.currentView === 'REQUESTS' ? 'Operativa'
-          : state.currentView === 'BEDS' ? 'MapaCamas'
-          : state.currentView === 'COMANDAS' ? 'Comandas'
-          : (state.currentView === 'USERS' || (state.currentView as string) === 'ROLES') ? 'Configuracion'
-          : 'Historial'
-        }
-        user={state.currentUser}
-      />
+      <h1 className="truncate text-lg font-bold">{tituloVista}</h1>
+      {ayudaModulo}
       {IS_TESTING && <EntornoDePrueba />}
     </div>
   );
@@ -484,11 +503,10 @@ export default function App() {
     </div>
   );
 
-  const usuario = (compacto: boolean) => (
-    <MenuUsuario
+  const pieSesion = (compacto: boolean) => (
+    <PieSesion
       compacto={compacto}
-      nombre={state.currentUser.name}
-      detalle={state.currentUser?.requiresIdentification && state.operador ? `Op: ${state.operador}` : `Sede ${state.currentUser.sede}`}
+      operador={state.operador}
       sincronizando={syncingRoles}
       onActualizarAccesos={handleSyncRoles}
       onCambioTurno={state.currentUser?.requiresIdentification ? actions.cambioTurno : undefined}
@@ -542,6 +560,10 @@ export default function App() {
           Sectores: {state.currentUser.assignedAreas?.length || 0}
         </span>
       )}
+      <BloqueUsuario
+        nombre={state.currentUser.name}
+        detalle={state.currentUser?.requiresIdentification && state.operador ? `Op: ${state.operador}` : `Sede ${state.currentUser.sede}`}
+      />
     </>
   );
 
@@ -612,9 +634,10 @@ export default function App() {
       onNavegar={(id) => actions.setCurrentView(id as any)}
       marca={marca}
       marcaCompacta={<GammaLogo size={24} className="text-sidebar-primary" />}
-      usuario={usuario(false)}
-      usuarioCompacto={usuario(true)}
+      usuario={pieSesion(false)}
+      usuarioCompacto={pieSesion(true)}
       ubicacion={ubicacion}
+      tituloMobile={tituloMobile}
       acciones={acciones}
       avisos={avisos}
       relleno={false}
@@ -651,14 +674,17 @@ export default function App() {
               padding de página y no se duplica. */}
           {canViewOperativa && state.currentView === 'REQUESTS' && (
             <>
-              {showOperativaTabs && (
-                <Tabs value={operativaTab} onValueChange={(v) => actions.setOperativaSubview(v as typeof operativaTab)} className="px-4 pt-4 md:px-6 md:pt-6 2xl:px-8 2xl:pt-8">
+              {/* Tab bar de Operativa (DESIGN §8.7): subrayado de marca; las vistas van abajo con su padding lateral. */}
+              {showOperativaTabs ? (
+                <Tabs value={operativaTab} onValueChange={(v) => actions.setOperativaSubview(v as typeof operativaTab)} className="mb-4 px-3 pt-3 md:mb-6 md:px-8 md:pt-6">
                   <TabsList variant="line" className="w-full justify-start">
                     {operativaTabDefs.map(([val, label]) => (
                       <TabsTrigger key={val} value={val}>{label}</TabsTrigger>
                     ))}
                   </TabsList>
                 </Tabs>
+              ) : (
+                <div className="pt-3 md:pt-8" />
               )}
               {operativaTab === 'limpiezas' ? (
                 canSeeLimpiezas && (
