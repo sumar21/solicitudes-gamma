@@ -2,26 +2,27 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { Bed, BedStatus, Ticket, TicketStatus } from '../types';
-import {
-  Search, Calendar as CalendarIcon, Clock, CheckCircle2,
-  ArrowRightLeft, Settings, X, Filter, AlertCircle, Download,
-  History, ClipboardList
-} from '../components/Icons';
-import { RefreshCw, Siren } from 'lucide-react';
-import { Card } from '../components/ui/card';
+import { Search, X, Download, History, ClipboardList, Clock, Info } from '../components/Icons';
+import { ArrowRight, ChevronRight, CircleDot, FileSearch, Loader2, RefreshCw, Siren } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
-import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
-import { Calendar } from '../components/ui/calendar';
-import { aIso, deIso } from '../lib/fechaIso';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table';
 import { Badge } from '../components/ui/badge';
 import { StatusBadge } from '../components/ui/status-badge';
+import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs';
+import { DataTable, type Columna } from '../components/ui/data-table';
+import { Cargando, Vacio } from '../components/ui/estados';
+import { BarraFiltros, BotonFiltros, CampoFiltro } from '../components/ui/filtros';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip';
+import { DateRangePicker, type DateRange } from '../components/ui/date-picker';
+import { Combobox } from '../components/ui/combobox';
 import { AuditModal } from '../components/AuditModal';
 import { PatientJourney } from '../components/PatientJourney';
-import { Combobox } from '../components/ui/combobox';
+import { aIso, deIso } from '../lib/fechaIso';
+import { ESTADOS_TICKET } from '../lib/estados';
+import { fecha, fechaHora, numero } from '../lib/formato';
 import { movementLabel } from '../lib/ticketEvents';
-import { cn, formatDateReadable, formatDateTime, calculateTicketMetrics, formatBedName, formatTicketDestination } from '../lib/utils';
+import { cn, calculateTicketMetrics, formatBedName, formatTicketDestination } from '../lib/utils';
 import { WORKFLOW_LABELS } from '../lib/constants';
 
 interface HistoryViewProps {
@@ -40,29 +41,25 @@ interface HistoryViewProps {
   beds?: Bed[];
 }
 
-const DateRangeTrigger = React.forwardRef<
-  HTMLButtonElement, 
-  { label: string; value: string; placeholder: string } & React.ButtonHTMLAttributes<HTMLButtonElement>
->(({ label, value, placeholder, className, ...props }, ref) => (
-  <button 
-    ref={ref}
-    type="button"
-    className={cn(
-      "w-full h-full px-4 flex items-center gap-3 text-left hover:bg-slate-50 transition-colors outline-hidden",
-      className
-    )}
-    {...props}
-  >
-    <CalendarIcon className="w-3.5 h-3.5 text-slate-400" />
-    <div className="flex flex-col justify-center pointer-events-none">
-      <span className="text-[7px] uppercase font-bold text-slate-400 leading-none mb-0.5">{label}</span>
-      <span className={cn("text-xs font-bold leading-none", value ? "text-slate-900" : "text-slate-300")}>
-        {value ? formatDateReadable(value) : placeholder}
-      </span>
-    </div>
-  </button>
-));
-DateRangeTrigger.displayName = "DateRangeTrigger";
+// fechaHora() (date-fns) tira con una fecha inválida: un histórico con un dato roto no puede tumbar la
+// vista entera. Antes formatDateTime devolvía "---"; ahora "—".
+const fechaHoraSegura = (iso?: string) => (iso && !Number.isNaN(Date.parse(iso)) ? fechaHora(iso) : '—');
+
+// Urgencia: pill lleno, lo único de la fila que tiene que saltar a la vista (igual que en Traslados).
+const PillUrgencia: React.FC<{ ticket: Ticket }> = ({ ticket }) =>
+  ticket.urgencia ? (
+    <span
+      className="inline-flex shrink-0 items-center gap-1 rounded-full bg-destructive px-2 py-0.5 text-[11px] leading-4 font-semibold tracking-wide text-destructive-foreground uppercase"
+      title="Ingreso por urgencia"
+    >
+      <Siren className="size-3" aria-hidden="true" /> Urgencia
+    </span>
+  ) : null;
+
+// Resultado del traslado cerrado (Consolidado / Cancelado) con el mapa canónico de estados (§3.11).
+const Resultado: React.FC<{ ticket: Ticket }> = ({ ticket }) => (
+  <StatusBadge tono={ESTADOS_TICKET[ticket.status].tono}>{ESTADOS_TICKET[ticket.status].label}</StatusBadge>
+);
 
 export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, refreshing, onRangeChange, onFetchPatientTickets, onSearchHistory, beds }) => {
   const todayISO = (() => {
@@ -83,8 +80,8 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
   const [selectedTicketForAudit, setSelectedTicketForAudit] = useState<Ticket | null>(null);
   const [exporting, setExporting] = useState(false);
 
-  const [openStart, setOpenStart] = useState(false);
-  const [openEnd, setOpenEnd] = useState(false);
+  // Barra de filtros (§4.7): abierta o cerrada, solo UI.
+  const [verFiltros, setVerFiltros] = useState(false);
 
   // Modo de vista: lista de traslados (clásico) o trayectoria por paciente (journey).
   const [viewMode, setViewMode] = useState<'list' | 'journey'>('list');
@@ -198,7 +195,9 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
       .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   }, [tickets, searchResults, startDate, endDate, searchTerm, statusFilter]);
 
-  const hasFilters = startDate !== todayISO || endDate !== todayISO || !!searchTerm || statusFilter !== 'all';
+  // Conteo del botón Filtros: resultado y período distinto de hoy (el buscador tiene su propia X).
+  // "Limpiar" de la barra sigue siendo clearFilters: vuelve todo al default.
+  const filtrosActivos = (statusFilter !== 'all' ? 1 : 0) + (startDate !== todayISO || endDate !== todayISO ? 1 : 0);
 
   const clearFilters = () => {
     setStartDate(todayISO);
@@ -326,303 +325,305 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
     }
   };
 
+
+  // ── Presentación (DESIGN §4.4, §5.2 y §7) ──────────────────────────────────
+
+  // Período: puente entre el DateRangePicker (Date) y las fechas "YYYY-MM-DD" que pide el hook. Con un
+  // solo día elegido, el rango es ese día. "Limpiar" del calendario vuelve a hoy (el default de la vista).
+  const rango: DateRange = { from: deIso(startDate), to: deIso(endDate) };
+  const cambiarRango = (r?: DateRange) => {
+    if (!r?.from) { setStartDate(todayISO); setEndDate(todayISO); return; }
+    setStartDate(aIso(r.from));
+    setEndDate(aIso(r.to ?? r.from));
+  };
+
+  // Con texto en el buscador la Lista muestra lo que trajo el server de TODO el histórico (sin período).
+  const buscandoTodo = searchResults !== null;
+  const desde = fecha(deIso(startDate) ?? new Date());
+  const hasta = fecha(deIso(endDate) ?? new Date());
+  // El histórico no tiene un estado de error propio (el hook deja lo previo si falla): mientras recarga
+  // y no hay nada para mostrar, va el loader en vez de "sin traslados".
+  const cargandoLista = !!refreshing && filteredHistory.length === 0;
+
+  const botonAuditar = (t: Ticket) => (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={`Auditar el traslado de ${t.patientName}`}
+          // La fila también abre la auditoría: sin esto se abriría dos veces el mismo ticket.
+          onClick={(e) => { e.stopPropagation(); setSelectedTicketForAudit(t); }}
+        >
+          <FileSearch className="size-4" aria-hidden="true" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>Auditar</TooltipContent>
+    </Tooltip>
+  );
+
+  // Columnas AGRUPADAS (DESIGN §7.2 "2 líneas" + §5.4 disclosure progresivo): valor arriba y metadato
+  // `text-[10px] text-muted-foreground` abajo. El tipo de traslado es secundario (aparece desde lg).
+  const columnas: Columna<Ticket>[] = [
+    {
+      id: 'fecha',
+      titulo: 'Fecha',
+      ordenar: (t) => t.createdAt || '',
+      clase: 'whitespace-nowrap',
+      celda: (t) => (
+        <div className="flex flex-col gap-0.5">
+          <span className="tabular-nums">{fechaHoraSegura(t.createdAt)}</span>
+          <span className="text-[10px] text-muted-foreground tabular-nums">Ciclo total {numero(calculateTicketMetrics(t).totalCycleTime)} min</span>
+        </div>
+      ),
+    },
+    {
+      id: 'paciente',
+      titulo: 'Paciente',
+      ordenar: (t) => t.patientName,
+      celda: (t) => (
+        <div className="flex flex-col gap-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="font-medium">{t.patientName}</span>
+            <PillUrgencia ticket={t} />
+          </div>
+          <span className="font-mono text-[10px] text-muted-foreground">{t.id}</span>
+        </div>
+      ),
+    },
+    {
+      id: 'traslado',
+      titulo: 'Traslado',
+      ordenar: (t) => t.origin,
+      celda: (t) => (
+        <div className="flex max-w-[260px] flex-col gap-0.5">
+          <span className="leading-tight wrap-break-word text-muted-foreground">{formatBedName(t.origin)}</span>
+          <span className="flex items-start gap-1 leading-tight">
+            <ArrowRight className="mt-0.5 size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+            {t.destination
+              ? <span className="font-medium wrap-break-word">{formatBedName(t.destination)}</span>
+              : <span className="text-muted-foreground">Sin destino</span>}
+          </span>
+        </div>
+      ),
+    },
+    {
+      id: 'tipo',
+      titulo: 'Tipo',
+      ocultarEn: 'md',
+      ordenar: (t) => WORKFLOW_LABELS[t.workflow] ?? '',
+      celda: (t) => <Badge variant="outline" className="px-2 py-0 text-[10px] font-medium">{WORKFLOW_LABELS[t.workflow]}</Badge>,
+    },
+    {
+      id: 'resultado',
+      titulo: 'Resultado',
+      ordenar: (t) => ESTADOS_TICKET[t.status].label,
+      clase: 'whitespace-nowrap',
+      celda: (t) => (
+        <div className="flex flex-col items-start gap-1">
+          <Resultado ticket={t} />
+          {t.completedAt && <span className="text-[10px] text-muted-foreground tabular-nums">{fechaHoraSegura(t.completedAt)}</span>}
+        </div>
+      ),
+    },
+    {
+      id: 'acciones',
+      titulo: 'Acciones',
+      alinear: 'der',
+      celda: (t) => botonAuditar(t),
+    },
+  ];
+
+  // Card mobile de fila (DESIGN §5.4b): identidad + resultado arriba, el traslado al medio y el pie con el
+  // ciclo. Toda la tarjeta abre la auditoría (como antes).
+  const tarjeta = (t: Ticket) => (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="font-medium">{t.patientName}</span>
+            <PillUrgencia ticket={t} />
+          </div>
+          <div className="font-mono text-[10px] break-all text-muted-foreground">{t.id}</div>
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <Resultado ticket={t} />
+          <span className="text-[10px] text-muted-foreground tabular-nums">{fechaHoraSegura(t.createdAt)}</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-[1fr_auto_1fr] items-start gap-2 rounded-md bg-muted/40 p-2.5">
+        <div className="min-w-0">
+          <p className="mb-0.5 text-[10px] tracking-wider text-muted-foreground uppercase">Origen</p>
+          <p className="text-[13px] leading-tight font-medium wrap-break-word">{formatBedName(t.origin)}</p>
+        </div>
+        <ArrowRight className="mt-4 size-4 text-muted-foreground" aria-hidden="true" />
+        <div className="min-w-0 text-right">
+          <p className="mb-0.5 text-[10px] tracking-wider text-muted-foreground uppercase">Destino</p>
+          <p className="text-[13px] leading-tight font-medium wrap-break-word">{formatTicketDestination(t)}</p>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+        <span className="flex min-w-0 items-center gap-1 tabular-nums">
+          <Clock className="size-3 shrink-0" aria-hidden="true" />
+          <span className="truncate">Ciclo total {numero(calculateTicketMetrics(t).totalCycleTime)} min · {WORKFLOW_LABELS[t.workflow]}</span>
+        </span>
+        <span className="flex shrink-0 items-center gap-0.5 text-xs font-medium text-foreground">
+          Auditar <ChevronRight className="size-3.5" aria-hidden="true" />
+        </span>
+      </div>
+    </div>
+  );
+
   return (
-    <div className="p-2 md:p-4 animate-in slide-in-from-right-4 duration-300 max-w-full space-y-3 pb-20 md:pb-8">
-      {/* Compact filter bar */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 pb-2">
-        {/* Búsqueda: en Lista es text input (paciente/ID); en Trayectoria es un combobox
-            "Seleccionar paciente" con buscador interno (pacientes únicos ya en memoria). */}
-        {viewMode === 'list' ? (
-          <div className="relative flex-1 min-w-[180px] max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-            <Input
-              placeholder="Paciente o ID de ticket..."
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              className="pl-9 h-9 text-xs rounded-xl border-slate-200"
-            />
-            {searching ? (
-              <div title="Buscando en todo el histórico…" className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 rounded-full border-2 border-slate-300 border-t-slate-600 animate-spin" />
-            ) : searchTerm ? (
-              <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-                <X className="h-3.5 w-3.5" />
-              </button>
-            ) : null}
-          </div>
-        ) : (
-          <div className="flex-1 min-w-[180px] max-w-sm">
-            <Combobox obligatorio
-              opciones={patientOptions}
-              value={journeyPatientKey ?? ''}
-              onChange={key => setJourneyPatientKey(key)}
-              placeholder="Seleccionar paciente"
-              buscar="Buscar paciente…"
-              className="h-9 text-xs"
-            />
-          </div>
-        )}
-
-        {/* Modo: Lista / Trayectoria del paciente */}
-        <div className="flex items-center bg-white border border-slate-200 rounded-xl overflow-hidden h-9 p-0.5">
-          {([
-            { key: 'list',    label: 'Lista',       icon: ClipboardList },
-            { key: 'journey', label: 'Trayectoria', icon: History },
-          ] as const).map(opt => {
-            const Icon = opt.icon;
-            return (
-              <button
-                key={opt.key}
-                type="button"
-                onClick={() => setViewMode(opt.key)}
-                aria-pressed={viewMode === opt.key}
-                className={cn(
-                  "px-3 h-full text-[10px] font-bold uppercase tracking-wide rounded-lg transition-colors flex items-center gap-1.5",
-                  viewMode === opt.key ? "bg-emerald-950 text-white" : "text-slate-400 hover:text-slate-600",
-                )}
-              >
-                <Icon className="w-3 h-3" /> {opt.label}
-              </button>
-            );
-          })}
+    <div className="flex w-full flex-col gap-4 p-3 md:p-8">
+      {/* HEADER + TOOLBAR (DESIGN §4.4 y §5.2) */}
+      <div className="flex shrink-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="hidden shrink-0 md:block">
+          <h2 className="text-2xl font-bold tracking-tight">Historial</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {viewMode === 'journey' ? (<>
+              <span className="font-medium text-foreground tabular-nums">{patientOptions.length}</span> pacientes para elegir · trayectoria completa por paciente
+            </>) : buscandoTodo ? (<>
+              <span className="font-medium text-foreground tabular-nums">{filteredHistory.length}</span> resultados en todo el histórico
+            </>) : (<>
+              <span className="font-medium text-foreground tabular-nums">{filteredHistory.length}</span> cerrados · {desde === hasta ? desde : `${desde} – ${hasta}`}
+            </>)}
+          </p>
         </div>
-
-        {/* Date range (solo modo Lista — la Trayectoria se busca por paciente, sin fechas) */}
-        {viewMode === 'list' && (
-        <div className="flex items-center bg-white border border-slate-200 rounded-xl overflow-hidden h-9">
-          <Popover open={openStart} onOpenChange={setOpenStart}>
-            <PopoverTrigger asChild>
-              <DateRangeTrigger label="Desde" value={startDate} placeholder="---" className="h-full text-xs" />
-            </PopoverTrigger>
-            <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
-              <Calendar mode="single" required selected={deIso(startDate)} onSelect={(dia: Date) => { const date = aIso(dia); setStartDate(date); setOpenStart(false); }} />
-            </PopoverContent>
-          </Popover>
-          <div className="w-px h-5 bg-slate-100 shrink-0" />
-          <Popover open={openEnd} onOpenChange={setOpenEnd}>
-            <PopoverTrigger asChild>
-              <DateRangeTrigger label="Hasta" value={endDate} placeholder="---" className="h-full text-xs" />
-            </PopoverTrigger>
-            <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
-              <Calendar mode="single" required selected={deIso(endDate)} onSelect={(dia: Date) => { const date = aIso(dia); setEndDate(date); setOpenEnd(false); }} />
-            </PopoverContent>
-          </Popover>
-        </div>
-        )}
-
-        {/* Status filter (solo modo Lista) */}
-        {viewMode === 'list' && (
-        <div className="flex items-center bg-white border border-slate-200 rounded-xl overflow-hidden h-9 p-0.5">
-          {([
-            { key: 'all',        label: 'Todos' },
-            { key: 'completed',  label: 'Consolidados' },
-            { key: 'cancelled',  label: 'Cancelados' },
-          ] as const).map(opt => (
-            <button
-              key={opt.key}
-              type="button"
-              onClick={() => setStatusFilter(opt.key)}
-              aria-pressed={statusFilter === opt.key}
-              className={cn(
-                "px-3 h-full text-[10px] font-bold uppercase tracking-wide rounded-lg transition-colors",
-                statusFilter === opt.key
-                  ? opt.key === 'completed' ? "bg-emerald-50 text-emerald-700"
-                  : opt.key === 'cancelled' ? "bg-red-50 text-red-600"
-                  : "bg-slate-100 text-slate-700"
-                  : "text-slate-400 hover:text-slate-600"
-              )}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-        )}
-
-        {/* Actions */}
-        <div className="flex items-center gap-1.5 ml-auto">
-          {hasFilters && (
-            <Button variant="ghost" size="sm" onClick={clearFilters} className="h-8 px-2 text-[10px] text-red-500 hover:text-red-600 hover:bg-red-50 rounded-lg">
-              <X className="w-3 h-3 mr-1" />Limpiar
-            </Button>
-          )}
-          {viewMode === 'list' && (
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+          {viewMode === 'list' ? (<>
+            {/* Buscador de la Lista: paciente o ID, en TODO el histórico (debounce + spinner mientras busca). */}
+            <div className="relative min-w-[7rem] flex-1 sm:w-56 sm:flex-none">
+              <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+              <Input
+                placeholder="Paciente o ID…"
+                aria-label="Buscar por paciente o ID de ticket"
+                className="h-9 pr-8 pl-8 text-sm"
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+              />
+              {searching ? (
+                <span role="status" aria-label="Buscando en todo el histórico" className="absolute top-1/2 right-2.5 -translate-y-1/2 text-muted-foreground">
+                  <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                </span>
+              ) : searchTerm ? (
+                <button type="button" onClick={() => setSearchTerm('')} aria-label="Limpiar búsqueda" className="absolute top-1/2 right-2 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground hover:text-foreground">
+                  <X className="size-3.5" />
+                </button>
+              ) : null}
+            </div>
+            {/* Período (filtro de una dimensión, inline en la toolbar §5.2). En mobile baja a su propia línea. */}
+            <span id="hist-periodo" className="sr-only">Período, por fecha del traslado</span>
+            <DateRangePicker value={rango} onChange={cambiarRango} aria-describedby="hist-periodo" className="order-last h-9 w-full sm:order-none sm:w-auto" />
+            {/* aria-label: en mobile el botón queda solo con íconos (el texto es `hidden sm:inline`). */}
+            <BotonFiltros abierto={verFiltros} activos={filtrosActivos} onClick={() => setVerFiltros(v => !v)} aria-label="Filtros" />
             <Button
+              type="button"
               variant="outline"
-              size="sm"
               onClick={handleExportExcel}
               disabled={exporting || filteredHistory.length === 0}
-              className="h-8 gap-1.5 bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 font-bold text-[10px] rounded-lg disabled:opacity-60"
+              aria-label="Exportar a Excel"
+              className="h-9 shrink-0 gap-1.5 px-3"
             >
-              {exporting ? (
-                <>
-                  <span className="inline-block w-3 h-3 border-2 border-emerald-200 border-t-emerald-700 rounded-full animate-spin" />
-                  Generando...
-                </>
-              ) : (
-                <>
-                  <Download className="w-3 h-3" />
-                  Excel
-                </>
-              )}
+              {exporting ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : <Download className="size-3.5" aria-hidden="true" />}
+              <span className="hidden sm:inline">{exporting ? 'Generando…' : 'Excel'}</span>
             </Button>
+          </>) : (
+            // Trayectoria: el buscador es el selector de paciente (pacientes únicos ya en memoria; busca
+            // también por código y habitación).
+            <div className="min-w-[7rem] flex-1 sm:w-80 sm:flex-none">
+              <Combobox obligatorio
+                opciones={patientOptions}
+                value={journeyPatientKey ?? ''}
+                onChange={key => setJourneyPatientKey(key)}
+                placeholder="Seleccionar paciente"
+                buscar="Buscar paciente…"
+                aria-label="Paciente"
+                className="h-9"
+              />
+            </div>
           )}
           {/* El histórico ya no se pollea: se carga al entrar y se refresca desde acá. */}
           {onRefresh && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onRefresh()}
-              disabled={refreshing}
-              className="h-8 gap-1.5 font-bold text-[10px] rounded-lg text-slate-600 disabled:opacity-60"
-            >
-              <RefreshCw className={cn('w-3 h-3', refreshing && 'animate-spin')} />
-              Actualizar
+            <Button type="button" variant="outline" onClick={() => onRefresh()} disabled={refreshing} aria-label="Actualizar" className="h-9 shrink-0 gap-1.5 px-3">
+              <RefreshCw className={cn('size-3.5', refreshing && 'animate-spin')} aria-hidden="true" />
+              <span className="hidden sm:inline">Actualizar</span>
             </Button>
           )}
         </div>
       </div>
 
-      {/* ── Modo Trayectoria: el cuerpo solo invita a buscar; las sugerencias se
-          despliegan desde la barra (combobox arriba). Al elegir se abre PatientJourney,
-          que recién ahí fetchea los movimientos de ESE paciente. */}
-      {viewMode === 'journey' && (
-        <div className="py-20 text-center opacity-30">
-          <History className="w-12 h-12 mx-auto mb-3" />
-          <p className="text-xs font-black uppercase tracking-widest">Buscá un paciente</p>
-          <p className="text-[10px] font-medium mt-1 lowercase tracking-normal">escribí nombre o código y elegí de las sugerencias</p>
-        </div>
+      {/* Modos de la vista: control segmentado (§6.6). */}
+      <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as 'list' | 'journey')}>
+        <TabsList aria-label="Lista de traslados o trayectoria de un paciente">
+          <TabsTrigger value="list"><ClipboardList aria-hidden="true" /> Lista</TabsTrigger>
+          <TabsTrigger value="journey"><History aria-hidden="true" /> Trayectoria</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      {/* FILTROS (DESIGN §4.7): barra inline, no un modal. "Limpiar" vuelve todo al default (hoy, todos). */}
+      {viewMode === 'list' && verFiltros && (
+        <BarraFiltros activos={filtrosActivos} onLimpiar={clearFilters}>
+          <CampoFiltro icono={CircleDot} label="Resultado">
+            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as typeof statusFilter)}>
+              <SelectTrigger className="w-full" aria-label="Resultado"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                <SelectItem value="completed">Consolidados</SelectItem>
+                <SelectItem value="cancelled">Cancelados</SelectItem>
+              </SelectContent>
+            </Select>
+          </CampoFiltro>
+        </BarraFiltros>
       )}
 
-      {/* ── Modo Lista: tabla/tarjetas clásicas ──────────────────────────────── */}
-      {viewMode === 'list' && (<>
-      {/* Vista Mobile History */}
-      <div className="grid grid-cols-1 gap-3 md:hidden">
-        {filteredHistory.length === 0 ? (
-          <div className="py-20 text-center opacity-30">
-            <Search className="w-12 h-12 mx-auto mb-3" />
-            <p className="text-xs font-black uppercase tracking-widest">Historial vacío</p>
-          </div>
+      {/* ── Modo Trayectoria: el cuerpo solo invita a elegir; al elegir se abre PatientJourney, que recién
+          ahí fetchea los movimientos de ESE paciente. */}
+      {viewMode === 'journey' && (
+        refreshing && patientOptions.length === 0 ? (
+          <Cargando texto="Cargando pacientes…" />
         ) : (
-          filteredHistory.map((t) => (
-            <Card 
-              key={t.id} 
-              onClick={() => setSelectedTicketForAudit(t)}
-              className={cn("p-4 border-slate-200 bg-white shadow-xs flex flex-col gap-4 active:scale-[0.98] transition-all", t.status === TicketStatus.REJECTED && "border-l-4 border-l-red-500")}
-            >
-              <div className="flex justify-between items-start">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    {t.status === TicketStatus.REJECTED ? (
-                      <StatusBadge tono="peligro">Rechazado</StatusBadge>
-                    ) : (
-                      <StatusBadge tono="exito">Finalizado</StatusBadge>
-                    )}
-                    <span className="text-[10px] font-black font-mono text-slate-400 tabular-nums">{formatDateTime(t.createdAt)}</span>
-                  </div>
-                  <h3 className="font-black text-slate-900 text-sm leading-tight uppercase tracking-tight">{t.patientName}{t.urgencia && <> <span className="inline-flex items-center gap-1 rounded-full bg-red-600 px-1.5 py-0.5 text-white shrink-0 align-middle" title="Ingreso por urgencia"><Siren className="w-3 h-3" strokeWidth={3} /><span className="text-[9px] font-black uppercase tracking-wide leading-none">Urgencia</span></span></>}</h3>
-                </div>
-                <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400">
-                  <Settings className="w-4 h-4" />
-                </Button>
-              </div>
+          <Vacio
+            icono={History}
+            titulo={patientOptions.length ? 'Elegí un paciente' : 'Sin pacientes para elegir'}
+            descripcion={patientOptions.length
+              ? 'Buscalo por nombre, código o habitación en el selector de arriba para ver todos sus traslados y cirugías.'
+              : 'Todavía no hay traslados cargados. Probá con Actualizar.'}
+          />
+        )
+      )}
 
-              <div className="flex items-center justify-between text-[10px] font-bold text-slate-500 bg-slate-50 p-2.5 rounded-xl border border-slate-100 uppercase tabular-nums">
-                <div className="flex items-center gap-1.5">
-                  <Clock className="w-3 h-3 text-slate-300" /> Total: {calculateTicketMetrics(t).totalCycleTime}m
-                </div>
-                <div className="text-slate-400">ID: {t.id}</div>
-              </div>
-
-              <div className="flex items-center justify-between gap-2">
-                <span className="flex-1 min-w-0 text-[10px] font-black text-slate-800 uppercase bg-slate-100 px-2 py-1 rounded-lg wrap-break-word leading-tight text-center">{formatBedName(t.origin)}</span>
-                <ArrowRightLeft className="w-3 h-3 text-slate-300 shrink-0" />
-                <span className="flex-1 min-w-0 text-[10px] font-black text-blue-700 uppercase bg-blue-50 px-2 py-1 rounded-lg wrap-break-word leading-tight text-center">{formatTicketDestination(t)}</span>
-              </div>
-            </Card>
-          ))
+      {/* ── Modo Lista: tabla (desktop) + cards (mobile) sobre el mismo array (§4.4, §7.1) ── */}
+      {viewMode === 'list' && (<>
+        {buscandoTodo && (
+          <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+            <Info className="mt-px size-3.5 shrink-0" aria-hidden="true" />
+            <span>Resultados de todo el histórico: mientras haya texto en el buscador, el período no aplica.</span>
+          </p>
         )}
-      </div>
-
-      {/* Vista Desktop History */}
-      <Card className="hidden md:block shadow-xs border-slate-200 overflow-hidden bg-white rounded-2xl">
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader className="bg-slate-50/50 border-b border-slate-200">
-              <TableRow>
-                <TableHead className="font-bold text-[9px] uppercase tracking-widest text-slate-400 px-6 h-10">Fecha</TableHead>
-                <TableHead className="font-bold text-[9px] uppercase tracking-widest text-slate-400 h-10">Paciente</TableHead>
-                <TableHead className="font-bold text-[9px] uppercase tracking-widest text-slate-400 h-10">Workflow</TableHead>
-                <TableHead className="font-bold text-[9px] uppercase tracking-widest text-slate-400 h-10">Trayectoria</TableHead>
-                <TableHead className="font-bold text-[9px] uppercase tracking-widest text-slate-400 h-10">Resultado</TableHead>
-                <TableHead className="text-right font-bold text-[9px] uppercase tracking-widest text-slate-400 pr-8 h-10">Audit</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredHistory.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="h-64 text-center">
-                    <div className="flex flex-col items-center justify-center opacity-20">
-                      <Search className="w-12 h-12 mb-4" />
-                      <p className="text-sm font-black uppercase tracking-widest">Sin resultados</p>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ) : (
-                filteredHistory.map((t) => (
-                  <TableRow key={t.id} className={cn("hover:bg-slate-50/50 transition-colors border-b border-slate-100 last:border-0 group", t.status === TicketStatus.REJECTED && "bg-red-50/5")}>
-                    <TableCell className="text-xs font-bold text-slate-500 px-6 py-5 tabular-nums whitespace-nowrap">
-                      {formatDateTime(t.createdAt)}
-                    </TableCell>
-                    <TableCell className="py-5">
-                      <div className="font-black text-slate-950 text-base uppercase tracking-tight">{t.patientName}{t.urgencia && <> <span className="inline-flex items-center gap-1 rounded-full bg-red-600 px-1.5 py-0.5 text-white shrink-0 align-middle" title="Ingreso por urgencia"><Siren className="w-3 h-3" strokeWidth={3} /><span className="text-[9px] font-black uppercase tracking-wide leading-none">Urgencia</span></span></>}</div>
-                      <div className="text-[11px] text-slate-400 font-mono mt-0.5 font-bold uppercase">{t.id}</div>
-                    </TableCell>
-                    <TableCell className="py-5">
-                      <Badge variant="outline" className="text-[10px] font-bold uppercase tracking-wide bg-slate-50 text-slate-600 border-slate-200 rounded-lg px-3 py-1">
-                        {WORKFLOW_LABELS[t.workflow]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="py-5">
-                      <div className="flex flex-col gap-1">
-                        <span className="text-xs text-slate-500 font-bold uppercase truncate max-w-[150px]">{formatBedName(t.origin)}</span>
-                        <span className="flex items-center gap-1.5 text-sm font-black text-slate-900 tracking-tight">
-                          <ArrowRightLeft className="w-3.5 h-3.5 text-slate-300"/> {t.destination ? formatBedName(t.destination) : 'N/A'}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="py-5">
-                      <div className="flex flex-col gap-1">
-                        {t.status === TicketStatus.REJECTED ? (
-                          <div className="flex items-center gap-2 text-[11px] text-red-600 font-bold bg-red-50 w-fit px-3 py-1.5 rounded-lg border border-red-100">
-                            <AlertCircle className="w-3.5 h-3.5" /> Cancelado
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2 text-[11px] text-emerald-600 font-bold bg-emerald-50 w-fit px-3 py-1.5 rounded-lg border border-emerald-100">
-                            <CheckCircle2 className="w-3.5 h-3.5" /> Consolidado
-                          </div>
-                        )}
-                        {t.completedAt && (
-                          <span className="text-[10px] text-slate-400 font-medium tabular-nums ml-1">{formatDateTime(t.completedAt)}</span>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right py-5 pr-8">
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
-                        onClick={() => setSelectedTicketForAudit(t)} 
-                        className="h-8 gap-2 bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:text-slate-900 hover:border-slate-300 font-bold text-[10px] uppercase tracking-wider shadow-xs rounded-lg transition-all"
-                      >
-                        <Settings className="w-3.5 h-3.5" />
-                        Auditar
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      </Card>
+        <DataTable
+          filas={filteredHistory}
+          columnas={columnas}
+          clave={(t) => t.id}
+          tarjeta={tarjeta}
+          onFila={setSelectedTicketForAudit}
+          cargando={cargandoLista}
+          claseFila={(t) => (t.status === TicketStatus.REJECTED ? 'bg-red-50/40' : undefined)}
+          vacio={
+            <Vacio
+              icono={searchTerm ? Search : History}
+              titulo={searchTerm ? 'Sin resultados para la búsqueda' : 'Sin traslados cerrados en el período'}
+              descripcion={searchTerm
+                ? 'Buscamos en todo el histórico. Probá con otro nombre o ID.'
+                : statusFilter !== 'all'
+                  ? 'Probá con otro período o con todos los resultados.'
+                  : 'Probá con otro período.'}
+            />
+          }
+        />
       </>)}
 
       <AuditModal

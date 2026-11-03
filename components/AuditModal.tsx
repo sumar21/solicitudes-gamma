@@ -7,11 +7,20 @@ import {
 import { Loader2, MessageSquare, Siren } from 'lucide-react';
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogTitle, DialogHeader, DialogFooter } from './ui/dialog';
 import { Textarea } from './ui/textarea';
-import { Cargando } from './ui/estados';
+import { Cargando, Vacio } from './ui/estados';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { cn, formatDateTime, formatTime, formatTicketDestination } from '../lib/utils';
+import { StatusBadge } from './ui/status-badge';
+import { cn, formatTicketDestination } from '../lib/utils';
+import { fechaHora, hora } from '../lib/formato';
+import { ESTADOS_TICKET } from '../lib/estados';
 import { APP_VERSION } from '../lib/version';
+
+// Formato es-AR del kit (lib/formato). date-fns tira con una fecha inválida: un evento con la fecha rota
+// no puede tumbar la auditoría, así que van con guarda ("—").
+const valida = (iso?: string | null): iso is string => !!iso && !Number.isNaN(Date.parse(iso));
+const fh = (iso?: string | null) => (valida(iso) ? fechaHora(iso) : '—');
+const h = (iso?: string | null) => (valida(iso) ? hora(iso) : '—');
 
 interface TicketEvent {
   id: string;
@@ -225,14 +234,15 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
 
           {/* HEADER */}
           <DialogHeader className="gap-1">
+                {/* Pills (§3.11): resultado con el mapa canónico de estados y, si se consolidó, el tipo de ciclo. */}
                 <div className="flex items-center gap-2 flex-wrap">
-                  <Badge variant={isRejected ? "destructive" : "outline"} className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0">
-                    {isRejected ? 'Ticket Cancelado' : 'Auditoría Operativa'}
-                  </Badge>
+                  <StatusBadge tono={ESTADOS_TICKET[ticket.status].tono}>
+                    {isRejected ? 'Ticket cancelado' : `Auditoría · ${ESTADOS_TICKET[ticket.status].label}`}
+                  </StatusBadge>
                   {!isRejected && (
-                    <Badge variant={isDirectTransfer ? "secondary" : "default"} className={cn("text-[10px] font-semibold uppercase tracking-wider px-2 py-0 border-none", isDirectTransfer ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700")}>
-                      {isDirectTransfer ? 'Traslado Directo (Cama Limpia)' : 'Ciclo Completo (Cama en Prep.)'}
-                    </Badge>
+                    <StatusBadge tono={isDirectTransfer ? 'exito' : 'info'}>
+                      {isDirectTransfer ? 'Traslado directo (cama limpia)' : 'Ciclo completo (cama en prep.)'}
+                    </StatusBadge>
                   )}
                   <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Sede {ticket.sede}</span>
                 </div>
@@ -240,9 +250,9 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                   {ticket.patientName}
                 </DialogTitle>
                 <DialogDescription className="flex flex-wrap items-center gap-x-3 gap-y-1 md:gap-x-4">
-                  <span className="flex items-center gap-1 min-w-0"><Hash className="size-3 shrink-0" /> <span className="truncate">{ticket.id}</span></span>
-                  <span className="flex items-center gap-1"><Calendar className="size-3 shrink-0" /> {formatDateTime(ticket.createdAt)}</span>
-                  <span className="flex items-center gap-1 font-medium text-foreground"><Activity className="size-3 shrink-0" /> {workflowLabels[ticket.workflow]}</span>
+                  <span className="flex items-center gap-1 min-w-0"><Hash className="size-3 shrink-0" aria-hidden="true" /> <span className="truncate font-mono">{ticket.id}</span></span>
+                  <span className="flex items-center gap-1 tabular-nums"><Calendar className="size-3 shrink-0" aria-hidden="true" /> {fh(ticket.createdAt)}</span>
+                  <span className="flex items-center gap-1 font-medium text-foreground"><Activity className="size-3 shrink-0" aria-hidden="true" /> {workflowLabels[ticket.workflow]}</span>
                 </DialogDescription>
 
             {/* SOLO MÓVIL: TRAYECTORIA — doble fila apilada (origen arriba, destino abajo).
@@ -253,8 +263,8 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                  <p className="text-xs font-semibold text-foreground wrap-break-word leading-tight">{ticket.origin}</p>
                </div>
                <div className="min-w-0 pt-2 border-t">
-                 <span className="text-[11px] font-semibold uppercase tracking-wider text-blue-700">Destino</span>
-                 <p className="text-xs font-bold text-foreground wrap-break-word leading-tight">{formatTicketDestination(ticket)}</p>
+                 <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Destino</span>
+                 <p className="text-xs font-semibold text-foreground wrap-break-word leading-tight">{formatTicketDestination(ticket)}</p>
                </div>
             </div>
           </DialogHeader>
@@ -267,15 +277,15 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
               <div>
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground block mb-2">Tiempo total en sistema</span>
                 <div className="flex items-baseline gap-2">
-                  <span className={cn("text-4xl font-bold tracking-tight tabular-nums leading-none", isRejected ? "text-red-600" : "text-foreground")}>
-                    {loading ? '...' : totalCycleTime}
+                  <span className={cn("text-4xl font-bold tracking-tight tabular-nums leading-none", isRejected ? "text-destructive" : "text-foreground")}>
+                    {loading ? '…' : totalCycleTime}
                   </span>
                 </div>
               </div>
 
               <div className="space-y-4 pt-4 border-t">
                 <div className="flex gap-4">
-                  <div className="mt-1 shrink-0"><MapPin className="size-4 text-muted-foreground" /></div>
+                  <div className="mt-1 shrink-0"><MapPin className="size-4 text-muted-foreground" aria-hidden="true" /></div>
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Trayectoria</p>
                     <p className="text-sm font-medium text-muted-foreground">{ticket.origin} → <span className="text-foreground font-semibold">{ticket.destination || (isRejected ? 'CANCELADO' : 'Pendiente')}</span></p>
@@ -285,7 +295,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                 {ticket.urgencia && (
                   <div className="p-3 bg-red-50 rounded-lg border border-red-200 text-red-700">
                     <p className="text-[11px] uppercase font-semibold tracking-wider mb-1.5 flex items-center gap-1">
-                      <Siren className="size-3" /> Ingreso por urgencia
+                      <Siren className="size-3" aria-hidden="true" /> Ingreso por urgencia
                     </p>
                     {ticket.pacienteDeclarado
                       ? <p className="text-xs leading-relaxed">Declarado por Coordinación: <b>{ticket.pacienteDeclarado}</b></p>
@@ -301,7 +311,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                 {isRejected && ticket.rejectionReason && (
                   <div className="p-3 bg-red-50 rounded-lg border border-red-200 text-red-700">
                     <p className="text-[11px] uppercase font-semibold tracking-wider mb-1.5 flex items-center gap-1">
-                      <XCircle className="size-3" /> Motivo de cancelación
+                      <XCircle className="size-3" aria-hidden="true" /> Motivo de cancelación
                     </p>
                     <p className="text-xs font-medium leading-relaxed italic">"{ticket.rejectionReason}"</p>
                   </div>
@@ -310,7 +320,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                 {(ticket.workflow === WorkflowType.INTERNAL || ticket.workflow === WorkflowType.ROOM_CHANGE) && ticket.changeReason && (
                   <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-amber-700">
                     <p className="text-[11px] uppercase font-semibold tracking-wider mb-1.5 flex items-center gap-1">
-                      <Info className="size-3" /> Motivo del traslado
+                      <Info className="size-3" aria-hidden="true" /> Motivo del traslado
                     </p>
                     <p className="text-xs font-medium leading-relaxed">{ticket.changeReason}</p>
                   </div>
@@ -321,7 +331,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                 <div className="space-y-2 pt-4 border-t">
                   <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Tiempos por servicio</p>
                   {loading ? (
-                    <p className="text-xs text-muted-foreground">Cargando...</p>
+                    <p className="text-xs text-muted-foreground">Cargando…</p>
                   ) : (
                     <div className="space-y-1.5">
                       <div className="flex justify-between items-center text-xs">
@@ -358,12 +368,12 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
               <div className="md:hidden grid grid-cols-2 gap-3 mb-6">
                  <div className={cn("bg-card p-3 rounded-lg border", isRejected && "col-span-2")}>
                     <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground block mb-1">Tiempo total</span>
-                    <span className={cn("text-2xl font-bold tabular-nums", isRejected ? "text-red-600" : "text-foreground")}>{loading ? '...' : totalCycleTime}</span>
+                    <span className={cn("text-2xl font-bold tabular-nums", isRejected ? "text-destructive" : "text-foreground")}>{loading ? '…' : totalCycleTime}</span>
                  </div>
                  {!isRejected && (
-                   <div className="bg-blue-50 p-3 rounded-lg border border-blue-200 flex flex-col justify-center">
-                      <span className="text-[11px] font-semibold text-blue-700 uppercase tracking-wider block mb-1">Traslado</span>
-                      <span className="text-2xl font-bold text-blue-800 tabular-nums">{loading ? '...' : transportTime}</span>
+                   <div className="bg-card p-3 rounded-lg border flex flex-col justify-center">
+                      <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1">Traslado</span>
+                      <span className="text-2xl font-bold text-foreground tabular-nums">{loading ? '…' : transportTime}</span>
                    </div>
                  )}
                  {isRejected && ticket.rejectionReason && (
@@ -374,13 +384,13 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
               </div>
 
               <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-5 flex items-center gap-2">
-                <TrendingUp className="size-4" /> Trazabilidad de hitos
+                <TrendingUp className="size-4 text-brand" aria-hidden="true" /> Trazabilidad de hitos
               </h4>
 
               {loading ? (
                 <Cargando texto="Cargando trazabilidad…" className="py-12" />
               ) : timeline.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-12">Sin movimientos registrados</p>
+                <Vacio icono={TrendingUp} titulo="Sin movimientos registrados" descripcion="Este traslado no tiene hitos en la auditoría." className="py-10" />
               ) : (
                 <div className="relative pl-8 space-y-5 before:content-[''] before:absolute before:left-[11px] before:top-2 before:bottom-2 before:w-px before:bg-border">
                   {timeline.map((item) => {
@@ -391,32 +401,27 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                       const isOriginal = o.id === 'original';
                       return (
                         <div key={item.key} className="relative">
+                          {/* Ícono en tile del tono (violeta = post cierre, ámbar = durante el traslado) y card
+                              neutra: el tipo de nota lo dice el pill (§3.11). */}
                           <div className={cn(
                             "absolute -top-0.5 left-[-31px] flex items-center justify-center size-5 rounded-full border",
-                            post ? "bg-violet-100 border-violet-200" : "bg-amber-100 border-amber-200"
+                            post ? "bg-violet-100 border-violet-200 text-violet-700" : "bg-amber-100 border-amber-200 text-amber-700"
                           )}>
-                            <MessageSquare className={cn("size-2.5", post ? "text-violet-600" : "text-amber-600")} />
+                            <MessageSquare className="size-2.5" aria-hidden="true" />
                           </div>
-                          <div className={cn(
-                            "rounded-lg border p-3",
-                            post ? "bg-violet-50 border-violet-200" : "bg-amber-50 border-amber-200"
-                          )}>
-                            {post && (
-                              <span className="inline-flex items-center gap-1 mb-1.5 px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200 text-[10px] font-semibold uppercase tracking-wider">
-                                Post cierre
-                              </span>
-                            )}
-                            {isOriginal && (
-                              <span className="inline-flex items-center gap-1 mb-1.5 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 text-[10px] font-semibold uppercase tracking-wider">
-                                Observación de la solicitud
-                              </span>
+                          <div className="rounded-lg border bg-card p-3 shadow-xs">
+                            {(post || isOriginal) && (
+                              <div className="mb-1.5 flex flex-wrap gap-1.5">
+                                {post && <StatusBadge tono="violeta">Post cierre</StatusBadge>}
+                                {isOriginal && <StatusBadge tono="aviso">Observación de la solicitud</StatusBadge>}
+                              </div>
                             )}
                             <p className="text-sm text-foreground leading-snug whitespace-pre-wrap wrap-break-word">{o.texto}</p>
-                            <p className="text-[11px] text-muted-foreground font-medium mt-2 flex items-center gap-1.5 flex-wrap">
-                              <span className="font-semibold text-foreground">{o.operador || o.usuario || 'Usuario'}</span>
-                              <span>·</span>
-                              <span>{formatDateTime(o.fecha)}</span>
-                              {o.status && !post && (<><span>·</span><span className="italic">{o.status}</span></>)}
+                            <p className="text-[11px] text-muted-foreground mt-2 flex items-center gap-1.5 flex-wrap">
+                              <span className="font-medium text-foreground">{o.operador || o.usuario || 'Usuario'}</span>
+                              <span aria-hidden="true">·</span>
+                              <span className="tabular-nums">{fh(o.fecha)}</span>
+                              {o.status && !post && (<><span aria-hidden="true">·</span><span className="italic">{o.status}</span></>)}
                             </p>
                           </div>
                         </div>
@@ -437,25 +442,26 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                       <div key={item.key} className="relative">
                         <div className={cn(
                           "absolute -top-0.5 flex items-center justify-center rounded-full",
-                          isFinal ? "left-[-36px] size-8 bg-primary text-primary-foreground shadow-sm"
-                          : isModification ? "left-[-34px] size-7 bg-amber-100 border border-amber-200 text-amber-600"
+                          isFinal ? "left-[-36px] size-8 bg-primary text-primary-foreground shadow-xs"
+                          : isModification ? "left-[-34px] size-7 bg-amber-100 border border-amber-200 text-amber-700"
                           : "left-[-32px] size-6 bg-card border text-muted-foreground"
                         )}>
-                          <Icon className="size-3.5" />
+                          <Icon className="size-3.5" aria-hidden="true" />
                         </div>
                         <div className="flex justify-between items-start">
                           <div className="flex-1 min-w-0 pr-3">
-                            <p className={cn("text-sm font-semibold", isFinal ? "text-primary" : isModification ? "text-amber-700" : "text-foreground")}>{config.label}</p>
-                            <p className="text-xs text-muted-foreground font-medium">{evt.operador || evt.usuario || config.sublabel}</p>
+                            <p className="text-sm font-semibold text-foreground">{config.label}</p>
+                            <p className="text-xs text-muted-foreground">{evt.operador || evt.usuario || config.sublabel}</p>
                             {modification && (
-                              <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-1">
+                              // Detalle de la modificación: banner suave ámbar (§9.4).
+                              <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-1 text-amber-700">
                                 {modification.changes.map((c, ix) => (
-                                  <p key={ix} className="text-xs text-foreground font-medium leading-snug">
-                                    <span className="text-amber-600 font-bold">·</span> {c}
+                                  <p key={ix} className="text-xs font-medium leading-snug">
+                                    <span aria-hidden="true">·</span> {c}
                                   </p>
                                 ))}
                                 {modification.motivo && (
-                                  <p className="text-[11px] text-amber-700 font-semibold italic mt-2 pt-2 border-t border-amber-200">
+                                  <p className="text-[11px] font-semibold italic mt-2 pt-2 border-t border-amber-200">
                                     Motivo: {modification.motivo}
                                   </p>
                                 )}
@@ -463,11 +469,11 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                             )}
                           </div>
                           {isFinal ? (
-                            <Badge className="bg-primary text-primary-foreground font-mono font-medium px-2 py-0.5 rounded-md tabular-nums border-none text-[11px] shrink-0">
-                              {formatTime(evt.fecha)}
+                            <Badge className="shrink-0 px-2 py-0.5 text-[11px] font-medium tabular-nums">
+                              {h(evt.fecha)}
                             </Badge>
                           ) : (
-                            <span className={cn("text-xs font-medium tabular-nums shrink-0", isModification ? "text-amber-600" : "text-muted-foreground")}>{formatTime(evt.fecha)}</span>
+                            <span className="text-xs tabular-nums shrink-0 text-muted-foreground">{h(evt.fecha)}</span>
                           )}
                         </div>
                       </div>
@@ -496,11 +502,11 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                     />
                     {obsError && <p role="alert" className="text-xs text-destructive">{obsError}</p>}
                     <div className="flex items-center justify-between gap-3 flex-wrap">
-                      <span className="text-xs text-muted-foreground">Quedará marcada como <span className="font-semibold text-violet-600">post cierre</span>.</span>
+                      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">Quedará marcada como <StatusBadge tono="violeta">Post cierre</StatusBadge></span>
                       <div className="flex items-center gap-3">
                         <span className="text-[11px] text-muted-foreground tabular-nums">{obsText.length}/500</span>
                         <Button type="button" size="sm" onClick={submitObs} disabled={obsSaving || !obsText.trim()}>
-                          {obsSaving && <Loader2 className="size-4 animate-spin" />}
+                          {obsSaving && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
                           {obsSaving ? 'Guardando…' : 'Agregar'}
                         </Button>
                       </div>
@@ -513,7 +519,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
                     onClick={() => { setObsError(''); setObsComposerOpen(true); }}
                     className="md:hidden w-full"
                   >
-                    <MessageSquare className="size-4" /> Agregar observación
+                    <MessageSquare className="size-4" aria-hidden="true" /> Agregar observación
                   </Button>
                 </div>
               )}
@@ -533,10 +539,10 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
-            <MessageSquare className="size-5 text-violet-600" /> Agregar observación
+            <MessageSquare className="size-5 text-brand" aria-hidden="true" /> Agregar observación
           </DialogTitle>
           <DialogDescription>
-            <span className="font-semibold text-violet-600">Post cierre</span> · <span className="font-medium text-foreground">{ticket.patientName}</span>
+            <StatusBadge tono="violeta">Post cierre</StatusBadge> · <span className="font-medium text-foreground">{ticket.patientName}</span>
           </DialogDescription>
         </DialogHeader>
 
@@ -564,7 +570,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({ ticket, isOpen, onClose,
             Cancelar
           </Button>
           <Button type="button" onClick={submitObs} disabled={obsSaving || !obsText.trim()} className="min-w-[140px]">
-            {obsSaving && <Loader2 className="size-4 animate-spin" />}
+            {obsSaving && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
             {obsSaving ? 'Guardando…' : 'Agregar'}
           </Button>
         </DialogFooter>
