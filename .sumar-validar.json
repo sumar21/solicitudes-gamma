@@ -1,0 +1,5 @@
+{
+  "excepciones": [
+    { "regla": "recorrido", "motivo": "app en producción: sin demo ni datos de ejemplo (regla del repo: nunca mocks como estado inicial). Ver PRODUCTO.md" }
+  ]
+}
