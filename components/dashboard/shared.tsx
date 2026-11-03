@@ -149,7 +149,7 @@ export const StatTile: React.FC<{
     </div>
     <div className="mt-1.5 flex items-baseline gap-1.5">
       <span className={cn('font-bold tracking-tight', heroe ? 'text-5xl text-brand' : 'text-2xl')}>{valor}</span>
-      {unidad && <span className={cn('font-medium text-muted-foreground', heroe ? 'text-base' : 'text-sm')}>{unidad}</span>}
+      {unidad && <span className={cn('font-medium text-muted-foreground', heroe ? 'text-lg' : 'text-sm')}>{unidad}</span>}
     </div>
     {delta && <div className="mt-1.5">{delta}</div>}
     {spark && spark.some((v) => v != null) && (
@@ -253,7 +253,8 @@ export const BarraSegmentada: React.FC<{ partes: { label: string; valor: number;
               <TooltipTrigger asChild>
                 <div
                   tabIndex={0}
-                  className="flex min-w-0 items-center rounded-[4px] px-2 text-[11px] font-semibold text-white outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                  // sumar-validar-ignorar: colores-crudos rótulo DENTRO de un relleno de serie (skill dataviz: blanco sobre el color)
+                  className="flex min-w-0 items-center rounded-sm px-2 text-[11px] font-semibold text-white outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                   style={{ width: `${pct}%`, backgroundColor: p.color }}
                 >
                   {pct >= 12 && <span className="truncate">{Math.round(pct)} %</span>}
@@ -288,7 +289,7 @@ export const FilaDistribucion: React.FC<{
       </div>
       <div className="flex h-6 w-full gap-0.5">
         {total === 0 ? (
-          <div className="h-full w-full rounded-[4px] bg-muted" />
+          <div className="h-full w-full rounded-sm bg-muted" />
         ) : (
           tramos.filter((t) => t.n > 0).map((t) => {
             const pct = (t.n / total) * 100;
@@ -297,7 +298,8 @@ export const FilaDistribucion: React.FC<{
                 <TooltipTrigger asChild>
                   <div
                     tabIndex={0}
-                    className={cn('flex min-w-0 items-center justify-center rounded-[4px] text-[10px] font-semibold outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
+                    className={cn('flex min-w-0 items-center justify-center rounded-sm text-[10px] font-semibold outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
+                      // sumar-validar-ignorar: colores-crudos rótulo DENTRO de un relleno de serie (skill dataviz: blanco sobre el color)
                       t.color === C.medio ? 'text-foreground' : 'text-white')}
                     style={{ width: `${pct}%`, backgroundColor: t.color }}
                   >
