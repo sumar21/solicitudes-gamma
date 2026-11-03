@@ -671,13 +671,13 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
       id: 'status',
       titulo: 'Estado',
       ordenar: (t) => t.status,
-      clase: 'w-[150px]',
+      clase: 'whitespace-nowrap',
       celda: (t) => (
         <div className="flex flex-col items-start gap-1">
-          <StatusBadge tono={ESTADOS_TICKET[t.status].tono} className="whitespace-normal">{ESTADOS_TICKET[t.status].label}</StatusBadge>
+          <StatusBadge tono={ESTADOS_TICKET[t.status].tono}>{ESTADOS_TICKET[t.status].label}</StatusBadge>
           <span className="text-[10px] text-muted-foreground tabular-nums">{fechaHora(t.createdAt)}</span>
           {/* Sin la columna Tarea (< lg), el "qué falta" va acá. */}
-          {ayudaEstado(t, true) && <span className="text-[10px] leading-snug text-muted-foreground lg:hidden">{ayudaEstado(t, true)}</span>}
+          {ayudaEstado(t, true) && <span className="max-w-[160px] text-[10px] leading-snug whitespace-normal text-muted-foreground lg:hidden">{ayudaEstado(t, true)}</span>}
         </div>
       ),
     },
