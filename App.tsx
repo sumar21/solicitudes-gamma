@@ -1,10 +1,16 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  LayoutDashboard, Home as HomeIcon, LogOut, History, Menu, Info,
-  Mail, Lock, Eye, EyeOff, User, Settings, ChevronDown, ChevronUp, Users, Download
+  LayoutDashboard, Home as HomeIcon, History, Info,
+  Mail, Lock, Eye, EyeOff, User, Settings, Users
 } from './components/Icons';
-import { Globe, MapPin as MapPinIcon, RefreshCw, Utensils } from 'lucide-react';
+import { BedDouble, Globe, Loader2, MapPin as MapPinIcon, RefreshCw, Utensils } from 'lucide-react';
+import { AppShell, type ItemNav } from './components/layout/app-shell';
+import { Aviso, EntornoDePrueba, MenuUsuario } from './components/layout/partes-shell';
+import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
+import { StatusBadge } from './components/ui/status-badge';
+import { Vacio } from './components/ui/estados';
+import { fechaHora } from './lib/formato';
 import { GammaLogo } from './components/GammaLogo';
 import { ModuleHelp } from './components/ModuleHelp';
 import { IS_TESTING } from './lib/env';
@@ -35,7 +41,7 @@ import { can, hasModule, receivesAnyNotif } from './lib/permissions';
 
 import { NotificationsDropdown } from './components/NotificationsDropdown';
 import { Popover, PopoverTrigger, PopoverContent } from './components/ui/popover';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from './components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog';
 import { Bell } from './components/Icons';
 
 // Modals
@@ -156,10 +162,8 @@ export default function App() {
   const [resetDestinoId, setResetDestinoId] = useState<string | null>(null);
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isLegendModalOpen, setIsLegendModalOpen] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [isConfigOpen, setIsConfigOpen] = useState(state.currentView === 'USERS' || (state.currentView as string) === 'ROLES');
   const [syncingRoles, setSyncingRoles] = useState(false);
 
   // Fuerza el resync de módulos/permisos del rol (útil si un admin cambió tu acceso y
@@ -429,323 +433,140 @@ export default function App() {
     return <IdentificationGate accountName={state.currentUser.name} onConfirm={actions.setOperador} onLogout={actions.handleLogout} />;
   }
 
-  return (
-    <ActualizacionProvider retenida={state.ticketActionLoading}>
-    <div className="h-screen h-dvh w-full flex flex-col md:flex-row bg-slate-50 overflow-hidden font-sans text-slate-900">
-      {/* Toast notifications */}
-      <NotificationToasts
-        toasts={state.toasts}
-        onDismiss={actions.handleDismissToast}
-        onTap={(n) => {
-          // Además de la vista, se fuerza la solapa: si el usuario estaba en Limpiezas,
-          // setCurrentView('REQUESTS') no produce cambio y el toast se vería muerto.
-          if (n.ticketId) { actions.setOperativaSubview('traslados'); actions.setCurrentView('REQUESTS'); }
-        }}
+  // ── Shell (rediseño, capa 2): AppShell del Estilo 1, sin router ────────────
+  // Configuración se arma con permisos finos; Operativa es una sola entrada aunque la vean
+  // roles con o sin filtro de pisos.
+  const nav = ([
+    canViewMonitor && { id: 'HOME', label: 'Monitor', icon: HomeIcon },
+    canViewOperativa && { id: 'REQUESTS', label: 'Operativa', icon: LayoutDashboard },
+    canViewHistorial && { id: 'HISTORY', label: 'Historial', icon: History },
+    canViewBeds && { id: 'BEDS', label: 'Mapa de Camas', icon: BedDouble },
+    canViewComandas && { id: 'COMANDAS', label: 'Comandas', icon: Utensils },
+    canSeeUsers && { id: 'USERS', label: 'Usuarios', icon: Users, grupo: 'Configuración' },
+    canSeeRoles && { id: 'ROLES', label: 'Roles', icon: Settings, grupo: 'Configuración' },
+  ].filter(Boolean)) as ItemNav[];
+
+  const tituloVista =
+    state.currentView === 'HOME' ? 'Monitor'
+    : state.currentView === 'REQUESTS' ? (operativaTab === 'limpiezas' ? 'Operativa · Limpiezas' : operativaTab === 'cirugias' ? 'Operativa · Cirugías' : 'Operativa')
+    : state.currentView === 'BEDS' ? 'Mapa de Camas'
+    : state.currentView === 'COMANDAS' ? 'Gestión de Comandas'
+    : state.currentView === 'USERS' ? 'Usuarios'
+    : (state.currentView as string) === 'ROLES' ? 'Roles'
+    : 'Historial';
+
+  const ubicacion = (
+    <div className="flex min-w-0 items-center gap-1.5">
+      <h1 className="truncate text-lg font-bold tracking-tight md:text-base md:font-semibold">{tituloVista}</h1>
+      <ModuleHelp
+        moduleKey={
+          state.currentView === 'HOME' ? 'Monitor'
+          : state.currentView === 'REQUESTS' ? 'Operativa'
+          : state.currentView === 'BEDS' ? 'MapaCamas'
+          : state.currentView === 'COMANDAS' ? 'Comandas'
+          : (state.currentView === 'USERS' || (state.currentView as string) === 'ROLES') ? 'Configuracion'
+          : 'Historial'
+        }
+        user={state.currentUser}
       />
+      {IS_TESTING && <EntornoDePrueba />}
+    </div>
+  );
 
-      {/* Loading overlay */}
-      {state.ticketActionLoading && (
-        <div className="fixed inset-0 z-100 bg-black/30 backdrop-blur-xs flex items-center justify-center">
-          <div className="bg-white rounded-2xl shadow-2xl px-8 py-6 flex flex-col items-center gap-3">
-            <div className="w-10 h-10 border-4 border-slate-200 border-t-emerald-500 rounded-full animate-spin" />
-            <span className="text-sm font-medium text-slate-600">Guardando en sistema...</span>
-          </div>
-        </div>
-      )}
-      {/* Sidebar Desktop */}
-      <aside className="hidden md:flex w-48 text-white flex-col shrink-0 z-30" style={{ background: IS_TESTING ? 'linear-gradient(180deg, #1e293b 0%, #475569 100%)' : 'linear-gradient(180deg, #022C22 0%, #034334 100%)' }}>
-        {/* min-h (no h fijo): la sede sale de Sede_U de SharePoint y puede ser larga ("IG - Instituto Gamma S.A."),
-            y en TESTING se suma la etiqueta; con alto fijo el bloque desbordaba y cortaba "Gamma" y el logo. */}
-        <div className="min-h-20 py-3 flex items-center px-4 border-b border-white/10 shrink-0">
-          <GammaLogo size={22} className={cn("mr-3 shrink-0", IS_TESTING ? "text-slate-300" : "text-emerald-400")} />
-          <div className="flex flex-col min-w-0">
-            <span className="font-bold text-white tracking-tight leading-none text-lg">Gamma</span>
-            <span className={cn("text-[9px] font-bold uppercase tracking-widest mt-1 leading-snug wrap-break-word", IS_TESTING ? "text-slate-300" : "text-emerald-400")}>Sede {state.currentUser.sede}</span>
-            {IS_TESTING && (
-              <span className="mt-1 inline-flex items-center gap-1 self-start rounded-md bg-slate-600 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-white">
-                <span className="h-1.5 w-1.5 rounded-full bg-slate-300 animate-pulse" />
-                Entorno de prueba
-              </span>
-            )}
-          </div>
-        </div>
-        <nav className="flex-1 p-3 flex flex-col">
-          <div className="space-y-1">
-            <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-white/30 px-3 mb-1 block">Menú Principal</span>
-            {canViewMonitor && (
-              <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'HOME' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('HOME')}><HomeIcon className="w-4 h-4" />Monitor</Button>
-            )}
-            {canViewOperativa && !hasAzafataAccess && (
-              <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'REQUESTS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('REQUESTS')}><LayoutDashboard className="w-4 h-4" />Operativa</Button>
-            )}
-            {hasAzafataAccess && canViewOperativa && (
-              <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'REQUESTS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('REQUESTS')}><LayoutDashboard className="w-4 h-4" />Operativa</Button>
-            )}
-            {canViewHistorial && (
-              <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'HISTORY' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('HISTORY')}><History className="w-4 h-4" />Historial</Button>
-            )}
-            {canViewBeds && (
-              <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'BEDS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('BEDS')}><Menu className="w-4 h-4" />Mapa de Camas</Button>
-            )}
-            {canViewComandas && (
-              <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'COMANDAS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('COMANDAS')}><Utensils className="w-4 h-4" />Comandas</Button>
-            )}
-          </div>
+  const marca = (
+    <div className="flex min-w-0 items-center gap-2.5">
+      <GammaLogo size={22} className="shrink-0 text-sidebar-primary" />
+      <div className="min-w-0 leading-tight">
+        <div className="titulo truncate">Gamma</div>
+        <div className="truncate text-xs text-sidebar-foreground/70" title={`Sede ${state.currentUser.sede}`}>Sede {state.currentUser.sede}</div>
+      </div>
+    </div>
+  );
 
-          {/* Configuración — collapsible. Visible si el rol tiene Acceso_RT incluyendo Configuracion. */}
-          {canViewConfig && (canSeeUsers || canSeeRoles) && (
-            <div className="mt-auto pt-3 border-t border-white/10">
-              <button
-                onClick={() => setIsConfigOpen(v => !v)}
-                className={cn(
-                  "w-full flex items-center justify-between gap-3 h-10 px-3 rounded-lg text-sm transition-colors",
-                  isConfigOpen || state.currentView === 'USERS' ? 'text-white font-bold' : 'text-white/50 hover:text-white/80 hover:bg-white/5'
-                )}
-              >
-                <span className="flex items-center gap-3"><Settings className="w-4 h-4" />Configuración</span>
-                {isConfigOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-              </button>
-              {isConfigOpen && (
-                <div className="ml-4 mt-1 space-y-0.5 border-l border-white/10 pl-3">
-                  {canSeeUsers && <Button variant="ghost" className={cn("w-full justify-start gap-3 h-9 rounded-lg text-sm", state.currentView === 'USERS' ? 'bg-white/15 text-white font-bold' : 'text-white/60 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('USERS')}><Users className="w-3.5 h-3.5" />Usuarios</Button>}
-                  {canSeeRoles && <Button variant="ghost" className={cn("w-full justify-start gap-3 h-9 rounded-lg text-sm", state.currentView === 'ROLES' as any ? 'bg-white/15 text-white font-bold' : 'text-white/60 hover:bg-white/10 hover:text-white')} onClick={() => actions.setCurrentView('ROLES' as any)}><Settings className="w-3.5 h-3.5" />Roles</Button>}
-                </div>
-              )}
-            </div>
-          )}
-        </nav>
-        <div className="p-3 border-t border-white/10 space-y-1">
-          <Button variant="ghost" disabled={syncingRoles} className="w-full justify-start gap-3 text-white/70 hover:bg-white/10 hover:text-white" onClick={handleSyncRoles}>
-            <RefreshCw className={cn("w-4 h-4", syncingRoles && "animate-spin")} /> Actualizar accesos
-          </Button>
-          {state.currentUser?.requiresIdentification && (
-            <Button variant="ghost" className="w-full justify-start gap-3 text-emerald-300 hover:bg-emerald-950/20 hover:text-emerald-200" onClick={actions.cambioTurno} title={state.operador ? `Operador: ${state.operador} — tocá para cambiar de turno` : 'Cambiar el nombre del operador de esta sesión'}>
-              <User className="w-4 h-4 shrink-0" />
-              <span className="min-w-0 flex-1 text-left truncate">Cambio de turno{state.operador ? ` · ${state.operador}` : ''}</span>
+  const usuario = (compacto: boolean) => (
+    <MenuUsuario
+      compacto={compacto}
+      nombre={state.currentUser.name}
+      detalle={state.currentUser?.requiresIdentification && state.operador ? `Op: ${state.operador}` : `Sede ${state.currentUser.sede}`}
+      sincronizando={syncingRoles}
+      onActualizarAccesos={handleSyncRoles}
+      onCambioTurno={state.currentUser?.requiresIdentification ? actions.cambioTurno : undefined}
+      onInstalar={installPrompt && /android/i.test(navigator.userAgent) ? handleInstallApp : undefined}
+      onSalir={actions.handleLogout}
+    />
+  );
+
+  const noLeidas = state.bellNotifications.filter(n => !n.isRead).length;
+  const acciones = (
+    <>
+      <CuentaRegresivaDeActualizacion />
+      {state.currentView === 'BEDS' && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button type="button" variant="ghost" size="icon" className="text-muted-foreground" onClick={() => setIsLegendModalOpen(true)} aria-label="Referencias del mapa">
+              <Info className="size-5" />
             </Button>
-          )}
-          <Button variant="ghost" className="w-full justify-start gap-3 text-red-400 hover:text-red-300 hover:bg-red-950/20" onClick={actions.handleLogout}><LogOut className="w-4 h-4" /> Salir</Button>
-          <div className="px-3 pt-1 text-[9px] font-mono text-white/25 tracking-wider select-all" title="Versión del cliente">{APP_VERSION}</div>
-        </div>
-      </aside>
-
-      {/* Main Container */}
-      <div className="flex-1 flex flex-col min-w-0 min-h-0 relative">
-        <header className="h-16 md:h-14 bg-white border-b border-slate-200 flex items-center justify-between px-2 md:px-8 shrink-0 z-20 shadow-xs relative">
-          <div className="flex items-center gap-1.5">
-            <button
-              className="md:hidden p-2 rounded-xl text-white hover:opacity-90 transition-colors shadow-lg active:scale-95"
-              style={{ backgroundColor: IS_TESTING ? '#334155' : '#022C22' }}
-              onClick={() => setIsMobileMenuOpen(true)}
-            >
-              <GammaLogo size={20} />
-            </button>
-            <h1 className="text-lg md:text-xl font-black text-slate-900 tracking-tight truncate max-w-[100px] xs:max-w-[180px] sm:max-w-none">
-              {state.currentView === 'HOME' ? 'Monitor' : state.currentView === 'REQUESTS' ? (operativaTab === 'limpiezas' ? 'Operativa · Limpiezas' : operativaTab === 'cirugias' ? 'Operativa · Cirugías' : 'Operativa') : state.currentView === 'BEDS' ? 'Mapa de Camas' : state.currentView === 'COMANDAS' ? 'Gestión de Comandas' : state.currentView === 'USERS' ? 'Usuarios' : (state.currentView as string) === 'ROLES' ? 'Roles' : 'Historial'}
-            </h1>
-            <ModuleHelp
-              moduleKey={
-                state.currentView === 'HOME' ? 'Monitor'
-                : state.currentView === 'REQUESTS' ? 'Operativa'
-                : state.currentView === 'BEDS' ? 'MapaCamas'
-                : state.currentView === 'COMANDAS' ? 'Comandas'
-                : (state.currentView === 'USERS' || (state.currentView as string) === 'ROLES') ? 'Configuracion'
-                : 'Historial'
-              }
-              user={state.currentUser}
+          </TooltipTrigger>
+          <TooltipContent>Referencias del mapa</TooltipContent>
+        </Tooltip>
+      )}
+      {(can(state.currentUser, 'notif_new_ticket')
+        || can(state.currentUser, 'notif_status_update')
+        || can(state.currentUser, 'notif_reception_confirmed')
+        || can(state.currentUser, 'notif_diet_change')) && (
+        <Popover open={isNotificationsOpen} onOpenChange={(open) => { setIsNotificationsOpen(open); if (open) actions.handleOpenNotifications(); }}>
+          <PopoverTrigger asChild>
+            <Button type="button" variant="ghost" size="icon" className="relative text-muted-foreground" aria-label={noLeidas ? `Notificaciones (${noLeidas} sin leer)` : 'Notificaciones'}>
+              <Bell className="size-5" />
+              {noLeidas > 0 && <span className="absolute top-2 right-2 size-2.5 rounded-full bg-destructive ring-2 ring-background" aria-hidden="true" />}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-[calc(100vw-1.5rem)] overflow-hidden p-0 sm:w-[380px]">
+            <NotificationsDropdown
+              notifications={state.bellNotifications}
+              onNotificationClick={(n) => {
+                // Pasamos la notif completa para que mark-by-event pueda linkear
+                // la notif local (NOTIF-*) con su contrapartida SP por ticketId+type.
+                actions.handleMarkNotificationRead(n);
+                setIsNotificationsOpen(false);
+              }}
+              onMarkAllAsRead={actions.handleMarkAllNotificationsRead}
+              onClose={() => setIsNotificationsOpen(false)}
             />
-            {IS_TESTING && (
-              <span className="inline-flex items-center gap-1.5 rounded-md bg-slate-600 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-white shadow-xs shrink-0">
-                <span className="h-1.5 w-1.5 rounded-full bg-slate-300 animate-pulse" />
-                <span className="hidden xs:inline">Entorno de prueba</span>
-                <span className="xs:hidden">Test</span>
-              </span>
-            )}
-          </div>
-          
-          {/* Mobile Sidebar Overlay */}
-          {isMobileMenuOpen && (
-            <div 
-              className="fixed inset-0 bg-black/50 z-40 md:hidden" 
-              onClick={() => setIsMobileMenuOpen(false)}
-            />
-          )}
+          </PopoverContent>
+        </Popover>
+      )}
+      {hasAzafataAccess && (
+        <span className="micro flex h-8 items-center rounded-md border bg-muted/50 px-2 tabular-nums">
+          Sectores: {state.currentUser.assignedAreas?.length || 0}
+        </span>
+      )}
+    </>
+  );
 
-          {/* Mobile Sidebar */}
-          <div className={cn(
-            "fixed inset-y-0 left-0 w-64 text-white flex flex-col z-50 md:hidden transition-transform duration-300 ease-in-out shadow-2xl",
-            isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
-          )} style={{ background: IS_TESTING ? 'linear-gradient(180deg, #1e293b 0%, #475569 100%)' : 'linear-gradient(180deg, #022C22 0%, #034334 100%)' }}>
-            <div className="min-h-14 py-2 flex items-center justify-between px-4 border-b border-white/10 shrink-0">
-              <div className="flex items-center min-w-0">
-                <GammaLogo size={22} className={cn("mr-3 shrink-0", IS_TESTING ? "text-slate-300" : "text-emerald-400")} />
-                <div className="flex flex-col min-w-0">
-                  <span className="font-bold text-white tracking-tight leading-none text-lg">Gamma</span>
-                  {IS_TESTING ? (
-                    <span className="inline-flex items-center gap-1 self-start rounded-sm bg-slate-600 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-white mt-0.5">
-                      <span className="h-1.5 w-1.5 rounded-full bg-slate-300 animate-pulse" />
-                      Entorno de prueba
-                    </span>
-                  ) : (
-                    <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest mt-1 leading-snug wrap-break-word">Sede {state.currentUser.sede}</span>
-                  )}
-                </div>
-              </div>
-              <button 
-                onClick={() => setIsMobileMenuOpen(false)}
-                className="p-2 text-zinc-400 hover:text-white"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-              </button>
-            </div>
-            <nav className="flex-1 p-3 flex flex-col overflow-y-auto">
-              <div className="space-y-1">
-                <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-white/30 px-3 mb-1 block">Menú Principal</span>
-                {canViewMonitor && (
-                  <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'HOME' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('HOME'); setIsMobileMenuOpen(false); }}><HomeIcon className="w-4 h-4" />Monitor</Button>
-                )}
-                {canViewOperativa && !hasAzafataAccess && (
-                  <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'REQUESTS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('REQUESTS'); setIsMobileMenuOpen(false); }}><LayoutDashboard className="w-4 h-4" />Operativa</Button>
-                )}
-                {hasAzafataAccess && canViewOperativa && (
-                  <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'REQUESTS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('REQUESTS'); setIsMobileMenuOpen(false); }}><LayoutDashboard className="w-4 h-4" />Operativa</Button>
-                )}
-                {canViewHistorial && (
-                  <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'HISTORY' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('HISTORY'); setIsMobileMenuOpen(false); }}><History className="w-4 h-4" />Historial</Button>
-                )}
-                {canViewBeds && (
-                  <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'BEDS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('BEDS'); setIsMobileMenuOpen(false); }}><Menu className="w-4 h-4" />Mapa de Camas</Button>
-                )}
-                {canViewComandas && (
-                  <Button variant="ghost" className={cn("w-full justify-start gap-3 h-10 rounded-lg text-sm", state.currentView === 'COMANDAS' ? 'bg-white/15 text-white font-bold' : 'text-white/70 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('COMANDAS'); setIsMobileMenuOpen(false); }}><Utensils className="w-4 h-4" />Comandas</Button>
-                )}
-              </div>
-
-              {canViewConfig && (canSeeUsers || canSeeRoles) && (
-                <div className="mt-auto pt-3 border-t border-white/10">
-                  <button
-                    onClick={() => setIsConfigOpen(v => !v)}
-                    className={cn(
-                      "w-full flex items-center justify-between gap-3 h-10 px-3 rounded-lg text-sm transition-colors",
-                      isConfigOpen || state.currentView === 'USERS' ? 'text-white font-bold' : 'text-white/50 hover:text-white/80 hover:bg-white/5'
-                    )}
-                  >
-                    <span className="flex items-center gap-3"><Settings className="w-4 h-4" />Configuración</span>
-                    {isConfigOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                  </button>
-                  {isConfigOpen && (
-                    <div className="ml-4 mt-1 space-y-0.5 border-l border-white/10 pl-3">
-                      {canSeeUsers && <Button variant="ghost" className={cn("w-full justify-start gap-3 h-9 rounded-lg text-sm", state.currentView === 'USERS' ? 'bg-white/15 text-white font-bold' : 'text-white/60 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('USERS'); setIsMobileMenuOpen(false); }}><Users className="w-3.5 h-3.5" />Usuarios</Button>}
-                      {canSeeRoles && <Button variant="ghost" className={cn("w-full justify-start gap-3 h-9 rounded-lg text-sm", state.currentView === 'ROLES' as any ? 'bg-white/15 text-white font-bold' : 'text-white/60 hover:bg-white/10 hover:text-white')} onClick={() => { actions.setCurrentView('ROLES' as any); setIsMobileMenuOpen(false); }}><Settings className="w-3.5 h-3.5" />Roles</Button>}
-                    </div>
-                  )}
-                </div>
-              )}
-            </nav>
-            <div className="p-3 border-t border-white/10 space-y-1">
-              {installPrompt && /android/i.test(navigator.userAgent) && (
-                <Button variant="ghost" className="w-full justify-start gap-3 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/20" onClick={() => { handleInstallApp(); setIsMobileMenuOpen(false); }}><Download className="w-4 h-4" /> Instalar App</Button>
-              )}
-              <Button variant="ghost" disabled={syncingRoles} className="w-full justify-start gap-3 text-white/70 hover:bg-white/10 hover:text-white" onClick={handleSyncRoles}>
-                <RefreshCw className={cn("w-4 h-4", syncingRoles && "animate-spin")} /> Actualizar accesos
-              </Button>
-              {state.currentUser?.requiresIdentification && (
-                <Button variant="ghost" className="w-full justify-start gap-3 text-emerald-300 hover:bg-emerald-950/20 hover:text-emerald-200" onClick={() => { actions.cambioTurno(); setIsMobileMenuOpen(false); }} title={state.operador ? `Operador: ${state.operador}` : undefined}><User className="w-4 h-4 shrink-0" /><span className="min-w-0 flex-1 text-left truncate">Cambio de turno{state.operador ? ` · ${state.operador}` : ''}</span></Button>
-              )}
-              <Button variant="ghost" className="w-full justify-start gap-3 text-red-400 hover:text-red-300 hover:bg-red-950/20" onClick={() => { actions.handleLogout(); setIsMobileMenuOpen(false); }}><LogOut className="w-4 h-4" /> Salir</Button>
-              <div className="px-3 pt-1 text-[9px] font-mono text-white/25 tracking-wider select-all" title="Versión del cliente">{APP_VERSION}</div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-1 md:gap-4">
-            <CuentaRegresivaDeActualizacion />
-            {state.currentView === 'BEDS' && (
-              <Button variant="ghost" size="icon" className="w-10 h-10 sm:w-9 sm:h-9 text-slate-400 hover:text-slate-600" onClick={() => setIsLegendModalOpen(true)}>
-                <Info className="w-6 h-6 sm:w-5 sm:h-5" />
-              </Button>
-            )}
-            <div className="flex items-center gap-1 sm:gap-3 pl-1 sm:pl-4 border-l border-slate-100">
-              {(can(state.currentUser, 'notif_new_ticket')
-                || can(state.currentUser, 'notif_status_update')
-                || can(state.currentUser, 'notif_reception_confirmed')
-                || can(state.currentUser, 'notif_diet_change')) && (
-                <Popover open={isNotificationsOpen} onOpenChange={(open) => { setIsNotificationsOpen(open); if (open) actions.handleOpenNotifications(); }}>
-                  <PopoverTrigger asChild>
-                    <Button variant="ghost" size="icon" className="relative w-10 h-10 sm:w-9 sm:h-9 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 active:bg-slate-200">
-                      <Bell className="w-5 h-5 sm:w-4 sm:h-4" />
-                      {state.bellNotifications.filter(n => !n.isRead).length > 0 && (
-                        <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white" />
-                      )}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent 
-                    align="end" 
-                    sideOffset={-40} 
-                    className="p-0 w-[calc(100vw-1.5rem)] sm:w-[380px] border-none shadow-[0_20px_50px_rgba(0,0,0,0.3)] rounded-2xl z-9999 outline-hidden animate-in fade-in zoom-in-95 duration-200 origin-top-right"
-                  >
-                    <NotificationsDropdown
-                      notifications={state.bellNotifications}
-                      onNotificationClick={(n) => {
-                        // Pasamos la notif completa para que mark-by-event pueda linkear
-                        // la notif local (NOTIF-*) con su contrapartida SP por ticketId+type.
-                        actions.handleMarkNotificationRead(n);
-                        setIsNotificationsOpen(false);
-                      }}
-                      onMarkAllAsRead={actions.handleMarkAllNotificationsRead}
-                      onClose={() => setIsNotificationsOpen(false)}
-                    />
-                  </PopoverContent>
-                </Popover>
-              )}
-              {hasAzafataAccess && (
-                <span className="h-10 sm:h-8 text-xs sm:text-[10px] font-black uppercase tracking-wider px-2 sm:px-2 rounded-xl border border-zinc-200 bg-zinc-50 shadow-xs flex items-center">
-                  SECTORES: {state.currentUser.assignedAreas?.length || 0}
-                </span>
-              )}
-              <div className="hidden sm:flex flex-col items-end">
-                <span className="text-xs font-bold text-slate-900 leading-none">{state.currentUser.name}</span>
-                {state.currentUser?.requiresIdentification && state.operador
-                  ? <span className="text-[9px] font-bold text-emerald-600 uppercase tracking-widest mt-1">Op: {state.operador}</span>
-                  : <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1">Sede {state.currentUser.sede}</span>}
-              </div>
-            </div>
-          </div>
-        </header>
-
-        {/* Banner de notificaciones sin leer */}
-        {state.unreadSpNotifications?.length > 0 && (
-          <div className="bg-red-50 border-b border-red-200 px-4 py-2 flex items-center justify-between gap-3 shrink-0">
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shrink-0" />
-              <p className="text-xs font-semibold text-red-800">
-                Tenés <span className="font-black">{state.unreadSpNotifications.length}</span> notificación{state.unreadSpNotifications.length > 1 ? 'es' : ''} sin confirmar hace más de 20 minutos
-              </p>
-            </div>
-            <button
-              onClick={() => { console.log('[App] Opening unread modal, count:', state.unreadSpNotifications?.length); setIsUnreadModalOpen(true); }}
-              className="text-[10px] font-black uppercase tracking-widest text-red-700 hover:text-red-900 border border-red-300 rounded-lg px-2 py-1 hover:bg-red-100 transition-colors shrink-0"
-            >
-              Ver pendientes
-            </button>
-          </div>
-        )}
-
-        {/* Banner de notificaciones desactivadas.
-            Sin esto el usuario NO tiene forma de saber que está mudo: con el permiso en 'denied'
-            la app nunca se suscribe y nunca vuelve a preguntar. Se midió en producción gente de
-            Admisión con cientos de traslados creados y cero suscripción push. */}
-        {state.notificationPermission !== 'granted' && state.notificationPermission !== 'unsupported'
-          && receivesAnyNotif(state.currentUser) && (
-          <div className="bg-orange-50 border-b border-orange-200 px-4 py-2 flex items-center justify-between gap-3 shrink-0">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="w-2 h-2 rounded-full bg-orange-500 shrink-0" />
-              <p className="text-xs font-semibold text-orange-900 truncate">
-                {state.notificationPermission === 'denied'
-                  ? 'Las notificaciones están bloqueadas en este navegador — no vas a recibir avisos de traslados ni de habitación limpia.'
-                  : 'No tenés las notificaciones activadas — no vas a recibir avisos de traslados ni de habitación limpia.'}
-              </p>
-            </div>
-            <button
+  const avisos = (
+    <>
+      {state.unreadSpNotifications?.length > 0 && (
+        <Aviso
+          tono="peligro"
+          accion={<Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => setIsUnreadModalOpen(true)}>Ver pendientes</Button>}
+        >
+          Tenés <span className="font-semibold">{state.unreadSpNotifications.length}</span> notificación{state.unreadSpNotifications.length > 1 ? 'es' : ''} sin confirmar hace más de 20 minutos
+        </Aviso>
+      )}
+      {/* Notificaciones desactivadas. Sin esto el usuario NO tiene forma de saber que está mudo: con
+          el permiso en 'denied' la app nunca se suscribe y nunca vuelve a preguntar. Se midió en
+          producción gente de Admisión con cientos de traslados creados y cero suscripción push. */}
+      {state.notificationPermission !== 'granted' && state.notificationPermission !== 'unsupported'
+        && receivesAnyNotif(state.currentUser) && (
+        <Aviso
+          tono="aviso"
+          accion={
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-xs"
               onClick={async () => {
                 const perm = await actions.enableNotifications();
                 // Con 'denied' el navegador ni siquiera muestra el prompt: hay que explicar el
@@ -761,32 +582,63 @@ export default function App() {
                   );
                 }
               }}
-              className="text-[10px] font-black uppercase tracking-widest text-orange-800 hover:text-orange-950 border border-orange-300 rounded-lg px-2 py-1 hover:bg-orange-100 transition-colors shrink-0"
             >
               Activar
-            </button>
-          </div>
-        )}
+            </Button>
+          }
+        >
+          {state.notificationPermission === 'denied'
+            ? 'Las notificaciones están bloqueadas en este navegador — no vas a recibir avisos de traslados ni de habitación limpia.'
+            : 'No tenés las notificaciones activadas — no vas a recibir avisos de traslados ni de habitación limpia.'}
+        </Aviso>
+      )}
+      {state.tokenExpirySoon && (
+        <Aviso
+          tono="aviso"
+          accion={<Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={actions.handleLogout}>Renovar sesión</Button>}
+        >
+          Tu sesión vence en <span className="font-semibold tabular-nums">{state.tokenMinutesLeft} min</span>. Guardá tu trabajo y volvé a ingresar.
+        </Aviso>
+      )}
+    </>
+  );
 
-        {/* Banner de sesión por vencer */}
-        {state.tokenExpirySoon && (
-          <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center justify-between gap-3 shrink-0">
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" />
-              <p className="text-xs font-semibold text-amber-800">
-                Tu sesión vence en <span className="font-black">{state.tokenMinutesLeft} min</span>. Guardá tu trabajo y volvé a ingresar.
-              </p>
-            </div>
-            <button
-              onClick={actions.handleLogout}
-              className="text-[10px] font-black uppercase tracking-widest text-amber-700 hover:text-amber-900 border border-amber-300 rounded-lg px-2 py-1 hover:bg-amber-100 transition-colors shrink-0"
-            >
-              Renovar sesión
-            </button>
-          </div>
-        )}
+  return (
+    <ActualizacionProvider retenida={state.ticketActionLoading}>
+    <AppShell
+      nav={nav}
+      activo={state.currentView as string}
+      onNavegar={(id) => actions.setCurrentView(id as any)}
+      marca={marca}
+      marcaCompacta={<GammaLogo size={24} className="text-sidebar-primary" />}
+      usuario={usuario(false)}
+      usuarioCompacto={usuario(true)}
+      ubicacion={ubicacion}
+      acciones={acciones}
+      avisos={avisos}
+      relleno={false}
+    >
+      {/* Toast notifications */}
+      <NotificationToasts
+        toasts={state.toasts}
+        onDismiss={actions.handleDismissToast}
+        onTap={(n) => {
+          // Además de la vista, se fuerza la solapa: si el usuario estaba en Limpiezas,
+          // setCurrentView('REQUESTS') no produce cambio y el toast se vería muerto.
+          if (n.ticketId) { actions.setOperativaSubview('traslados'); actions.setCurrentView('REQUESTS'); }
+        }}
+      />
 
-        <main className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 bg-slate-50/50 relative overscroll-y-contain">
+      {/* Guardando: bloquea la pantalla mientras se escribe en el sistema */}
+      {state.ticketActionLoading && (
+        <div className="fixed inset-0 z-overlay grid place-items-center bg-background/60 backdrop-blur-xs" role="status" aria-live="polite">
+          <div className="flotante flex flex-col items-center gap-3 px-8 py-6">
+            <Loader2 className="size-8 animate-spin text-primary" aria-hidden="true" />
+            <span className="text-sm text-muted-foreground">Guardando en sistema…</span>
+          </div>
+        </div>
+      )}
+
           {/* Monitor — Admin, Admisión y Dirección (lectura) */}
           {/* `historyTickets` y no `filteredTickets`: el Monitor calcula KPIs por rango de
               fechas sobre traslados Consolidados, que el poll de 15s ya no trae (ver
@@ -877,8 +729,6 @@ export default function App() {
           {/* Mapa de Camas — gateado por Acceso_RT */}
           {canViewBeds && state.currentView === 'BEDS' && <BedsView beds={state.beds} tickets={state.tickets} currentUser={state.currentUser} bedsLoading={state.bedsLoading} bedsError={state.bedsError} isolatedBeds={state.isolatedBeds} onEnrichBed={actions.enrichBed} onFetchPatientTickets={actions.fetchPatientTickets} onRefresh={actions.refreshAll} onMarkClean={actions.markBedClean} onUndoClean={actions.undoBedClean} onRevertirLimpieza={can(state.currentUser, 'limpieza_revertir') ? actions.revertirLimpieza : undefined} onSaveMeal={actions.saveMealLoad} onClearMeal={actions.clearMealLoad} onSaveCompanion={actions.saveCompanionLoad} onClearCompanion={actions.clearCompanionLoad} onMarcarListo={can(state.currentUser, 'cirugia_listo') ? actions.marcarListoParaCirugia : undefined} onCirugiaEnTraslado={can(state.currentUser, 'cirugia_entregar') ? actions.cirugiaEnTraslado : undefined} onCirugiaTolerancia={can(state.currentUser, 'cirugia_tolerancia') ? actions.cirugiaTolerancia : undefined} onCirugiaRetroceder={canCirugiaRetroceder ? actions.cirugiaRetroceder : undefined} onCirugiaPrevia={canCirugiaPrevia ? actions.registrarCirugiaPrevia : undefined} onAnularCirugiaPrevia={canCirugiaPrevia ? actions.anularCirugiaPrevia : undefined} onStartRoutineCleaning={can(state.currentUser, 'limpieza_rutina') ? actions.startRoutineCleaning : undefined} onFinishRoutineCleaning={can(state.currentUser, 'limpieza_rutina') ? actions.finishRoutineCleaning : undefined} onMarcarVaCirugia={can(state.currentUser, 'cirugia_marcar') ? actions.marcarVaCirugia : undefined} onDesmarcarVaCirugia={can(state.currentUser, 'cirugia_marcar') ? actions.desmarcarVaCirugia : undefined} />}
           {canViewComandas && state.currentView === 'COMANDAS' && <ComandasManagementView beds={state.beds} currentUser={state.currentUser} onRefresh={actions.refreshAll} onSetMealStatus={actions.setMealStatus} />}
-        </main>
-      </div>
 
       {/* Modals */}
       <NewRequestModal
@@ -965,58 +815,50 @@ export default function App() {
 
       {/* Modal de notificaciones pendientes */}
       <Dialog open={isUnreadModalOpen} onOpenChange={setIsUnreadModalOpen}>
-        <DialogContent className="sm:max-w-[500px] rounded-3xl max-h-[80vh] overflow-hidden flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="text-xl flex items-center gap-2">
-              <Bell className="w-5 h-5 text-red-500" />
-              Notificaciones Pendientes
-              <span className="text-sm font-bold text-red-500 bg-red-50 px-2 py-0.5 rounded-full">{state.unreadSpNotifications?.length || 0}</span>
+        <DialogContent className="flex max-h-[80vh] flex-col gap-0 p-0 sm:max-w-[500px]">
+          <DialogHeader className="shrink-0 border-b px-6 py-4">
+            <DialogTitle className="flex items-center gap-2">
+              <Bell className="size-4 text-destructive" aria-hidden="true" />
+              Notificaciones pendientes
+              <StatusBadge tono="peligro">{state.unreadSpNotifications?.length || 0}</StatusBadge>
             </DialogTitle>
+            <DialogDescription>Sin confirmar hace más de 20 minutos.</DialogDescription>
           </DialogHeader>
-          <div className="flex-1 overflow-y-auto space-y-2 py-2">
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-6">
             {(state.unreadSpNotifications ?? []).map((n: any) => (
-              <div key={n.id} className="flex items-start gap-3 p-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition-colors">
-                <span className="w-2 h-2 rounded-full bg-red-500 mt-1.5 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold text-slate-900">{n.title}</p>
-                  <p className="text-xs text-slate-500 truncate">{n.message}</p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">{n.fecha ? new Date(n.fecha).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}</p>
+              <div key={n.id} className="flex items-start gap-3 rounded-lg border bg-card p-3">
+                <span className="mt-1.5 size-2 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium">{n.title}</p>
+                  <p className="truncate text-xs text-muted-foreground">{n.message}</p>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">{n.fecha ? fechaHora(n.fecha) : ''}</p>
                 </div>
-                <button
-                  onClick={() => actions.handleMarkNotificationRead(n)}
-                  className="text-[9px] font-bold uppercase text-emerald-600 hover:text-emerald-800 border border-emerald-200 rounded-lg px-2 py-1 hover:bg-emerald-50 transition-colors shrink-0"
-                >
+                <Button type="button" variant="outline" size="sm" className="h-7 shrink-0 px-2 text-xs" onClick={() => actions.handleMarkNotificationRead(n)}>
                   Leída
-                </button>
+                </Button>
               </div>
             ))}
             {(state.unreadSpNotifications ?? []).length === 0 && (
-              <div className="py-10 text-center">
-                <Bell className="w-10 h-10 mx-auto mb-3 text-emerald-200" />
-                <p className="text-sm font-bold text-slate-300">Sin notificaciones pendientes</p>
-              </div>
+              <Vacio icono={Bell} titulo="Sin notificaciones pendientes" />
             )}
           </div>
           {(state.unreadSpNotifications ?? []).length > 0 && (
-            <div className="border-t border-slate-100 pt-3 flex gap-2">
-              <button
+            <DialogFooter className="shrink-0 border-t bg-muted/20 p-4">
+              <Button type="button" variant="outline" onClick={() => setIsUnreadModalOpen(false)}>
+                Cerrar
+              </Button>
+              <Button
+                type="button"
                 onClick={() => {
                   // Una sola llamada: el handler usa el endpoint bulk y maneja errores
                   // internamente. Antes acá había forEach + call all → 2N PATCH duplicados.
                   actions.handleMarkAllNotificationsRead();
                   setIsUnreadModalOpen(false);
                 }}
-                className="flex-1 h-10 rounded-xl font-bold text-xs uppercase tracking-widest bg-emerald-600 hover:bg-emerald-700 text-white transition-colors"
               >
                 Marcar todas como leídas
-              </button>
-              <button
-                onClick={() => setIsUnreadModalOpen(false)}
-                className="h-10 px-4 rounded-xl font-bold text-xs uppercase tracking-widest border border-slate-200 text-slate-500 hover:bg-slate-50 transition-colors"
-              >
-                Cerrar
-              </button>
-            </div>
+              </Button>
+            </DialogFooter>
           )}
         </DialogContent>
       </Dialog>
@@ -1064,7 +906,7 @@ export default function App() {
           </div>
         </DialogContent>
       </Dialog>
-    </div>
+    </AppShell>
     <ActualizacionDialog />
     </ActualizacionProvider>
   );
