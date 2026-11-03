@@ -228,10 +228,17 @@
   /* Series de gráficos (DATAVIZ.md §3): slot 1 = paso claro de la marca. */
   /* chart-1: validado con el script de dataviz (banda de luminosidad, croma, contraste vs card). */
   --chart-1: #0a8466;
-  --chart-2: #2563eb;
-  --chart-3: #0891b2;
-  --chart-4: #d97706;
+  --chart-2: #2a78d6;
+  --chart-3: #eb6834;
+  --chart-4: #6250d6;
   --chart-5: #7c3aed;
+  /* Dataviz (validado con scripts/validate_palette.js de la skill, contra la card):
+     comparar = gris de énfasis (lo que no se destaca, el período anterior);
+     medio / lento = el centro neutro y el polo malo de la escala divergente de espera
+     (el polo bueno es chart-1). */
+  --chart-comparar: #a1a1aa;
+  --chart-medio: #d4d4d8;
+  --chart-lento: #d03b3b;
 
   /* Sidebar verde Gamma (la de la app original). sidebar-primary = verde claro
      de acento (sede, indicador activo). */
@@ -300,10 +307,13 @@
   --brand-foreground: #022c22;
 
   --chart-1: #1fae7c;
-  --chart-2: #60a5fa;
-  --chart-3: #22d3ee;
-  --chart-4: #fbbf24;
+  --chart-2: #3987e5;
+  --chart-3: #e0652f;
+  --chart-4: #8a7be8;
   --chart-5: #a78bfa;
+  --chart-comparar: #52525b;
+  --chart-medio: #3f3f46;
+  --chart-lento: #c93a3a;
 
   --sidebar: #04150f;
   --sidebar-foreground: #fafafa;
@@ -355,6 +365,9 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
+  --color-chart-comparar: var(--chart-comparar);
+  --color-chart-medio: var(--chart-medio);
+  --color-chart-lento: var(--chart-lento);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-accent: var(--sidebar-accent);
