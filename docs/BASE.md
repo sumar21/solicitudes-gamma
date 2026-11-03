@@ -6,7 +6,7 @@ Todo estilo de Sumar es **un tema sobre esta base**. La base fija el stack, la e
 
 | Archivo | Qué tiene |
 |---|---|
-| `base/BASE.md` | Este documento: stack, estructura, tokens, API de componentes, recetas comunes, reglas y lo común de un rediseño (§9). |
+| `base/BASE.md` | Este documento: stack, estructura, tokens, API de componentes, recetas comunes, reglas, lo común de un rediseño (§9) y de los tableros (§10). |
 | `base/starter/` | El esqueleto común que compila: app, rutas, formato es-AR, store de demo, kit de demo, pantallas de muestra. |
 | `estilos/<id>/starter/` | Lo propio del estilo: `src/index.css`, `src/components/ui/*`, `src/components/layout/*`. Se copia **encima** de la base. |
 | `estilos/<id>/DESIGN.md` | Reglas visuales del estilo: carácter, tokens con sus valores, tipografía, cómo se compone cada pantalla, reglas de oro. |
@@ -219,6 +219,7 @@ Cada estilo dice **cómo se ven**; acá está **qué llevan**. Las pantallas de 
 7. Toda pantalla funciona en 390 px.
 8. Textos en castellano y números con `formato.ts`.
 9. Lo que el validador marca 🔴 no se mergea. Una excepción lleva motivo (`// sumar-validar-ignorar: <regla> <motivo>`).
+10. **Todo tablero, monitor, dashboard o KPI se hace con las skills `business-intelligence` y `dataviz`, siempre** (§10). Sin excepción por "es un gráfico chico".
 
 ---
 
@@ -291,3 +292,33 @@ precachea el service worker (vite-plugin-pwa), el build falla. Se separan las li
   `PRODUCTO.md` cómo se muestra (un entorno de prueba).
 - `VALIDACION.md` (validador con `--reporte`) trae el antes / después por regla y la tabla **por
   archivo**, que es el orden de ataque de las vistas que faltan.
+
+---
+
+## 10. Tableros: `business-intelligence` + `dataviz`, siempre
+
+Todo tablero, monitor, dashboard, KPI, indicador o reporte de gestión de una app de Sumar —nuevo o
+en un rediseño, en cualquier estilo— se hace con **dos skills, en este orden, antes de escribir
+código**:
+
+| Skill | Qué decide | Dónde está |
+|---|---|---|
+| **`business-intelligence`** | **Qué** se mide y **cómo se calcula**: la pregunta y el decisor de cada indicador, aditivas vs no aditivas, ratios como cociente de sumas, el divisor, medianas y p90 en tiempos, la ventana y la comparación de cada número, datos parciales, la lectura en una oración, el ancla para verificar | Este kit (`skills/business-intelligence/`, plugin `sumar-kit`) |
+| **`dataviz`** | **Cómo se dibuja**: la forma según el trabajo del dato, el color por su trabajo y **validado con su script** (no a ojo), marcas, leyenda, hover, vista tabla, mirar el render | Viene con Claude Code. Sin ella (Codex, Cursor): el `DATAVIZ.md` del estilo resume su protocolo |
+
+Después, el `DATAVIZ.md` del estilo da los parámetros visuales (paleta, piezas, catálogo).
+
+**Lo mínimo que tiene un tablero de Sumar** (lo verifica la revisión, §R.6 del estilo):
+
+- Una **cifra héroe** (el resultado que importa) y 4–5 KPIs con **delta contra un período con
+  nombre** y sparkline.
+- Cada gráfico con su **lectura** (el hallazgo, calculado), su **vista tabla** y su tooltip.
+- Tiempos en **mediana / p90**; **distribución** donde la pregunta es "dónde está el problema";
+  **énfasis** (un dato en color, el resto en gris) donde la pregunta es "cuál".
+- Colores de gráfico **solo por tokens `chart-*`**, validados con el script de `dataviz` contra la
+  card, de día y de noche; los valores validados se anotan en el `index.css`.
+- Datos parciales o muestras chicas **avisados en pantalla**; nunca un cero que significa "no cargó".
+- Las métricas en una capa pura (`src/lib/metricas.ts`), no en los componentes.
+
+Referencias: el Tablero de Gamma (`grupo-gamma/tablero/dashboard`) y el Monitor de MediFlow
+(`solicitudes-gamma`, `views/DashboardView.tsx`).

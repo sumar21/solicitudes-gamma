@@ -49,7 +49,14 @@ de componentes es la de la base de Sumar ([docs/BASE.md](docs/BASE.md) §4); est
 dice la tabla de abajo. Cómo se llegó y qué falta: [docs/REDISENO.md](docs/REDISENO.md) y `VALIDACION.md`.
 
 **Antes de tocar UI:** leé la sección de `DESIGN.md` que corresponde a la tarea (ruteo al principio).
-Dashboards y gráficos: [docs/DATAVIZ.md](docs/DATAVIZ.md) es obligatorio. La vista de referencia ya
+
+**Tableros (Monitor), KPIs y gráficos: siempre con las skills `business-intelligence` (qué se mide y
+cómo se calcula: preguntas, medianas / p90, ventanas, comparaciones, lecturas, ancla para verificar)
+y `dataviz` (cómo se dibuja: forma, color validado con su script, marcas, tabla), en ese orden, y
+después [docs/DATAVIZ.md](docs/DATAVIZ.md)** ([docs/BASE.md](docs/BASE.md) §10). La referencia es el
+Monitor (`views/DashboardView.tsx` + `components/dashboard/shared.tsx`): cifra héroe, stat tiles con
+delta y sparkline, lectura y vista tabla en cada gráfico. Los colores de gráfico son los `chart-*` de
+`index.css`, validados con el script de `dataviz`; uno nuevo se valida antes de usarlo. La vista de referencia ya
 migrada es **Operativa** (`views/RequestsView.tsx`): una vista nueva o migrada se arma igual.
 
 **Inventario:** Vite + React 19 sin router (la vista vive en `useHospitalState.currentView`) · Tailwind 4 ·

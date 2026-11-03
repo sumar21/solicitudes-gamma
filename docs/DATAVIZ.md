@@ -8,7 +8,7 @@ Los gráficos son la parte de la UI donde más se nota un rediseño a medias y d
 
 ## 1. Protocolo
 
-Antes de escribir código de un gráfico, invocá la skill **`dataviz`** de Claude Code y seguí su procedimiento en orden. La skill es agnóstica del sistema de diseño; §3 le da los parámetros de este estilo.
+Antes de escribir código de un tablero o un gráfico, invocá **dos skills, en este orden** (BASE §10): **`business-intelligence`** (del kit: qué preguntas responde el tablero, cómo se calcula cada número —medianas, ventanas, comparaciones, denominadores— y qué lectura se afirma) y **`dataviz`** (de Claude Code: forma, color validado con su script, marcas, hover, tabla). Seguí el procedimiento de cada una en orden; no alcanza con cargarlas. `dataviz` es agnóstica del sistema de diseño; §3 le da los parámetros de este estilo.
 
 **Regla corta:** *forma → color → validar → marcas → hover → accesibilidad → mirar el render.* El color es lo último y se valida con el script, nunca a ojo.
 

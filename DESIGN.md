@@ -9,7 +9,7 @@ Reglas visuales del estilo. Es **un tema sobre la base común** (`base/BASE.md`)
 > |---|---|---|
 > | **Repo nuevo** | `node scripts/armar.mjs 01-minimal-zinc <carpeta>` (o `/nuevo-proyecto`). Copia la base y el starter del estilo; no hay código para pegar. | BASE entera (es corta) + este documento. |
 > | **Repo existente** (otra estética) | `/rediseno` | **`REDISENO.md`** entero, después la sección de acá que pida cada capa. |
-> | **Dashboard, gráfico o KPI** | Protocolo dataviz, obligatorio. | **`DATAVIZ.md`** + §3.4 de este documento. |
+> | **Dashboard, gráfico o KPI** | Las skills **`business-intelligence`** (qué se mide y cómo se calcula) y **`dataviz`** (cómo se dibuja), siempre y en ese orden (BASE §10). | **`DATAVIZ.md`** + §3.4 de este documento. |
 > | **Patrón de negocio** (cuenta corriente, checkout, emails, permisos, tipo de cambio) | Son opcionales. | **`EJEMPLOS.md`**. |
 > | **Tarea puntual** | — | Colores → §1.1 · tipografía → §1.2 · superficies, radios, sombras → §1.3–§1.5 · densidad → §1.6 · íconos → §1.7 · foco → §1.8 · animaciones → §1.9 · cómo se ve un componente → §2 · listado → §3.1 · detalle → §3.2 · formulario → §3.3 · inicio → §3.4 · login → §3.5 · confirmar → §3.6 · toasts y banners → §3.7 · filtros → §3.8 · tablas → §3.9 · sidebar, header, mobile, celular → §4 · modo noche → §5 · reglas de oro → §6. |
 >
@@ -338,7 +338,7 @@ Piezas del formulario:
 
 ### 3.4 Inicio / dashboard
 
-Muestra: `base/starter/src/pages/Inicio.tsx`. Gráficos: **`DATAVIZ.md` primero** (protocolo obligatorio).
+Muestra: `base/starter/src/pages/Inicio.tsx`. Tableros y gráficos: las skills **`business-intelligence`** (qué se mide y cómo se calcula) y **`dataviz`** (cómo se dibuja), siempre y en ese orden (BASE §10), y después **`DATAVIZ.md`**.
 
 - Contenedor `flex flex-col gap-4 pb-8`; recarga silenciosa `transition-opacity` + `opacity-60`.
 - `PageHeader` (título + período como badge `rounded-full bg-brand/10 px-2.5 py-0.5 text-[11px] font-semibold text-brand` con `CalendarRange h-3.5 w-3.5`) y, en `acciones`, refrescar (`outline icon`, `RefreshCw` que gira mientras carga).
