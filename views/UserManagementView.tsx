@@ -1,16 +1,18 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { User, Area } from '../types';
-import { Users, Plus, Search, X, Eye, EyeOff, AlertCircle, CheckCircle2, Pencil, Trash2 } from '../components/Icons';
+import { Users, Plus, Search, X, Eye, EyeOff, AlertCircle, CheckCircle2, Pencil } from '../components/Icons';
 import { Button } from '../components/ui/button';
-import { Card } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table';
 import { Combobox } from '../components/ui/combobox';
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Checkbox } from '../components/ui/checkbox';
-import { Loader2 } from 'lucide-react';
+import { DataTable, type Columna } from '../components/ui/data-table';
+import { Vacio } from '../components/ui/estados';
+import { StatusBadge, type Tono } from '../components/ui/status-badge';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip';
+import { Loader2, UserX } from 'lucide-react';
 import { Badge } from '../components/ui/badge';
 import { cn } from '../lib/utils';
 
@@ -83,6 +85,9 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
   const [deleteConfirm, setDeleteConfirm] = useState<SPUser | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [roleOptions, setRoleOptions] = useState<RoleOption[]>(DEFAULT_ROLE_OPTIONS);
+  // Solo para MOSTRAR la falla de carga (DESIGN §9 / convenciones §4.6): la lógica de fetch no cambia
+  // (si falla, se queda con lo que había).
+  const [loadError, setLoadError] = useState(false);
 
   // Devuelve true si el rol elegido por nombre filtra por pisos (lookup en roleOptions).
   const roleFiltersByFloors = (roleName: string): boolean => {
@@ -109,8 +114,9 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
       if (r.ok) {
         const data = await r.json();
         setUsers(data.users ?? []);
-      }
-    } catch { /* keep current */ }
+        setLoadError(false);
+      } else setLoadError(true);
+    } catch { setLoadError(true); /* keep current */ }
     finally { setLoading(false); }
   }, [authFetch]);
 
@@ -267,173 +273,213 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
     }));
   };
 
+  // ── Presentación (DESIGN §4.4 / §7) ─────────────────────────────────────────
+
+  const iniciales = (name: string) => name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+
+  // Estado del usuario (§3.11): el endpoint hoy trae solo los activos, pero la pill queda por si eso cambia.
+  const estadoUsuario = (status: string): { tono: Tono; label: string } =>
+    status === 'Inactivo' ? { tono: 'neutro', label: 'Inactivo' } : { tono: 'exito', label: status || 'Activo' };
+
+  // Sectores asignados en texto corto (sin "Internación", "HPR", "Piso"); null si el rol no filtra por pisos.
+  const sectoresDe = (u: SPUser): { todos: boolean; total: number; corto: string; completo: string } | null => {
+    if (!roleFiltersByFloors(u.role) || !u.assignedFloors) return null;
+    const floors = u.assignedFloors.split(';').filter(Boolean);
+    const short = floors.map(f => f.replace('Internacion ', '').replace('Internación ', '').replace(' HPR', '').replace(' Piso', ''));
+    return {
+      todos: floors.length === AREA_OPTIONS.length,
+      total: floors.length,
+      corto: `${short.slice(0, 3).join(', ')}${floors.length > 3 ? ` +${floors.length - 3}` : ''}`,
+      completo: floors.join('\n'),
+    };
+  };
+
+  const celdaSectores = (u: SPUser) => {
+    const s = sectoresDe(u);
+    if (!s) return <span className="text-muted-foreground">—</span>;
+    if (s.todos) return <Badge variant="secondary" className="font-medium">Todos los sectores</Badge>;
+    return <span className="text-xs text-muted-foreground" title={s.completo}>{s.corto}</span>;
+  };
+
+  // Acción de fila (DESIGN §7.6): botón-ícono ghost con tooltip; "Desactivar" con hover destructivo.
+  const accionFila = (icono: React.ReactNode, label: string, onClick: () => void, peligro = false) => (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={label}
+          onClick={onClick}
+          className={cn('text-muted-foreground', peligro ? 'hover:bg-destructive/10 hover:text-destructive' : 'hover:text-foreground')}
+        >
+          {icono}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+
+  // Columnas AGRUPADAS (§7.2 "2 líneas"): nombre arriba y login · email abajo, en una sola celda.
+  const columnas: Columna<SPUser>[] = [
+    {
+      id: 'name',
+      titulo: 'Usuario',
+      ordenar: (u) => u.name,
+      celda: (u) => (
+        <div className="flex items-center gap-3">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground" aria-hidden="true">
+            {iniciales(u.name)}
+          </span>
+          <div className="min-w-0">
+            <div className="font-medium">{u.name}</div>
+            <div className="truncate text-[10px] text-muted-foreground">
+              <span className="font-mono">{u.username}</span>
+              {u.email && u.email !== '-' && <> · {u.email}</>}
+            </div>
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: 'role',
+      titulo: 'Rol',
+      ordenar: (u) => u.role,
+      celda: (u) => <Badge variant="outline" className="font-medium">{u.role}</Badge>,
+    },
+    {
+      id: 'sectores',
+      titulo: 'Sectores',
+      ocultarEn: 'md',
+      clase: 'max-w-[320px] whitespace-normal',
+      celda: celdaSectores,
+    },
+    {
+      id: 'estado',
+      titulo: 'Estado',
+      ocultarEn: 'md',
+      celda: (u) => {
+        const e = estadoUsuario(u.status);
+        return <StatusBadge tono={e.tono}>{e.label}</StatusBadge>;
+      },
+    },
+    {
+      id: 'acciones',
+      titulo: 'Acciones',
+      alinear: 'der',
+      celda: (u) => (
+        <div className="flex items-center justify-end gap-1">
+          {accionFila(<Pencil className="size-4" />, `Editar a ${u.name}`, () => handleOpenEdit(u))}
+          {accionFila(<UserX className="size-4" />, `Desactivar a ${u.name}`, () => setDeleteConfirm(u), true)}
+        </div>
+      ),
+    },
+  ];
+
+  // Card mobile (§5.4b): identidad + rol arriba, email y sectores, acciones a lo ancho al pie.
+  const tarjeta = (u: SPUser) => {
+    const s = sectoresDe(u);
+    return (
+      <div className="flex flex-col gap-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground" aria-hidden="true">
+              {iniciales(u.name)}
+            </span>
+            <div className="min-w-0">
+              <div className="font-medium leading-tight">{u.name}</div>
+              <div className="font-mono text-[10px] text-muted-foreground">{u.username}</div>
+            </div>
+          </div>
+          <Badge variant="outline" className="shrink-0 font-medium">{u.role}</Badge>
+        </div>
+        {(u.email && u.email !== '-') || s ? (
+          <div className="space-y-1 text-xs text-muted-foreground">
+            {u.email && u.email !== '-' && <p className="truncate">{u.email}</p>}
+            {s && <p>{s.todos ? 'Todos los sectores' : `${s.total} sectores: ${s.corto}`}</p>}
+          </div>
+        ) : null}
+        <div className="grid grid-cols-2 gap-2 border-t pt-3">
+          <Button type="button" variant="outline" onClick={() => handleOpenEdit(u)}>
+            <Pencil className="size-4" /> Editar
+          </Button>
+          <Button type="button" variant="outline" className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setDeleteConfirm(u)}>
+            <UserX className="size-4" /> Desactivar
+          </Button>
+        </div>
+      </div>
+    );
+  };
+
+  const todosLosSectores = AREA_OPTIONS.every(o => form.assignedFloors.includes(o.value));
+
   return (
-    <div className="p-2 md:p-6 animate-in slide-in-from-right-4 duration-300 max-w-full space-y-4 pb-20 md:pb-8">
-      {/* Feedback toast */}
+    <div className="flex w-full flex-col gap-4 p-3 md:p-8">
+      {/* Feedback de guardado: banner flotante suave (§9.4) en la capa de toasts. */}
       {feedback && (
-        <div className={cn(
-          "fixed top-4 right-4 z-50 flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg text-sm font-bold animate-in slide-in-from-top-2 duration-200",
-          feedback.type === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'
-        )}>
-          {feedback.type === 'success' ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+        <div
+          role={feedback.type === 'error' ? 'alert' : 'status'}
+          className={cn(
+            "fixed inset-x-4 top-4 z-toast flex items-center gap-2 rounded-lg border px-4 py-3 text-sm font-medium shadow-md animate-in fade-in slide-in-from-top-2 duration-200 sm:left-auto sm:max-w-sm",
+            feedback.type === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'
+          )}
+        >
+          {feedback.type === 'success' ? <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" /> : <AlertCircle className="size-4 shrink-0" aria-hidden="true" />}
           {feedback.message}
         </div>
       )}
 
-      {/* Compact filter bar */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 pb-2">
-        <div className="relative flex-1 min-w-[180px] max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-          <Input
-            placeholder="Buscar por nombre, email o usuario..."
-            value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
-            className="pl-9 h-9 text-xs rounded-xl border-slate-200"
-          />
-          {searchTerm && (
-            <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
+      {/* HEADER + TOOLBAR (DESIGN §4.4 y §5.2) */}
+      <div className="flex shrink-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="hidden shrink-0 md:block">
+          <h2 className="text-2xl font-bold tracking-tight">Usuarios</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            <span className="font-medium text-foreground tabular-nums">{visibleUsers.length}</span> activos
+            {searchTerm && <> · <span className="font-medium text-foreground tabular-nums">{filtered.length}</span> coinciden con la búsqueda</>}
+          </p>
         </div>
-        <Button onClick={handleOpenCreate} className="bg-emerald-950 hover:bg-emerald-900 shadow-md h-10 text-sm font-bold rounded-xl gap-2 px-5 ml-auto">
-          <Plus className="w-4 h-4" /> Nuevo Usuario
-        </Button>
-      </div>
-
-      {/* Mobile cards */}
-      <div className="grid grid-cols-1 gap-3 md:hidden">
-        {loading ? (
-          <div className="py-20 text-center">
-            <div className="w-8 h-8 border-4 border-slate-200 border-t-emerald-500 rounded-full animate-spin mx-auto mb-3" />
-            <p className="text-xs text-slate-400 font-bold uppercase">Cargando usuarios...</p>
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="py-20 text-center opacity-30">
-            <Users className="w-12 h-12 mx-auto mb-3" />
-            <p className="text-xs font-black uppercase tracking-widest">Sin resultados</p>
-          </div>
-        ) : filtered.map(u => (
-          <Card key={u.id} className="p-4 border-slate-200 bg-white shadow-xs">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-[10px] font-black text-slate-600">
-                  {u.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}
-                </div>
-                <div>
-                  <div className="font-black text-slate-900 text-sm">{u.name}</div>
-                  <div className="text-[10px] text-slate-400 font-mono">{u.username}</div>
-                </div>
-              </div>
-              <Badge variant="outline" className="text-[9px] font-bold uppercase">{u.role}</Badge>
-            </div>
-            {u.email && (
-              <div className="text-[10px] text-slate-500 mb-2">{u.email}</div>
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+          <div className="relative min-w-[7rem] flex-1 sm:w-64 sm:flex-none">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+            <Input
+              placeholder="Nombre, email o usuario…"
+              aria-label="Buscar por nombre, email o usuario"
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              className="h-9 pr-8 pl-8 text-sm"
+            />
+            {searchTerm && (
+              <button type="button" onClick={() => setSearchTerm('')} aria-label="Limpiar búsqueda" className="absolute top-1/2 right-2 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring outline-hidden">
+                <X className="size-3.5" />
+              </button>
             )}
-            {roleFiltersByFloors(u.role) && u.assignedFloors && (() => {
-              const floors = u.assignedFloors.split(';').filter(Boolean);
-              const allSelected = floors.length === AREA_OPTIONS.length;
-              return (
-                <div className="mb-3">
-                  {allSelected
-                    ? <Badge variant="outline" className="text-[9px] bg-emerald-50 text-emerald-700 border-emerald-200">Todos los sectores</Badge>
-                    : <span className="text-[10px] text-slate-500">{floors.length} sectores asignados</span>
-                  }
-                </div>
-              );
-            })()}
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => handleOpenEdit(u)} className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors" title="Editar">
-                <Pencil className="w-4 h-4" />
-              </button>
-              <button onClick={() => setDeleteConfirm(u)} className="p-2 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors" title="Desactivar">
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
-          </Card>
-        ))}
+          </div>
+          <Button type="button" onClick={handleOpenCreate} className="h-9 shrink-0 gap-1.5 px-3" aria-label="Nuevo usuario">
+            <Plus className="size-3.5" /><span className="hidden sm:inline">Usuario</span>
+          </Button>
+        </div>
       </div>
 
-      {/* Desktop table */}
-      <Card className="hidden md:block shadow-xs border-slate-200 overflow-hidden bg-white rounded-2xl">
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader className="bg-slate-50/50 border-b border-slate-200">
-              <TableRow>
-                <TableHead className="font-bold text-[9px] uppercase tracking-widest text-slate-400 px-6 h-10">Usuario</TableHead>
-                <TableHead className="font-bold text-[9px] uppercase tracking-widest text-slate-400 h-10">Rol</TableHead>
-                <TableHead className="font-bold text-[9px] uppercase tracking-widest text-slate-400 h-10">Sectores</TableHead>
-                <TableHead className="font-bold text-[9px] uppercase tracking-widest text-slate-400 h-10">Login</TableHead>
-                <TableHead className="text-right font-bold text-[9px] uppercase tracking-widest text-slate-400 pr-6 h-10">Acciones</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                <TableRow>
-                  <TableCell colSpan={5} className="h-40 text-center">
-                    <div className="w-8 h-8 border-4 border-slate-200 border-t-emerald-500 rounded-full animate-spin mx-auto mb-3" />
-                    <p className="text-xs text-slate-400 font-bold uppercase">Cargando...</p>
-                  </TableCell>
-                </TableRow>
-              ) : filtered.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={5} className="h-40 text-center">
-                    <div className="flex flex-col items-center justify-center opacity-20">
-                      <Users className="w-12 h-12 mb-3" />
-                      <p className="text-sm font-black uppercase tracking-widest">Sin resultados</p>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ) : filtered.map(u => (
-                <TableRow key={u.id} className="hover:bg-slate-50/50 transition-colors border-b border-slate-100 last:border-0">
-                  <TableCell className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-[10px] font-black text-slate-600 shadow-xs">
-                        {u.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}
-                      </div>
-                      <div>
-                        <div className="font-bold text-slate-900 text-sm">{u.name}</div>
-                        {u.email && <div className="text-[10px] text-slate-400">{u.email}</div>}
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className="text-[10px] font-bold uppercase tracking-wide bg-slate-50 text-slate-600 border-slate-200 rounded-lg px-3 py-1">
-                      {u.role}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    {roleFiltersByFloors(u.role) && u.assignedFloors ? (() => {
-                      const floors = u.assignedFloors.split(';').filter(Boolean);
-                      const allSelected = floors.length === AREA_OPTIONS.length;
-                      if (allSelected) return <Badge variant="outline" className="text-[9px] bg-emerald-50 text-emerald-700 border-emerald-200">Todos los sectores</Badge>;
-                      const short = floors.map(f => f.replace('Internacion ', '').replace('Internación ', '').replace(' HPR', '').replace(' Piso', ''));
-                      return (
-                        <span className="text-[10px] text-slate-500" title={floors.join('\n')}>
-                          {short.slice(0, 3).join(', ')}{floors.length > 3 ? ` +${floors.length - 3}` : ''}
-                        </span>
-                      );
-                    })() : (
-                      <span className="text-[10px] text-slate-300">—</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-xs font-mono text-slate-400">{u.username}</TableCell>
-                  <TableCell className="text-right pr-6">
-                    <div className="flex items-center justify-end gap-1">
-                      <button onClick={() => handleOpenEdit(u)} className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors" title="Editar">
-                        <Pencil className="w-4 h-4" />
-                      </button>
-                      <button onClick={() => setDeleteConfirm(u)} className="p-2 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors" title="Desactivar">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+      {/* Falló una recarga pero hay datos: aviso suave (§9.4) arriba de la tabla, que sigue mostrando lo último. */}
+      {loadError && users.length > 0 && !loading && (
+        <div role="alert" className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          <span>No pudimos actualizar la lista de usuarios; lo que ves puede estar desactualizado.</span>
         </div>
-      </Card>
+      )}
+
+      {/* TABLA (desktop) + CARDS (mobile) sobre el mismo array (§4.4, §7.1), con cargando / error / vacío. */}
+      <DataTable
+        filas={filtered}
+        columnas={columnas}
+        clave={(u) => u.id}
+        tarjeta={tarjeta}
+        cargando={loading && users.length === 0}
+        error={loadError && users.length === 0 ? { mensaje: 'No pudimos traer los usuarios. Revisá tu conexión y probá de nuevo.', onReintentar: () => { fetchUsers(); } } : undefined}
+        vacio={searchTerm
+          ? <Vacio icono={Search} titulo="Sin resultados" descripcion="Probá con otro nombre, email o usuario." />
+          : <Vacio icono={Users} titulo="Todavía no hay usuarios" descripcion="Creá el primero con el botón Usuario." />}
+      />
 
       {/* Create/Edit Modal */}
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
@@ -446,8 +492,8 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
             <DialogDescription>Datos de acceso, rol y sectores del usuario.</DialogDescription>
           </DialogHeader>
           <DialogBody>
-            {/* Row 1: Nombre, Apellido */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Datos de la persona y de acceso en una grilla de 2 (§6.1); email y rol a lo ancho. */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <Label htmlFor="usr-nombre" className="mb-1 block text-xs font-medium text-muted-foreground">Nombre <span className="text-destructive">*</span></Label>
                 <Input
@@ -473,11 +519,19 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
                   }}
                 />
               </div>
-            </div>
 
-            {/* Row 2: Rol, Usuario, Contraseña */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div>
+              <div className="sm:col-span-2">
+                <Label htmlFor="usr-email" className="mb-1 block text-xs font-medium text-muted-foreground">Email</Label>
+                <Input
+                  id="usr-email"
+                  type="email"
+                  placeholder="usuario@grupogamma.com"
+                  value={form.email}
+                  onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                />
+              </div>
+
+              <div className="sm:col-span-2">
                 <Label className="mb-1 block text-xs font-medium text-muted-foreground">Rol / perfil <span className="text-destructive">*</span></Label>
                 <Combobox obligatorio
                   value={form.role}
@@ -491,6 +545,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
                   placeholder="Seleccionar rol"
                 />
               </div>
+
               <div>
                 <Label htmlFor="usr-login" className="mb-1 block text-xs font-medium text-muted-foreground">Usuario (login)</Label>
                 <Input
@@ -499,13 +554,16 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
                   placeholder="auto"
                   value={form.username}
                   onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
-                  className="bg-muted/50"
+                  className="font-mono"
+                  aria-describedby="usr-login-ayuda"
                 />
+                <p id="usr-login-ayuda" className="mt-1 text-xs text-muted-foreground">Se arma solo con el nombre y el apellido.</p>
               </div>
               <div>
                 <Label htmlFor="usr-password" className="mb-1 block text-xs font-medium text-muted-foreground">
                   Contraseña {!editingUser && <span className="text-destructive">*</span>}
                 </Label>
+                {/* Contraseña con mostrar / ocultar (§6.8). */}
                 <div className="relative">
                   <Input
                     id="usr-password"
@@ -520,67 +578,56 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
                     type="button"
                     onClick={() => setShowPassword(v => !v)}
                     aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    className="absolute top-1/2 right-3 -translate-y-1/2 rounded-sm text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                   </button>
                 </div>
+                {editingUser && <p className="mt-1 text-xs text-muted-foreground">Dejala vacía para no cambiarla.</p>}
               </div>
             </div>
 
-            {/* Row 3: Email */}
-            <div>
-              <Label htmlFor="usr-email" className="mb-1 block text-xs font-medium text-muted-foreground">Email</Label>
-              <Input
-                id="usr-email"
-                type="email"
-                placeholder="usuario@grupogamma.com"
-                value={form.email}
-                onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-              />
-            </div>
-
-            {/* Row 4: Sectores — visible si el rol tiene FiltrarPisos_RT=Sí. Cubre Azafata,
-                Catering y cualquier rol nuevo con el flag. */}
+            {/* Sectores — visible si el rol tiene FiltrarPisos_RT=Sí. Cubre Azafata, Catering y cualquier
+                rol nuevo con el flag. Caja de agrupación (§6.1) con micro-label y "Seleccionar todo". */}
             {roleFiltersByFloors(form.role) && (
-                <div>
-                  <div className="flex items-center justify-between">
-                    <Label className="mb-1 block text-xs font-medium text-muted-foreground">Sectores asignados</Label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const allSelected = AREA_OPTIONS.every(o => form.assignedFloors.includes(o.value));
-                        setForm(f => ({ ...f, assignedFloors: allSelected ? [] : AREA_OPTIONS.map(o => o.value) }));
-                      }}
-                      className="mb-1 text-xs font-medium text-primary hover:underline underline-offset-2"
-                    >
-                      {AREA_OPTIONS.every(o => form.assignedFloors.includes(o.value)) ? 'Deseleccionar todo' : 'Seleccionar todo'}
-                    </button>
-                  </div>
-                  <div className="border rounded-lg p-2 grid grid-cols-2 gap-1.5">
-                    {AREA_OPTIONS.map(opt => (
+              <div role="group" aria-labelledby="usr-sectores" className="space-y-3 rounded-lg border bg-muted/20 p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <p id="usr-sectores" className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Sectores asignados</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const allSelected = AREA_OPTIONS.every(o => form.assignedFloors.includes(o.value));
+                      setForm(f => ({ ...f, assignedFloors: allSelected ? [] : AREA_OPTIONS.map(o => o.value) }));
+                    }}
+                    className="rounded-sm text-xs font-medium text-primary underline-offset-2 outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    {todosLosSectores ? 'Deseleccionar todo' : 'Seleccionar todo'}
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+                  {AREA_OPTIONS.map(opt => {
+                    const checked = form.assignedFloors.includes(opt.value);
+                    const id = `usr-sector-${opt.value}`;
+                    return (
                       <label
                         key={opt.value}
+                        htmlFor={id}
                         className={cn(
-                          "flex items-center gap-2 px-2.5 py-1.5 rounded-md border cursor-pointer transition-colors text-xs",
-                          form.assignedFloors.includes(opt.value)
-                            ? 'bg-primary/5 border-primary/40 text-foreground font-medium'
-                            : 'border-transparent hover:bg-muted/50 text-muted-foreground'
+                          "flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-background",
+                          checked ? 'font-medium text-foreground' : 'text-muted-foreground hover:text-foreground'
                         )}
                       >
-                        <Checkbox
-                          checked={form.assignedFloors.includes(opt.value)}
-                          onCheckedChange={() => toggleFloor(opt.value)}
-                        />
+                        <Checkbox id={id} checked={checked} onCheckedChange={() => toggleFloor(opt.value)} />
                         {opt.label.replace(' HPR', '')}
                       </label>
-                    ))}
-                  </div>
-                  {form.assignedFloors.length > 0 && (
-                    <p className="text-xs text-muted-foreground mt-1">{form.assignedFloors.length} de {AREA_OPTIONS.length} sectores</p>
-                  )}
+                    );
+                  })}
                 </div>
-              )}
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  {form.assignedFloors.length} de {AREA_OPTIONS.length} sectores
+                </p>
+              </div>
+            )}
           </DialogBody>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setModalOpen(false)}>Cancelar</Button>
@@ -606,8 +653,8 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
             <DialogDescription>Usuario <span className="font-medium text-foreground">{deleteConfirm?.name}</span></DialogDescription>
           </DialogHeader>
           <DialogBody>
-            <div className="size-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center">
-              <Trash2 className="size-5" />
+            <div className="flex size-10 items-center justify-center rounded-full bg-destructive/10 text-destructive" aria-hidden="true">
+              <UserX className="size-5" />
             </div>
             <p className="text-sm text-muted-foreground">
               ¿Estás seguro de que querés desactivar a <strong className="text-foreground">{deleteConfirm?.name}</strong>?

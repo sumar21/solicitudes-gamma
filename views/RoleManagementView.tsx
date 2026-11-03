@@ -1,11 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { User, Permission, RoleModule, MEAL_SLOTS, mealSlotPermission } from '../types';
-import { Settings, Plus, Search, X, AlertCircle, CheckCircle2, Pencil, Trash2, Check } from '../components/Icons';
+import { Settings, Plus, Search, X, AlertCircle, CheckCircle2, Pencil, Trash2 } from '../components/Icons';
 import { Button } from '../components/ui/button';
-import { Card } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table';
+import { Checkbox } from '../components/ui/checkbox';
+import { Switch } from '../components/ui/switch';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
+import { DataTable, type Columna } from '../components/ui/data-table';
+import { Vacio } from '../components/ui/estados';
+import { StatusBadge, type Tono } from '../components/ui/status-badge';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip';
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Loader2 } from 'lucide-react';
 import { Badge } from '../components/ui/badge';
@@ -192,6 +197,11 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
   const [originalPermissions, setOriginalPermissions] = useState<Set<Permission>>(new Set());
   // Solapa activa del modal: '__general__' | '<módulo>' | '__cross__' (Notificaciones).
   const [activeTab, setActiveTab] = useState<string>('__general__');
+  // Solo para MOSTRAR la carga inicial y su falla (DESIGN §9): el fetch sigue igual (si falla, se queda
+  // con lo que había). `loading` arranca en true y se apaga una vez: las recargas después de guardar no
+  // vuelven a mostrar el loader.
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   const authFetch = useCallback((url: string, options?: RequestInit) => {
     const token = localStorage.getItem('mediflow_token');
@@ -211,8 +221,10 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
       if (r.ok) {
         const data = await r.json();
         setRoles(data.roles ?? []);
-      }
-    } catch { /* silent */ }
+        setLoadError(false);
+      } else setLoadError(true);
+    } catch { setLoadError(true); /* silent */ }
+    finally { setLoading(false); }
   }, [authFetch]);
 
   useEffect(() => { fetchRoles(); }, [fetchRoles]);
@@ -400,164 +412,227 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
       ? [crossGroup]
       : PERMISSION_GROUPS.filter(g => g.module === activeTab);
 
+  // ── Presentación (DESIGN §4.4 / §6 / §7) ────────────────────────────────────
+
+  // Nombre visible del módulo (el `value` es lo que se guarda en Acceso_RT; acá solo se traduce).
+  const moduloLabel = (mod: string) => MODULES.find(m => m.value === mod)?.label ?? mod;
+
+  // Estado del rol (§3.11): el endpoint hoy trae solo los activos, pero la pill queda por si eso cambia.
+  const estadoRol = (status: string): { tono: Tono; label: string } =>
+    status === 'Inactivo' ? { tono: 'neutro', label: 'Inactivo' } : { tono: 'exito', label: status || 'Activo' };
+
+  // Los 3 comportamientos del rol, con el texto de qué pasa en cada caso (el que aplica va como descripción).
+  const COMPORTAMIENTOS = [
+    { key: 'filterByFloors' as const, title: 'Filtrado por pisos asignados', corto: 'Filtra por pisos',
+      yes: 'Solo ve traslados/camas de los pisos del usuario', no: 'Ve todo' },
+    { key: 'bypassLocationCheck' as const, title: 'Acceso sin restricción de ubicación (IP/GPS)', corto: 'Sin control de ubicación',
+      yes: 'Puede entrar desde cualquier red/ubicación', no: 'Debe estar en una red/ubicación autorizada' },
+    { key: 'requiresIdentification' as const, title: 'Requiere identificación del operador (cuenta compartida)', corto: 'Identifica al operador',
+      yes: 'Pide el nombre al entrar; queda como responsable', no: 'Las operaciones van a nombre de la cuenta' },
+  ];
+
+  // Etiqueta de permiso → título + descripción corta: el último paréntesis pasa a ser la descripción
+  // ("Confirmar limpieza (Habitación Lista)" → "Confirmar limpieza" / "Habitación Lista").
+  const partirEtiqueta = (label: string): { titulo: string; detalle: string | null } => {
+    const m = label.match(/^(.*?)\s*\(([^()]*)\)\s*$/);
+    return m && m[1] ? { titulo: m[1], detalle: m[2] } : { titulo: label, detalle: null };
+  };
+
+  const chipsModulos = (role: SPRole) => {
+    const mods = role.access.split('/').filter(Boolean);
+    if (mods.length === 0) return <span className="text-muted-foreground">—</span>;
+    return (
+      <div className="flex flex-wrap gap-1">
+        {mods.map(mod => (
+          <Badge key={mod} variant="outline" className="font-medium">{moduloLabel(mod)}</Badge>
+        ))}
+      </div>
+    );
+  };
+
+  const chipsComportamiento = (role: SPRole) => {
+    const activos = COMPORTAMIENTOS.filter(c => role[c.key]);
+    if (activos.length === 0) return <span className="text-muted-foreground">—</span>;
+    return (
+      <div className="flex flex-wrap gap-1">
+        {activos.map(c => <Badge key={c.key} variant="secondary" className="font-medium">{c.corto}</Badge>)}
+      </div>
+    );
+  };
+
+  const resumenRol = (role: SPRole) => {
+    const nMods = role.access.split('/').filter(Boolean).length;
+    const nPerms = (role.permissions ?? []).length;
+    return `${nPerms} ${nPerms === 1 ? 'permiso' : 'permisos'} · ${nMods} ${nMods === 1 ? 'módulo' : 'módulos'}`;
+  };
+
+  // Acción de fila (DESIGN §7.6): botón-ícono ghost con tooltip; "Eliminar" con hover destructivo.
+  const accionFila = (icono: React.ReactNode, label: string, onClick: () => void, peligro = false) => (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={label}
+          onClick={onClick}
+          className={cn('text-muted-foreground', peligro ? 'hover:bg-destructive/10 hover:text-destructive' : 'hover:text-foreground')}
+        >
+          {icono}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+
+  // Columnas AGRUPADAS (§7.2 "2 líneas"): nombre arriba y "N permisos · M módulos" abajo.
+  const columnas: Columna<SPRole>[] = [
+    {
+      id: 'name',
+      titulo: 'Rol',
+      ordenar: (r) => r.name,
+      clase: 'min-w-[160px]',
+      celda: (r) => (
+        <div>
+          <div className="font-medium">{r.name}</div>
+          <div className="text-[10px] text-muted-foreground tabular-nums">{resumenRol(r)}</div>
+        </div>
+      ),
+    },
+    {
+      id: 'modulos',
+      titulo: 'Módulos',
+      clase: 'max-w-[460px] whitespace-normal',
+      celda: chipsModulos,
+    },
+    {
+      id: 'comportamiento',
+      titulo: 'Comportamiento',
+      ocultarEn: 'md',
+      clase: 'max-w-[260px] whitespace-normal',
+      celda: chipsComportamiento,
+    },
+    {
+      id: 'estado',
+      titulo: 'Estado',
+      ocultarEn: 'md',
+      celda: (r) => {
+        const e = estadoRol(r.status);
+        return <StatusBadge tono={e.tono}>{e.label}</StatusBadge>;
+      },
+    },
+    {
+      id: 'acciones',
+      titulo: 'Acciones',
+      alinear: 'der',
+      celda: (r) => (
+        <div className="flex items-center justify-end gap-1">
+          {accionFila(<Pencil className="size-4" />, `Editar el rol ${r.name}`, () => openEdit(r))}
+          {accionFila(<Trash2 className="size-4" />, `Eliminar el rol ${r.name}`, () => setDeleteTarget(r), true)}
+        </div>
+      ),
+    },
+  ];
+
+  // Card mobile (§5.4b): nombre + resumen y estado arriba, módulos y comportamiento, acciones al pie.
+  const tarjeta = (r: SPRole) => {
+    const e = estadoRol(r.status);
+    return (
+      <div className="flex flex-col gap-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="font-medium leading-tight">{r.name}</div>
+            <div className="text-[10px] text-muted-foreground tabular-nums">{resumenRol(r)}</div>
+          </div>
+          <StatusBadge tono={e.tono} className="shrink-0">{e.label}</StatusBadge>
+        </div>
+        {chipsModulos(r)}
+        {COMPORTAMIENTOS.some(c => r[c.key]) && chipsComportamiento(r)}
+        <div className="grid grid-cols-2 gap-2 border-t pt-3">
+          <Button type="button" variant="outline" onClick={() => openEdit(r)}>
+            <Pencil className="size-4" /> Editar
+          </Button>
+          <Button type="button" variant="outline" className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setDeleteTarget(r)}>
+            <Trash2 className="size-4" /> Eliminar
+          </Button>
+        </div>
+      </div>
+    );
+  };
+
+  const todosLosModulos = MODULES.every(m => form.selectedModules.has(m.value));
+
   return (
-    <div className="p-4 md:p-8 animate-in slide-in-from-right-4 duration-300 max-w-full space-y-4 md:space-y-5 pb-24 md:pb-8">
-      {/* Toast */}
+    <div className="flex w-full flex-col gap-4 p-3 md:p-8">
+      {/* Feedback de guardado: banner flotante suave (§9.4) en la capa de toasts. */}
       {toast && (
-        <div className={cn(
-          "fixed top-4 right-4 z-50 flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg text-sm font-bold animate-in slide-in-from-top-2 duration-200",
-          toast.type === 'success' ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-red-50 text-red-700 border border-red-200"
-        )}>
-          {toast.type === 'success' ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+        <div
+          role={toast.type === 'error' ? 'alert' : 'status'}
+          className={cn(
+            "fixed inset-x-4 top-4 z-toast flex items-center gap-2 rounded-lg border px-4 py-3 text-sm font-medium shadow-md animate-in fade-in slide-in-from-top-2 duration-200 sm:left-auto sm:max-w-sm",
+            toast.type === 'success' ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-red-200 bg-red-50 text-red-700"
+          )}
+        >
+          {toast.type === 'success' ? <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" /> : <AlertCircle className="size-4 shrink-0" aria-hidden="true" />}
           {toast.message}
         </div>
       )}
 
-      {/* Filter bar — same style as UserManagementView */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 pb-2">
-        <div className="relative flex-1 min-w-[180px] max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-          <Input
-            placeholder="Buscar rol..."
-            value={searchFilter}
-            onChange={e => setSearchFilter(e.target.value)}
-            className="pl-9 h-9 text-xs rounded-xl border-slate-200"
-          />
-          {searchFilter && (
-            <button onClick={() => setSearchFilter('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
+      {/* HEADER + TOOLBAR (DESIGN §4.4 y §5.2), igual que Usuarios */}
+      <div className="flex shrink-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="hidden shrink-0 md:block">
+          <h2 className="text-2xl font-bold tracking-tight">Roles</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            <span className="font-medium text-foreground tabular-nums">{roles.length}</span> activos
+            {searchFilter && <> · <span className="font-medium text-foreground tabular-nums">{filtered.length}</span> coinciden con la búsqueda</>}
+          </p>
         </div>
-        <Button onClick={openCreate} className="bg-emerald-950 hover:bg-emerald-900 shadow-md h-9 text-sm font-bold rounded-xl gap-2 px-5 ml-auto">
-          <Plus className="w-4 h-4" /> Nuevo Rol
-        </Button>
-      </div>
-
-      {/* Mobile cards */}
-      <div className="grid grid-cols-1 gap-3 md:hidden">
-        {filtered.length === 0 ? (
-          <div className="py-20 text-center opacity-30">
-            <Settings className="w-12 h-12 mx-auto mb-3" />
-            <p className="text-xs font-black uppercase tracking-widest">Sin roles</p>
-          </div>
-        ) : filtered.map(role => (
-          <Card key={role.id} className="p-4 border-slate-200 bg-white shadow-xs">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full bg-indigo-100 border border-indigo-200 flex items-center justify-center text-[10px] font-black text-indigo-600">
-                  {role.name.slice(0, 2).toUpperCase()}
-                </div>
-                <div className="font-black text-slate-900 text-sm">{role.name}</div>
-              </div>
-              <div className="flex gap-1">
-                <button onClick={() => openEdit(role)} className="p-1.5 rounded-lg hover:bg-slate-100"><Pencil className="w-3.5 h-3.5 text-slate-400" /></button>
-                <button onClick={() => setDeleteTarget(role)} className="p-1.5 rounded-lg hover:bg-red-50"><Trash2 className="w-3.5 h-3.5 text-slate-400" /></button>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-1">
-              {role.access.split('/').filter(Boolean).map(mod => (
-                <Badge key={mod} variant="outline" className="text-[8px] font-bold uppercase bg-slate-50 text-slate-600 border-slate-200">{mod}</Badge>
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-1 mt-2">
-              <Badge variant="outline" className="text-[8px] font-bold uppercase bg-indigo-50 text-indigo-700 border-indigo-200">
-                {(role.permissions ?? []).length} permisos
-              </Badge>
-              {role.filterByFloors && (
-                <Badge variant="outline" className="text-[8px] font-bold uppercase bg-amber-50 text-amber-700 border-amber-200">
-                  Filtra pisos
-                </Badge>
-              )}
-              {role.bypassLocationCheck && (
-                <Badge variant="outline" className="text-[8px] font-bold uppercase bg-sky-50 text-sky-700 border-sky-200">
-                  Sin ubicación
-                </Badge>
-              )}
-            </div>
-          </Card>
-        ))}
-      </div>
-
-      {/* Desktop table */}
-      <Card className="hidden md:block shadow-xs border-slate-200 overflow-hidden bg-white rounded-2xl">
-        <Table>
-          <TableHeader className="bg-slate-50/50 border-b border-slate-200">
-            <TableRow>
-              <TableHead className="font-bold text-[9px] uppercase tracking-widest text-slate-400 px-6 h-10">Rol</TableHead>
-              <TableHead className="font-bold text-[9px] uppercase tracking-widest text-slate-400 h-10">Módulos</TableHead>
-              <TableHead className="font-bold text-[9px] uppercase tracking-widest text-slate-400 h-10">Permisos</TableHead>
-              <TableHead className="font-bold text-[9px] uppercase tracking-widest text-slate-400 h-10">Filtra pisos</TableHead>
-              <TableHead className="font-bold text-[9px] uppercase tracking-widest text-slate-400 h-10">Sin ubicación</TableHead>
-              <TableHead className="text-right font-bold text-[9px] uppercase tracking-widest text-slate-400 pr-6 h-10">Acciones</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={6} className="h-32 text-center text-slate-400">
-                  <p className="text-sm font-bold">Sin roles</p>
-                </TableCell>
-              </TableRow>
-            ) : (
-              filtered.map(role => (
-                <TableRow key={role.id} className="hover:bg-slate-50/50 transition-colors border-b border-slate-100 last:border-0">
-                  <TableCell className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-[10px] font-black text-slate-600 shadow-xs">
-                        {role.name.slice(0, 2).toUpperCase()}
-                      </div>
-                      <span className="font-bold text-slate-900 text-sm">{role.name}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-1">
-                      {role.access.split('/').filter(Boolean).map(mod => (
-                        <Badge key={mod} variant="outline" className="text-[10px] font-bold uppercase tracking-wide bg-slate-50 text-slate-600 border-slate-200 rounded-lg px-3 py-1">
-                          {mod}
-                        </Badge>
-                      ))}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className="text-[10px] font-bold uppercase bg-indigo-50 text-indigo-700 border-indigo-200 rounded-lg px-3 py-1">
-                      {(role.permissions ?? []).length}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    {role.filterByFloors ? (
-                      <Badge variant="outline" className="text-[10px] font-bold uppercase bg-amber-50 text-amber-700 border-amber-200 rounded-lg px-3 py-1">Sí</Badge>
-                    ) : (
-                      <span className="text-[10px] font-bold uppercase text-slate-400">No</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {role.bypassLocationCheck ? (
-                      <Badge variant="outline" className="text-[10px] font-bold uppercase bg-sky-50 text-sky-700 border-sky-200 rounded-lg px-3 py-1">Sí</Badge>
-                    ) : (
-                      <span className="text-[10px] font-bold uppercase text-slate-400">No</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right pr-6">
-                    <div className="flex items-center justify-end gap-1">
-                      <button onClick={() => openEdit(role)} className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors" title="Editar">
-                        <Pencil className="w-4 h-4" />
-                      </button>
-                      <button onClick={() => setDeleteTarget(role)} className="p-2 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors" title="Eliminar">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+          <div className="relative min-w-[7rem] flex-1 sm:w-64 sm:flex-none">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+            <Input
+              placeholder="Buscar rol…"
+              aria-label="Buscar rol por nombre"
+              value={searchFilter}
+              onChange={e => setSearchFilter(e.target.value)}
+              className="h-9 pr-8 pl-8 text-sm"
+            />
+            {searchFilter && (
+              <button type="button" onClick={() => setSearchFilter('')} aria-label="Limpiar búsqueda" className="absolute top-1/2 right-2 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+                <X className="size-3.5" />
+              </button>
             )}
-          </TableBody>
-        </Table>
-      </Card>
+          </div>
+          <Button type="button" onClick={openCreate} className="h-9 shrink-0 gap-1.5 px-3" aria-label="Nuevo rol">
+            <Plus className="size-3.5" /><span className="hidden sm:inline">Rol</span>
+          </Button>
+        </div>
+      </div>
 
-      {/* Create/Edit Modal — solapas HORIZONTALES arriba (segmented control, mismo patrón que el
-          modal de detalle de cama): General + una solapa por módulo habilitado + Notificaciones.
-          El panel usa el ancho completo y crece según la solapa; header y barra quedan fijos arriba. */}
+      {/* Falló una recarga pero hay datos: aviso suave (§9.4) arriba de la tabla, que sigue mostrando lo último. */}
+      {loadError && roles.length > 0 && (
+        <div role="alert" className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          <span>No pudimos actualizar la lista de roles; lo que ves puede estar desactualizado.</span>
+        </div>
+      )}
+
+      {/* TABLA (desktop) + CARDS (mobile) sobre el mismo array (§4.4, §7.1), con cargando / error / vacío. */}
+      <DataTable
+        filas={filtered}
+        columnas={columnas}
+        clave={(r) => r.id}
+        tarjeta={tarjeta}
+        cargando={loading}
+        error={loadError && roles.length === 0 ? { mensaje: 'No pudimos traer los roles. Revisá tu conexión y probá de nuevo.', onReintentar: () => { fetchRoles(); } } : undefined}
+        vacio={searchFilter
+          ? <Vacio icono={Search} titulo="Sin resultados" descripcion="Ningún rol coincide con la búsqueda." />
+          : <Vacio icono={Settings} titulo="Todavía no hay roles" descripcion="Creá el primero con el botón Rol." />}
+      />
+
+      {/* Create/Edit Modal — solapas HORIZONTALES arriba (Tabs segmentado del kit): General + una solapa por
+          módulo habilitado + Notificaciones. El panel usa el ancho completo y crece según la solapa; header y
+          barra quedan fijos arriba. */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
         {/* Modal canónico (DESIGN §4.1), 4xl por las solapas de permisos: header → barra de solapas fija →
             cuerpo con scroll → footer. */}
@@ -571,169 +646,136 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
             </DialogDescription>
           </DialogHeader>
 
-          {/* Barra de solapas — segmented control, scrolleable en X cuando hay muchos módulos.
-              El overflow-x-auto va en un contenedor EXTERNO transparente para que el scrollbar quede
-              en una franja DEBAJO del pill gris (fuera de él), sin tapar el texto de los tabs.
-              min-w-0: sin esto la fila (whitespace-nowrap) estira el modal en vez de scrollear. */}
-          <div className="px-6 pt-4 shrink-0 min-w-0">
-            <div className="overflow-x-auto tabs-x-scroll">
-            <div className="inline-flex gap-1 bg-muted rounded-md p-1 min-w-full">
-              {modalTabs.map(tab => {
-                const active = activeTab === tab.key;
-                return (
-                  <button
-                    key={tab.key}
-                    type="button"
-                    onClick={() => setActiveTab(tab.key)}
-                    className={cn(
-                      "shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-sm text-xs font-medium whitespace-nowrap transition-colors",
-                      active ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
-                    )}
-                  >
-                    {tab.label}
-                    {tab.badge && (
-                      <span className={cn(
-                        "text-[10px] font-semibold px-1.5 py-0.5 rounded-full tabular-nums",
-                        !tab.badge.startsWith('0/') && active ? "bg-primary/10 text-primary" : "bg-muted-foreground/10 text-muted-foreground"
-                      )}>
-                        {tab.badge}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
+          {/* El Tabs envuelve la barra y el cuerpo: min-h-0 + flex-1 para que el DialogBody siga scrolleando. */}
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="min-h-0 flex-1 flex-col gap-0">
+            {/* Barra de solapas, scrolleable en X cuando hay muchos módulos. El overflow va en un contenedor
+                EXTERNO para que el scrollbar quede DEBAJO del segmentado, sin tapar el texto.
+                min-w-0: sin esto la fila (whitespace-nowrap) estira el modal en vez de scrollear. */}
+            <div className="min-w-0 shrink-0 px-6 pt-4">
+              <div className="tabs-x-scroll overflow-x-auto">
+                <TabsList aria-label="Secciones del rol" className="w-max max-w-none min-w-full justify-start">
+                  {modalTabs.map(tab => (
+                    <TabsTrigger key={tab.key} value={tab.key} className="shrink-0 text-xs sm:text-sm">
+                      {tab.label}
+                      {tab.badge && (
+                        <span className={cn(
+                          "rounded-full px-1.5 py-0.5 text-[10px] leading-none font-semibold tabular-nums",
+                          tab.badge.startsWith('0/') ? "bg-muted-foreground/10 text-muted-foreground" : "bg-primary/10 text-primary"
+                        )}>
+                          {tab.badge}
+                        </span>
+                      )}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </div>
             </div>
-            </div>
-          </div>
 
-          {/* Panel de la solapa activa — ancho completo, scrollea solo si excede el alto */}
-          <DialogBody>
+            {/* Panel de la solapa activa — ancho completo, scrollea solo si excede el alto */}
+            <DialogBody className="pt-4">
               {/* ── General: nombre + módulos de acceso + comportamiento ── */}
-              {activeTab === '__general__' && (
-                <div className="space-y-5">
-                  <div>
-                    <Label htmlFor="rol-nombre" className="mb-1 block text-xs font-medium text-muted-foreground">Nombre del rol <span className="text-destructive">*</span></Label>
-                    <Input
-                      id="rol-nombre"
-                      placeholder="Ej: Enfermería, Catering..."
-                      value={form.name}
-                      onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
-                    />
-                  </div>
+              <TabsContent value="__general__" className="mt-0 space-y-5">
+                <div>
+                  <Label htmlFor="rol-nombre" className="mb-1 block text-xs font-medium text-muted-foreground">Nombre del rol <span className="text-destructive">*</span></Label>
+                  <Input
+                    id="rol-nombre"
+                    required
+                    placeholder="Ej: Enfermería, Catering..."
+                    value={form.name}
+                    onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
+                  />
+                </div>
 
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <Label className="mb-1 block text-xs font-medium text-muted-foreground">Módulos de acceso</Label>
-                      <button type="button" onClick={toggleAll} className="mb-1 text-xs font-medium text-primary hover:underline underline-offset-2">
-                        {MODULES.every(m => form.selectedModules.has(m.value)) ? 'Deseleccionar todo' : 'Seleccionar todo'}
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
-                      {MODULES.map(mod => {
-                        const selected = form.selectedModules.has(mod.value);
-                        return (
-                          <label
-                            key={mod.value}
-                            className={cn(
-                              "flex items-center gap-3 p-2.5 rounded-md border cursor-pointer transition-colors",
-                              selected ? "bg-primary/5 border-primary/40" : "bg-card hover:bg-muted/50"
-                            )}
-                          >
-                            <div className={cn(
-                              "size-4 rounded-sm border flex items-center justify-center shrink-0 transition-colors",
-                              selected ? "bg-primary border-primary text-primary-foreground" : "border-muted-foreground bg-background"
-                            )}>
-                              {selected && <Check className="size-3" strokeWidth={3} />}
-                            </div>
-                            <span className={cn("text-sm", selected ? "font-medium text-foreground" : "text-foreground")}>
-                              {mod.label}
-                            </span>
-                            <input type="checkbox" className="sr-only" checked={selected} onChange={() => toggleModule(mod.value)} />
-                          </label>
-                        );
-                      })}
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Cada módulo habilitado suma su solapa de permisos arriba.
+                {/* Módulos de acceso: caja de agrupación (§6.1) con un Checkbox del kit por módulo. */}
+                <div role="group" aria-labelledby="rol-modulos" className="space-y-3 rounded-lg border bg-muted/20 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <p id="rol-modulos" className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+                      Módulos de acceso <span className="ml-1 font-medium tracking-normal normal-case tabular-nums">{form.selectedModules.size} de {MODULES.length}</span>
                     </p>
+                    <button type="button" onClick={toggleAll} className="rounded-sm text-xs font-medium text-primary underline-offset-2 outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring">
+                      {todosLosModulos ? 'Deseleccionar todo' : 'Seleccionar todo'}
+                    </button>
                   </div>
+                  <div className="grid grid-cols-1 gap-1 sm:grid-cols-2 lg:grid-cols-3">
+                    {MODULES.map(mod => {
+                      const selected = form.selectedModules.has(mod.value);
+                      const id = `rol-mod-${mod.value.replace(/\s+/g, '-')}`;
+                      return (
+                        <label
+                          key={mod.value}
+                          htmlFor={id}
+                          className={cn(
+                            "flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-background",
+                            selected ? "font-medium text-foreground" : "text-muted-foreground hover:text-foreground"
+                          )}
+                        >
+                          <Checkbox id={id} checked={selected} onCheckedChange={() => toggleModule(mod.value)} />
+                          {mod.label}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <p className="text-xs text-muted-foreground">Cada módulo habilitado suma su solapa de permisos arriba.</p>
+                </div>
 
-                  {/* Comportamiento: los 3 toggles del rol, en fila en desktop */}
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Comportamiento</p>
-                    <div className="grid gap-4 sm:grid-cols-3">
-                    {[
-                      { key: 'filterByFloors' as const, title: 'Filtrado por pisos asignados',
-                        yes: 'Solo ve traslados/camas de los pisos del usuario', no: 'Ve todo' },
-                      { key: 'bypassLocationCheck' as const, title: 'Acceso sin restricción de ubicación (IP/GPS)',
-                        yes: 'Puede entrar desde cualquier red/ubicación', no: 'Debe estar en una red/ubicación autorizada' },
-                      { key: 'requiresIdentification' as const, title: 'Requiere identificación del operador (cuenta compartida)',
-                        yes: 'Pide el nombre al entrar; queda como responsable', no: 'Las operaciones van a nombre de la cuenta' },
-                    ].map(t => (
-                      <div key={t.key} className="grid gap-1 content-start">
-                        <Label className="mb-1 block text-xs font-medium text-muted-foreground sm:min-h-8">{t.title}</Label>
-                        <div className="grid grid-cols-2 gap-2">
-                          {[{ val: true, label: 'Sí', sub: t.yes }, { val: false, label: 'No', sub: t.no }].map(opt => {
-                            const selected = form[t.key] === opt.val;
-                            return (
-                              <button
-                                key={String(opt.val)}
-                                type="button"
-                                aria-pressed={selected}
-                                onClick={() => setForm(prev => ({ ...prev, [t.key]: opt.val }))}
-                                className={cn(
-                                  "p-3 rounded-md border text-left transition-colors",
-                                  selected ? "bg-primary/5 border-primary/40" : "bg-card hover:bg-muted/50"
-                                )}
-                              >
-                                <div className={cn("text-sm font-semibold mb-0.5", selected ? "text-primary" : "text-foreground")}>{opt.label}</div>
-                                <div className="text-[11px] text-muted-foreground leading-tight">{opt.sub}</div>
-                              </button>
-                            );
-                          })}
+                {/* Comportamiento: los 3 interruptores del rol (Switch del kit), cada uno con lo que pasa hoy. */}
+                <div role="group" aria-labelledby="rol-comportamiento" className="rounded-lg border bg-muted/20 p-4">
+                  <p id="rol-comportamiento" className="mb-1 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Comportamiento</p>
+                  <div className="divide-y">
+                    {COMPORTAMIENTOS.map(t => {
+                      const id = `rol-${t.key}`;
+                      return (
+                        <div key={t.key} className="flex items-start justify-between gap-4 py-3 last:pb-0">
+                          <div className="min-w-0">
+                            <label htmlFor={id} className="block cursor-pointer text-sm font-medium">{t.title}</label>
+                            <p id={`${id}-ayuda`} className="mt-0.5 text-xs text-muted-foreground">{form[t.key] ? t.yes : t.no}</p>
+                          </div>
+                          <Switch
+                            id={id}
+                            aria-describedby={`${id}-ayuda`}
+                            checked={form[t.key]}
+                            onCheckedChange={(val) => setForm(prev => ({ ...prev, [t.key]: val }))}
+                            className="mt-0.5"
+                          />
                         </div>
-                      </div>
-                    ))}
-                    </div>
+                      );
+                    })}
                   </div>
                 </div>
-              )}
+              </TabsContent>
 
-              {/* ── Solapa de permisos (módulo o Notificaciones): grupos apilados a lo ancho ── */}
+              {/* ── Solapa de permisos (módulo o Notificaciones): una caja por grupo, un Checkbox por permiso ── */}
               {activeTab !== '__general__' && (
-                <div className="space-y-3">
+                <TabsContent value={activeTab} className="mt-0 space-y-4">
                   {groupsForActiveTab.map(group => {
                     const activeCount = group.perms.filter(p => form.selectedPermissions.has(p.code)).length;
                     return (
-                      <div key={group.label} className="border border-border/50 rounded-lg bg-secondary/20 overflow-hidden">
-                        <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b">
-                          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{group.label}</span>
+                      <div key={group.label} role="group" aria-label={group.label} className="space-y-2 rounded-lg border bg-muted/20 p-4">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">{group.label}</p>
                           <span className={cn(
-                            "text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 tabular-nums",
+                            "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums",
                             activeCount > 0 ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
                           )}>
                             {activeCount}/{group.perms.length}
                           </span>
                         </div>
-                        <div className="p-2 grid sm:grid-cols-2 gap-1">
+                        <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
                           {group.perms.map(p => {
                             const selected = form.selectedPermissions.has(p.code);
+                            const { titulo, detalle } = partirEtiqueta(p.label);
+                            const id = `rol-perm-${p.code}`;
                             return (
                               <label
                                 key={p.code}
-                                className={cn(
-                                  "flex items-center gap-2.5 px-2 py-1.5 rounded-md cursor-pointer transition-colors",
-                                  selected ? "bg-primary/5" : "hover:bg-background"
-                                )}
+                                htmlFor={id}
+                                className="flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-2 transition-colors hover:bg-background"
                               >
-                                <div className={cn(
-                                  "size-4 rounded-sm border flex items-center justify-center shrink-0 transition-colors",
-                                  selected ? "bg-primary border-primary text-primary-foreground" : "border-muted-foreground bg-background"
-                                )}>
-                                  {selected && <Check className="size-2.5" strokeWidth={3} />}
-                                </div>
-                                <span className={cn("text-xs leading-tight text-foreground", selected && "font-medium")}>{p.label}</span>
-                                <input type="checkbox" className="sr-only" checked={selected} onChange={() => togglePermission(p.code)} />
+                                <Checkbox id={id} checked={selected} onCheckedChange={() => togglePermission(p.code)} className="mt-0.5" />
+                                <span className="min-w-0">
+                                  <span className="block text-sm leading-snug font-medium">{titulo}</span>
+                                  {detalle && <span className="block text-xs leading-snug text-muted-foreground">{detalle}</span>}
+                                </span>
                               </label>
                             );
                           })}
@@ -741,9 +783,10 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
                       </div>
                     );
                   })}
-                </div>
+                </TabsContent>
               )}
-          </DialogBody>
+            </DialogBody>
+          </Tabs>
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setIsModalOpen(false)}>Cancelar</Button>
@@ -769,7 +812,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
             <DialogDescription>Rol <span className="font-medium text-foreground">{deleteTarget?.name}</span></DialogDescription>
           </DialogHeader>
           <DialogBody>
-            <div className="size-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center">
+            <div className="flex size-10 items-center justify-center rounded-full bg-destructive/10 text-destructive" aria-hidden="true">
               <Trash2 className="size-5" />
             </div>
             <p className="text-sm text-muted-foreground">
