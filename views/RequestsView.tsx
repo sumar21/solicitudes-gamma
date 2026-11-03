@@ -245,7 +245,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     const contador = n > 0 ? (
       <span
         aria-hidden="true"
-        className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] leading-none font-bold text-white tabular-nums ring-2 ring-card"
+        className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] leading-none font-bold text-destructive-foreground tabular-nums ring-2 ring-card"
       >
         {n > 9 ? '9+' : n}
       </span>
