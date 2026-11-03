@@ -44,7 +44,7 @@ La carpeta `docs/` está organizada por propósito: `arquitectura/` (referencia 
 ## Diseño / UI — Estilo 1 · Minimalista zinc
 
 La estética es el **Estilo 1 · Minimalista zinc** de Sumar (`./DESIGN.md`, sello `01-minimal-zinc`),
-con el **verde Gamma** como color principal (`primary`, marca y sidebar; gris pizarra en TESTING). La API
+con el **verde Gamma** como color principal (`primary`, marca y sidebar; de noche, verde salvia apagado y sidebar negra). En TESTING la sidebar y el panel del login son **gris neutro** (zinc), de día y de noche. La API
 de componentes es la de la base de Sumar ([docs/BASE.md](docs/BASE.md) §4); este repo la implementa como
 dice la tabla de abajo. Cómo se llegó y qué falta: [docs/REDISENO.md](docs/REDISENO.md) y `VALIDACION.md`.
 
@@ -62,8 +62,8 @@ La vista de referencia ya migrada es **Operativa** (`views/RequestsView.tsx`): u
 migrada se arma igual.
 
 **Inventario:** Vite + React 19 sin router (la vista vive en `useHospitalState.currentView`) · Tailwind 4 ·
-componentes copiados del starter del kit en `components/ui/` · tokens en `index.css` (día y noche; el
-selector de tema se habilita cuando todas las vistas usen tokens) · Inter · lucide (re-exportado en
+componentes copiados del starter del kit en `components/ui/` · tokens en `index.css` (día y noche; selector
+de tema en el header, `SelectorTema` de `components/layout/partes-shell.tsx`, default "según el sistema") · Inter · lucide (re-exportado en
 `components/Icons.tsx`) · gráficos con recharts (`components/dashboard/shared.tsx`) · marca `#022c22` en `--brand` y
 `lib/marca.ts`. El código está en la raíz (no hay `src/`); el alias `@/` apunta a la raíz.
 

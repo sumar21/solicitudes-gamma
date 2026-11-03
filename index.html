@@ -15,6 +15,14 @@
     <link rel="icon" type="image/png" sizes="512x512" href="/pwa-512x512.png" />
     <link rel="apple-touch-icon" href="/logo.svg" />
     <title>Grupo Gamma - Gestión de Traslados</title>
+    <!-- Tema antes del primer render (misma clave y lógica que lib/tema.ts): evita el flash claro de noche. -->
+    <script>
+      try {
+        var t = localStorage.getItem("mediflow-tema");
+        if (t !== "claro" && t !== "oscuro") t = matchMedia("(prefers-color-scheme: dark)").matches ? "oscuro" : "claro";
+        if (t === "oscuro") document.documentElement.classList.add("dark");
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

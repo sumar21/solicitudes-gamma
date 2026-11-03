@@ -6,7 +6,7 @@ import {
 } from './components/Icons';
 import { AlertCircle, ArrowRight, BedDouble, Globe, Loader2, MapPin as MapPinIcon, RefreshCw, Utensils } from 'lucide-react';
 import { AppShell, type ItemNav } from './components/layout/app-shell';
-import { Aviso, BloqueUsuario, EntornoDePrueba, PieSesion } from './components/layout/partes-shell';
+import { Aviso, BloqueUsuario, EntornoDePrueba, PieSesion, SelectorTema } from './components/layout/partes-shell';
 import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
 import { Tabs, TabsList, TabsTrigger } from './components/ui/tabs';
 import { StatusBadge } from './components/ui/status-badge';
@@ -42,7 +42,8 @@ import { can, hasModule, receivesAnyNotif } from './lib/permissions';
 
 import { NotificationsDropdown } from './components/NotificationsDropdown';
 import { Popover, PopoverTrigger, PopoverContent } from './components/ui/popover';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog';
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog';
+import { AISLAMIENTOS, ORDEN_ESTADOS_CAMA, estadoCama, puntoAislamiento } from './lib/estados-camas';
 import { Bell } from './components/Icons';
 
 // Modals
@@ -75,6 +76,14 @@ const SprayCanIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+// Botón principal de las pantallas de acceso (DESIGN §12.1): más alto que el de la app y con halo de marca.
+const BOTON_ACCESO = [
+  // sumar-validar-ignorar: cuerpo-text-base botón grande del login (receta DESIGN §12.1)
+  "h-12 w-full text-base font-semibold",
+  // sumar-validar-ignorar: sombras-pesadas halo de marca del botón del login (receta DESIGN §12.1)
+  "shadow-lg shadow-primary/20 transition-all hover:scale-[1.01]",
+].join(" ");
+
 // Pantalla de acceso (DESIGN §12.1, split-screen): a la izquierda el panel de marca (solo desktop), a la
 // derecha el formulario. La usan el login y el gate de cuentas compartidas.
 const PantallaAcceso: React.FC<{ titulo: string; bajada: string; children: React.ReactNode }> = ({ titulo, bajada, children }) => (
@@ -88,11 +97,11 @@ const PantallaAcceso: React.FC<{ titulo: string; bajada: string; children: React
       </div>
       <div className="relative">
         <h1 className="mb-6 text-4xl leading-tight font-extrabold tracking-tight lg:text-6xl">Gestión de Traslados</h1>
-        <p className="max-w-md border-l-2 border-brand-foreground/30 pl-4 text-lg text-brand-foreground/80">
+        <p className="max-w-md border-l-2 border-sidebar-foreground/30 pl-4 text-lg text-sidebar-foreground/80">
           Solicitud, cama, limpieza, traslado y consolidación, en un solo lugar.
         </p>
       </div>
-      <p className="relative text-xs font-medium tracking-wide text-brand-foreground/60 uppercase">Grupo Gamma · Red de Salud</p>
+      <p className="relative text-xs font-medium tracking-wide text-sidebar-foreground/60 uppercase">Grupo Gamma · Red de Salud</p>
     </div>
     {/* Formulario */}
     <div className="relative flex flex-1 items-center justify-center p-6">
@@ -135,7 +144,7 @@ const IdentificationGate: React.FC<{
           <Input id="operador" autoFocus type="text" placeholder="Nombre y apellido" value={name} onChange={e => setName(e.target.value)} className={INPUT_ACCESO} />
           <p className="mt-1.5 ml-1 text-xs text-muted-foreground">Todas tus operaciones van a quedar registradas a tu nombre hasta el cambio de turno.</p>
         </div>
-        <Button type="submit" disabled={!name.trim()} className="h-12 w-full text-base font-semibold shadow-lg shadow-primary/20 transition-all hover:scale-[1.01]">
+        <Button type="submit" disabled={!name.trim()} className={BOTON_ACCESO}>
           Continuar <ArrowRight className="ml-1 size-4" />
         </Button>
       </form>
@@ -387,7 +396,7 @@ export default function App() {
           <Button
             type="submit"
             disabled={state.loginLoading}
-            className="mt-2 h-12 w-full text-base font-semibold shadow-lg shadow-primary/20 transition-all hover:scale-[1.01]"
+            className={cn("mt-2", BOTON_ACCESO)}
           >
             {state.loginLoading ? <><Loader2 className="size-4 animate-spin" /> Verificando…</> : <>Ingresar <ArrowRight className="ml-1 size-4" /></>}
           </Button>
@@ -554,6 +563,7 @@ export default function App() {
           </PopoverContent>
         </Popover>
       )}
+      <SelectorTema />
       {hasAzafataAccess && (
         <span className="micro flex h-8 items-center rounded-md border bg-muted/50 px-2 tabular-nums">
           Sectores: {state.currentUser.assignedAreas?.length || 0}
@@ -887,43 +897,32 @@ export default function App() {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Estado de Camas</DialogTitle>
+            <DialogDescription>Qué significa cada color del mapa.</DialogDescription>
           </DialogHeader>
-          <div className="flex flex-col gap-3 mt-4">
-            <div className="flex items-center gap-3">
-              <div className="w-4 h-4 rounded-full bg-emerald-500" />
-              <span className="text-sm font-bold text-slate-700">DISPONIBLE</span>
+          <DialogBody>
+            <ul className="space-y-2.5">
+              {ORDEN_ESTADOS_CAMA.map((estado) => {
+                const info = estadoCama(estado);
+                return (
+                  <li key={estado} className="flex items-center gap-3">
+                    <span className="w-28 shrink-0"><StatusBadge tono={info.tono}>{info.label}</StatusBadge></span>
+                    <span className="text-sm text-muted-foreground">{info.descripcion}</span>
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="space-y-2 border-t pt-4">
+              <p className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">Aislamientos</p>
+              <ul className="grid grid-cols-2 gap-1.5">
+                {AISLAMIENTOS.map((a) => (
+                  <li key={a.nombre} className="flex items-center gap-2 text-xs">
+                    <span className={cn("size-2.5 shrink-0 rounded-full", puntoAislamiento(a.color))} aria-hidden />
+                    <span>{a.nombre}{a.sigla && <span className="text-muted-foreground"> ({a.sigla})</span>}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="w-4 h-4 rounded-full bg-red-500" />
-              <span className="text-sm font-bold text-slate-700">OCUPADA</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="w-4 h-4 rounded-full bg-amber-500" />
-              <span className="text-sm font-bold text-slate-700">EN PREPARACIÓN</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="w-4 h-4 rounded-full bg-blue-500" />
-              <span className="text-sm font-bold text-slate-700">ASIGNADA (TRÁNSITO)</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="w-4 h-4 rounded-full bg-slate-400" />
-              <span className="text-sm font-bold text-slate-700">INHABILITADA</span>
-            </div>
-            <div className="border-t border-slate-100 pt-3 mt-1 space-y-2">
-              <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">Aislamientos</span>
-              <div className="grid grid-cols-2 gap-1.5">
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-pink-500" /><span className="text-xs text-slate-600">Neutropénico</span></div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-slate-500" /><span className="text-xs text-slate-600">Trasplante</span></div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-green-500" /><span className="text-xs text-slate-600">Respiratorio</span></div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-500" /><span className="text-xs text-slate-600">Por Gotas</span></div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-yellow-500" /><span className="text-xs text-slate-600">Covid</span></div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-fuchsia-500" /><span className="text-xs text-slate-600">Entomológico/Dengue</span></div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-orange-500" /><span className="text-xs text-slate-600">Contacto</span></div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-teal-500" /><span className="text-xs text-slate-600">Contacto preventivo</span></div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-amber-800" /><span className="text-xs text-slate-600">C. Difficile</span></div>
-              </div>
-            </div>
-          </div>
+          </DialogBody>
         </DialogContent>
       </Dialog>
     </AppShell>

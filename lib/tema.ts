@@ -13,9 +13,9 @@ export const CLAVE_TEMA = "mediflow-tema";
 const mq = () =>
   typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
 
-// MediFlow: el default es "claro" (no "sistema") y no hay selector de tema hasta que todas las vistas
-// usen tokens (rediseño, capa 3). Con "sistema", a quien tiene el SO en oscuro le saldría media app rota.
-const TEMA_POR_DEFECTO: Tema = "claro";
+// Todas las vistas usan tokens (rediseño terminado, BASE §9.4): el default sigue al sistema y el
+// selector está en el header (SelectorTema, components/layout/partes-shell.tsx).
+const TEMA_POR_DEFECTO: Tema = "sistema";
 
 function leer(): Tema {
   try {

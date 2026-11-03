@@ -62,10 +62,10 @@ export const CIRUGIA_ESTADO_SHORT: Record<CirugiaEstado, string> = {
 export const CIRUGIA_PILL_CLASS: Record<CirugiaEstado, string> = {
   LISTO_PARA_CIRUGIA: 'bg-amber-100 text-amber-700 border-amber-200',
   VAN_A_BUSCAR:       'bg-orange-100 text-orange-700 border-orange-200',
-  EN_TRASLADO:        'bg-yellow-100 text-yellow-800 border-yellow-200',
+  EN_TRASLADO:        'bg-yellow-100 text-yellow-700 border-yellow-200',
   EN_CIRUGIA:         'bg-cyan-100 text-cyan-700 border-cyan-200',
   EN_DEVOLUCION:      'bg-violet-100 text-violet-700 border-violet-200',
-  TOLERANCIA_EVALUADA: 'bg-green-100 text-green-800 border-green-300',
+  TOLERANCIA_EVALUADA: 'bg-green-100 text-green-700 border-green-300',
   CANCELADO:          'bg-red-100 text-red-700 border-red-200',
 };
 

@@ -1,9 +1,18 @@
 import * as React from "react"
-import { Download, LogOut, RefreshCw, UserRound, type LucideIcon } from "lucide-react"
+import { Download, LogOut, Monitor, Moon, RefreshCw, Sun, UserRound, type LucideIcon } from "lucide-react"
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { useTema, type Tema } from "@/lib/tema"
 import { APP_VERSION } from "@/lib/version"
 import { cn } from "@/lib/utils"
 
@@ -34,6 +43,43 @@ export function BloqueUsuario({ nombre, detalle }: { nombre: string; detalle: st
   )
 }
 
+const OPCIONES_TEMA: { valor: Tema; label: string; icono: LucideIcon }[] = [
+  { valor: "claro", label: "Claro", icono: Sun },
+  { valor: "oscuro", label: "Oscuro", icono: Moon },
+  { valor: "sistema", label: "Según el sistema", icono: Monitor },
+]
+
+/** Selector de tema del header (DESIGN §5): claro / oscuro / según el sistema, con useTema(). */
+export function SelectorTema() {
+  const { tema, resuelto, setTema } = useTema()
+  const Icono = resuelto === "oscuro" ? Moon : Sun
+  return (
+    <DropdownMenu>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button type="button" variant="ghost" size="icon" className="text-muted-foreground" aria-label="Tema">
+              <Icono className="size-5" />
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent>Tema</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuLabel>Tema</DropdownMenuLabel>
+        <DropdownMenuRadioGroup value={tema} onValueChange={(v) => setTema(v as Tema)}>
+          {OPCIONES_TEMA.map(({ valor, label, icono: I }) => (
+            <DropdownMenuRadioItem key={valor} value={valor}>
+              <I className="size-4 text-muted-foreground" />
+              {label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 function AccionPie({
   icono: Icono,
   label,
@@ -52,7 +98,7 @@ function AccionPie({
         compacto ? "justify-center px-0" : "justify-start",
         // Sidebar oscura (verde / pizarra): el rojo de `destructive` da 2,6:1 encima; el 300 pasa 5:1 en las dos.
         peligro
-          ? "text-red-300 hover:bg-sidebar-accent hover:text-red-200"
+          ? "text-red-300 hover:bg-sidebar-accent"
           : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground"
       )}
       {...props}

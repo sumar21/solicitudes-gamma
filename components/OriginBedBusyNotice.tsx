@@ -19,8 +19,8 @@ export const OriginBedBusyNotice: React.FC<{ ticket: Ticket; beds: Bed[] }> = ({
     >
       <AlertCircle className={cn('mt-0.5 h-4 w-4 shrink-0', otherPatient ? 'text-red-600' : 'text-amber-600')} />
       <div className="min-w-0">
-        <p className={cn('text-xs font-bold leading-snug', otherPatient ? 'text-red-900' : 'text-amber-900')}>{title}</p>
-        <p className={cn('mt-0.5 text-xs leading-snug wrap-break-word', otherPatient ? 'text-red-800' : 'text-amber-800')}>{message}</p>
+        <p className={cn('text-xs font-bold leading-snug', otherPatient ? 'text-red-700' : 'text-amber-700')}>{title}</p>
+        <p className={cn('mt-0.5 text-xs leading-snug wrap-break-word', otherPatient ? 'text-red-700' : 'text-amber-700')}>{message}</p>
       </div>
     </div>
   );

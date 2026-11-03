@@ -13,12 +13,12 @@ export const RoomCheckNotice: React.FC<{ check: RoomCheck | null }> = ({ check }
   return (
     <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-sky-50 border border-sky-200">
       <ClipboardCheck className="w-3.5 h-3.5 mt-0.5 text-sky-600 shrink-0" />
-      <div className="text-xs font-medium text-sky-900 leading-snug">
+      <div className="text-xs font-medium text-sky-700 leading-snug">
         <p>
           La azafata tiene que confirmar la habitación antes de trasladar al paciente
           <span className="font-bold"> (queda “Esperando Habitación” aunque la cama figure Disponible)</span>.
         </p>
-        <ul className="mt-1 list-disc pl-4 space-y-0.5 text-sky-800">
+        <ul className="mt-1 list-disc pl-4 space-y-0.5 text-sky-700">
           {check.shared && (
             <li>
               Habitación compartida: la cama contigua está ocupada

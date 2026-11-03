@@ -139,8 +139,11 @@
 
 /* Panel grande en el color de la marca (la mitad de marca del login, §3.5): de
    borde a borde. */
+/* Panel de marca del login (§12.1): oscuro con texto claro de día y de noche. Usa los tokens del
+   sidebar y no `brand`, porque de noche `brand` se aclara (#34d399) y el panel quedaría un bloque
+   menta encandilando. En TESTING toma el pizarra del sidebar, como el resto de la app. */
 @utility panel-marca {
-  @apply bg-brand text-brand-foreground;
+  @apply bg-sidebar text-sidebar-foreground;
 }
 
 /* Barras fijas (header sticky del portal · barra de acción al pie, §4.3): fondo
@@ -252,15 +255,16 @@
   --sidebar-ring: #34d399;
 }
 
-/* Entorno de prueba: la sidebar pasa a gris pizarra para que nadie confunda
-   TESTING con producción (lib/env.ts). Solo cambia la sidebar. */
+/* Entorno de prueba: la sidebar (y el panel del login) pasa a gris neutro (zinc) para que nadie
+   confunda TESTING con producción (lib/env.ts). Gris sin matiz: el pizarra (slate) se leía azul.
+   Solo cambia la sidebar. */
 [data-entorno="testing"] {
-  --sidebar: #334155;
-  --sidebar-accent: #475569;
-  --sidebar-border: #475569;
-  --sidebar-primary: #cbd5e1;
-  --sidebar-primary-foreground: #0f172a;
-  --sidebar-ring: #cbd5e1;
+  --sidebar: #3f3f46;
+  --sidebar-accent: #52525b;
+  --sidebar-border: #52525b;
+  --sidebar-primary: #d4d4d8;
+  --sidebar-primary-foreground: #18181b;
+  --sidebar-ring: #d4d4d8;
 }
 
 .dark {
@@ -275,9 +279,12 @@
   --popover: #18181b;
   --popover-foreground: #fafafa;
 
-  /* primary: el verde aclarado, con texto verde oscuro. */
-  --primary: #34d399;
-  --primary-foreground: #022c22;
+  /* primary: el verde Gamma aclarado y APAGADO (salvia, saturación 30 %), con texto verde casi negro.
+     Un emerald-400 (#34d399, 64 %) pasaba el contraste pero en cada botón relleno, tab y filtro
+     encandilaba: de noche la marca se baja de saturación, no solo se aclara.
+     6,7:1 con su texto · 7,1:1 como texto sobre el lienzo. */
+  --primary: #5fa88e;
+  --primary-foreground: #04150f;
   --secondary: #27272a;
   --secondary-foreground: #fafafa;
   --muted: #1f1f23;
@@ -301,10 +308,10 @@
   --input: #3f3f46;
   --ring: #a1a1aa;
 
-  /* Marca aclarada para que contraste sobre fondos oscuros (mismo matiz que
-     #022c22). Recalcular si cambia el cliente. */
-  --brand: #34d399;
-  --brand-foreground: #022c22;
+  /* Marca de noche = primary: mismo matiz que #022c22, aclarada y apagada (ver primary).
+     Recalcular si cambia el cliente. */
+  --brand: #5fa88e;
+  --brand-foreground: #04150f;
 
   --chart-1: #1fae7c;
   --chart-2: #3987e5;
@@ -315,20 +322,96 @@
   --chart-medio: #3f3f46;
   --chart-lento: #c93a3a;
 
-  --sidebar: #04150f;
+  /* Sidebar de noche (producción): negro, con el verde salvia solo en el acento del ítem activo.
+     Un verde casi negro (#04150f) se leía como "color raro"; negro + borde zinc separa del lienzo. */
+  --sidebar: #000000;
   --sidebar-foreground: #fafafa;
-  --sidebar-accent: #0f2a22;
+  --sidebar-accent: #1c1c1f;
   --sidebar-accent-foreground: #fafafa;
-  --sidebar-border: #0f2a22;
-  --sidebar-primary: #34d399;
-  --sidebar-primary-foreground: #022c22;
-  --sidebar-ring: #34d399;
+  --sidebar-border: #27272a;
+  --sidebar-primary: #5fa88e;
+  --sidebar-primary-foreground: #04150f;
+  --sidebar-ring: #5fa88e;
+}
+
+/* Noche de los tonos semánticos (estados, avisos, marcas). Las pantallas escriben los pasos de día
+   del DESIGN.md §3.11 (`bg-amber-100 text-amber-700`, avisos `bg-red-50 border-red-200`); de noche
+   esos pasos, fijos en Tailwind, quedaban como pills pastel y recuadros crema sobre el lienzo negro.
+   Acá se redefinen en .dark, sin `dark:` en ninguna vista:
+     50 / 100 / 200 (fondos y bordes) → el 500 del tono, translúcido (10 % · 18 % · 32 %)
+     600 / 700 (texto)                → el 400 / 300 del tono, claros sobre el tinte
+   Los 500 (puntos de leyenda, filtros) y los 800 (puntos de aislamiento) no cambian. Valores de
+   node_modules/tailwindcss/theme.css; si se suma un tono nuevo a una vista, se suma acá. */
+.dark {
+  --color-red-50: color-mix(in oklab, oklch(63.7% 0.237 25.331) 10%, transparent);
+  --color-red-100: color-mix(in oklab, oklch(63.7% 0.237 25.331) 18%, transparent);
+  --color-red-200: color-mix(in oklab, oklch(63.7% 0.237 25.331) 32%, transparent);
+  --color-red-600: oklch(70.4% 0.191 22.216);
+  --color-red-700: oklch(80.8% 0.114 19.571);
+  --color-orange-50: color-mix(in oklab, oklch(70.5% 0.213 47.604) 10%, transparent);
+  --color-orange-100: color-mix(in oklab, oklch(70.5% 0.213 47.604) 18%, transparent);
+  --color-orange-200: color-mix(in oklab, oklch(70.5% 0.213 47.604) 32%, transparent);
+  --color-orange-600: oklch(75% 0.183 55.934);
+  --color-orange-700: oklch(83.7% 0.128 66.29);
+  --color-amber-50: color-mix(in oklab, oklch(76.9% 0.188 70.08) 10%, transparent);
+  --color-amber-100: color-mix(in oklab, oklch(76.9% 0.188 70.08) 18%, transparent);
+  --color-amber-200: color-mix(in oklab, oklch(76.9% 0.188 70.08) 32%, transparent);
+  --color-amber-600: oklch(82.8% 0.189 84.429);
+  --color-amber-700: oklch(87.9% 0.169 91.605);
+  --color-yellow-50: color-mix(in oklab, oklch(79.5% 0.184 86.047) 10%, transparent);
+  --color-yellow-100: color-mix(in oklab, oklch(79.5% 0.184 86.047) 18%, transparent);
+  --color-yellow-200: color-mix(in oklab, oklch(79.5% 0.184 86.047) 32%, transparent);
+  --color-yellow-600: oklch(85.2% 0.199 91.936);
+  --color-yellow-700: oklch(90.5% 0.182 98.111);
+  --color-green-50: color-mix(in oklab, oklch(72.3% 0.219 149.579) 10%, transparent);
+  --color-green-100: color-mix(in oklab, oklch(72.3% 0.219 149.579) 18%, transparent);
+  --color-green-200: color-mix(in oklab, oklch(72.3% 0.219 149.579) 32%, transparent);
+  --color-green-600: oklch(79.2% 0.209 151.711);
+  --color-green-700: oklch(87.1% 0.15 154.449);
+  --color-emerald-50: color-mix(in oklab, oklch(69.6% 0.17 162.48) 10%, transparent);
+  --color-emerald-100: color-mix(in oklab, oklch(69.6% 0.17 162.48) 18%, transparent);
+  --color-emerald-200: color-mix(in oklab, oklch(69.6% 0.17 162.48) 32%, transparent);
+  --color-emerald-600: oklch(76.5% 0.177 163.223);
+  --color-emerald-700: oklch(84.5% 0.143 164.978);
+  --color-cyan-50: color-mix(in oklab, oklch(71.5% 0.143 215.221) 10%, transparent);
+  --color-cyan-100: color-mix(in oklab, oklch(71.5% 0.143 215.221) 18%, transparent);
+  --color-cyan-200: color-mix(in oklab, oklch(71.5% 0.143 215.221) 32%, transparent);
+  --color-cyan-600: oklch(78.9% 0.154 211.53);
+  --color-cyan-700: oklch(86.5% 0.127 207.078);
+  --color-sky-50: color-mix(in oklab, oklch(68.5% 0.169 237.323) 10%, transparent);
+  --color-sky-100: color-mix(in oklab, oklch(68.5% 0.169 237.323) 18%, transparent);
+  --color-sky-200: color-mix(in oklab, oklch(68.5% 0.169 237.323) 32%, transparent);
+  --color-sky-600: oklch(74.6% 0.16 232.661);
+  --color-sky-700: oklch(82.8% 0.111 230.318);
+  --color-blue-50: color-mix(in oklab, oklch(62.3% 0.214 259.815) 10%, transparent);
+  --color-blue-100: color-mix(in oklab, oklch(62.3% 0.214 259.815) 18%, transparent);
+  --color-blue-200: color-mix(in oklab, oklch(62.3% 0.214 259.815) 32%, transparent);
+  --color-blue-600: oklch(70.7% 0.165 254.624);
+  --color-blue-700: oklch(80.9% 0.105 251.813);
+  --color-indigo-50: color-mix(in oklab, oklch(58.5% 0.233 277.117) 10%, transparent);
+  --color-indigo-100: color-mix(in oklab, oklch(58.5% 0.233 277.117) 18%, transparent);
+  --color-indigo-200: color-mix(in oklab, oklch(58.5% 0.233 277.117) 32%, transparent);
+  --color-indigo-600: oklch(67.3% 0.182 276.935);
+  --color-indigo-700: oklch(78.5% 0.115 274.713);
+  --color-violet-50: color-mix(in oklab, oklch(60.6% 0.25 292.717) 10%, transparent);
+  --color-violet-100: color-mix(in oklab, oklch(60.6% 0.25 292.717) 18%, transparent);
+  --color-violet-200: color-mix(in oklab, oklch(60.6% 0.25 292.717) 32%, transparent);
+  --color-violet-600: oklch(70.2% 0.183 293.541);
+  --color-violet-700: oklch(81.1% 0.111 293.571);
+  --color-rose-50: color-mix(in oklab, oklch(64.5% 0.246 16.439) 10%, transparent);
+  --color-rose-100: color-mix(in oklab, oklch(64.5% 0.246 16.439) 18%, transparent);
+  --color-rose-200: color-mix(in oklab, oklch(64.5% 0.246 16.439) 32%, transparent);
+  --color-rose-600: oklch(71.2% 0.194 13.428);
+  --color-rose-700: oklch(81% 0.117 11.638);
 }
 
 .dark[data-entorno="testing"] {
-  --sidebar: #0f172a;
-  --sidebar-accent: #1e293b;
-  --sidebar-border: #1e293b;
+  --sidebar: #27272a;
+  --sidebar-accent: #3f3f46;
+  --sidebar-border: #3f3f46;
+  --sidebar-primary: #d4d4d8;
+  --sidebar-primary-foreground: #18181b;
+  --sidebar-ring: #d4d4d8;
 }
 
 /* Tokens que leen variables (cambian por cliente o por tema). */
