@@ -56,13 +56,15 @@ y `dataviz` (cómo se dibuja: forma, color validado con su script, marcas, tabla
 después [docs/DATAVIZ.md](docs/DATAVIZ.md)** ([docs/BASE.md](docs/BASE.md) §10). La referencia es el
 Monitor (`views/DashboardView.tsx` + `components/dashboard/shared.tsx`): cifra héroe, stat tiles con
 delta y sparkline, lectura y vista tabla en cada gráfico. Los colores de gráfico son los `chart-*` de
-`index.css`, validados con el script de `dataviz`; uno nuevo se valida antes de usarlo. La vista de referencia ya
-migrada es **Operativa** (`views/RequestsView.tsx`): una vista nueva o migrada se arma igual.
+`index.css`, validados con el script de `dataviz`; uno nuevo se valida antes de usarlo.
+
+La vista de referencia ya migrada es **Operativa** (`views/RequestsView.tsx`): una vista nueva o
+migrada se arma igual.
 
 **Inventario:** Vite + React 19 sin router (la vista vive en `useHospitalState.currentView`) · Tailwind 4 ·
 componentes copiados del starter del kit en `components/ui/` · tokens en `index.css` (día y noche; el
 selector de tema se habilita cuando todas las vistas usen tokens) · Inter · lucide (re-exportado en
-`components/Icons.tsx`) · gráficos SVG propios (`components/dashboard/`) · marca `#022c22` en `--brand` y
+`components/Icons.tsx`) · gráficos con recharts (`components/dashboard/shared.tsx`) · marca `#022c22` en `--brand` y
 `lib/marca.ts`. El código está en la raíz (no hay `src/`); el alias `@/` apunta a la raíz.
 
 **Equivalencias (kit → este repo):**
