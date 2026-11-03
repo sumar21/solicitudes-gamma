@@ -1,14 +1,14 @@
-<!-- sumar:estilo=01-minimal-zinc version=2.0.0 -->
+<!-- sumar:estilo=01-minimal-zinc version=2.1.0 -->
 # Estilo 1 · Minimalista zinc — Rediseño de una app existente
 
 Cómo llevar una app que ya existe (otro diseño, otro kit, o una app generada con AI Studio / v0 / Lovable) al Estilo 1, **sin cambiar su lógica de negocio**. Lo usa el skill `/rediseno`; también sirve a mano.
 
-Se lee entero antes de tocar código. Después, de `DESIGN.md`, solo la sección que pida cada capa. Lo común a todos los estilos (stack, tabla Tailwind 3 → 4, API de componentes) está en `base/BASE.md`.
+Se lee entero antes de tocar código. Después, de `DESIGN.md`, solo la sección que pida cada capa. Lo común a todos los estilos está en `base/BASE.md`, y **antes que este documento se lee BASE §9** (rediseño: los colores de la app se conservan, stack mínimo, repos sin `src/` o sin router, modo noche al final, PWA, documentación de un repo existente).
 
 ## Principios
 
 1. **Se rediseña la estética, no la lógica.** Las reglas de negocio, el store, las APIs y las rutas no se tocan. Los componentes que funcionan se **reconfiguran** para que se vean como el estilo; no se reescriben por gusto.
-2. **El estilo manda en cómo se ve y se compone** (tokens, tipografía, superficies, radios, sombras, densidad, recetas, reglas de oro de `DESIGN.md` §6). La API de componentes es la de BASE §4: si el repo tiene otra, se mapea en la tabla de equivalencias (§R.3).
+2. **El estilo manda en cómo se ve y se compone** (tokens, tipografía, superficies, radios, sombras, densidad, recetas, reglas de oro de `DESIGN.md` §6), **salvo el color**: el color principal de la app se conserva como `primary` y marca (BASE §9.1). La API de componentes es la de BASE §4: si el repo tiene otra, se mapea en la tabla de equivalencias (§R.3).
 3. **Por capas, de mayor a menor impacto** (§R.2). Cada commit cierra una capa, un componente o una vista entera; nunca "un poco de todo".
 4. **Verificable.** Una vista está terminada cuando el validador da cero 🔴 en sus archivos y cumple la checklist de §R.6. "Se ve parecido" no es un criterio.
 
@@ -23,7 +23,7 @@ El 70–80 % del look no vive en los componentes sino en cinco decisiones global
 | # | Decisión | Qué se ve | Dónde |
 |---|---|---|---|
 | 1 | **Inter** como única fuente, `antialiased`, cuerpo `text-sm` | Densidad y textura de toda la app | `DESIGN.md` §1.2 |
-| 2 | **Neutros zinc + `primary` negro + `--brand` como único acento**, día y noche | Blanco y negro por defecto, marca solo donde importa | `DESIGN.md` §1.1, §5 · `starter/src/index.css` |
+| 2 | **Neutros zinc + `primary` del color de la app (negro si no tiene, BASE §9.1) + `--brand` como único acento**, día y noche | La app conserva su color; todo lo demás es zinc | `DESIGN.md` §1.1, §5 · `starter/src/index.css` |
 | 3 | **Superficies**: lienzo → área `secondary/30` → card blanca `shadow-xs` → `muted/20` | Cards planas con borde de 1 px, sin sombras pesadas ni fondos grises grandes | `DESIGN.md` §1.3 |
 | 4 | **Radios y sombras**: `md` controles · `lg` cards · `xl` modales · `shadow-xs` base · `shadow-2xl` solo modales | Esquinas consistentes, elevación mínima | `DESIGN.md` §1.4, §1.5 |
 | 5 | **Micro-tipografía**: encabezados de tabla y labels `text-[11px] uppercase tracking-wider text-muted-foreground`, números `tabular-nums` | Lo que distingue una tabla del estudio de una tabla default | `DESIGN.md` §1.2, §3.9 |
@@ -32,9 +32,9 @@ El 70–80 % del look no vive en los componentes sino en cinco decisiones global
 
 | Capa | Qué incluye | Impacto | Costo | Cuándo parar |
 |---|---|---|---|---|
-| **0 · Tokens** | `src/index.css` del starter (tokens día y noche, capas `z-*`, `@layer base`, radios, fuente, scrollbar), `src/lib/marca.ts` con el hex del cliente, `src/lib/tema.ts` + script de `index.html` | **Alto**: toda la app cambia a la vez | 1 commit, sin tocar vistas | Nunca: es el mínimo |
+| **0 · Tokens** | `src/index.css` del starter (tokens día y noche, capas `z-*`, `@layer base`, radios, fuente, scrollbar), `src/lib/marca.ts` con el hex del cliente; tokens de noche sí, pero `tema.ts` arranca en claro y el selector se habilita al final (BASE §9.4) | **Alto**: toda la app cambia a la vez | 1 commit, sin tocar vistas | Nunca: es el mínimo |
 | **1 · Componentes** | `src/components/ui/` con las clases del estilo + `src/lib/{utils,formato,estados,dataviz}.ts` | Alto | 1 commit por componente (o uno para la copia entera) | Cuando button, input, card, badge, table, select y dialog coinciden con el starter |
-| **2 · Shell** | `AppShell`: sidebar, header, nav mobile, selector de tema (`DESIGN.md` §4) | Alto | 1 commit | — |
+| **2 · Shell** | `AppShell`: sidebar, header, nav mobile (`DESIGN.md` §4), y los **componentes globales** (avisos tipo `alert`, toasts propios, ayuda, notificaciones) sobre `Dialog` / `Popover` del kit (BASE §9.3) | Alto | 1 commit para el shell, 1 para los globales | — |
 | **3 · Vistas** | Cada pantalla llevada a su receta (`DESIGN.md` §3) | Medio por vista, alto acumulado | 1 commit (o PR) por vista | Cuando todas pasan §R.6 |
 | **Dashboards** | `DATAVIZ.md` entero | Alto donde están | 1 PR por dashboard | — |
 
@@ -56,7 +56,7 @@ Antes de tocar código, relevá el repo. La tabla resultante **va al `AGENTS.md`
 | Íconos | `grep -rlE "lucide-react\|@heroicons\|react-icons" src` | lucide · otra |
 | Gráficos | `recharts` · `chart.js` · nada | — |
 | Modo noche | `.dark` con tokens · `dark:` sueltas sin tokens · nada | — |
-| Color del cliente | pedirlo o tomarlo del logo | hex |
+| Color del cliente | el **color principal de la app** (botón principal, sidebar); si no tiene, el del logo o se pide | hex (va a `primary` y `--brand`, BASE §9.1) |
 
 **Tabla de equivalencias.** El kit **es** shadcn sobre Radix con nombres de token de shadcn. Por eso:
 
@@ -225,3 +225,40 @@ acciones, la marca solo donde dice `DESIGN.md` §1.1; `MoneyInput` y `dinero()` 
 estados con `StatusBadge`; listas con cargando / vacío / error. Una vista está terminada con la
 checklist de `REDISENO.md` §R.6 completa.
 ```
+
+## R.9 Caso real: MediFlow · Grupo Gamma (app propia → Estilo 1)
+
+Repo `solicitudes-gamma` (MediFlow, traslados de pacientes del Hospital Privado de Rosario), **en
+producción**: React 18, Tailwind 3, sin `src/` ni router, 16.000 líneas, un shadcn hecho a mano sin
+`cva`, cero tokens (1.233 colores crudos), PWA. Rama `rediseno/01-minimal-zinc`, capas 0–2 y
+**Operativa** como vista piloto (noviembre de 2026). Lo que enseña:
+
+1. **Los colores de la app se conservan** (BASE §9.1). La primera propuesta fue la sidebar blanca y el
+   `primary` negro del estilo; el cliente reconoce su app por el verde. Quedó el verde Gamma en
+   `primary`, marca y sidebar, y el gris pizarra que la app usaba para el entorno de prueba, como tokens
+   bajo `[data-entorno="testing"]`.
+2. **El stack fue un commit propio antes de la capa 0:** `npx @tailwindcss/upgrade` (36 archivos),
+   React 19 (sin él, los `asChild` del kit pierden la ref sin error), `radix-ui`, lucide 1.x. El
+   upgrader renombró la variante `"outline"` de Button a `"outline-solid"` y dejó `z-[9999]` como
+   `z-9999` (BASE §1).
+3. **Copiar `components/ui/` entero se pagó en llamadas, no en vistas:** 16 `SearchableSelect` →
+   `Combobox obligatorio`, 18 calendarios con fechas `YYYY-MM-DD` → `Calendar` del kit con un puente
+   ISO ↔ `Date` (hasta migrar cada vista a `DatePicker`), 2 `noPadding` → clases, los badges de
+   colores → `StatusBadge` con `lib/estados.ts`. Typecheck en verde antes de mirar nada.
+4. **El shell sin router** (`activo` / `onNavegar` sobre el estado, BASE §9.3) y con `ubicacion`,
+   porque las vistas no tenían título propio. Los avisos tipo `alert`, el aviso de versión, los
+   toasts, la ayuda y las notificaciones se rehicieron sobre `Dialog` / `AlertDialog` / `Popover` en la
+   misma capa: sin eso, la app nueva abría ventanas viejas.
+5. **Siete estados, cinco tonos:** con "un tono por etapa" (§1.1) quedaron Presolicitud `neutro`,
+   Esperando habitación y Por consolidar `aviso`, Habitación lista y En traslado `info`. Los chips con
+   contador de la grilla se quedaron (son información), con el punto del tono: es la receta de §3.8.
+6. **`DataTable` necesitó tres cosas que el kit no tenía:** orden controlado (el orden vivía en el
+   store y los pre-tickets van siempre arriba), clase por fila (cancelados) y clase por columna
+   (acciones fijas a la derecha). Se sumaron al kit.
+7. **El PWA dejó de compilar:** el bundle ya estaba a 7 kB de los 2 MiB del precache y los componentes
+   lo pasaron. Chunks por librería (BASE §9.5).
+8. **El validador encontró lo que el ojo no:** un `<body class="bg-gray-50">` en `index.html` que le
+   ganaba a los tokens, y los `z-50` que el upgrader dejó en las vistas.
+9. **Resultado** (mismo validador sobre `develop` y la rama): 9 🔴 · 9 🟡 → 3 🔴 · 7 🟡; colores crudos
+   1.233 → 992 (todos en vistas sin migrar, listadas por archivo en `VALIDACION.md`); Operativa con cero
+   hallazgos. El modo noche quedó con tokens pero sin selector hasta migrar el resto (BASE §9.4).

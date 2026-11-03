@@ -1,4 +1,4 @@
-<!-- sumar:estilo=01-minimal-zinc version=2.0.0 -->
+<!-- sumar:estilo=01-minimal-zinc version=2.1.0 -->
 # Estilo 1 · Minimalista zinc (Sumar UI Kit)
 
 Reglas visuales del estilo. Es **un tema sobre la base común** (`base/BASE.md`): la base fija stack, tokens, API de componentes, recetas, accesibilidad y textos; este documento dice **cómo se ven** acá. Es prescriptivo: si algo no está, se compone con los componentes de `src/components/ui/` y los tokens de §1, no se inventa.
@@ -38,7 +38,7 @@ Reglas visuales del estilo. Es **un tema sobre la base común** (`base/BASE.md`)
 | Clientes con marca propia fuerte: la marca cambia un token y el resto queda neutro. | Pantallas táctiles de operario con guantes o kioscos (los controles son chicos). |
 | Usuarios que pasan el día en la app y valoran leer rápido. | Landing pages o apps de consumo que necesitan personalidad visual. |
 
-Cinco decisiones hacen el 80 % del look; si están, la app ya "es" el estilo: **Inter con cuerpo `text-sm`** (§1.2) · **neutros zinc + `primary` negro + marca como único acento** (§1.1) · **cards planas con borde de 1 px y `shadow-xs`** (§1.3, §1.5) · **radios `md` / `lg` / `xl`** (§1.4) · **micro-etiquetas (`micro`: `text-[11px] font-medium uppercase tracking-wider`) y números `tabular-nums`** (§1.2).
+Cinco decisiones hacen el 80 % del look; si están, la app ya "es" el estilo: **Inter con cuerpo `text-sm`** (§1.2) · **neutros zinc + `primary` negro (en un rediseño, el color de la app) + marca como único acento** (§1.1) · **cards planas con borde de 1 px y `shadow-xs`** (§1.3, §1.5) · **radios `md` / `lg` / `xl`** (§1.4) · **micro-etiquetas (`micro`: `text-[11px] font-medium uppercase tracking-wider`) y números `tabular-nums`** (§1.2).
 
 ---
 
@@ -52,7 +52,7 @@ Los nombres de token son los de BASE §2. Los valores exactos, de día y de noch
 |---|---|---|---|
 | `background` / `foreground` | `#ffffff` / `#09090b` | Lienzo y texto principal. | — |
 | `card` · `popover` | `#ffffff` (de noche, un paso y dos pasos más claros que el lienzo) | Tarjetas, paneles · lo que flota: menús, popovers, modales, sheets, toasts. | Fondos grandes de sección (eso es `secondary/30`). |
-| `primary` / `primary-foreground` | `#1a1a1a` / `#fafafa` | **La acción y la selección**: botón default, nav activo, checkbox / switch / radio marcados, día elegido del calendario, pill o card seleccionada, barra de progreso. | Decorar. Es fijo: no cambia entre clientes. |
+| `primary` / `primary-foreground` | `#1a1a1a` / `#fafafa` | **La acción y la selección**: botón default, nav activo, checkbox / switch / radio marcados, día elegido del calendario, pill o card seleccionada, barra de progreso. | Decorar. En un proyecto nuevo es este negro para todos los clientes; **en un rediseño, el color principal de la app** (BASE §9.1). |
 | `secondary` | `#f4f4f5` | Botón secundario; header de modal (`/20`); área de contenido (`/30`); cajas de agrupación (`/20`). | — |
 | `muted` / `muted-foreground` | `#f4f4f5` / `#6b6b73` | Superficies sutiles (`/20`, `/50`), fila seleccionada, texto secundario, labels, micro-etiquetas, placeholder, ejes de gráficos. | Texto principal. |
 | `accent` | `#f4f4f5` | Hover y opción activa en listas, menús y comboboxes. | Selección persistente (eso es `primary`). |
@@ -61,7 +61,7 @@ Los nombres de token son los de BASE §2. Los valores exactos, de día y de noch
 | `border` · `input` · `ring` | `#e4e4e7` · `#e4e4e7` · `#71717a` | Bordes de cards y divisores · borde de controles · anillo de foco. | — |
 | `brand` / `brand-foreground` | el del cliente | Ver la tabla de marca. | Ver la tabla de marca. |
 | `chart-1` … `chart-5` | `chart-1` = paso validado de la marca · `#2563eb` · `#059669` · `#d97706` · `#7c3aed` | Series de gráficos. Reglas en `DATAVIZ.md`. | UI (botones, badges, texto). |
-| `sidebar*` | `#fafafa`, borde `border`, activo = `primary` | El sidebar (§4.1). | — |
+| `sidebar*` | `#fafafa`, borde `border`, ítem activo `sidebar-accent` | El sidebar (§4.1). En un rediseño puede ser del color de la app: el `AppShell` usa solo tokens `sidebar-*` (BASE §9.1). | — |
 
 **Marca del cliente.** Un token, `--brand` en `:root` de `src/index.css`, y su espejo `MARCA` en `src/lib/marca.ts` para emails, PDF y `<meta theme-color>`; el validador chequea que coincidan (BASE §3). Las opacidades salen solas porque `brand` está en `@theme inline`: `bg-brand/10`, `border-brand/20`. Nunca `bg-(--brand)` ni el hex.
 
@@ -87,7 +87,7 @@ Los nombres de token son los de BASE §2. Los valores exactos, de día y de noch
 **Estados → tonos.** Los estados de cada app se mapean a los seis tonos de `StatusBadge` (BASE §4) en `src/lib/estados.ts`, nunca en la pantalla. Dos reglas:
 
 1. **Un tono por etapa del circuito, no uno por estado.** Estados distintos que significan "falta lo mismo" comparten tono; los distingue el texto. Y el badge muestra el estado **de lectura**, no el enum del backend: una compra "Activa" que todavía se debe no puede llevar el mismo tono que una "Pagada".
-2. **Tonos que conviven en una columna tienen que separarse en matiz (≥ 25°).** El tono `marca` no se usa junto a `info` si la marca del cliente es azulada, ni junto a `peligro` si es roja.
+2. **Tonos que conviven en una columna tienen que separarse en matiz (≥ 25°).** Los estados usan los semánticos y `neutro`, nunca `marca` (BASE §3). Si en la misma columna aparece una etiqueta en tono `marca` (un canal, una categoría), no puede convivir con `info` si la marca del cliente es azulada, ni con `peligro` si es roja.
 
 Ejemplo de eje para una cuenta corriente: `aviso` = falta algo · `info` = comprometido · `exito` = liquidado · `neutro` = anulado o cerrado · `peligro` = vencido.
 
@@ -387,6 +387,7 @@ Muestra: `base/starter/src/pages/Login.tsx`. Contenedor `min-h-dvh flex bg-backg
 | Una sola dimensión, en la toolbar de una tabla | `MultiCombobox` en la toolbar (§3.1). |
 | Elegir un valor de una lista larga | `Combobox`. |
 | Varias dimensiones a la vez (dashboards, vistas ricas) | **Barra colapsable**, abajo. |
+| Pocos estados (≤ 8) de una grilla operativa, donde **la cantidad por estado es información** | **Chips de estado**, abajo. |
 
 Barra colapsable:
 
@@ -395,6 +396,14 @@ Barra colapsable:
 - **Cada campo**: label micro-etiqueta con ícono `h-3.5 w-3.5 text-brand`; ancho `w-full sm:w-44` (en mobile se apilan solos). Rango de fechas primero (`DateRangePicker`), después los `MultiCombobox`.
 - **Limpiar** (si hay alguno activo): `ghost` `text-xs` con `X`, resetea todo de una vez.
 - El estado vive en un contexto o en la URL; la vista solo lee los filtros. La barra la muestra o esconde la vista (`useState`), no se auto-oculta.
+
+Chips de estado (selección múltiple; sin ninguno, se ve todo):
+
+- Fila `flex flex-wrap items-center gap-2`. Primero **"Todos"** con el total; después un chip por estado, en el orden del circuito; al final "Limpiar" (`ghost` `text-xs` con `X`) si hay alguno activo.
+- **Chip**: `inline-flex h-8 items-center gap-1.5 rounded-full border bg-card pl-2.5 pr-2 text-xs font-medium hover:bg-accent`, con `aria-pressed`. Adentro: punto `size-2 rounded-full` con el color del tono del estado (`PUNTO_TONO[tono]` de `status-badge.tsx`, el mismo de `lib/estados.ts`), el nombre y el contador `rounded-full bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground` (al 60 % si es 0).
+- **Elegido**: `border-primary bg-primary text-primary-foreground`, contador `bg-primary-foreground/20` (la selección es `primary`, §1.1).
+- Un filtro que no es un estado (p. ej. "Urgencias") va al final con su ícono en el color semántico.
+- **Mobile**: los chips quedan detrás de un botón `outline` "Filtrar" con el contador de activos (`bg-primary` chico) y se despliegan abajo.
 
 **Tabs de un dashboard** (navegar entre secciones, no filtrar): `Tabs` con `TabsList variant="line"` (§2) sobre un `border-b`, con scroll horizontal en mobile (`overflow-x-auto no-scrollbar`). La activa va en `text-brand` con subrayado de marca.
 
@@ -428,17 +437,20 @@ Implementación: `starter/src/components/layout/app-shell.tsx` (API en BASE §4)
 
 ### 4.1 Sidebar (desktop, `md+`)
 
-- `hidden md:flex flex-col w-64 border-r bg-sidebar z-nav`; colapsado `w-16` (solo íconos, tooltip con el nombre), `transition-[width] duration-300`.
-- Arriba, `h-16 px-4 flex items-center` con el logo (`h-7`; colapsado, isotipo `h-8 w-8`) y el botón de colapsar (`ghost icon-sm`, `PanelLeft`). Si la app maneja sucursales o empresas, debajo un `Combobox` para elegirla (texto fijo si el rol no puede cambiar).
-- Grupos (`ItemNav.grupo`): título micro-etiqueta `px-3 pt-4 pb-1`; colapsables con el acordeón de §1.9.
-- **Ítem**: `flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-sidebar-accent hover:text-foreground`; **activo `bg-primary text-primary-foreground shadow-xs`**. Ícono `h-4 w-4`. Contador (`badge`): `ml-auto min-w-5 h-5 rounded-full bg-destructive px-1.5 text-[10px] font-bold text-destructive-foreground` (colapsado: `absolute -top-1 -right-1 ring-2 ring-sidebar`; más de 99, "99+").
-- Pie `border-t p-3`: usuario (avatar + nombre `text-sm font-medium` + rol `text-xs text-muted-foreground`) y "Cerrar sesión" `ghost text-destructive hover:bg-destructive/10`, que pasa por `useConfirm`.
+Implementación: `app-shell.tsx`. Usa **solo tokens `sidebar-*`** (también para el texto secundario), así funciona igual con la sidebar clara del estilo o con una de color (rediseño, BASE §9.1).
+
+- `hidden md:flex flex-col w-60 border-r border-sidebar-border bg-sidebar text-sidebar-foreground z-nav`; colapsado `w-16` (solo íconos, tooltip con el nombre), `transition-[width] duration-300`; el estado se recuerda en `localStorage`.
+- Arriba, `h-14 px-4 flex items-center border-b border-sidebar-border` con la marca y el botón de colapsar (`ghost icon-sm`, `PanelLeftClose`). Colapsado: arriba `marcaCompacta` (el isotipo); al pie, el botón de expandir y `usuarioCompacto`. Si la app maneja sucursales o empresas, debajo de la marca un `Combobox` para elegirla (texto fijo si el rol no puede cambiar).
+- Grupos (`ItemNav.grupo`): título `px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/70`; colapsado, una línea divisoria.
+- **Ítem**: `relative flex h-9 items-center gap-3 rounded-md px-3 text-sm text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground`; **activo `bg-sidebar-accent font-medium text-sidebar-foreground`** (y `aria-current="page"`). Ícono `size-4`. Contador (`badge`): `ml-auto min-w-5 h-5 rounded-full bg-destructive px-1.5 text-[10px] font-bold text-destructive-foreground` (colapsado: `absolute -top-1 -right-1 ring-2 ring-sidebar`; más de 99, "99+").
+- Pie `border-t border-sidebar-border p-3`: `usuario` = menú del usuario (avatar + nombre `text-sm font-medium` + rol `text-xs text-sidebar-foreground/70`), con "Cerrar sesión" adentro.
 
 ### 4.2 Header
 
-- **Desktop**: `sticky top-0 z-nav hidden md:flex h-16 items-center justify-between border-b bg-background/80 backdrop-blur-sm px-6`. A la izquierda, la ubicación (`text-sm font-medium`, separador `/` en `text-muted-foreground/50`). A la derecha (`acciones` y `usuario`): menú Demo si corresponde, botón del celular (§4.4), selector de tema (§5) y avatar.
-- **Mobile**: `md:hidden fixed inset-x-0 top-0 z-header h-16 flex items-center justify-between border-b bg-background px-4`. Hamburguesa (`ghost icon`, `Menu h-6 w-6`, `aria-label="Abrir menú"`) + nombre de la pantalla `truncate text-lg font-bold`; a la derecha, avatar. La hamburguesa abre el nav en un `Sheet` izquierdo (`w-72`, §2) con el mismo contenido del sidebar.
-- **Contenido**: `flex-1 min-w-0 overflow-auto bg-secondary/30 p-3 md:p-8 pt-19 md:pt-8` (el `pt` despeja el header fijo). No hay barra de navegación inferior.
+- **Desktop** (si hay `ubicacion` o `acciones`): `z-nav hidden md:flex h-14 items-center justify-between gap-4 border-b bg-background px-6`. A la izquierda, `ubicacion`: el nombre de la pantalla (`text-sm font-semibold`) y, si la app la tiene, su ayuda; las apps cuyas pantallas traen `PageHeader` no la pasan. A la derecha, `acciones`: menú Demo si corresponde, botón del celular (§4.4), selector de tema (§5).
+- **Mobile**: `md:hidden z-header h-14 flex items-center gap-2 border-b bg-background px-3`. Hamburguesa (`ghost icon`, `Menu`, `aria-label="Abrir menú"`) + `ubicacion` si viene (nombre de la pantalla `truncate text-lg font-bold`) o la marca; a la derecha, `acciones`. La hamburguesa abre el nav en un `Sheet` izquierdo con el mismo contenido del sidebar, en sus tokens.
+- **Avisos** (`avisos`): banners de toda la app (sesión por vencer, permisos), a lo ancho entre el header y el contenido: `border-b px-4 md:px-6 py-2 text-xs` con el patrón de banner semántico (§1.1).
+- **Contenido**: `<main>` con scroll propio, `bg-secondary/30`; adentro `mx-auto max-w-7xl px-4 py-5 md:px-8 md:py-8` (`relleno={false}` lo saca: vistas que traen su padding, BASE §9.3). No hay barra de navegación inferior.
 
 ### 4.3 Mobile
 

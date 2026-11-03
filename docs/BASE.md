@@ -6,11 +6,11 @@ Todo estilo de Sumar es **un tema sobre esta base**. La base fija el stack, la e
 
 | Archivo | Qué tiene |
 |---|---|
-| `base/BASE.md` | Este documento: stack, estructura, tokens, API de componentes, recetas comunes, reglas. |
+| `base/BASE.md` | Este documento: stack, estructura, tokens, API de componentes, recetas comunes, reglas y lo común de un rediseño (§9). |
 | `base/starter/` | El esqueleto común que compila: app, rutas, formato es-AR, store de demo, kit de demo, pantallas de muestra. |
 | `estilos/<id>/starter/` | Lo propio del estilo: `src/index.css`, `src/components/ui/*`, `src/components/layout/*`. Se copia **encima** de la base. |
 | `estilos/<id>/DESIGN.md` | Reglas visuales del estilo: carácter, tokens con sus valores, tipografía, cómo se compone cada pantalla, reglas de oro. |
-| `estilos/<id>/REDISENO.md` | Cómo llevar una app existente a ese estilo. |
+| `estilos/<id>/REDISENO.md` | Cómo llevar una app existente a ese estilo (después de §9 de esta base). |
 | `estilos/<id>/reglas.json` | Lo que el validador chequea de ese estilo. |
 
 Un proyecto nuevo se arma con `node scripts/armar.mjs <estilo> <carpeta>` (lo hace `/nuevo-proyecto`).
@@ -19,7 +19,7 @@ Un proyecto nuevo se arma con `node scripts/armar.mjs <estilo> <carpeta>` (lo ha
 
 ## 1. Stack
 
-- **Vite + React 19 + TypeScript** (template `react-ts`), código en `src/`, alias `@/` → `src/`.
+- **Vite + React 19 + TypeScript** (template `react-ts`), código en `src/`, alias `@/` → `src/`. **React 19 es requisito**, no preferencia: los componentes reciben `ref` como prop (sin `forwardRef`); con React 18 los `asChild` de Radix (Tooltip, Popover, Dialog sobre un `Button`) pierden la ref **sin dar error**.
 - **Tailwind 4** con `@tailwindcss/vite`. Sin `tailwind.config.js` ni PostCSS: el tema vive en `src/index.css` (`@theme`).
 - **Componentes: shadcn/ui sobre Radix** (paquete `radix-ui`), `class-variance-authority`, `clsx` + `tailwind-merge` 3 (`cn`), `tw-animate-css` para animaciones de entrada/salida.
 - **Íconos:** solo `lucide-react`.
@@ -43,7 +43,12 @@ Un proyecto nuevo se arma con `node scripts/armar.mjs <estilo> <carpeta>` (lo ha
 | `tailwindcss-animate` | `tw-animate-css` | Mismas clases. |
 | `tailwind.config.js` · `@tailwind base` | `@theme` · `@import "tailwindcss"` | |
 
-Cambios de comportamiento: `hover:` solo aplica con puntero (`@media (hover:hover)`); `space-y-*` cambió de selector (preferí `gap`); los defaults de borde, placeholder y cursor de botón cambiaron (cada `index.css` de estilo los fija en `@layer base`). Para migrar un repo entero: `npx @tailwindcss/upgrade`.
+Cambios de comportamiento: `hover:` solo aplica con puntero (`@media (hover:hover)`); `space-y-*` cambió de selector (preferí `gap`); los defaults de borde, placeholder y cursor de botón cambiaron (cada `index.css` de estilo los fija en `@layer base`). Para migrar un repo entero: `npx @tailwindcss/upgrade`. **Después del upgrader, revisar a mano:**
+
+- Toma los **valores de props** como si fueran clases: la variante `"outline"` de Button y Badge pasa a `"outline-solid"` (en el tipo y en los usos). El typecheck lo muestra; se vuelve a `"outline"`.
+- Pasa `z-[9999]` a `z-9999`: sigue siendo un z-index mágico (el validador lo marca igual).
+- Deja PostCSS (`@tailwindcss/postcss`); el kit usa `@tailwindcss/vite` y el CSS importado desde el entry (`main.tsx`), no por `<link>` en `index.html`.
+- No mira `index.html`: un `<body class="bg-gray-50 text-slate-800">` le gana a los tokens que pone el estilo en `@layer base`. Se borran.
 
 ---
 
@@ -111,7 +116,9 @@ Los **bordes y el espaciado de los encabezados y pies** de `Dialog`, `Sheet` y `
 
 - **Un token**, `--brand` (hex) en `:root` de `src/index.css`, y su espejo `MARCA` en `src/lib/marca.ts` para lo que no lee CSS (emails, PDF, `<meta theme-color>`). El validador chequea que coincidan.
 - **De noche** `.dark` redefine `--brand` (y su foreground) con una versión aclarada del mismo color que pase contraste sobre el fondo oscuro; es obligatorio porque la marca de día casi nunca se lee sobre oscuro. Si algo fuera del CSS la necesita, `MARCA_NOCHE` en `marca.ts`.
-- **Dónde va la marca:** logo, login, portal de clientes, emails, acentos de dashboard y filtros/tabs activos si el estilo lo permite. **Dónde no:** botones de acción (eso es `primary`), estados (eso son los semánticos). Cada estilo precisa la lista en su `DESIGN.md`.
+- **Dónde va la marca:** logo, login, portal de clientes, emails, acentos de dashboard y filtros/tabs activos si el estilo lo permite. **Dónde no:** botones de acción (eso es `primary`), estados (eso son los semánticos y `neutro`). Cada estilo precisa la lista en su `DESIGN.md`.
+- El tono **`marca` del `StatusBadge`** no es para estados: es para una etiqueta que no lo es y tiene que leerse como "propia del cliente" (un canal, una categoría: "Web", "Cliente VIP"). Si duda, `neutro`.
+- **En un rediseño la marca y `primary` salen de la app** (§9.1): el estilo pone su color de acción solo si la app no tiene uno.
 - Gráficos: `var(--color-brand)` o `var(--color-chart-N)` directo en las props de recharts; nada de hex.
 
 ---
@@ -152,7 +159,7 @@ Un estilo también puede **sumar componentes propios** en otra carpeta (el Copil
 
 | Archivo | Exports | API |
 |---|---|---|
-| `app-shell.tsx` | `AppShell`, `type ItemNav` | `{ nav: ItemNav[]; marca: ReactNode; marcaCompacta?: ReactNode; usuario?: ReactNode; usuarioCompacto?: ReactNode; acciones?: ReactNode; lateral?: ReactNode; children }`. `marcaCompacta` / `usuarioCompacto` (logo y avatar) se usan cuando la navegación es un riel de íconos; si no vienen, el riel no los muestra. `ItemNav { to; label; icon: LucideIcon; grupo?; badge?: number }`. `lateral` es la columna derecha opcional (el celular del portal): el shell la muestra **solo desde `xl`**, con ancho y borde; abajo de `xl` la app la dibuja flotante con `z-overlay` (patrón en `src/demo/CelularPortal.tsx`: `useEsXl()` y un solo iframe por vez).  Resuelve sidebar o riel desktop, header y navegación mobile. |
+| `app-shell.tsx` | `AppShell`, `type ItemNav` | `{ nav: ItemNav[]; marca: ReactNode; marcaCompacta?: ReactNode; usuario?: ReactNode; usuarioCompacto?: ReactNode; acciones?: ReactNode; ubicacion?: ReactNode; avisos?: ReactNode; lateral?: ReactNode; relleno?: boolean; children }`. `ubicacion` = el nombre de la pantalla (y su ayuda): en mobile reemplaza a la marca en el header; en desktop va a la izquierda de las acciones (para apps cuyas vistas no traen `PageHeader`). `avisos` = banners de toda la app, a lo ancho arriba del contenido. `relleno={false}` = el contenido sin márgenes ni ancho máximo (vistas que ponen el suyo, §9). `marcaCompacta` / `usuarioCompacto` (logo y avatar) se usan cuando la navegación es un riel de íconos; si no vienen, el riel no los muestra. `ItemNav { to; label; icon: LucideIcon; grupo?; badge?: number }`. `lateral` es la columna derecha opcional (el celular del portal): el shell la muestra **solo desde `xl`**, con ancho y borde; abajo de `xl` la app la dibuja flotante con `z-overlay` (patrón en `src/demo/CelularPortal.tsx`: `useEsXl()` y un solo iframe por vez).  Resuelve sidebar o riel desktop, header y navegación mobile. |
 
 ---
 
@@ -212,3 +219,75 @@ Cada estilo dice **cómo se ven**; acá está **qué llevan**. Las pantallas de 
 7. Toda pantalla funciona en 390 px.
 8. Textos en castellano y números con `formato.ts`.
 9. Lo que el validador marca 🔴 no se mergea. Una excepción lleva motivo (`// sumar-validar-ignorar: <regla> <motivo>`).
+
+---
+
+## 9. Rediseño: lo que vale para todos los estilos
+
+Cada estilo tiene su `REDISENO.md` (capas, equivalencias, checklist). Esto es lo común, aprendido en
+rediseños reales (MediFlow · Grupo Gamma, El Garage DTF). Se lee antes del `REDISENO.md` del estilo.
+
+### 9.1 Los colores de la app se conservan
+
+Se rediseña la estética, no la identidad: el cliente reconoce su app por su color.
+
+- El **color principal de la app** (el de sus botones principales, su sidebar o su logo) pasa a
+  **`primary`** y a **`--brand`** / `MARCA`. Si la sidebar era de color, sigue de color con los tokens
+  `sidebar-*` (el `AppShell` los usa todos, también para el texto secundario).
+- El color de acción propio del estilo (el negro del Estilo 1, la tinta del Copiloto) se usa **solo si
+  la app no tiene uno**.
+- Variantes de entorno (una sidebar distinta en "testing") van como tokens bajo un atributo de `<html>`
+  (`[data-entorno="testing"] { --sidebar: … }`), no con clases en el JSX.
+- Se verifica con `node <kit>/scripts/contraste.mjs index.css`, de día y de noche. De noche el color
+  principal va aclarado (con un `-foreground` oscuro) como la marca (§3).
+- Lo que el estilo reserva para otra cosa no se pisa: en el Copiloto el violeta es la IA. Si el color
+  de la app es violeta, se pregunta.
+
+### 9.2 El stack mínimo
+
+React 19 (§1) y Tailwind 4 son requisitos de los componentes, no del gusto: si el repo está en React 18 o
+en Tailwind 3, la migración es un commit propio **antes** de la capa 0 (`build: …`), con typecheck y
+build en verde. Con el upgrader, §1. `@radix-ui/react-*` sueltos pasan al paquete `radix-ui` (los viejos
+no aceptan React 19 como peer). `lucide-react` a la versión del kit.
+
+### 9.3 Repos que no tienen la forma del starter
+
+- **Sin `src/`** (código en la raíz): el alias `@/` apunta a la raíz y los archivos del kit van a
+  `components/ui/`, `components/layout/`, `lib/`. El validador lo detecta solo: con el código en la raíz
+  deja afuera `docs/`, tests, `api/`, `scripts/`, `public/`, `supabase/` y los `*.config.*`, y lee las
+  rutas `src/…` de las reglas sin ese prefijo. Para algo más: `"ignorar": ["carpeta/**"]` en
+  `.sumar-validar.json`.
+- **Sin router** (la vista vive en un estado): el `AppShell` del kit usa `NavLink`. En el repo se cambia
+  por un `<button>` con la clase `active` cuando corresponde, `ItemNav.id` en vez de `to` y dos props,
+  `activo` y `onNavegar`; el scroll arriba se dispara con `activo`. Se anota en la tabla de equivalencias.
+- **Vistas con su propio padding**: hasta migrarlas, `AppShell relleno={false}`; al migrar todas, el
+  padding pasa al shell.
+- **Componentes globales** (avisos tipo `alert`, aviso de versión nueva, toasts propios, ayuda,
+  desplegables de notificaciones): son del marco, van en la **capa 2** con el shell. Se reconstruyen
+  sobre `Dialog` / `AlertDialog` / `Popover` del kit conservando su API, así el resto de la app no cambia.
+
+### 9.4 El modo noche, al final
+
+Los tokens de noche se escriben en la capa 0 (y pasan el contraste), pero el **selector de tema se
+habilita recién cuando todas las vistas usan tokens**. Mientras tanto `tema.ts` arranca en `"claro"`
+(no `"sistema"`) y `index.html` no aplica `.dark`: si no, a quien tiene el sistema en oscuro le sale
+media app rota.
+
+### 9.5 PWA
+
+Los componentes del kit suman peso: si la app es PWA y el bundle principal pasa los **2 MiB** que
+precachea el service worker (vite-plugin-pwa), el build falla. Se separan las librerías pesadas con
+`build.rollupOptions.output.manualChunks` (PDF, planillas, Supabase, Radix); no se sube el límite.
+
+### 9.6 Documentación de un repo que ya tiene la suya
+
+- Si el repo tiene un `CLAUDE.md` propio, su contenido pasa a **`AGENTS.md`** (canónico, también lo lee
+  Codex) con la sección "Diseño / UI" del `REDISENO.md` del estilo y la **tabla de equivalencias**;
+  `CLAUDE.md` queda en `@AGENTS.md`.
+- `PRODUCTO.md` resume el producto en una página y **remite** a los docs que ya existan (casos de uso,
+  roles); no los duplica.
+- **Demo guiada:** en una app en producción, sin datos de ejemplo, no se arma. Se declara en
+  `.sumar-validar.json` (`{"regla": "recorrido", "motivo": "app en producción…"}`) y se dice en
+  `PRODUCTO.md` cómo se muestra (un entorno de prueba).
+- `VALIDACION.md` (validador con `--reporte`) trae el antes / después por regla y la tabla **por
+  archivo**, que es el orden de ataque de las vistas que faltan.
