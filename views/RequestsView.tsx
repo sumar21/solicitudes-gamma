@@ -684,7 +684,11 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
         <div className="flex flex-col items-start gap-1.5">
           <Badge variant="outline" className="text-[10px]">{WORKFLOW_LABEL_BADGE[t.workflow] ?? 'Interno'}</Badge>
           {ayudaEstado(t, true) && <div className="text-[11px] leading-snug text-muted-foreground">{ayudaEstado(t, true)}</div>}
-          {t.changeReason && <StatusBadge tono="aviso" className="whitespace-normal"><Info className="size-3" aria-hidden="true" /> {t.changeReason}</StatusBadge>}
+          {t.changeReason && (
+            <span className="flex items-start gap-1 text-[11px] leading-snug font-medium text-warning">
+              <Info className="mt-0.5 size-3 shrink-0" aria-hidden="true" /> {t.changeReason}
+            </span>
+          )}
         </div>
       ),
     },
@@ -717,29 +721,21 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
     {
       id: 'destino',
       titulo: 'Destino',
-      clase: 'min-w-[90px]',
+      clase: 'min-w-[100px]',
+      // Valor + metadato (DESIGN §3.9): el estado que tenía la cama destino va debajo, no en otra columna
+      // (a 1280 con la sidebar abierta la grilla tiene que entrar entera).
       celda: (t) =>
         t.destination ? (
           <div className="flex flex-col gap-1">
             {/* Sin nowrap: destinos largos ("UNIDAD TERAPIA INTENSIVA HPR - CAMA 02") estiraban la columna a ~340px. */}
             <div className="max-w-[150px] font-medium leading-tight wrap-break-word">{formatBedName(t.destination)}</div>
+            {t.targetBedOriginalStatus && <span className="text-[11px] leading-tight text-muted-foreground">{t.targetBedOriginalStatus}</span>}
+            {t.bedAssignedAt && <StatusBadge tono="exito">Cama: {t.bedAssignedAt}</StatusBadge>}
             {renderSharedRoomTag(t)}
           </div>
         ) : (
           <span className="text-muted-foreground">—</span>
         ),
-    },
-    {
-      id: 'estadoDestino',
-      titulo: 'Estado destino',
-      ocultarEn: 'lg',
-      clase: 'min-w-[90px]',
-      celda: (t) => (
-        <div className="flex flex-col gap-1">
-          <span className="text-[11px] leading-tight text-muted-foreground">{t.targetBedOriginalStatus || '—'}</span>
-          {t.bedAssignedAt && <StatusBadge tono="exito">Cama: {t.bedAssignedAt}</StatusBadge>}
-        </div>
-      ),
     },
     { id: 'observaciones', titulo: 'Observaciones', clase: 'min-w-[110px]', celda: observacion },
     {
@@ -854,8 +850,9 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
             <span className="cifra text-sm">{typeof averageWaitTime === 'number' && averageWaitTime > 0 ? `${averageWaitTime} min` : '—'}</span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="relative min-w-28 flex-1 lg:w-64 lg:flex-none">
+        <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
+          {/* En mobile la búsqueda va sola en su fila; las altas, abajo a lo ancho. */}
+          <div className="relative min-w-28 basis-full sm:basis-auto sm:flex-1 lg:w-64 lg:flex-none">
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
             <Input
               placeholder="Paciente o ID…"
@@ -871,12 +868,12 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
             )}
           </div>
           {can(currentUser, 'crear_pre_ticket') && onNewPreTicket && (
-            <Button type="button" variant="outline" onClick={onNewPreTicket} className="shrink-0 gap-1.5 px-3 md:h-9">
+            <Button type="button" variant="outline" onClick={onNewPreTicket} className="flex-1 gap-1.5 px-3 sm:flex-none md:h-9">
               <Plus /> Pre-ticket
             </Button>
           )}
           {can(currentUser, 'crear_ticket') && (
-            <Button type="button" onClick={onNewRequest} className="shrink-0 gap-1.5 px-3 md:h-9">
+            <Button type="button" onClick={onNewRequest} className="flex-1 gap-1.5 px-3 sm:flex-none md:h-9">
               <Plus /> Solicitud
             </Button>
           )}

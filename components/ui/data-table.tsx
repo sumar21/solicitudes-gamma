@@ -108,7 +108,7 @@ export function DataTable<T>({
   const paginas = Math.max(1, Math.ceil(total / porPagina))
   // Si cambian los filtros y quedan menos filas, no nos quedamos en una página vacía.
   const actual = Math.min(pagina, paginas - 1)
-  const desde = actual * porPagina
+  const desde = actual === 0 ? 0 : actual * porPagina // porPagina puede ser Infinity (sin paginar): 0 × ∞ = NaN
   const visibles = ordenadas.slice(desde, desde + porPagina)
 
   const cambiarOrden = (id: string) => {
