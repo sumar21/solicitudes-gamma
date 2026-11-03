@@ -4,15 +4,24 @@ import { can, canLoadMealSlot, canLoadAnyMealSlot } from '../lib/permissions';
 import { hasLiveFasting, fastingOccurrences, formatFastingDateTime, fastingTimesForToday } from '../lib/fasting';
 import { isolationSigla, isolationRule } from '../lib/isolations';
 import { Input } from '../components/ui/input';
-import { cn, dietRequiresCustomComanda, suggestedRoomSex, formatBedName, formatDateReadable, bedEventKey, isIndividualBoxArea } from '../lib/utils';
-import { BedDouble, User as UserIcon, Info, Search, X, Plus, ChevronDown, ChevronRight, Check, AlertTriangle, AlertCircle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan, History, Lock, Activity, ArrowRight, Undo2, Calendar as CalendarIcon, Loader2 } from 'lucide-react';
-import { Calendar } from '../components/ui/calendar';
+import { Textarea } from '../components/ui/textarea';
+import { Switch } from '../components/ui/switch';
+import { cn, dietRequiresCustomComanda, suggestedRoomSex, formatBedName, bedEventKey, isIndividualBoxArea } from '../lib/utils';
+import { BedDouble, User as UserIcon, Info, Search, X, Plus, ChevronRight, Check, AlertTriangle, AlertCircle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, FileText, ArrowDownAZ, SprayCan, History, Lock, Activity, ArrowRight, Undo2, Loader2, CircleDot, LayoutGrid, Filter, Building2, Stethoscope, CalendarDays, ClipboardList } from 'lucide-react';
 import { aIso, deIso } from '../lib/fechaIso';
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
-import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
+import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs';
+import { StatusBadge, type Tono } from '../components/ui/status-badge';
+import { BarraFiltros, BotonFiltros, CampoFiltro } from '../components/ui/filtros';
+import { MultiCombobox } from '../components/ui/combobox';
+import { DateRangePicker } from '../components/ui/date-picker';
+import { Cargando, ErrorEstado, Vacio } from '../components/ui/estados';
+import { diaMes, fecha, fechaHora, hora } from '../lib/formato';
+import { ESTADOS_CAMA, ORDEN_ESTADOS_CAMA, MARCAS_CAMA, ICONO_AISLAMIENTO, estadoCama, puntoEstadoCama, acentoEstadoCama, puntoAislamiento } from '../lib/estados-camas';
+import { estadoCirugia } from '../lib/estados-cirugia';
 import { PatientJourney } from '../components/PatientJourney';
-import { WORKFLOW_LABELS, CIRUGIA_ESTADO_LABEL, CIRUGIA_PILL_CLASS, CIRUGIA_TIPO_PREVIA, cirugiaRetrocesoDe } from '../lib/constants';
+import { WORKFLOW_LABELS, CIRUGIA_ESTADO_LABEL, CIRUGIA_TIPO_PREVIA, cirugiaRetrocesoDe } from '../lib/constants';
 import jsPDF from 'jspdf';
 
 const AREA_LABELS: Record<string, string> = {
@@ -89,31 +98,47 @@ interface BedsViewProps {
   onDesmarcarVaCirugia?: (patientCode: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
-// Mapa de clave de color (la define api/isolations-summary.ts) → clases Tailwind.
-// Las clases van como literales para que el JIT de Tailwind las incluya en el build.
-const ISOLATION_COLORS: Record<string, { ring: string; bg: string; text: string; dot: string; pill: string }> = {
-  pink:    { ring: 'ring-pink-400',    bg: 'bg-pink-500',    text: 'text-pink-700',    dot: 'bg-pink-500',    pill: 'bg-pink-100 text-pink-700' },
-  slate:   { ring: 'ring-slate-400',   bg: 'bg-slate-500',   text: 'text-slate-700',   dot: 'bg-slate-500',   pill: 'bg-slate-100 text-slate-700' },
-  green:   { ring: 'ring-green-400',   bg: 'bg-green-500',   text: 'text-green-700',   dot: 'bg-green-500',   pill: 'bg-green-100 text-green-700' },
-  blue:    { ring: 'ring-blue-400',    bg: 'bg-blue-500',    text: 'text-blue-700',    dot: 'bg-blue-500',    pill: 'bg-blue-100 text-blue-700' },
-  yellow:  { ring: 'ring-yellow-400',  bg: 'bg-yellow-500',  text: 'text-yellow-700',  dot: 'bg-yellow-500',  pill: 'bg-yellow-100 text-yellow-700' },
-  orange:  { ring: 'ring-orange-400',  bg: 'bg-orange-500',  text: 'text-orange-700',  dot: 'bg-orange-500',  pill: 'bg-orange-100 text-orange-700' },
-  teal:    { ring: 'ring-teal-400',    bg: 'bg-teal-500',    text: 'text-teal-700',    dot: 'bg-teal-500',    pill: 'bg-teal-100 text-teal-700' },
-  amber:   { ring: 'ring-amber-700',   bg: 'bg-amber-800',   text: 'text-amber-800',   dot: 'bg-amber-800',   pill: 'bg-amber-100 text-amber-800' },
-  fuchsia: { ring: 'ring-fuchsia-400', bg: 'bg-fuchsia-500', text: 'text-fuchsia-700', dot: 'bg-fuchsia-500', pill: 'bg-fuchsia-100 text-fuchsia-700' },
-  violet:  { ring: 'ring-violet-400',  bg: 'bg-violet-500',  text: 'text-violet-700',  dot: 'bg-violet-500',  pill: 'bg-violet-100 text-violet-700' },
-  // Verde inglés — cartelería de Quemado (Q) y Diálisis peritoneal (DP), alta 16/09/2026.
-  // Deliberadamente MÁS OSCURO que `green` (Respiratorio, green-500) para no confundirlos.
-  englishGreen: { ring: 'ring-emerald-800', bg: 'bg-emerald-800', text: 'text-emerald-900', dot: 'bg-emerald-800', pill: 'bg-emerald-100 text-emerald-900' },
-};
-const DEFAULT_ISO_COLOR = ISOLATION_COLORS.violet;
+// Colores de los aislamientos (punto de la cartelería) y de los estados de cama: lib/estados-camas.ts
+// (los comparte con la leyenda del mapa en App.tsx).
 
-// Color de la cama CONTIGUA a un aislamiento "Contacto preventivo": no se inhabilita
-// (a diferencia de los demás aislamientos, que la bloquean en gris/violeta) sino que se
-// marca con un color propio que NO se usa para ningún estado de cama (Disponible/Ocupada/
-// En preparación/Asignada/Inhabilitada) ni para el bloqueo duro (violeta). Usamos cyan.
-const PREVENTIVE_ADJ_CELL = 'bg-cyan-50 border-cyan-300';
-const PREVENTIVE_ADJ_DOT  = 'bg-cyan-400';
+// Fechas que vienen del back como ISO: se formatean con lib/formato.ts, pero un ISO roto no puede
+// romper el render (date-fns tira RangeError con una fecha inválida) → string vacío.
+const fechaHoraSegura = (iso?: string): string => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '' : fechaHora(d);
+};
+const fechaSegura = (iso?: string): string => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '' : fecha(d);
+};
+
+// Aviso inline suave (DESIGN §9.4): bg-{c}-50 + border-{c}-200 + text-{c}-700, con ícono. Un solo
+// componente para los carteles del detalle de la cama (limpieza, dieta, cirugía, bloqueos).
+type TonoAviso = 'exito' | 'aviso' | 'peligro' | 'info' | 'neutro';
+const CLASE_AVISO: Record<TonoAviso, string> = {
+  exito: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  aviso: 'border-amber-200 bg-amber-50 text-amber-700',
+  peligro: 'border-red-200 bg-red-50 text-red-700',
+  info: 'border-blue-200 bg-blue-50 text-blue-700',
+  neutro: 'bg-muted/40 text-muted-foreground',
+};
+const AvisoInline: React.FC<{
+  tono: TonoAviso;
+  icono: React.ElementType;
+  compacto?: boolean;
+  className?: string;
+  children: React.ReactNode;
+}> = ({ tono, icono: Icono, compacto, className, children }) => (
+  <div className={cn('flex items-start gap-2 rounded-lg border', compacto ? 'p-2 text-xs' : 'p-3 text-sm', CLASE_AVISO[tono], className)}>
+    <Icono className={cn('mt-0.5 shrink-0', compacto ? 'size-3.5' : 'size-4')} aria-hidden="true" />
+    <div className="min-w-0 flex-1">{children}</div>
+  </div>
+);
+
+// Micro-label de sección / dato (DESIGN §1.4): text-[11px] uppercase tracking-wider muted.
+const MICRO = 'text-[11px] font-semibold tracking-wider text-muted-foreground uppercase';
 
 // Normalización para comparar nombres de aislamiento sin tildes/casing.
 const normIsoName = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
@@ -229,7 +254,7 @@ function drawBedTotalsFooter(
 // El orden y los labels salen del catálogo único (types.ts) — NO redeclarar la lista acá.
 
 const fmtMealWhen = (m?: { by: string; at: string }) =>
-  m ? `${m.by}${m.at ? ` · ${new Date(m.at).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}` : ''}` : '';
+  m ? `${m.by}${m.at ? ` · ${fechaHoraSegura(m.at)}` : ''}` : '';
 
 // Pill de tipo (compartido con el monitor de comandas): Menú/Opción/Otros con su color.
 export const comandaTipoPill = (t?: string): { label: string; cls: string } =>
@@ -237,11 +262,29 @@ export const comandaTipoPill = (t?: string): { label: string; cls: string } =>
   : t === 'OPCION' ? { label: 'Opción', cls: 'bg-amber-100 text-amber-700' }
   : { label: 'Otros', cls: 'bg-indigo-100 text-indigo-700' };
 
-const TIPO_BTN_CLS: Record<'MENU' | 'OPCION' | 'OTROS', string> = {
-  MENU:   'bg-emerald-600 text-white border-emerald-600',
-  OPCION: 'bg-amber-500 text-white border-amber-500',
-  OTROS:  'bg-indigo-600 text-white border-indigo-600',
-};
+// Tono del tipo de comanda en el StatusBadge de esta vista: mismos matices que comandaTipoPill
+// (Menú esmeralda · Opción ámbar · Otros índigo), que sigue exportada tal cual para el monitor de comandas.
+const TONO_TIPO_COMANDA: Record<'MENU' | 'OPCION' | 'OTROS', Tono> = { MENU: 'exito', OPCION: 'aviso', OTROS: 'indigo' };
+const tonoTipoComanda = (t?: string): Tono => TONO_TIPO_COMANDA[t as 'MENU' | 'OPCION' | 'OTROS'] ?? 'indigo';
+
+// Selector Menú / Opción / Otros: control segmentado (DESIGN §6.6). El tipo elegido ya no se pinta con
+// un relleno de color: es una selección, va como la solapa activa (bg-background + sombra).
+const TipoComandaSegmentado: React.FC<{
+  value: 'MENU' | 'OPCION' | 'OTROS' | '';
+  onPick: (op: 'MENU' | 'OPCION' | 'OTROS') => void;
+  disabled?: boolean;
+  compacto?: boolean;
+}> = ({ value, onPick, disabled, compacto }) => (
+  <div role="group" aria-label="Tipo de comanda" className={cn('flex w-full items-center rounded-md bg-muted p-1', compacto ? 'h-8' : 'h-9')}>
+    {(['MENU', 'OPCION', 'OTROS'] as const).map(op => (
+      <button key={op} type="button" onClick={() => onPick(op)} disabled={disabled} aria-pressed={value === op}
+        className={cn('h-full flex-1 rounded-sm text-xs font-medium transition-all outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
+          value === op ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground')}>
+        {op === 'MENU' ? 'Menú' : op === 'OPCION' ? 'Opción' : 'Otros'}
+      </button>
+    ))}
+  </div>
+);
 
 /** Planificación vigente resuelta: turno → { MENU?: texto, OPCION?: texto }. */
 type PlannedMenu = Partial<Record<MealSlot, Partial<Record<'MENU' | 'OPCION', string>>>>;
@@ -347,24 +390,23 @@ const MealSlotEditor: React.FC<{
 
   // Header: siempre visible, es el que colapsa. Muestra el estado sin abrir el box.
   const header = (
-    <button type="button" onClick={onToggle}
-      className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-slate-50/80 transition-colors">
-      <div className="flex items-center gap-2 min-w-0">
-        <ChevronRight className={cn('w-3 h-3 text-slate-400 shrink-0 transition-transform', open && 'rotate-90')} />
-        <span className="text-[10px] font-bold uppercase tracking-wide text-slate-600">{label}</span>
+    <button type="button" onClick={onToggle} aria-expanded={open}
+      className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left transition-colors outline-hidden hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring">
+      <div className="flex min-w-0 items-center gap-2">
+        <ChevronRight className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')} aria-hidden="true" />
+        <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">{label}</span>
       </div>
-      <div className="flex items-center gap-1.5 shrink-0">
+      <div className="flex shrink-0 items-center gap-1.5">
         {/* Candado en span y no `title` directo en el ícono: el atributo title sobre un <svg>
-            inline no muestra tooltip nativo — sobre el <span> HTML sí (mismo patrón que el
-            botón de eliminar acompañante). */}
+            inline no muestra tooltip nativo — sobre el <span> HTML sí. */}
         {lockedByPermission && (
           <span title="Tu rol no puede cargar este turno" className="flex items-center">
-            <Lock className="w-3 h-3 text-slate-300 shrink-0" />
+            <Lock className="size-3 shrink-0 text-muted-foreground" aria-label="Solo lectura" />
           </span>
         )}
         {pill
-          ? <span className={cn('px-2 py-0.5 rounded-full text-[9px] font-bold', pill.cls)}>{pill.label}</span>
-          : <span className="text-[9px] text-slate-300 italic">Sin carga</span>}
+          ? <StatusBadge tono={tonoTipoComanda(meal?.tipo)}>{pill.label}</StatusBadge>
+          : <span className="text-[10px] text-muted-foreground">Sin carga</span>}
       </div>
     </button>
   );
@@ -372,27 +414,27 @@ const MealSlotEditor: React.FC<{
   // Colapso por CSS (`hidden`) y NO por render condicional: desmontar destruiría lo tipeado sin
   // guardar. Con 4 turnos el riesgo se multiplica por 4.
   const body = (children: React.ReactNode) => (
-    <div className={cn('px-3 pb-3 space-y-2', !open && 'hidden')}>{children}</div>
+    <div className={cn('space-y-2 border-t px-3 pt-2 pb-3', !open && 'hidden')}>{children}</div>
   );
 
   if (!canEdit) {
     return (
-      <div className="bg-white rounded-xl border border-slate-100 overflow-hidden">
+      <div className="overflow-hidden rounded-lg border bg-card">
         {header}
         {body(
           <>
             {lockedByPermission && (
-              <p className="text-[9px] text-slate-400 italic flex items-center gap-1">
-                <Lock className="w-3 h-3 shrink-0" /> Solo lectura — tu rol no puede cargar este turno.
+              <p className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <Lock className="size-3 shrink-0" aria-hidden="true" /> Solo lectura — tu rol no puede cargar este turno.
               </p>
             )}
             {meal ? (
               <>
-                {meal.detalle && <p className="text-[11px] font-semibold text-slate-800 whitespace-pre-wrap wrap-break-word">{meal.detalle}</p>}
-                {meal.observaciones && <p className="text-[11px] text-slate-500 whitespace-pre-wrap wrap-break-word mt-0.5">Obs: {meal.observaciones}</p>}
-                <p className="text-[9px] text-slate-400 mt-1">{fmtMealWhen(meal)}</p>
+                {meal.detalle && <p className="text-xs font-medium whitespace-pre-wrap wrap-break-word">{meal.detalle}</p>}
+                {meal.observaciones && <p className="mt-0.5 text-xs whitespace-pre-wrap wrap-break-word text-muted-foreground">Obs: {meal.observaciones}</p>}
+                <p className="mt-1 text-[10px] text-muted-foreground">{fmtMealWhen(meal)}</p>
               </>
-            ) : <p className="text-[10px] text-slate-300 italic">Sin carga</p>}
+            ) : <p className="text-xs text-muted-foreground">Sin carga</p>}
           </>
         )}
       </div>
@@ -432,73 +474,54 @@ const MealSlotEditor: React.FC<{
   const canSave = !entregada && !sinDieta && !!tipo && dirty && (tipo !== 'OTROS' || detalle.trim() !== '');
 
   return (
-    <div className="bg-white rounded-xl border border-slate-100 overflow-hidden">
+    <div className="overflow-hidden rounded-lg border bg-card">
       {header}
       {body(
         <>
-          {meal && <p className="text-[9px] text-slate-400 -mt-1">{fmtMealWhen(meal)}</p>}
+          {meal && <p className="text-[10px] text-muted-foreground">{fmtMealWhen(meal)}</p>}
 
           {/* Las 3 opciones para TODAS las dietas. En terapéuticas, "Otros" viene preseleccionado. */}
-          <div className="flex gap-1.5">
-            {(['MENU', 'OPCION', 'OTROS'] as const).map(op => (
-              <button key={op} type="button" onClick={() => pickTipo(op)} disabled={entregada || sinDieta}
-                aria-pressed={tipo === op}
-                className={cn('flex-1 h-9 rounded-lg text-[11px] font-bold uppercase tracking-wide border transition-all disabled:opacity-50 disabled:cursor-not-allowed',
-                  tipo === op ? TIPO_BTN_CLS[op] : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-100')}>
-                {op === 'MENU' ? 'Menú' : op === 'OPCION' ? 'Opción' : 'Otros'}
-              </button>
-            ))}
-          </div>
+          <TipoComandaSegmentado value={tipo} onPick={pickTipo} disabled={entregada || sinDieta} />
 
           {entregada && (
-            <div className="flex items-start gap-1.5 px-2 py-1.5 rounded-lg bg-emerald-50 border border-emerald-100">
-              <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0 mt-0.5" />
-              <p className="text-[9px] font-medium text-emerald-700">
-                Ya entregada — para modificarla o quitarla, volvela a pendiente desde el panel de Comandas.
-              </p>
-            </div>
+            <AvisoInline tono="exito" icono={CheckCircle2} compacto>
+              Ya entregada — para modificarla o quitarla, volvela a pendiente desde el panel de Comandas.
+            </AvisoInline>
           )}
           {/* Bloqueo "sin dieta": el titular no se puede pedir hasta que PROGAL tenga la dieta.
               El botón "Quitar" queda operativo a propósito — es la válvula de escape para anular
               una comanda pre-existente de un paciente que perdió la dieta. */}
           {sinDieta && (
-            <div className="flex items-start gap-1.5 px-2 py-1.5 rounded-lg bg-amber-50 border border-amber-200">
-              <ShieldAlert className="w-3 h-3 text-amber-600 shrink-0 mt-0.5" />
-              <p className="text-[9px] font-medium text-amber-800">
-                El paciente no tiene dieta cargada en PROGAL — no se puede pedir su comanda hasta que la dieta esté cargada.
-                {meal ? ' La comanda ya cargada solo se puede quitar.' : ''} Los acompañantes sí se pueden cargar.
-              </p>
-            </div>
+            <AvisoInline tono="aviso" icono={ShieldAlert} compacto>
+              El paciente no tiene dieta cargada en PROGAL — no se puede pedir su comanda hasta que la dieta esté cargada.
+              {meal ? ' La comanda ya cargada solo se puede quitar.' : ''} Los acompañantes sí se pueden cargar.
+            </AvisoInline>
           )}
           {preferOtros && !entregada && !sinDieta && (
-            <p className="text-[9px] text-indigo-600 font-medium">
+            <p className="text-[11px] text-muted-foreground">
               Dieta especial — sugerido "Otros" (podés cambiarlo)
             </p>
           )}
 
           {showNoPlanWarning && (
-            <div className="flex items-start gap-1.5 px-2 py-1.5 rounded-lg bg-amber-50 border border-amber-100">
-              <AlertCircle className="w-3 h-3 text-amber-500 shrink-0 mt-0.5" />
-              <p className="text-[9px] font-medium text-amber-700">
-                No hay comanda planificada para este turno y tipo. Escribila abajo.
-              </p>
-            </div>
+            <AvisoInline tono="aviso" icono={AlertCircle} compacto>
+              No hay comanda planificada para este turno y tipo. Escribila abajo.
+            </AvisoInline>
           )}
 
-          <input value={detalle} onChange={e => { editedRef.current = true; setDetalle(e.target.value); }} maxLength={500}
+          <Input value={detalle} onChange={e => { editedRef.current = true; setDetalle(e.target.value); }} maxLength={500}
             disabled={entregada || sinDieta}
+            aria-label="Detalle de la comanda"
+            aria-invalid={tipo === 'OTROS' && detalle.trim() === '' ? true : undefined}
             placeholder={tipo === 'OTROS' ? 'Comida / menú (obligatorio)' : 'Detalle de la comanda'}
-            className={cn('w-full rounded-lg border px-2.5 py-1.5 text-[11px] focus:outline-hidden focus:ring-2 focus:ring-emerald-200 disabled:bg-slate-50 disabled:text-slate-400',
-              tipo === 'OTROS' && detalle.trim() === '' ? 'border-indigo-300 bg-indigo-50/30' : 'border-slate-200')} />
-          <textarea value={obs} onChange={e => { editedRef.current = true; setObs(e.target.value); }} rows={2} maxLength={500}
+            className="h-9" />
+          <Textarea value={obs} onChange={e => { editedRef.current = true; setObs(e.target.value); }} rows={2} maxLength={500}
             disabled={entregada || sinDieta}
+            aria-label="Observaciones"
             placeholder="Observaciones (opcional)"
-            className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] resize-none focus:outline-hidden focus:ring-2 focus:ring-emerald-200 disabled:bg-slate-50 disabled:text-slate-400" />
+            className="min-h-16 resize-none" />
           {saveError && (
-            <div className="flex items-start gap-1.5 px-2 py-1.5 rounded-lg bg-red-50 border border-red-200">
-              <AlertCircle className="w-3 h-3 text-red-500 shrink-0 mt-0.5" />
-              <p className="text-[9px] font-medium text-red-700">{saveError}</p>
-            </div>
+            <AvisoInline tono="peligro" icono={AlertCircle} compacto>{saveError}</AvisoInline>
           )}
           <div className="flex gap-2">
             <Button size="sm" disabled={!canSave || saving}
@@ -511,7 +534,7 @@ const MealSlotEditor: React.FC<{
                   else setSaveError(r?.error ?? 'No se pudo guardar. Reintentá.');
                 } finally { setSaving(false); }
               }}
-              className="flex-1 h-8 text-[11px] font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40">
+              className="flex-1">
               {saving ? 'Guardando…' : meal ? 'Actualizar' : 'Guardar'}
             </Button>
             {/* "Quitar" es una anulación: bloqueada si el plato ya se entregó (congelado, como
@@ -519,8 +542,7 @@ const MealSlotEditor: React.FC<{
             {meal && onClear && (
               <Button variant="outline" size="sm" disabled={saving || entregada || removing}
                 title={entregada ? 'Ya entregada — volvela a pendiente desde el panel para poder quitarla' : undefined}
-                onClick={() => { setRemoveMotivo(''); setRemoving(true); }}
-                className="h-8 px-3 text-[11px] font-bold rounded-lg border-slate-200 text-slate-500 hover:bg-slate-100 disabled:opacity-40">
+                onClick={() => { setRemoveMotivo(''); setRemoving(true); }}>
                 Quitar
               </Button>
             )}
@@ -528,24 +550,24 @@ const MealSlotEditor: React.FC<{
 
           {/* Prompt inline de motivo al quitar (anular). Obligatorio, queda en el histórico. */}
           {removing && onClear && (
-            <div className="rounded-lg border border-red-200 bg-red-50/60 p-2 space-y-1.5">
-              <p className="text-[9px] font-bold uppercase tracking-wide text-red-600">Motivo de anulación</p>
-              <textarea
+            <div className="space-y-2 rounded-lg border border-red-200 bg-red-50 p-2.5">
+              <p className="text-[11px] font-semibold tracking-wider text-red-700 uppercase">Motivo de anulación</p>
+              <Textarea
                 autoFocus value={removeMotivo} onChange={e => setRemoveMotivo(e.target.value)} rows={2} maxLength={500}
+                aria-label="Motivo de anulación"
                 placeholder="Ej: el paciente pasó a ayuno, alta, cambio de dieta…"
-                className="w-full rounded-lg border border-red-200 px-2 py-1.5 text-[11px] resize-none focus:outline-hidden focus:ring-2 focus:ring-red-200" />
+                className="min-h-16 resize-none" />
               <div className="flex gap-2">
-                <Button size="sm" disabled={!removeMotivo.trim() || saving}
+                <Button variant="destructive" size="sm" disabled={!removeMotivo.trim() || saving}
                   onClick={async () => {
                     setSaving(true);
                     try { await onClear(bed, slot, removeMotivo.trim()); setRemoving(false); }
                     finally { setSaving(false); }
                   }}
-                  className="flex-1 h-7 text-[11px] font-bold rounded-lg bg-red-600 hover:bg-red-700 text-white disabled:opacity-40">
+                  className="flex-1">
                   {saving ? 'Quitando…' : 'Confirmar anulación'}
                 </Button>
-                <Button variant="outline" size="sm" disabled={saving} onClick={() => setRemoving(false)}
-                  className="h-7 px-3 text-[11px] font-bold rounded-lg border-slate-200 text-slate-500 hover:bg-slate-100">
+                <Button variant="outline" size="sm" disabled={saving} onClick={() => setRemoving(false)}>
                   Cancelar
                 </Button>
               </div>
@@ -553,9 +575,9 @@ const MealSlotEditor: React.FC<{
           )}
 
           {/* ── Acompañantes ─────────────────────────────────────────────── */}
-          <div className="pt-1 border-t border-slate-100 space-y-2">
+          <div className="space-y-2 border-t pt-2">
             {(acomps.length > 0 || drafts.length > 0) && (
-              <p className="text-[8px] font-bold uppercase tracking-widest text-slate-400 pt-1">Acompañante/s</p>
+              <p className={MICRO}>Acompañante/s</p>
             )}
             {acomps.map((a, i) => (
               <CompanionEditor key={a.spItemId} bed={bed} slot={slot} companion={a} index={i + 1}
@@ -568,8 +590,8 @@ const MealSlotEditor: React.FC<{
             ))}
             {acomps.length + drafts.length < MAX_ACOMPANANTES && (
               <button type="button" onClick={() => setDrafts(d => [...d, nextDraftId.current++])}
-                className="w-full h-8 rounded-lg border border-dashed border-slate-200 text-[10px] font-bold text-slate-400 hover:text-slate-600 hover:border-slate-300 flex items-center justify-center gap-1">
-                <Plus className="w-3 h-3" /> Agregar acompañante
+                className="flex h-8 w-full items-center justify-center gap-1.5 rounded-md border border-dashed text-xs font-medium text-muted-foreground transition-colors outline-hidden hover:border-foreground/30 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+                <Plus className="size-3.5" aria-hidden="true" /> Agregar acompañante
               </button>
             )}
           </div>
@@ -631,66 +653,62 @@ const CompanionEditor: React.FC<{
   const canSave = !entregada && !!tipo && dirty && (tipo !== 'OTROS' || detalle.trim() !== '');
 
   return (
-    <div className="rounded-lg border border-slate-100 bg-slate-50/60 p-2 space-y-1.5">
-      <div className="flex items-center justify-between">
-        <span className="text-[9px] font-bold uppercase tracking-wide text-slate-500">
+    <div className="space-y-2 rounded-lg border bg-muted/30 p-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
           Acompañante {index}
-          {entregada && <span className="ml-1.5 text-emerald-600">· Entregada</span>}
+          {entregada && <StatusBadge tono="exito">Entregada</StatusBadge>}
         </span>
         {/* Bloqueado si la bandeja del acompañante ya se entregó (congelada, como el titular).
             Un draft (sin companion) o un acompañante pendiente sí se pueden quitar. */}
-        <button type="button" disabled={entregada || removing}
+        <Button variant="ghost" size="icon-sm" disabled={entregada || removing}
           title={entregada ? 'Ya entregada — volvela a pendiente desde el panel para poder quitarla' : 'Eliminar acompañante'}
+          aria-label="Eliminar acompañante"
           onClick={() => {
             if (!companion) { onDiscardDraft?.(); return; }   // draft → se descarta sin red ni motivo
             setRemoveMotivo(''); setRemoving(true);            // guardado → pide motivo
           }}
-          className="w-5 h-5 rounded-sm flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-300">
-          <X className="w-3 h-3" />
-        </button>
+          className="size-7 text-muted-foreground hover:text-destructive">
+          <X className="size-3.5" />
+        </Button>
       </div>
 
       {/* Prompt inline de motivo al quitar un acompañante guardado (anular). */}
       {removing && companion && (
-        <div className="rounded-lg border border-red-200 bg-red-50/60 p-2 space-y-1.5">
-          <p className="text-[9px] font-bold uppercase tracking-wide text-red-600">Motivo de anulación</p>
-          <textarea
+        <div className="space-y-2 rounded-lg border border-red-200 bg-red-50 p-2.5">
+          <p className="text-[11px] font-semibold tracking-wider text-red-700 uppercase">Motivo de anulación</p>
+          <Textarea
             autoFocus value={removeMotivo} onChange={e => setRemoveMotivo(e.target.value)} rows={2} maxLength={500}
+            aria-label="Motivo de anulación"
             placeholder="Ej: cambio de dieta, ya no come el acompañante…"
-            className="w-full rounded-lg border border-red-200 px-2 py-1 text-[10px] resize-none focus:outline-hidden focus:ring-2 focus:ring-red-200" />
+            className="min-h-16 resize-none" />
           <div className="flex gap-2">
-            <Button size="sm" disabled={!removeMotivo.trim() || saving}
+            <Button variant="destructive" size="sm" disabled={!removeMotivo.trim() || saving}
               onClick={async () => {
                 setSaving(true);
                 try { await onRemove?.(bed, slot, companion.spItemId, removeMotivo.trim()); setRemoving(false); }
                 finally { setSaving(false); }
               }}
-              className="flex-1 h-7 text-[10px] font-bold rounded-lg bg-red-600 hover:bg-red-700 text-white disabled:opacity-40">
+              className="flex-1">
               {saving ? 'Quitando…' : 'Confirmar'}
             </Button>
-            <Button variant="outline" size="sm" disabled={saving} onClick={() => setRemoving(false)}
-              className="h-7 px-3 text-[10px] font-bold rounded-lg border-slate-200 text-slate-500 hover:bg-slate-100">
+            <Button variant="outline" size="sm" disabled={saving} onClick={() => setRemoving(false)}>
               Cancelar
             </Button>
           </div>
         </div>
       )}
-      <div className="flex gap-1">
-        {(['MENU', 'OPCION', 'OTROS'] as const).map(op => (
-          <button key={op} type="button" onClick={() => pickTipo(op)} aria-pressed={tipo === op}
-            className={cn('flex-1 h-7 rounded-sm text-[9px] font-bold uppercase border transition-all',
-              tipo === op ? TIPO_BTN_CLS[op] : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-100')}>
-            {op === 'MENU' ? 'Menú' : op === 'OPCION' ? 'Opción' : 'Otros'}
-          </button>
-        ))}
-      </div>
-      <input value={detalle} onChange={e => { editedRef.current = true; setDetalle(e.target.value); }} maxLength={500}
+      <TipoComandaSegmentado value={tipo} onPick={pickTipo} compacto />
+      <Input value={detalle} onChange={e => { editedRef.current = true; setDetalle(e.target.value); }} maxLength={500}
+        aria-label={`Detalle del acompañante ${index}`}
+        aria-invalid={tipo === 'OTROS' && detalle.trim() === '' ? true : undefined}
         placeholder={tipo === 'OTROS' ? 'Comida (obligatorio)' : 'Detalle'}
-        className="w-full rounded-sm border border-slate-200 px-2 py-1 text-[10px] focus:outline-hidden focus:ring-1 focus:ring-emerald-200" />
-      <input value={obs} onChange={e => { editedRef.current = true; setObs(e.target.value); }} maxLength={500}
+        className="h-8" />
+      <Input value={obs} onChange={e => { editedRef.current = true; setObs(e.target.value); }} maxLength={500}
+        aria-label={`Observaciones del acompañante ${index}`}
         placeholder="Observaciones (opcional)"
-        className="w-full rounded-sm border border-slate-200 px-2 py-1 text-[10px] focus:outline-hidden focus:ring-1 focus:ring-emerald-200" />
-      {error && <p className="text-[9px] font-medium text-red-600">{error}</p>}
+        className="h-8" />
+      {error && <p role="alert" className="text-xs font-medium text-destructive">{error}</p>}
       <Button size="sm" disabled={!canSave || saving}
         onClick={async () => {
           if (!tipo || !onSave) return;
@@ -702,7 +720,7 @@ const CompanionEditor: React.FC<{
             else setError(r?.error ?? 'No se pudo guardar. Reintentá.');
           } finally { setSaving(false); }
         }}
-        className="w-full h-7 text-[10px] font-bold rounded-sm bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40">
+        className="w-full">
         {saving ? 'Guardando…' : companion ? 'Actualizar' : 'Guardar'}
       </Button>
     </div>
@@ -718,28 +736,25 @@ const VolverAPreparacion: React.FC<{ bed: Bed; onConfirm: (bed: Bed) => Promise<
   const [error, setError] = useState<string | null>(null);
   if (!confirmando) {
     return (
-      <button onClick={() => { setError(null); setConfirmando(true); }}
-        className="w-full flex items-center justify-center gap-1.5 h-10 rounded-2xl border border-amber-300 bg-white text-amber-700 text-[11px] font-black uppercase tracking-widest hover:bg-amber-50">
-        <Undo2 className="w-3.5 h-3.5" /> Volver a "En preparación"
-      </button>
+      <Button variant="outline" onClick={() => { setError(null); setConfirmando(true); }} className="w-full">
+        <Undo2 /> Volver a "En preparación"
+      </Button>
     );
   }
   return (
-    <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-3 flex flex-col gap-2">
-      <p className="text-[11px] font-medium text-amber-900">
+    <div className="space-y-2.5 rounded-lg border border-amber-200 bg-amber-50 p-3">
+      <p className="text-sm text-amber-700">
         ¿La habitación está <strong>sucia</strong>? Se vuelve a mostrar <strong>En preparación</strong> hasta que una azafata la marque limpia de nuevo. Si ya estaba consolidada, actualicen también PROGAL.
       </p>
-      {error && <p className="text-[10px] font-bold text-red-600">{error}</p>}
+      {error && <p role="alert" className="text-xs font-medium text-destructive">{error}</p>}
       <div className="flex gap-2">
-        <button disabled={busy}
-          onClick={async () => { setBusy(true); setError(null); const r = await onConfirm(bed); setBusy(false); if (r.ok) onDone(); else setError(r.error ?? 'No se pudo.'); }}
-          className="flex-1 h-9 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-black uppercase tracking-widest disabled:opacity-50">
+        <Button size="sm" disabled={busy} className="flex-1"
+          onClick={async () => { setBusy(true); setError(null); const r = await onConfirm(bed); setBusy(false); if (r.ok) onDone(); else setError(r.error ?? 'No se pudo.'); }}>
           {busy ? 'Guardando…' : 'Sí, está sucia'}
-        </button>
-        <button disabled={busy} onClick={() => setConfirmando(false)}
-          className="flex-1 h-9 rounded-xl border border-slate-300 bg-white text-slate-600 text-[10px] font-black uppercase tracking-widest hover:bg-slate-50">
+        </Button>
+        <Button variant="outline" size="sm" disabled={busy} onClick={() => setConfirmando(false)} className="flex-1">
           No
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -788,11 +803,7 @@ const CirugiaBedBlock: React.FC<{
   const flagActivo = !!bed.goingToSurgery; // marca "va a cirugía" de Admisión
   // La fecha probable de cirugía (EVE_FECHA_PROBABLE_CIRUGIA) viene de PROGAL a medianoche (sin hora
   // real) → se muestra SOLO fecha; con timeStyle salía un "00:00" confuso. Igual que el modal (fmtDateOnly).
-  const fmtFechaProbable = (iso?: string) => {
-    if (!iso) return '';
-    const d = new Date(iso);
-    return isNaN(d.getTime()) ? '' : d.toLocaleDateString('es-AR');
-  };
+  const fmtFechaProbable = (iso?: string) => fechaSegura(iso);
 
   // Cama con operatoria viva → pill + (Iniciar dieta si está de regreso de cirugía).
   if (cx) {
@@ -811,75 +822,72 @@ const CirugiaBedBlock: React.FC<{
     // Desde "Listo para cirugía" también: anula la marca (permiso cirugia_volver_listo, pedido de Enfermería 29/10/2026).
     const retro = cirugiaRetrocesoDe(cx.estado);
     const puedoRetroceder = !!onCirugiaRetroceder && !!retro && can(currentUser, retro.permiso) && !soyOrigenConCambio;
+    const infoCx = estadoCirugia(cx.estado);
     return (
-      <div className="rounded-2xl p-3.5 border border-slate-200 bg-slate-50/70 flex flex-col gap-2.5">
-        <div className="flex items-center gap-2">
-          <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-tight', CIRUGIA_PILL_CLASS[cx.estado])}>
-            <Activity className="w-3 h-3" strokeWidth={3} /> Cx · {CIRUGIA_ESTADO_LABEL[cx.estado]}
-          </span>
+      <div className="flex flex-col gap-2.5 rounded-lg border bg-card p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusBadge tono={infoCx.tono}>
+            <Activity className="size-3" aria-hidden="true" /> Cx · {CIRUGIA_ESTADO_LABEL[cx.estado]}
+          </StatusBadge>
           {soyDestino && (
-            <span className="text-[10px] font-bold text-violet-700">Cama destino</span>
+            <span className="text-xs font-medium text-muted-foreground">Cama destino</span>
           )}
         </div>
         {/* Cama DESTINO: llega un paciente de otra cama → mostrar quién y de dónde. */}
         {soyDestino && (
-          <p className="text-[11px] font-medium text-slate-600">
-            Llega de cirugía: <strong>{cx.pacienteNombre ?? 'paciente'}</strong> (viene de {formatBedName(cx.camaOrigen)})
+          <p className="text-sm text-muted-foreground">
+            Llega de cirugía: <strong className="font-semibold text-foreground">{cx.pacienteNombre ?? 'paciente'}</strong> (viene de {formatBedName(cx.camaOrigen)})
           </p>
         )}
         {/* Cama ORIGEN de un cambio: el paciente NO vuelve acá, se fue a la destino. */}
         {soyOrigenConCambio && (
-          <p className="text-[11px] font-medium text-slate-600">
-            El paciente volvió de cirugía a <strong>{formatBedName(cx.camaDestino!)}</strong> — iniciá la dieta en esa cama.
+          <p className="text-sm text-muted-foreground">
+            El paciente volvió de cirugía a <strong className="font-semibold text-foreground">{formatBedName(cx.camaDestino!)}</strong> — iniciá la dieta en esa cama.
           </p>
         )}
-        {error && <p className="text-[10px] font-bold text-red-600">{error}</p>}
+        {error && <p role="alert" className="text-xs font-medium text-destructive">{error}</p>}
         {cx.estado === 'VAN_A_BUSCAR' && onCirugiaEnTraslado && (
-          <button disabled={busy}
+          <Button disabled={busy} className="w-full"
             onClick={async () => {
               setBusy(true); setError(null);
               const r = await onCirugiaEnTraslado(cx.id);
               setBusy(false);
               if (r.ok) onDone(); else setError(r.error ?? 'No se pudo confirmar.');
-            }}
-            className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-yellow-500 hover:bg-yellow-600 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-xs disabled:opacity-50">
-            <ArrowRight className="w-4 h-4" /> {busy ? 'Registrando…' : 'En traslado a cirugía'}
-          </button>
+            }}>
+            <ArrowRight /> {busy ? 'Registrando…' : 'En traslado a cirugía'}
+          </Button>
         )}
         {puedoTolerancia && onCirugiaTolerancia && (
-          <button disabled={busy}
+          <Button disabled={busy} className="w-full"
             onClick={async () => {
               setBusy(true); setError(null);
               const r = await onCirugiaTolerancia(cx.id);
               setBusy(false);
               if (r.ok) onDone(); else setError(r.error ?? 'No se pudo confirmar.');
-            }}
-            className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-xs disabled:opacity-50">
-            <CheckCircle2 className="w-4 h-4" /> {busy ? 'Confirmando…' : 'Iniciar dieta'}
-          </button>
+            }}>
+            <CheckCircle2 /> {busy ? 'Confirmando…' : 'Iniciar dieta'}
+          </Button>
         )}
         {puedoRetroceder && (confirmando === 'retroceder' ? (
-          <div className="rounded-xl border border-amber-200 bg-white p-2.5 flex flex-col gap-2">
-            <p className="text-[11px] font-medium text-slate-700">
+          <div className="space-y-2.5 rounded-lg border border-amber-200 bg-amber-50 p-3">
+            <p className="text-sm text-amber-700">
               ¿<strong>{retro!.pregunta}</strong>? Queda registrado en la trayectoria del paciente.
             </p>
             <div className="flex gap-2">
-              <button disabled={busy} onClick={() => run('retroceder', () => onCirugiaRetroceder!(cx.id), 'No se pudo volver el paso.')}
-                className="flex-1 h-9 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-black uppercase tracking-widest disabled:opacity-50">
+              <Button size="sm" disabled={busy} className="flex-1" onClick={() => run('retroceder', () => onCirugiaRetroceder!(cx.id), 'No se pudo volver el paso.')}>
                 {busy ? 'Volviendo…' : 'Sí, volver'}
-              </button>
-              <button disabled={busy} onClick={() => setConfirmando(null)}
-                className="flex-1 h-9 rounded-xl border border-slate-300 bg-white text-slate-600 text-[10px] font-black uppercase tracking-widest hover:bg-slate-50">
+              </Button>
+              <Button variant="outline" size="sm" disabled={busy} className="flex-1" onClick={() => setConfirmando(null)}>
                 No
-              </button>
+              </Button>
             </div>
           </div>
         ) : (
-          <button disabled={busy} onClick={() => { setError(null); setConfirmando('retroceder'); }}
+          <Button variant="outline" disabled={busy} onClick={() => { setError(null); setConfirmando('retroceder'); }}
             title={`${retro!.pregunta} (corrige un paso marcado por error)`}
-            className="w-full flex items-center justify-center gap-1.5 h-9 rounded-xl border border-slate-300 bg-white text-slate-600 text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 disabled:opacity-50">
-            <Undo2 className="w-3.5 h-3.5" /> Volver un paso
-          </button>
+            className="w-full">
+            <Undo2 /> Volver un paso
+          </Button>
         ))}
       </div>
     );
@@ -904,23 +912,22 @@ const CirugiaBedBlock: React.FC<{
   const bloq = bed.cirugiaBloqueante;
   const bloqDesde = bloq?.updatedAt ? new Date(bloq.updatedAt) : null;
   const bloqDesdeTxt = bloqDesde && !isNaN(bloqDesde.getTime())
-    ? ` desde el ${bloqDesde.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })} ${bloqDesde.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })}`
+    ? ` desde el ${diaMes(bloqDesde)} ${hora(bloqDesde)}`
     : '';
   const previaFecha = previa?.createdAt ? new Date(previa.createdAt) : null;
-  const previaFechaTxt = previaFecha && !isNaN(previaFecha.getTime()) ? ` el ${previaFecha.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}` : '';
+  const previaFechaTxt = previaFecha && !isNaN(previaFecha.getTime()) ? ` el ${diaMes(previaFecha)}` : '';
 
   return (
-    <div className={cn('rounded-2xl p-3.5 border flex flex-col gap-2.5',
-      puedeListo || puedePrevia ? 'border-amber-200 bg-amber-50/50' : 'border-slate-200 bg-slate-50/70')}>
+    <div className="flex flex-col gap-2.5 rounded-lg border bg-card p-3">
       {previa && (
         <div className="flex items-start gap-2">
-          <Info className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
-          <p className="text-[11px] font-medium text-slate-600 wrap-break-word">
+          <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <p className="text-sm wrap-break-word text-muted-foreground">
             Cirugía previa registrada (fuera de MediFlow){previaFechaTxt}.
             {!flagActivo && ' Para una nueva cirugía, Admisión tiene que habilitarlo con "Va a cirugía".'}
             {onAnularCirugiaPrevia && (
-              <button disabled={busy} onClick={() => run('anular', () => onAnularCirugiaPrevia(previa.id, bed), 'No se pudo deshacer.')}
-                className="ml-1.5 font-bold text-slate-700 underline underline-offset-2 hover:text-slate-900 disabled:opacity-50">
+              <button type="button" disabled={busy} onClick={() => run('anular', () => onAnularCirugiaPrevia(previa.id, bed), 'No se pudo deshacer.')}
+                className="ml-1.5 rounded-sm font-medium text-foreground underline underline-offset-2 outline-hidden hover:text-foreground/80 focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
                 {accion === 'anular' ? 'Deshaciendo…' : 'Deshacer'}
               </button>
             )}
@@ -928,61 +935,50 @@ const CirugiaBedBlock: React.FC<{
         </div>
       )}
       {autoQ && (
-        <div className="flex items-start gap-2">
-          <Activity className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" strokeWidth={2.5} />
-          <p className="text-[11px] font-medium text-amber-800">
-            Paciente quirúrgico (PROGAL){bed.expectedSurgeryDate ? ` · cirugía probable: ${fmtFechaProbable(bed.expectedSurgeryDate)}` : ''}.
-          </p>
-        </div>
+        <AvisoInline tono="aviso" icono={Activity}>
+          Paciente quirúrgico (PROGAL){bed.expectedSurgeryDate ? ` · cirugía probable: ${fmtFechaProbable(bed.expectedSurgeryDate)}` : ''}.
+        </AvisoInline>
       )}
       {flagActivo && (
-        <div className="flex items-start gap-2">
-          <Activity className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" strokeWidth={2.5} />
-          <p className="text-[11px] font-medium text-amber-800">
-            {esQuirurgico ? 'Nueva cirugía autorizada por Admisión' : 'Marcado para cirugía por Admisión'}{bed.goingToSurgeryBy ? ` (${bed.goingToSurgeryBy})` : ''}.
-          </p>
-        </div>
+        <AvisoInline tono="aviso" icono={Activity}>
+          {esQuirurgico ? 'Nueva cirugía autorizada por Admisión' : 'Marcado para cirugía por Admisión'}{bed.goingToSurgeryBy ? ` (${bed.goingToSurgeryBy})` : ''}.
+        </AvisoInline>
       )}
       {bloq && (
         <div className="flex items-start gap-2">
-          <Info className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
-          <p className="text-[11px] font-medium text-slate-600 wrap-break-word">
+          <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <p className="text-sm wrap-break-word text-muted-foreground">
             {bloq.estado === 'EN_DEVOLUCION'
-              ? <>Esta cama tiene pendiente "Iniciar dieta" de <strong>{bloq.pacienteNombre || 'otro paciente'}</strong> (Regreso de cirugía{bloqDesdeTxt}).</>
-              : <>De esta cama salió una cirugía de <strong>{bloq.pacienteNombre || 'otro paciente'}</strong> que sigue abierta ({CIRUGIA_ESTADO_LABEL[bloq.estado]}{bloqDesdeTxt}).</>}
+              ? <>Esta cama tiene pendiente "Iniciar dieta" de <strong className="font-semibold text-foreground">{bloq.pacienteNombre || 'otro paciente'}</strong> (Regreso de cirugía{bloqDesdeTxt}).</>
+              : <>De esta cama salió una cirugía de <strong className="font-semibold text-foreground">{bloq.pacienteNombre || 'otro paciente'}</strong> que sigue abierta ({CIRUGIA_ESTADO_LABEL[bloq.estado]}{bloqDesdeTxt}).</>}
             {' '}No impide marcar a este paciente.
           </p>
         </div>
       )}
-      {error && <p className="text-[10px] font-bold text-red-600">{error}</p>}
+      {error && <p role="alert" className="text-xs font-medium text-destructive">{error}</p>}
       {puedeListo && (
-        <button disabled={busy}
-          onClick={() => run('listo', () => onMarcarListo!(bed), 'No se pudo marcar.')}
-          className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-xs disabled:opacity-50">
-          <Activity className="w-4 h-4" /> {accion === 'listo' ? 'Marcando…' : 'Listo para cirugía'}
-        </button>
+        <Button disabled={busy} className="w-full" onClick={() => run('listo', () => onMarcarListo!(bed), 'No se pudo marcar.')}>
+          <Activity /> {accion === 'listo' ? 'Marcando…' : 'Listo para cirugía'}
+        </Button>
       )}
       {puedePrevia && (confirmando === 'previa' ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-2.5 flex flex-col gap-2">
-          <p className="text-[11px] font-medium text-slate-700">
+        <div className="space-y-2.5 rounded-lg border bg-muted/40 p-3">
+          <p className="text-sm">
             ¿Este paciente <strong>ya se operó en esta internación</strong>? Queda registrado, la "Q" deja de mostrarse y una nueva cirugía va a necesitar la autorización de Admisión.
           </p>
           <div className="flex gap-2">
-            <button disabled={busy} onClick={() => run('previa', () => onCirugiaPrevia!(bed), 'No se pudo registrar.')}
-              className="flex-1 h-9 rounded-xl bg-slate-700 hover:bg-slate-800 text-white text-[10px] font-black uppercase tracking-widest disabled:opacity-50">
+            <Button size="sm" disabled={busy} className="flex-1" onClick={() => run('previa', () => onCirugiaPrevia!(bed), 'No se pudo registrar.')}>
               {busy ? 'Registrando…' : 'Sí, ya se operó'}
-            </button>
-            <button disabled={busy} onClick={() => setConfirmando(null)}
-              className="flex-1 h-9 rounded-xl border border-slate-300 bg-white text-slate-600 text-[10px] font-black uppercase tracking-widest hover:bg-slate-50">
+            </Button>
+            <Button variant="outline" size="sm" disabled={busy} className="flex-1" onClick={() => setConfirmando(null)}>
               No
-            </button>
+            </Button>
           </div>
         </div>
       ) : (
-        <button disabled={busy} onClick={() => { setError(null); setConfirmando('previa'); }}
-          className="w-full flex items-center justify-center gap-1.5 h-9 rounded-xl border border-slate-300 bg-white text-slate-600 text-[10px] font-black uppercase tracking-widest hover:bg-slate-50 disabled:opacity-50">
-          <CheckCircle2 className="w-3.5 h-3.5" /> Ya se operó (fuera de MediFlow)
-        </button>
+        <Button variant="outline" disabled={busy} onClick={() => { setError(null); setConfirmando('previa'); }} className="w-full">
+          <CheckCircle2 /> Ya se operó (fuera de MediFlow)
+        </Button>
       ))}
     </div>
   );
@@ -1014,28 +1010,26 @@ const VaCirugiaToggle: React.FC<{
     setBusy(false);
     if (!r.ok) setError(r.error ?? 'No se pudo actualizar.');
   };
+  const titulo = cxViva ? 'Cirugía en curso' : sinCodigo ? 'Paciente sin código Gamma' : checked ? 'Desmarcar' : 'Marcar va a cirugía';
   return (
-    <div className="rounded-xl p-3 border border-violet-100 bg-violet-50/50">
-      <div className="flex items-center justify-between gap-2">
+    <div className="rounded-lg border bg-card p-3">
+      <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[8px] font-bold uppercase text-violet-500 mb-0.5">Va a cirugía</p>
-          <p className="text-[11px] font-medium text-violet-900">
+          <p className={cn(MICRO, 'mb-0.5')}>Va a cirugía</p>
+          <p className="text-sm">
             {autoQ ? 'Paciente quirúrgico (PROGAL) — ya habilitado'
               : esQuirurgico ? (checked ? `Nueva cirugía autorizada${bed.goingToSurgeryBy ? ` por ${bed.goingToSurgeryBy}` : ''}` : 'Ya se operó — autorizar nueva cirugía (nuevo consentimiento)')
               : checked ? `Marcado${bed.goingToSurgeryBy ? ` por ${bed.goingToSurgeryBy}` : ''}`
               : 'Habilitar cirugía para este paciente'}
           </p>
         </div>
-        <button type="button" role="switch" aria-checked={checked} disabled={disabled} onClick={toggle}
-          title={cxViva ? 'Cirugía en curso' : sinCodigo ? 'Paciente sin código Gamma' : checked ? 'Desmarcar' : 'Marcar va a cirugía'}
-          className={cn('relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-40',
-            checked ? 'bg-violet-600' : 'bg-slate-300')}>
-          <span className={cn('inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform', checked ? 'translate-x-5' : 'translate-x-0.5')} />
-        </button>
+        <Switch checked={checked} disabled={disabled} onCheckedChange={() => toggle()} title={titulo} aria-label={titulo} />
       </div>
-      {cxViva && <p className="text-[10px] text-violet-500 mt-1">Cirugía en curso: el flag ya no aplica.</p>}
-      {sinCodigo && <p className="text-[10px] text-amber-600 mt-1">El paciente no tiene código Gamma: no se puede marcar.</p>}
-      {error && <p className="text-[10px] font-bold text-red-600 mt-1">{error}</p>}
+      {cxViva && <p className="mt-1 text-xs text-muted-foreground">Cirugía en curso: el flag ya no aplica.</p>}
+      {sinCodigo && (
+        <AvisoInline tono="aviso" icono={AlertCircle} compacto className="mt-2">El paciente no tiene código Gamma: no se puede marcar.</AvisoInline>
+      )}
+      {error && <p role="alert" className="mt-1 text-xs font-medium text-destructive">{error}</p>}
     </div>
   );
 };
@@ -1051,119 +1045,32 @@ const RoutineCleaningBlock: React.FC<{
   const [busy, setBusy] = useState(false);
   if (bed.status !== BedStatus.OCCUPIED || (!onStart && !onFinish)) return null;
   const active = !!bed.routineCleaningActive;
-  const fmtFecha = (iso?: string) => {
-    if (!iso) return '';
-    const d = new Date(iso);
-    return isNaN(d.getTime()) ? '' : d.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
-  };
   if (active) {
     return (
-      <div className="rounded-2xl p-3.5 border border-sky-200 bg-sky-50/60 flex flex-col gap-2.5">
-        <div className="flex items-center gap-2 text-[11px] font-bold text-sky-800">
-          <SprayCan className="w-4 h-4" strokeWidth={2.5} /> Limpieza de rutina en curso
+      <div className="flex flex-col gap-2.5 rounded-lg border bg-card p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusBadge tono={MARCAS_CAMA.rutina.tono}><SprayCan className="size-3" aria-hidden="true" /> Limpieza de rutina en curso</StatusBadge>
         </div>
         {bed.routineCleaningBy && (
-          <p className="text-[11px] font-medium text-slate-500">
-            Iniciada por {bed.routineCleaningBy}{bed.routineCleaningAt ? ` · ${fmtFecha(bed.routineCleaningAt)}` : ''}
+          <p className="text-xs text-muted-foreground">
+            Iniciada por {bed.routineCleaningBy}{bed.routineCleaningAt ? ` · ${fechaHoraSegura(bed.routineCleaningAt)}` : ''}
           </p>
         )}
         {onFinish && (
-          <button disabled={busy}
-            onClick={async () => { setBusy(true); await onFinish(bed); setBusy(false); onDone(); }}
-            className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-sky-600 hover:bg-sky-700 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-xs disabled:opacity-50">
-            <Check className="w-4 h-4" /> {busy ? 'Finalizando…' : 'Finalizar limpieza de rutina'}
-          </button>
+          <Button disabled={busy} className="w-full"
+            onClick={async () => { setBusy(true); await onFinish(bed); setBusy(false); onDone(); }}>
+            <Check /> {busy ? 'Finalizando…' : 'Finalizar limpieza de rutina'}
+          </Button>
         )}
       </div>
     );
   }
   return onStart ? (
-    <div className="rounded-2xl p-3.5 border border-sky-200 bg-sky-50/40">
-      <button disabled={busy}
-        onClick={async () => { setBusy(true); await onStart(bed); setBusy(false); onDone(); }}
-        className="w-full flex items-center justify-center gap-2 h-11 rounded-2xl bg-sky-500 hover:bg-sky-600 text-white font-black text-xs uppercase tracking-widest active:scale-[0.98] transition-all shadow-xs disabled:opacity-50">
-        <SprayCan className="w-4 h-4" /> {busy ? 'Iniciando…' : 'Iniciar limpieza de rutina'}
-      </button>
-    </div>
+    <Button variant="outline" disabled={busy} className="w-full"
+      onClick={async () => { setBusy(true); await onStart(bed); setBusy(false); onDone(); }}>
+      <SprayCan /> {busy ? 'Iniciando…' : 'Iniciar limpieza de rutina'}
+    </Button>
   ) : null;
-};
-
-// Filtro de rango de FECHA DE INTERNACIÓN con el date-picker propio (no el input nativo, que
-// pinta el calendario del navegador y rompe el diseño). Desktop → Popover con los dos calendarios;
-// Mobile → Dialog (más grande y usable con el dedo). Ambos comparten el mismo estado.
-const AdmissionDateFilter: React.FC<{
-  from: string; to: string;
-  setFrom: (s: string) => void; setTo: (s: string) => void;
-}> = ({ from, to, setFrom, setTo }) => {
-  const [openDesk, setOpenDesk] = useState(false);
-  const [openMob, setOpenMob]   = useState(false);
-  const active = !!(from || to);
-  const clear = () => { setFrom(''); setTo(''); };
-  const chipClass = cn(
-    'flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border',
-    active ? 'bg-slate-900 text-white border-slate-900 shadow-xs' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50',
-  );
-  const label = active
-    ? `${from ? formatDateReadable(from) : '…'} – ${to ? formatDateReadable(to) : '…'}`
-    : 'Fecha internación';
-  const chipInner = (<><CalendarIcon className="w-2.5 h-2.5" />{label}<ChevronDown className="w-2.5 h-2.5" /></>);
-  const dosCalendarios = (
-    <div className="flex flex-col sm:flex-row gap-4">
-      <div>
-        <p className="text-[9px] font-bold uppercase text-slate-400 mb-1.5 px-1">Desde</p>
-        <Calendar mode="single" required selected={deIso(from)} onSelect={(dia: Date) => setFrom(aIso(dia))} />
-      </div>
-      <div>
-        <p className="text-[9px] font-bold uppercase text-slate-400 mb-1.5 px-1">Hasta</p>
-        <Calendar mode="single" required selected={deIso(to)} onSelect={(dia: Date) => setTo(aIso(dia))} />
-      </div>
-    </div>
-  );
-
-  return (
-    <>
-      {/* Desktop → Popover */}
-      <div className="hidden md:block">
-        <Popover open={openDesk} onOpenChange={setOpenDesk}>
-          <PopoverTrigger asChild><button type="button" className={chipClass}>{chipInner}</button></PopoverTrigger>
-          <PopoverContent align="start" className="w-auto p-3">
-            <div className="flex items-center justify-between px-1 pb-2 mb-2 border-b border-slate-100">
-              <span className="text-[9px] font-bold uppercase text-slate-400">Fecha de internación</span>
-              {active && <button onClick={clear} className="text-[9px] font-bold text-red-500">Limpiar</button>}
-            </div>
-            {dosCalendarios}
-          </PopoverContent>
-        </Popover>
-      </div>
-      {/* Mobile → Dialog */}
-      <div className="md:hidden">
-        <button type="button" onClick={() => setOpenMob(true)} className={chipClass}>{chipInner}</button>
-        <Dialog open={openMob} onOpenChange={setOpenMob}>
-          {/* Modal canónico (DESIGN §4.1) — solo mobile: los dos calendarios apilados en el cuerpo con scroll. */}
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>Fecha de internación</DialogTitle>
-              <DialogDescription>Elegí el rango desde / hasta.</DialogDescription>
-            </DialogHeader>
-            <DialogBody className="flex flex-col items-center gap-4 space-y-0">
-              <div className="w-full">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Desde</p>
-                <Calendar mode="single" required selected={deIso(from)} onSelect={(dia: Date) => setFrom(aIso(dia))} />
-              </div>
-              <div className="w-full">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Hasta</p>
-                <Calendar mode="single" required selected={deIso(to)} onSelect={(dia: Date) => setTo(aIso(dia))} />
-              </div>
-            </DialogBody>
-            <DialogFooter>
-              {active && <Button type="button" variant="outline" onClick={clear}>Limpiar</Button>}
-              <Button type="button" onClick={() => setOpenMob(false)} className="min-w-[140px]">Listo</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
-    </>
-  );
 };
 
 export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, bedsLoading, bedsError, isolatedBeds = new Set(), onEnrichBed, onFetchPatientTickets, onRefresh, onMarkClean, onUndoClean, onRevertirLimpieza, onSaveMeal, onClearMeal, onSaveCompanion, onClearCompanion, onMarcarListo, onCirugiaEnTraslado, onCirugiaTolerancia, onCirugiaRetroceder, onCirugiaPrevia, onAnularCirugiaPrevia, onStartRoutineCleaning, onFinishRoutineCleaning, onMarcarVaCirugia, onDesmarcarVaCirugia }) => {
@@ -1306,12 +1213,6 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   // que `cargar_dieta` implicaba ver): quien pide almuerzo necesita ver qué hay en los demás.
   const canViewComanda = can(currentUser, 'ver_dieta') || canLoadAnyMealSlot(currentUser);
 
-  // Color del aislamiento de una cama (el primer tipo activo define el color).
-  const getIsolationColor = (bed: Bed) => {
-    const primary = bed.isolations?.[0]?.color;
-    return primary ? (ISOLATION_COLORS[primary] ?? DEFAULT_ISO_COLOR) : DEFAULT_ISO_COLOR;
-  };
-
   // Aislamientos activos de una cama (vacío si no hay). Vienen del enrich (PROGAL).
   const getIsolationTypes = (bed: Bed): IsolationEntry[] => bed.isolations ?? [];
 
@@ -1399,15 +1300,13 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   const [showDietOnly, setShowDietOnly] = useState(false);
   const [showFastingOnly, setShowFastingOnly] = useState(false);
   const [showCirugiaOnly, setShowCirugiaOnly] = useState(false);
-  const [showFilters, setShowFilters] = useState(false); // colapsa los chips en mobile (desktop siempre visibles)
+  // Barra de filtros (DESIGN §4.7): abierta de entrada en desktop, cerrada en mobile (como Operativa).
+  const [verFiltros, setVerFiltros] = useState(() => typeof window === 'undefined' || window.innerWidth >= 768);
   const [financierFilters, setFinancierFilters] = useState<Set<string>>(new Set());
-  const [financierSearch, setFinancierSearch] = useState('');
 
   const [physicianFilters, setPhysicianFilters] = useState<Set<string>>(new Set());
-  const [physicianSearch, setPhysicianSearch] = useState('');
 
   const [dietTypeFilters, setDietTypeFilters] = useState<Set<string>>(new Set());
-  const [dietTypeSearch, setDietTypeSearch]   = useState('');
   const [admissionTypeFilters, setAdmissionTypeFilters] = useState<Set<string>>(new Set());
   // Filtro por FECHA DE INTERNACIÓN (bed.admissionDate del enrich). Rango [desde, hasta] en
   // YYYY-MM-DD; cualquiera de los dos puede quedar vacío (bound abierto).
@@ -1441,8 +1340,16 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
   // enfermería (clínico→quirúrgico), sin falsear el dato de la cama.
   const QUIRURGICA_LABEL = 'Quirúrgica';
 
-  // Cantidad de filtros activos (chips) — feedback en el botón "Filtros" de mobile.
+  // El "todos" es sobre los sectores PERMITIDOS: una azafata de Piso 8 con su único sector
+  // tildado tiene que leer "todos los sectores", no "1 sector".
+  const areaFiltersVisibles = allowedAreas.filter(a => areaFilters.has(a)).length;
+  const todosLosSectores = areaFiltersVisibles === allowedAreas.length;
+
+  // Cantidad de filtros activos — badge del botón "Filtros" y habilita "Limpiar" (DESIGN §4.7).
+  // El sector cuenta como uno cuando no están todos: a Admisión le arranca en 1 porque URP y
+  // Sueño vienen ocultos (así se entiende por qué no aparecen).
   const activeFilterCount =
+    (todosLosSectores ? 0 : 1) +
     statusFilters.size +
     (showIsolatedOnly ? 1 : 0) +
     (showDietOnly ? 1 : 0) +
@@ -1467,33 +1374,28 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     return [...s].sort((a, b) => a.localeCompare(b, 'es'));
   }, [beds, cirugiaBeds]);
 
-  const toggleArea = (area: string) => {
-    setAreaFilters((prev: Set<string>) => {
-      const next = new Set(prev);
-      next.has(area) ? next.delete(area) : next.add(area);
-      return next;
-    });
+  // "Limpiar" de la barra: vuelve todo a cero (DESIGN §4.7 regla 4), sectores incluidos (todos los
+  // permitidos para el rol — el techo por rol no se toca, vive en el filtro).
+  const limpiarFiltros = () => {
+    setAreaFilters(new Set<string>(allowedAreas));
+    setStatusFilters(new Set());
+    setShowIsolatedOnly(false);
+    setShowDietOnly(false);
+    setShowFastingOnly(false);
+    setShowCirugiaOnly(false);
+    setFinancierFilters(new Set());
+    setPhysicianFilters(new Set());
+    setDietTypeFilters(new Set());
+    setAdmissionTypeFilters(new Set());
+    setAdmissionFrom('');
+    setAdmissionTo('');
   };
-
-  const toggleStatus = (status: string) => {
-    setStatusFilters((prev: Set<string>) => {
-      const next = new Set(prev);
-      next.has(status) ? next.delete(status) : next.add(status);
-      return next;
-    });
-  };
-
-  // El "todos" del label es sobre los sectores PERMITIDOS: una azafata de Piso 8 con su
-  // único sector tildado tiene que leer "Todos los sectores", no "1 sector".
-  const areaFiltersVisibles = allowedAreas.filter(a => areaFilters.has(a)).length;
-  const areaFilterLabel = areaFiltersVisibles === allowedAreas.length
-    ? 'Todos los sectores'
-    : areaFiltersVisibles === 0
-      ? 'Ningún sector'
-      : `${areaFiltersVisibles} sector${areaFiltersVisibles > 1 ? 'es' : ''}`;
 
   // Filter beds based on user role, assigned areas and search filters
-  const filteredBeds = useMemo(() => {
+  // El estado se aplica AL FINAL: `bedsSinEstado` (todo lo demás aplicado) da los conteos por estado
+  // del resumen y del filtro, que no pueden caer a 0 cuando se elige un estado. Los filtros son todos
+  // `filter` independientes, así que el orden no cambia el resultado.
+  const { filteredBeds, bedsSinEstado } = useMemo(() => {
     // Techo por rol, ANTES que cualquier filtro de UI y sin importar `areaFilters`.
     //
     // Va acá y no solo en el desplegable a propósito: el desplegable es presentación, y
@@ -1530,9 +1432,6 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     }
     if (areaFiltersVisibles < allowedAreas.length) {
       result = result.filter(bed => areaFilters.has(bed.area));
-    }
-    if (statusFilters.size > 0) {
-      result = result.filter(bed => statusFilters.has(bed.status));
     }
     if (showIsolatedOnly) {
       result = result.filter(bed => isolatedBeds.has(bed.label));
@@ -1574,7 +1473,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
       });
     }
 
-    return result;
+    const sinEstado = result;
+    const conEstado = statusFilters.size > 0 ? sinEstado.filter(bed => statusFilters.has(bed.status)) : sinEstado;
+    return { filteredBeds: conEstado, bedsSinEstado: sinEstado };
   }, [beds, currentUser, searchFilter, areaFilters, statusFilters, allowedAreas, areaFiltersVisibles, bedTicketMap, showIsolatedOnly, isolatedBeds, showDietOnly, dietBeds, showFastingOnly, fastingBeds, showCirugiaOnly, cirugiaBeds, financierFilters, physicianFilters, dietTypeFilters, admissionTypeFilters, admissionFrom, admissionTo]);
 
   // Conteo de camas para el badge del header: excluimos HRA ("Sala de Espera"),
@@ -1584,6 +1485,59 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     () => filteredBeds.filter(bed => bed.area !== Area.HRA).length,
     [filteredBeds],
   );
+
+  // Conteo por estado de lo que se ve (todos los filtros menos el de estado): resumen siempre
+  // visible arriba de la grilla y labels de las opciones del filtro "Estado".
+  const conteoPorEstado = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const b of bedsSinEstado) m.set(b.status, (m.get(b.status) ?? 0) + 1);
+    return m;
+  }, [bedsSinEstado]);
+
+  // Opciones de la barra de filtros (MultiCombobox, DESIGN §4.7): el conteo va en el label.
+  const conteoPorSector = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const b of beds) m.set(b.area, (m.get(b.area) ?? 0) + 1);
+    return m;
+  }, [beds]);
+  const opcionesSector = allowedAreas.map(a => ({ value: a, label: `${AREA_LABELS[a] ?? a} (${conteoPorSector.get(a) ?? 0})` }));
+  // Todos los sectores = sin elegir (placeholder "Todos"); elegir uno muestra solo ese. Vaciar la
+  // selección vuelve a todos los permitidos (antes se podía quedar en "Ningún sector" y el mapa en blanco).
+  const valorSectores = todosLosSectores ? [] : allowedAreas.filter(a => areaFilters.has(a));
+  const elegirSectores = (v: string[]) => setAreaFilters(new Set<string>(v.length ? v : allowedAreas));
+
+  const opcionesEstado = ORDEN_ESTADOS_CAMA.map(st => ({ value: st, label: `${ESTADOS_CAMA[st].label} (${conteoPorEstado.get(st) ?? 0})` }));
+
+  // "Solo camas con…": los cuatro toggles de antes (aislamiento / dieta / ayuno / cirugía), que se
+  // suman entre sí (Y). Solo se ofrecen los que tienen alguna cama, como los chips de antes.
+  const opcionesIndicador = [
+    isolatedBeds.size > 0 && { value: 'aislamiento', label: `Aislamiento (${isolatedBeds.size})` },
+    dietBeds.size > 0 && { value: 'dieta', label: `Dieta (${dietBeds.size})` },
+    fastingBeds.size > 0 && { value: 'ayuno', label: `Ayuno (${fastingBeds.size})` },
+    cirugiaBeds.size > 0 && { value: 'cirugia', label: `Cirugía (${cirugiaBeds.size})` },
+  ].filter(Boolean) as { value: string; label: string }[];
+  const valorIndicador = [
+    showIsolatedOnly && 'aislamiento',
+    showDietOnly && 'dieta',
+    showFastingOnly && 'ayuno',
+    showCirugiaOnly && 'cirugia',
+  ].filter(Boolean) as string[];
+  const elegirIndicador = (v: string[]) => {
+    setShowIsolatedOnly(v.includes('aislamiento'));
+    setShowDietOnly(v.includes('dieta'));
+    setShowFastingOnly(v.includes('ayuno'));
+    setShowCirugiaOnly(v.includes('cirugia'));
+  };
+  const aOpciones = (xs: string[]) => xs.map(x => ({ value: x, label: x }));
+
+  // Fecha de internación: el DateRangePicker trabaja con Date; el filtro guarda 'YYYY-MM-DD'.
+  const rangoInternacion = admissionFrom || admissionTo
+    ? { from: deIso(admissionFrom), to: deIso(admissionTo) }
+    : undefined;
+  const elegirRangoInternacion = (r?: { from?: Date; to?: Date }) => {
+    setAdmissionFrom(r?.from ? aIso(r.from) : '');
+    setAdmissionTo(r?.to ? aIso(r.to) : '');
+  };
 
   // Group beds by Area, ordered with HIT first.
   // Gamma a veces devuelve las camas de un piso en orden arbitrario (mezcla
@@ -2443,709 +2397,326 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
     doc.save(`dietas-${new Date().toISOString().slice(0, 10)}.pdf`);
   }, [filteredBeds, currentUser, enrichBedsForPdf, bedTicketMap]);
 
-  // ── Status helpers ────────────────────────────────────────────────────────
-  const getStatusColor = (status: BedStatus) => {
-    switch (status) {
-      case BedStatus.AVAILABLE:   return "bg-emerald-100 text-emerald-700 border-emerald-300 hover:bg-emerald-200";
-      case BedStatus.OCCUPIED:    return "bg-red-100 text-red-700 border-red-300 hover:bg-red-200";
-      case BedStatus.PREPARATION: return "bg-amber-100 text-amber-700 border-amber-300 hover:bg-amber-200";
-      case BedStatus.ASSIGNED:    return "bg-indigo-100 text-indigo-700 border-indigo-300 hover:bg-indigo-200";
-      case BedStatus.DISABLED:    return "bg-slate-100 text-slate-500 border-slate-300 hover:bg-slate-200";
-      default:                    return "bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200";
-    }
-  };
-
-  const getStatusDot = (status: BedStatus) => {
-    switch (status) {
-      case BedStatus.AVAILABLE:   return "bg-emerald-500";
-      case BedStatus.OCCUPIED:    return "bg-red-500";
-      case BedStatus.PREPARATION: return "bg-amber-500";
-      case BedStatus.ASSIGNED:    return "bg-indigo-500";
-      case BedStatus.DISABLED:    return "bg-slate-400";
-      default:                    return "bg-slate-400";
-    }
-  };
-
   // ── Render ────────────────────────────────────────────────────────────────
+  const buscando = !!searchFilter.trim();
+  const disponibles = conteoPorEstado.get(BedStatus.AVAILABLE) ?? 0;
+  const sinDatos = beds.length === 0;
+  // Botón de PDF de la toolbar (§5.2): outline h-9, label oculto en mobile; mientras genera muestra el
+  // avance "n/total" también en mobile (es la única señal de que está trabajando).
+  const botonPdf = (tipo: 'normal' | 'alpha' | 'dietas', Icono: React.ElementType, label: string, ayuda: string, onClick: () => void) => (
+    <Button variant="outline" onClick={onClick} disabled={!!pdfExporting} title={ayuda} aria-label={ayuda} className="h-9 shrink-0 gap-1.5 px-3">
+      {pdfExporting === tipo ? <Loader2 className="size-3.5 animate-spin" /> : <Icono className="size-3.5" />}
+      <span className={cn(pdfExporting === tipo ? 'inline tabular-nums' : 'hidden sm:inline')}>
+        {pdfExporting === tipo ? `${pdfProgress.done}/${pdfProgress.total}` : label}
+      </span>
+    </Button>
+  );
+
   return (
-    <div className="p-2 md:p-3 space-y-2 md:space-y-4 max-w-[1600px] mx-auto w-full relative">
-      {/* Filters bar */}
-      <div className="flex flex-col gap-2 border-b border-slate-100 pb-2">
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Search input */}
-          <div className="relative flex-1 min-w-[180px] max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+    <div className="flex w-full flex-col gap-4 p-3 md:p-8">
+      {/* HEADER + TOOLBAR (DESIGN §4.4 y §5.2) */}
+      <div className="flex shrink-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="hidden shrink-0 md:block">
+          <h2 className="text-2xl font-bold tracking-tight">Mapa de Camas</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {/* El conteo deja afuera la Sala de Espera (HRA): son sillones de pre-internación, no camas. */}
+            <span className="font-medium text-foreground tabular-nums">{bedCount}</span> {bedCount === 1 ? 'cama' : 'camas'} ·{' '}
+            <span className="font-medium text-foreground tabular-nums">{disponibles}</span> {disponibles === 1 ? 'disponible' : 'disponibles'}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+          {/* Buscador: en mobile ocupa la fila entera (los botones van debajo, solo ícono). */}
+          <div className="relative w-full sm:w-64">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
             <Input
-              placeholder="Paciente, evento, financiador, médico, habitación..."
+              placeholder="Paciente, evento, financiador, médico, hab…"
+              aria-label="Buscar por paciente, evento, financiador, médico o habitación"
+              className="h-9 pr-8 pl-8 text-sm"
               value={searchFilter}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchFilter(e.target.value)}
-              className="pl-9 h-9 text-xs rounded-xl border-slate-200"
             />
             {searchFilter && (
-              <button onClick={() => setSearchFilter('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-                <X className="h-3.5 w-3.5" />
+              <button type="button" onClick={() => setSearchFilter('')} aria-label="Limpiar búsqueda" className="absolute top-1/2 right-2 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground hover:text-foreground">
+                <X className="size-3.5" />
               </button>
             )}
           </div>
-
-          {/* Area multi-select */}
-          <Popover>
-            <PopoverTrigger asChild>
-              <button className="flex items-center gap-1.5 h-9 px-3 text-xs rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-colors min-w-[130px] md:min-w-[160px] justify-between">
-                <span>{areaFilterLabel}</span>
-                <ChevronDown className="h-3.5 w-3.5 text-slate-400 ml-1" />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent align="start" className="w-52 p-2">
-              <div className="flex flex-col gap-0.5">
-                <label
-                  className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs font-bold text-slate-500 hover:bg-slate-50 transition-colors cursor-pointer"
-                >
-                  <input
-                    type="checkbox"
-                    checked={areaFiltersVisibles === allowedAreas.length}
-                    onChange={() => setAreaFilters(areaFiltersVisibles === allowedAreas.length ? new Set() : new Set(allowedAreas))}
-                    className="h-3.5 w-3.5 rounded-sm border-slate-300 text-emerald-600 focus:ring-emerald-500 accent-emerald-700"
-                  />
-                  Todos los sectores
-                </label>
-                <div className="my-1 border-t border-slate-100" />
-                {allowedAreas.map(area => (
-                  <label
-                    key={area}
-                    className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={areaFilters.has(area)}
-                      onChange={() => toggleArea(area)}
-                      className="h-3.5 w-3.5 rounded-sm border-slate-300 text-emerald-600 focus:ring-emerald-500 accent-emerald-700"
-                    />
-                    <span className="truncate">{AREA_LABELS[area] ?? area}</span>
-                  </label>
-                ))}
-              </div>
-            </PopoverContent>
-          </Popover>
-
-          {/* Bed count + actions */}
-          <div className="flex items-center gap-1.5 ml-auto">
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-50 border border-slate-100 text-[10px] md:text-xs font-black text-slate-500 uppercase tracking-wider">
-              <BedDouble className="h-3 w-3 text-slate-400" />
-              <span>{bedCount} camas</span>
-            </div>
-
-            {/* Mobile: toggle de filtros — colapsa los chips para no ocupar media pantalla.
-                Muestra el conteo de filtros activos como feedback aunque esté cerrado. */}
-            <button
-              onClick={() => setShowFilters(v => !v)}
-              aria-expanded={showFilters}
-              className={cn(
-                "md:hidden flex items-center gap-1.5 h-8 px-3 rounded-lg border text-[10px] font-bold uppercase tracking-tight transition-all",
-                activeFilterCount > 0 ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
-              )}
-            >
-              <SlidersHorizontal className="h-3.5 w-3.5" />
-              Filtros{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
-              <ChevronDown className={cn("h-3 w-3 transition-transform", showFilters && "rotate-180")} />
-            </button>
-
-            {/* Desktop: acciones inline (sin cambios) */}
-            <div className="hidden md:flex items-center gap-1.5">
-              {onRefresh && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onRefresh()}
-                  disabled={bedsLoading}
-                  title="Forzar actualización del mapa de camas"
-                  className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50 disabled:opacity-50"
-                >
-                  <RefreshCw className={cn("h-3 w-3", bedsLoading && "animate-spin")} />
-                  <span className="hidden sm:inline">Refrescar</span>
-                </Button>
-              )}
-              <Button variant="outline" size="sm" onClick={exportPDF} disabled={!!pdfExporting} title="PDF por sector" aria-label="Exportar PDF por sector" className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50 disabled:opacity-50">
-                {pdfExporting === 'normal' ? <span className="inline-block w-3 h-3 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
-                <span className="hidden sm:inline">{pdfExporting === 'normal' ? `${pdfProgress.done}/${pdfProgress.total}` : 'PDF'}</span>
-              </Button>
-              <Button variant="outline" size="sm" onClick={exportPDFAlpha} disabled={!!pdfExporting} title="PDF alfabético por paciente" aria-label="Exportar PDF alfabético" className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50 disabled:opacity-50">
-                {pdfExporting === 'alpha' ? <span className="inline-block w-3 h-3 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : <ArrowDownAZ className="h-3.5 w-3.5" />}
-                <span className="hidden sm:inline">{pdfExporting === 'alpha' ? `${pdfProgress.done}/${pdfProgress.total}` : 'PDF A-Z'}</span>
-              </Button>
-              <Button variant="outline" size="sm" onClick={exportPDFDietas} disabled={!!pdfExporting} title="PDF de dietas y ayunos" aria-label="Exportar PDF de dietas" className="h-8 rounded-lg border-slate-200 font-bold text-[10px] md:text-xs gap-1.5 px-3 hover:bg-slate-50 disabled:opacity-50">
-                {pdfExporting === 'dietas' ? <span className="inline-block w-3 h-3 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : <UtensilsCrossed className="h-3.5 w-3.5" />}
-                <span className="hidden sm:inline">{pdfExporting === 'dietas' ? `${pdfProgress.done}/${pdfProgress.total}` : 'Dietas'}</span>
-              </Button>
-            </div>
-
-            {/* Mobile: acciones (refrescar + PDFs) en menú ⋯ para liberar la barra */}
-            <Popover>
-              <PopoverTrigger asChild>
-                <button className="md:hidden flex items-center justify-center h-8 w-8 rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50" aria-label="Más acciones">
-                  {pdfExporting ? <span className="inline-block w-3.5 h-3.5 border-2 border-slate-200 border-t-emerald-500 rounded-full animate-spin" /> : <MoreVertical className="h-4 w-4" />}
-                </button>
-              </PopoverTrigger>
-              <PopoverContent align="end" className="w-56 p-1.5">
-                <div className="flex flex-col gap-0.5">
-                  {onRefresh && (
-                    <button onClick={() => onRefresh()} disabled={bedsLoading} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50">
-                      <RefreshCw className={cn("h-4 w-4 text-slate-400", bedsLoading && "animate-spin")} /> Refrescar mapa
-                    </button>
-                  )}
-                  <button onClick={exportPDF} disabled={!!pdfExporting} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50">
-                    <FileText className="h-4 w-4 text-slate-400" /> PDF por sector
-                  </button>
-                  <button onClick={exportPDFAlpha} disabled={!!pdfExporting} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50">
-                    <ArrowDownAZ className="h-4 w-4 text-slate-400" /> PDF alfabético (A-Z)
-                  </button>
-                  <button onClick={exportPDFDietas} disabled={!!pdfExporting} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50">
-                    <UtensilsCrossed className="h-4 w-4 text-slate-400" /> PDF dietas y ayunos
-                  </button>
-                  {!!pdfExporting && (
-                    <div className="px-2.5 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Generando {pdfProgress.done}/{pdfProgress.total}…</div>
-                  )}
-                </div>
-              </PopoverContent>
-            </Popover>
-          </div>
-        </div>
-
-        {/* Status multi-select buttons + filtros especiales.
-            En mobile se colapsan detrás del botón "Filtros"; en desktop siempre visibles. */}
-        <div className={cn("flex-wrap gap-1.5", showFilters ? "flex" : "hidden md:flex")}>
-          {Object.values(BedStatus).map(s => {
-            const dot = s === BedStatus.AVAILABLE ? 'bg-emerald-500' : s === BedStatus.OCCUPIED ? 'bg-red-500' : s === BedStatus.PREPARATION ? 'bg-amber-500' : s === BedStatus.ASSIGNED ? 'bg-indigo-500' : 'bg-slate-400';
-            const active = statusFilters.has(s);
-            return (
-              <button
-                key={s}
-                onClick={() => toggleStatus(s)}
-                className={cn(
-                  "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
-                  active
-                    ? "bg-slate-900 text-white border-slate-900 shadow-xs"
-                    : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
-                )}
-              >
-                <span className={cn("w-2 h-2 rounded-full", dot)} />
-                {s}
-              </button>
-            );
-          })}
-          {isolatedBeds.size > 0 && (
-            <button
-              onClick={() => setShowIsolatedOnly(v => !v)}
-              className={cn(
-                "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
-                showIsolatedOnly
-                  ? "bg-violet-600 text-white border-violet-600 shadow-xs"
-                  : "bg-white text-violet-600 border-violet-200 hover:bg-violet-50"
-              )}
-            >
-              <ShieldAlert className="w-3 h-3" />
-              Aislamiento ({isolatedBeds.size})
-            </button>
+          <BotonFiltros abierto={verFiltros} activos={activeFilterCount} onClick={() => setVerFiltros(v => !v)} />
+          {onRefresh && (
+            <Button variant="outline" onClick={() => onRefresh()} disabled={bedsLoading} title="Forzar actualización del mapa de camas" aria-label="Actualizar" className="h-9 shrink-0 gap-1.5 px-3">
+              <RefreshCw className={cn('size-3.5', bedsLoading && 'animate-spin')} /><span className="hidden sm:inline">Actualizar</span>
+            </Button>
           )}
-          {dietBeds.size > 0 && (
-            <button
-              onClick={() => setShowDietOnly(v => !v)}
-              className={cn(
-                "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
-                showDietOnly
-                  ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
-                  : "bg-white text-emerald-600 border-emerald-200 hover:bg-emerald-50"
-              )}
-            >
-              <UtensilsCrossed className="w-3 h-3" />
-              Dietas ({dietBeds.size})
-            </button>
-          )}
-          {fastingBeds.size > 0 && (
-            <button
-              onClick={() => setShowFastingOnly(v => !v)}
-              className={cn(
-                "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
-                showFastingOnly
-                  ? "bg-amber-500 text-white border-amber-500 shadow-xs"
-                  : "bg-white text-amber-600 border-amber-200 hover:bg-amber-50"
-              )}
-            >
-              <Clock className="w-3 h-3" />
-              Ayunos ({fastingBeds.size})
-            </button>
-          )}
-          {cirugiaBeds.size > 0 && (
-            <button
-              onClick={() => setShowCirugiaOnly(v => !v)}
-              className={cn(
-                "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
-                showCirugiaOnly
-                  ? "bg-cyan-600 text-white border-cyan-600 shadow-xs"
-                  : "bg-white text-cyan-700 border-cyan-200 hover:bg-cyan-50"
-              )}
-            >
-              <Activity className="w-3 h-3" />
-              Cirugía ({cirugiaBeds.size})
-            </button>
-          )}
-
-          {/* Financier filter */}
-          {uniqueFinanciers.length > 0 && (
-            <Popover>
-              <PopoverTrigger asChild>
-                <button className={cn(
-                  "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
-                  financierFilters.size > 0 ? "bg-slate-900 text-white border-slate-900 shadow-xs" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
-                )}>
-                  <Search className="w-2.5 h-2.5" />
-                  Financiador {financierFilters.size > 0 && `(${financierFilters.size})`}
-                  <ChevronDown className="w-2.5 h-2.5" />
-                </button>
-              </PopoverTrigger>
-              <PopoverContent className="w-64 p-2">
-                <div className="flex items-center justify-between px-2 pb-2 border-b border-slate-100 mb-1">
-                  <span className="text-[9px] font-bold uppercase text-slate-400">Financiadores</span>
-                  {financierFilters.size > 0 && (
-                    <button onClick={() => setFinancierFilters(new Set())} className="text-[9px] font-bold text-red-500">Limpiar</button>
-                  )}
-                </div>
-                <div className="relative mb-1.5">
-                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
-                  <input
-                    type="text"
-                    placeholder="Buscar financiador..."
-                    value={financierSearch}
-                    onChange={(e: any) => setFinancierSearch(e.target.value)}
-                    className="w-full pl-7 pr-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-hidden focus:border-emerald-400"
-                  />
-                </div>
-                <div className="max-h-48 overflow-y-auto">
-                  {uniqueFinanciers.filter((f: string) => f.toLowerCase().includes(financierSearch.toLowerCase())).map((f: string) => (
-                    <label key={f} className={cn(
-                      "flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer text-xs transition-colors",
-                      financierFilters.has(f) ? "bg-emerald-50 text-emerald-800 font-bold" : "hover:bg-slate-50 text-slate-600"
-                    )}>
-                      <input type="checkbox" checked={financierFilters.has(f)} onChange={() => {
-                        setFinancierFilters((prev: Set<string>) => { const next = new Set(prev); next.has(f) ? next.delete(f) : next.add(f); return next; });
-                      }} className="accent-emerald-600 w-3.5 h-3.5" />
-                      {f}
-                    </label>
-                  ))}
-                </div>
-              </PopoverContent>
-            </Popover>
-          )}
-
-          {/* Physician filter */}
-          {uniquePhysicians.length > 0 && (
-            <Popover>
-              <PopoverTrigger asChild>
-                <button className={cn(
-                  "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
-                  physicianFilters.size > 0 ? "bg-slate-900 text-white border-slate-900 shadow-xs" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
-                )}>
-                  <Search className="w-2.5 h-2.5" />
-                  Profesional {physicianFilters.size > 0 && `(${physicianFilters.size})`}
-                  <ChevronDown className="w-2.5 h-2.5" />
-                </button>
-              </PopoverTrigger>
-              <PopoverContent className="w-72 p-2">
-                <div className="flex items-center justify-between px-2 pb-2 border-b border-slate-100 mb-1">
-                  <span className="text-[9px] font-bold uppercase text-slate-400">Profesionales</span>
-                  {physicianFilters.size > 0 && (
-                    <button onClick={() => setPhysicianFilters(new Set())} className="text-[9px] font-bold text-red-500">Limpiar</button>
-                  )}
-                </div>
-                <div className="relative mb-1.5">
-                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
-                  <input
-                    type="text"
-                    placeholder="Buscar profesional..."
-                    value={physicianSearch}
-                    onChange={(e: any) => setPhysicianSearch(e.target.value)}
-                    className="w-full pl-7 pr-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-hidden focus:border-emerald-400"
-                  />
-                </div>
-                <div className="max-h-48 overflow-y-auto">
-                  {uniquePhysicians.filter((p: string) => p.toLowerCase().includes(physicianSearch.toLowerCase())).map((p: string) => (
-                    <label key={p} className={cn(
-                      "flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer text-xs transition-colors",
-                      physicianFilters.has(p) ? "bg-emerald-50 text-emerald-800 font-bold" : "hover:bg-slate-50 text-slate-600"
-                    )}>
-                      <input type="checkbox" checked={physicianFilters.has(p)} onChange={() => {
-                        setPhysicianFilters((prev: Set<string>) => { const next = new Set(prev); next.has(p) ? next.delete(p) : next.add(p); return next; });
-                      }} className="accent-emerald-600 w-3.5 h-3.5" />
-                      {p}
-                    </label>
-                  ))}
-                </div>
-              </PopoverContent>
-            </Popover>
-          )}
-
-          {/* Diet type filter */}
-          {uniqueDietTypes.length > 0 && (
-            <Popover>
-              <PopoverTrigger asChild>
-                <button className={cn(
-                  "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
-                  dietTypeFilters.size > 0 ? "bg-slate-900 text-white border-slate-900 shadow-xs" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
-                )}>
-                  <Utensils className="w-2.5 h-2.5" />
-                  Tipo de dieta {dietTypeFilters.size > 0 && `(${dietTypeFilters.size})`}
-                  <ChevronDown className="w-2.5 h-2.5" />
-                </button>
-              </PopoverTrigger>
-              <PopoverContent className="w-72 p-2">
-                <div className="flex items-center justify-between px-2 pb-2 border-b border-slate-100 mb-1">
-                  <span className="text-[9px] font-bold uppercase text-slate-400">Tipo de dieta</span>
-                  {dietTypeFilters.size > 0 && (
-                    <button onClick={() => setDietTypeFilters(new Set())} className="text-[9px] font-bold text-red-500">Limpiar</button>
-                  )}
-                </div>
-                <div className="relative mb-1.5">
-                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400" />
-                  <input
-                    type="text"
-                    placeholder="Buscar tipo..."
-                    value={dietTypeSearch}
-                    onChange={(e: any) => setDietTypeSearch(e.target.value)}
-                    className="w-full pl-7 pr-2 py-1.5 text-xs rounded-lg border border-slate-200 focus:outline-hidden focus:border-emerald-400"
-                  />
-                </div>
-                <div className="max-h-48 overflow-y-auto">
-                  {uniqueDietTypes.filter((d: string) => d.toLowerCase().includes(dietTypeSearch.toLowerCase())).map((d: string) => (
-                    <label key={d} className={cn(
-                      "flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer text-xs transition-colors",
-                      dietTypeFilters.has(d) ? "bg-emerald-50 text-emerald-800 font-bold" : "hover:bg-slate-50 text-slate-600"
-                    )}>
-                      <input type="checkbox" checked={dietTypeFilters.has(d)} onChange={() => {
-                        setDietTypeFilters((prev: Set<string>) => { const next = new Set(prev); next.has(d) ? next.delete(d) : next.add(d); return next; });
-                      }} className="accent-emerald-600 w-3.5 h-3.5" />
-                      {d}
-                    </label>
-                  ))}
-                </div>
-              </PopoverContent>
-            </Popover>
-          )}
-
-          {/* Filtro por tipo de internación (admissionType: Q/T/H/K/O/C — lo que pidió HPR) */}
-          {uniqueAdmissionTypes.length > 0 && (
-            <Popover>
-              <PopoverTrigger asChild>
-                <button className={cn(
-                  "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border",
-                  admissionTypeFilters.size > 0 ? "bg-slate-900 text-white border-slate-900 shadow-xs" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"
-                )}>
-                  <Activity className="w-2.5 h-2.5" />
-                  Tipo internación {admissionTypeFilters.size > 0 && `(${admissionTypeFilters.size})`}
-                  <ChevronDown className="w-2.5 h-2.5" />
-                </button>
-              </PopoverTrigger>
-              <PopoverContent className="w-64 p-2">
-                <div className="flex items-center justify-between px-2 pb-2 border-b border-slate-100 mb-1">
-                  <span className="text-[9px] font-bold uppercase text-slate-400">Tipo de internación</span>
-                  {admissionTypeFilters.size > 0 && (
-                    <button onClick={() => setAdmissionTypeFilters(new Set())} className="text-[9px] font-bold text-red-500">Limpiar</button>
-                  )}
-                </div>
-                <div className="max-h-48 overflow-y-auto">
-                  {uniqueAdmissionTypes.map((tp: string) => (
-                    <label key={tp} className={cn(
-                      "flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer text-xs transition-colors",
-                      admissionTypeFilters.has(tp) ? "bg-emerald-50 text-emerald-800 font-bold" : "hover:bg-slate-50 text-slate-600"
-                    )}>
-                      <input type="checkbox" checked={admissionTypeFilters.has(tp)} onChange={() => {
-                        setAdmissionTypeFilters((prev: Set<string>) => { const next = new Set(prev); next.has(tp) ? next.delete(tp) : next.add(tp); return next; });
-                      }} className="accent-emerald-600 w-3.5 h-3.5" />
-                      {tp}
-                    </label>
-                  ))}
-                </div>
-              </PopoverContent>
-            </Popover>
-          )}
-
-          {/* Filtro por FECHA DE INTERNACIÓN (bed.admissionDate) — date-picker propio; Dialog en mobile. */}
-          <AdmissionDateFilter from={admissionFrom} to={admissionTo} setFrom={setAdmissionFrom} setTo={setAdmissionTo} />
+          {botonPdf('normal', FileText, 'PDF', 'Exportar PDF por sector', exportPDF)}
+          {botonPdf('alpha', ArrowDownAZ, 'PDF A-Z', 'Exportar PDF alfabético por paciente', exportPDFAlpha)}
+          {botonPdf('dietas', UtensilsCrossed, 'Dietas', 'Exportar PDF de dietas y ayunos', exportPDFDietas)}
         </div>
       </div>
 
-      {/* Loading — first load: skeleton */}
-      {bedsLoading && beds.length === 0 && (
-        <div className="flex flex-col items-center justify-center gap-3 py-16 text-slate-400">
-          <div className="flex items-center gap-2">
-            <svg className="animate-spin h-4 w-4 text-slate-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-            </svg>
-            <span className="text-sm font-semibold tracking-wide">Cargando camas...</span>
-          </div>
-          <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-12 lg:grid-cols-16 xl:grid-cols-20 gap-1 md:gap-1.5 w-full opacity-40">
-            {Array.from({ length: 40 }).map((_, i) => (
-              <div key={i} className="aspect-square rounded-lg bg-slate-100 animate-pulse" />
-            ))}
-          </div>
-        </div>
+      {/* FILTROS (DESIGN §4.7): barra inline, no un modal. Antes eran chips sueltos + popovers propios. */}
+      {verFiltros && (
+        <BarraFiltros activos={activeFilterCount} onLimpiar={limpiarFiltros}>
+          <CampoFiltro icono={LayoutGrid} label="Sector">
+            <MultiCombobox opciones={opcionesSector} value={valorSectores} onChange={elegirSectores}
+              placeholder="Todos los sectores" buscar="Buscar sector…" aria-label="Sector" maxChips={1} />
+          </CampoFiltro>
+          <CampoFiltro icono={CircleDot} label="Estado">
+            <MultiCombobox opciones={opcionesEstado} value={[...statusFilters]} onChange={(v) => setStatusFilters(new Set(v))}
+              placeholder={`Todos (${bedsSinEstado.length})`} buscar="Buscar estado…" aria-label="Estado" />
+          </CampoFiltro>
+          {opcionesIndicador.length > 0 && (
+            <CampoFiltro icono={Filter} label="Solo camas con">
+              <MultiCombobox opciones={opcionesIndicador} value={valorIndicador} onChange={elegirIndicador}
+                placeholder="Cualquiera" aria-label="Solo camas con" />
+            </CampoFiltro>
+          )}
+          {uniqueAdmissionTypes.length > 0 && (
+            <CampoFiltro icono={Activity} label="Tipo de internación">
+              <MultiCombobox opciones={aOpciones(uniqueAdmissionTypes)} value={[...admissionTypeFilters]} onChange={(v) => setAdmissionTypeFilters(new Set(v))}
+                placeholder="Todos" aria-label="Tipo de internación" />
+            </CampoFiltro>
+          )}
+          <CampoFiltro icono={CalendarDays} label="Fecha de internación" className="sm:w-56">
+            <DateRangePicker value={rangoInternacion} onChange={elegirRangoInternacion} placeholder="Cualquier fecha" />
+          </CampoFiltro>
+          {uniqueFinanciers.length > 0 && (
+            <CampoFiltro icono={Building2} label="Financiador">
+              <MultiCombobox opciones={aOpciones(uniqueFinanciers)} value={[...financierFilters]} onChange={(v) => setFinancierFilters(new Set(v))}
+                placeholder="Todos" buscar="Buscar financiador…" aria-label="Financiador" />
+            </CampoFiltro>
+          )}
+          {uniquePhysicians.length > 0 && (
+            <CampoFiltro icono={Stethoscope} label="Profesional">
+              <MultiCombobox opciones={aOpciones(uniquePhysicians)} value={[...physicianFilters]} onChange={(v) => setPhysicianFilters(new Set(v))}
+                placeholder="Todos" buscar="Buscar profesional…" aria-label="Profesional" />
+            </CampoFiltro>
+          )}
+          {uniqueDietTypes.length > 0 && (
+            <CampoFiltro icono={Utensils} label="Tipo de dieta">
+              <MultiCombobox opciones={aOpciones(uniqueDietTypes)} value={[...dietTypeFilters]} onChange={(v) => setDietTypeFilters(new Set(v))}
+                placeholder="Todos" buscar="Buscar tipo…" aria-label="Tipo de dieta" />
+            </CampoFiltro>
+          )}
+        </BarraFiltros>
       )}
 
-      {/* Loading — refresh while data already exists */}
-      {bedsLoading && beds.length > 0 && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-500 text-xs font-semibold w-fit">
-          <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-          </svg>
-          Actualizando camas...
-        </div>
+      {/* Resumen por estado, siempre visible (hace de leyenda): punto + estado + cuántas. */}
+      {!sinDatos && (
+        <ul className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground" aria-label="Camas por estado">
+          {ORDEN_ESTADOS_CAMA.map(st => (
+            <li key={st} className="flex items-center gap-1.5">
+              <span className={cn('size-2 rounded-full', puntoEstadoCama(st))} aria-hidden="true" />
+              {ESTADOS_CAMA[st].label}
+              <span className="font-medium text-foreground tabular-nums">{conteoPorEstado.get(st) ?? 0}</span>
+            </li>
+          ))}
+        </ul>
       )}
 
-      {/* Error sin datos: antes el mapa quedaba en blanco. Cartel + código de debug + recargar. */}
-      {bedsError && beds.length === 0 && !bedsLoading && (
-        <div className="flex flex-col items-center justify-center gap-4 py-16 px-4 text-center">
-          <div className="flex items-center justify-center w-14 h-14 rounded-2xl bg-rose-50 border border-rose-100">
-            <AlertTriangle className="w-7 h-7 text-rose-500" />
-          </div>
-          <div className="space-y-1">
-            <p className="text-sm font-black text-slate-800">No se pudo cargar el mapa de camas</p>
-            <p className="text-xs text-slate-500 max-w-sm">Hubo un problema al consultar la información a Progal. Reintentá; si el error persiste, pasá el código de abajo a soporte.</p>
-          </div>
-          <code className="text-[10px] font-mono text-slate-400 bg-slate-50 border border-slate-200 rounded-md px-2 py-1">debug: {bedsError}</code>
+      {/* Error con datos previos: aviso suave (§9.4) sin tapar el mapa (sigue mostrando lo último). */}
+      {bedsError && !sinDatos && (
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
+          <span className="flex min-w-0 items-center gap-2">
+            <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
+            <span className="min-w-0">
+              <span className="font-semibold">No se pudo actualizar el mapa.</span> Mostrando los últimos datos.{' '}
+              <span className="font-mono text-xs opacity-80">debug: {bedsError}</span>
+            </span>
+          </span>
           {onRefresh && (
-            <Button onClick={() => onRefresh()} disabled={bedsLoading} className="gap-2 rounded-xl">
-              <RefreshCw className={cn("h-4 w-4", bedsLoading && "animate-spin")} />
-              Recargar
+            <Button variant="outline" size="sm" onClick={() => onRefresh()} disabled={bedsLoading} className="h-8 shrink-0 gap-1.5 px-3 text-xs">
+              <RefreshCw className={cn('size-3.5', bedsLoading && 'animate-spin')} /> Reintentar
             </Button>
           )}
         </div>
       )}
 
-      {/* Error con datos previos: aviso discreto, sin tapar el mapa (sigue mostrando lo último). */}
-      {bedsError && beds.length > 0 && (
-        <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs font-semibold">
-          <span className="flex items-center gap-2 min-w-0">
-            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">No se pudo actualizar el mapa (mostrando últimos datos). <span className="font-mono opacity-70">debug: {bedsError}</span></span>
-          </span>
-          {onRefresh && (
-            <button onClick={() => onRefresh()} disabled={bedsLoading} className="flex items-center gap-1.5 font-bold hover:underline disabled:opacity-50 shrink-0">
-              <RefreshCw className={cn("h-3.5 w-3.5", bedsLoading && "animate-spin")} /> Reintentar
-            </button>
+      {/* TRES ESTADOS (§9.1, §9.3, regla 22): cargando · error sin datos · vacío. */}
+      {sinDatos && bedsLoading ? (
+        <Cargando texto="Cargando camas…" />
+      ) : sinDatos && bedsError ? (
+        onRefresh ? (
+          <ErrorEstado
+            titulo="No se pudo cargar el mapa de camas"
+            descripcion={<>
+              Hubo un problema al consultar la información a PROGAL. Reintentá; si el error persiste, pasá este código a soporte:
+              <code className="mt-2 block font-mono text-xs">debug: {bedsError}</code>
+            </>}
+            onReintentar={() => onRefresh()}
+          />
+        ) : (
+          <Vacio icono={AlertTriangle} titulo="No se pudo cargar el mapa de camas" descripcion={<code className="font-mono text-xs">debug: {bedsError}</code>} />
+        )
+      ) : sinDatos ? (
+        <Vacio icono={BedDouble} titulo="No hay camas para mostrar" descripcion="PROGAL no devolvió camas para tus sectores." />
+      ) : filteredBeds.length === 0 ? (
+        <Vacio
+          icono={Search}
+          titulo="Ninguna cama coincide"
+          descripcion={buscando ? 'Probá con otro texto o limpiá el buscador.' : 'Ajustá o limpiá los filtros para ver más camas.'}
+          accion={(buscando || activeFilterCount > 0) && (
+            <Button variant="outline" onClick={() => { setSearchFilter(''); limpiarFiltros(); }}>Limpiar búsqueda y filtros</Button>
           )}
+        />
+      ) : (
+        // GRILLA por sector (§7.9). Refresco silencioso (§9.1): se atenúa sin desmontar.
+        <div className={cn('flex flex-col gap-6 transition-opacity duration-300', bedsLoading && 'opacity-60')}>
+          {sortedAreaEntries.map(([areaName, areaBeds]) => {
+            const libres = areaBeds.filter(b => b.status === BedStatus.AVAILABLE).length;
+            return (
+              <section key={areaName} aria-labelledby={`sector-${areaName}`} className="flex flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  <h3 id={`sector-${areaName}`} className={MICRO}>{AREA_LABELS[areaName] ?? areaName}</h3>
+                  <span className="text-[11px] text-muted-foreground tabular-nums">
+                    {areaBeds.length} · {libres} {libres === 1 ? 'disponible' : 'disponibles'}
+                  </span>
+                  <div className="h-px flex-1 bg-border" aria-hidden="true" />
+                </div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
+                  {areaBeds.map(bed => {
+                    const shortCode = `${bed.roomCode}-${bed.bedCode}`;
+                    const info = estadoCama(bed.status);
+                    const isIsolated = isolatedBeds.has(bed.label);
+                    const isBlocked = blockedByIsolation.has(bed.label);
+                    const isPreventiveAdj = preventiveContactAdjacent.has(bed.label);
+                    const isoTipos = isIsolated ? getIsolationTypes(bed) : [];
+                    const suggestedSex = suggestedSexFor(bed);
+                    const ticketAsignado = bed.status !== BedStatus.OCCUPIED ? bedTicketMap.get(bed.label) : undefined;
+                    const llegaDeCx = bed.status !== BedStatus.OCCUPIED && !ticketAsignado && bed.cirugia?.role === 'destino' && bed.cirugia.pacienteNombre;
+                    const esQ = (bed.admissionTypeCode ?? '').toUpperCase() === 'Q';
+                    const comandaVisible = canViewComanda && hasAnyMealLoad(bed.meals);
+                    const comanda = comandaVisible && hasPendingMealLoad(bed.meals) ? MARCAS_CAMA.comandaPendiente : MARCAS_CAMA.comandaEntregada;
+                    const ayuno = hasLiveFasting(bed.fasting);
+
+                    // Quién ocupa / quién llega + un dato de contexto (micro, muted).
+                    let ocupante: React.ReactNode = null;
+                    let meta: string | undefined;
+                    if (bed.status === BedStatus.OCCUPIED) {
+                      ocupante = bed.patientName;
+                      meta = bed.institution;
+                    } else if (ticketAsignado) {
+                      ocupante = <>→ {ticketAsignado.patientName}</>;
+                      meta = 'Traslado en curso';
+                    } else if (llegaDeCx) {
+                      ocupante = <>→ {bed.cirugia!.pacienteNombre}</>;
+                      meta = `Llega de cirugía · de ${formatBedName(bed.cirugia!.camaOrigen)}`;
+                    } else if (bed.status === BedStatus.DISABLED) {
+                      meta = bed.disabledReason || info.descripcion;
+                    }
+
+                    const hayMarcas = isoTipos.length > 0 || isBlocked || isPreventiveAdj || !!bed.cirugia || (bed.goingToSurgery && !bed.cirugia)
+                      || bed.quirurgicoPendiente || bed.routineCleaningActive || comandaVisible || ayuno || !!suggestedSex;
+
+                    return (
+                      <button
+                        key={bed.id}
+                        type="button"
+                        onClick={() => setSelectedBed(bed)}
+                        title={bed.status === BedStatus.DISABLED && bed.disabledReason ? `Inhabilitada — ${bed.disabledReason}` : undefined}
+                        className={cn(
+                          'flex min-w-0 flex-col gap-1.5 rounded-lg border border-l-[3px] bg-card p-3 text-left shadow-xs transition-all outline-hidden hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.99]',
+                          acentoEstadoCama(bed.status),
+                          // Bloqueada por aislamiento: no se asigna → se apaga, pero sigue legible.
+                          isBlocked && 'bg-muted/40',
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="text-sm font-semibold tabular-nums">{shortCode}</span>
+                          <StatusBadge tono={info.tono} className="shrink-0">{info.corto}</StatusBadge>
+                        </div>
+                        <div className="min-w-0">
+                          {ocupante
+                            ? <p className="truncate text-[13px] font-medium">{ocupante}</p>
+                            : <p className="truncate text-[13px] text-muted-foreground">{bed.status === BedStatus.DISABLED ? 'Fuera de servicio' : 'Sin paciente'}</p>}
+                          {meta && <p className="truncate text-[10px] text-muted-foreground">{meta}</p>}
+                        </div>
+                        {hayMarcas && (
+                          <div className="flex flex-wrap items-center gap-1">
+                            {/* Aislamientos: punto de la cartelería + NOMBRE (nunca color solo; son 9+ tipos). */}
+                            {isoTipos.map((iso, i) => (
+                              <span key={`${iso.name}-${i}`} title={`Aislamiento: ${iso.name}`}
+                                className="inline-flex max-w-full items-center gap-1 rounded-full border bg-background px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap">
+                                <span className={cn('size-2 shrink-0 rounded-full', puntoAislamiento(iso.color))} aria-hidden="true" />
+                                <span className="truncate">{isolationSigla(iso.name) ? `${iso.name} (${isolationSigla(iso.name)})` : iso.name}</span>
+                              </span>
+                            ))}
+                            {isBlocked && (
+                              <StatusBadge tono={MARCAS_CAMA.bloqueada.tono}>
+                                <MARCAS_CAMA.bloqueada.icono className="size-3" aria-hidden="true" />{MARCAS_CAMA.bloqueada.label}
+                              </StatusBadge>
+                            )}
+                            {isPreventiveAdj && (
+                              <span title="Contacto preventivo en la habitación — habilitada, usar con precaución">
+                                <StatusBadge tono={MARCAS_CAMA.preventivo.tono}>
+                                  <MARCAS_CAMA.preventivo.icono className="size-3" aria-hidden="true" />{MARCAS_CAMA.preventivo.label}
+                                </StatusBadge>
+                              </span>
+                            )}
+                            {/* Cirugía viva: tono por etapa (lib/estados-cirugia.ts). `role: 'destino'` = cama
+                                destino en limbo (EN_DEVOLUCION con cambio de cama). */}
+                            {bed.cirugia && (
+                              <span title={`Cirugía: ${CIRUGIA_ESTADO_LABEL[bed.cirugia.estado]}${bed.cirugia.role === 'destino' ? ' (cama destino)' : ''}`}>
+                                <StatusBadge tono={estadoCirugia(bed.cirugia.estado).tono}>
+                                  <Activity className="size-3" aria-hidden="true" />Cx · {estadoCirugia(bed.cirugia.estado).label}
+                                </StatusBadge>
+                              </span>
+                            )}
+                            {/* Marca "va a cirugía" de Admisión sin operatoria viva: "C→Q" (de clínico a
+                                quirúrgico) o "Re-Cx" (quirúrgico re-habilitado para otra cirugía). */}
+                            {bed.goingToSurgery && !bed.cirugia && (
+                              <span title={`${esQ ? 'Nueva cirugía autorizada' : 'De clínico a quirúrgico'} — marcado por Admisión${bed.goingToSurgeryBy ? ` · ${bed.goingToSurgeryBy}` : ''}`}>
+                                <StatusBadge tono={MARCAS_CAMA.vaCirugia.tono} className="border border-dashed border-muted-foreground/40">
+                                  <Activity className="size-3" aria-hidden="true" />{esQ ? 'Re-Cx' : MARCAS_CAMA.vaCirugia.label}
+                                </StatusBadge>
+                              </span>
+                            )}
+                            {/* "Q": paciente quirúrgico (PROGAL) pendiente de su cirugía en esta internación (lib/cirugiaQ.ts). */}
+                            {bed.quirurgicoPendiente && (
+                              <span title={`Paciente quirúrgico (PROGAL) — pendiente de su cirugía${bed.expectedSurgeryDate ? ` · probable: ${fechaSegura(bed.expectedSurgeryDate)}` : ''}`}>
+                                <StatusBadge tono={MARCAS_CAMA.quirurgico.tono}>{MARCAS_CAMA.quirurgico.label}</StatusBadge>
+                              </span>
+                            )}
+                            {ayuno && (
+                              <StatusBadge tono={MARCAS_CAMA.ayuno.tono}>
+                                <MARCAS_CAMA.ayuno.icono className="size-3" aria-hidden="true" />{MARCAS_CAMA.ayuno.label}
+                              </StatusBadge>
+                            )}
+                            {/* Comanda (solo si el rol la puede ver): pendiente de entregar vs. ya entregada. */}
+                            {comandaVisible && (
+                              <span title={comanda.descripcion}>
+                                <StatusBadge tono={comanda.tono}>
+                                  <comanda.icono className="size-3" aria-hidden="true" />{comanda.label}
+                                </StatusBadge>
+                              </span>
+                            )}
+                            {bed.routineCleaningActive && (
+                              <span title={`Limpieza de rutina en curso${bed.routineCleaningBy ? ` · ${bed.routineCleaningBy}` : ''}`}>
+                                <StatusBadge tono={MARCAS_CAMA.rutina.tono}>
+                                  <MARCAS_CAMA.rutina.icono className="size-3" aria-hidden="true" />{MARCAS_CAMA.rutina.label}
+                                </StatusBadge>
+                              </span>
+                            )}
+                            {/* Sexo SUGERIDO para una cama libre (según quién ocupa el resto de la
+                                habitación): es una sugerencia, no un dato del paciente → neutro, con borde. */}
+                            {suggestedSex && (
+                              <span
+                                title={`Sugerido: ${suggestedSex === 'M' ? 'masculino' : 'femenino'} — la habitación ya aloja ${suggestedSex === 'M' ? 'pacientes masculinos' : 'pacientes femeninos'}`}
+                                className="inline-flex items-center rounded-full border border-dashed px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap text-muted-foreground"
+                              >
+                                Sug. {suggestedSex}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
         </div>
       )}
-
-      <div className="flex flex-col gap-3 md:gap-4">
-        {sortedAreaEntries.map(([areaName, areaBeds]) => (
-          <div key={areaName} className="space-y-3">
-            <div className="flex items-center gap-2">
-              <span className="inline-flex items-center rounded-lg bg-slate-100/50 border border-slate-200 text-slate-600 font-bold px-2 py-0.5 text-xs">
-                {AREA_LABELS[areaName] ?? areaName}
-              </span>
-              <div className="h-px flex-1 bg-slate-100" />
-            </div>
-            <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-12 lg:grid-cols-16 xl:grid-cols-20 gap-1 md:gap-1.5">
-              {areaBeds.map(bed => {
-                const shortCode = `${bed.roomCode}-${bed.bedCode}`;
-                const isIsolated = isolatedBeds.has(bed.label);
-                const isBlocked = blockedByIsolation.has(bed.label);
-                const isPreventiveAdj = preventiveContactAdjacent.has(bed.label);
-                const isoColor = isIsolated ? getIsolationColor(bed) : DEFAULT_ISO_COLOR;
-                const isoTipos = isIsolated ? getIsolationTypes(bed) : [];
-                const isMultiIso = isoTipos.length >= 2;
-                const suggestedSex = suggestedSexFor(bed);
-
-                return (
-                  <button
-                    key={bed.id}
-                    onClick={() => setSelectedBed(bed)}
-                    title={
-                      bed.status === BedStatus.DISABLED && bed.disabledReason
-                        ? `Inhabilitada — ${bed.disabledReason}`
-                        : isMultiIso ? `Aislamientos: ${isoTipos.map(e => e.name).join(', ')}` : undefined
-                    }
-                    className={cn(
-                      "relative flex flex-col items-center justify-center aspect-square rounded-lg border transition-all duration-200 overflow-hidden group",
-                      isBlocked
-                        ? "bg-violet-50 border-violet-300 opacity-60"
-                        : isPreventiveAdj
-                          ? PREVENTIVE_ADJ_CELL          // Contacto preventivo: color propio, NO inhabilitada
-                          : getStatusColor(bed.status),
-                      // Ring color = first isolation type (works for single AND multi cases).
-                      isIsolated && `ring-2 ${isoColor.ring} ring-offset-1`
-                    )}
-                  >
-                    <div className={cn("absolute top-1 right-1 w-1 h-1 md:w-1.5 md:h-1.5 rounded-full shadow-xs", isBlocked ? "bg-violet-400" : isPreventiveAdj ? PREVENTIVE_ADJ_DOT : getStatusDot(bed.status))} />
-                    {/* Aislamientos con sigla de cartelería (Q, DP) muestran la sigla en vez del escudo:
-                        es el mismo dato que el cartel de la puerta, legible de un vistazo en la grilla. */}
-                    {isIsolated && (() => {
-                      const sigla = isoTipos.map(i => isolationSigla(i.name)).find(Boolean);
-                      return (
-                        <div className={cn("absolute top-0.5 left-0.5 w-3 h-3 md:w-3.5 md:h-3.5 rounded-full flex items-center justify-center", isoColor.bg)}>
-                          {sigla
-                            ? <span className="text-[6px] md:text-[7px] font-black text-white leading-none tracking-tighter">{sigla}</span>
-                            : <ShieldAlert className="w-2 h-2 md:w-2.5 md:h-2.5 text-white" strokeWidth={3} />}
-                        </div>
-                      );
-                    })()}
-                    {/* Multi-isolation tag: a tiny pill in the bottom-left corner with the count
-                        and a thumbnail of the SECOND isolation color, so the user can tell at a glance
-                        that the patient has more than one precaution active. */}
-                    {isMultiIso && (
-                      <div className="absolute bottom-0.5 left-0.5 flex items-center gap-0.5 px-1 h-3 md:h-3.5 rounded-full bg-slate-900 text-white text-[7px] md:text-[8px] font-black ring-1 ring-white shadow-xs">
-                        <span className={cn("w-1.5 h-1.5 rounded-full", (ISOLATION_COLORS[isoTipos[1].color] ?? DEFAULT_ISO_COLOR).bg)} />
-                        <span>{isoTipos.length}</span>
-                      </div>
-                    )}
-                    {isBlocked && (
-                      <div className="absolute top-0.5 left-0.5 w-3 h-3 md:w-3.5 md:h-3.5 bg-violet-400 rounded-full flex items-center justify-center">
-                        <X className="w-2 h-2 md:w-2.5 md:h-2.5 text-white" strokeWidth={3} />
-                      </div>
-                    )}
-                    {/* Contiguo a Contacto preventivo: marca de precaución (NO inhabilitada). */}
-                    {isPreventiveAdj && (
-                      <div className="absolute top-0.5 left-0.5 w-3 h-3 md:w-3.5 md:h-3.5 bg-cyan-400 rounded-full flex items-center justify-center" title="Contacto preventivo en la habitación">
-                        <ShieldAlert className="w-2 h-2 md:w-2.5 md:h-2.5 text-white" strokeWidth={3} />
-                      </div>
-                    )}
-                    {/* Esquina inf. derecha: platito = comanda cargada (sólo si puede verla) +
-                        pill de ayuno. En flex para que no se pisen si el paciente tiene ambos. */}
-                    {/* Pill Cx: operatoria de cirugía viva sobre esta cama. Color por estado
-                        (listo=ámbar · en camino=naranja · en cirugía=cyan · volviendo=violeta).
-                        `role: 'destino'` = cama destino en limbo (EN_DEVOLUCION con cambio de cama). */}
-                    {bed.cirugia && (
-                      <div
-                        className={cn(
-                          'absolute top-0.5 left-1/2 -translate-x-1/2 flex items-center gap-0.5 px-1 h-3 md:h-3.5 rounded-full ring-1 ring-white shadow-xs text-[7px] md:text-[8px] font-black uppercase z-10',
-                          CIRUGIA_PILL_CLASS[bed.cirugia.estado],
-                        )}
-                        title={`Cirugía: ${CIRUGIA_ESTADO_LABEL[bed.cirugia.estado]}${bed.cirugia.role === 'destino' ? ' (cama destino)' : ''}`}
-                      >
-                        <Activity className="w-2 h-2 md:w-2.5 md:h-2.5" strokeWidth={3} />
-                        <span>Cx</span>
-                      </div>
-                    )}
-                    {/* Marca "va a cirugía" de Admisión (flag) sobre un paciente SIN operatoria viva.
-                        Label "C→Q" = pasa de clínico a quirúrgico (habilitado para cirugía). Si el
-                        paciente YA es quirúrgico (re-habilitado para una nueva cirugía), "Re-Cx".
-                        Estilo tenue/dashed para diferenciarlo de la pill Cx (cirugía en curso). */}
-                    {bed.goingToSurgery && !bed.cirugia && (
-                      <div
-                        className="absolute top-0.5 left-1/2 -translate-x-1/2 flex items-center gap-0.5 px-1 h-3 md:h-3.5 rounded-full ring-1 ring-white shadow-xs text-[7px] md:text-[8px] font-black uppercase z-10 whitespace-nowrap bg-violet-100 text-violet-700 border border-dashed border-violet-400"
-                        title={`${(bed.admissionTypeCode ?? '').toUpperCase() === 'Q' ? 'Nueva cirugía autorizada' : 'De clínico a quirúrgico'} — marcado por Admisión${bed.goingToSurgeryBy ? ` · ${bed.goingToSurgeryBy}` : ''}`}
-                      >
-                        <Activity className="w-2 h-2 md:w-2.5 md:h-2.5 shrink-0" strokeWidth={3} />
-                        <span className="tracking-tight">{(bed.admissionTypeCode ?? '').toUpperCase() === 'Q' ? 'Re-Cx' : 'C→Q'}</span>
-                      </div>
-                    )}
-                    {/* "Q": paciente quirúrgico (PROGAL) pendiente de su cirugía en esta internación
-                        (lib/cirugiaQ.ts). No aparece si ya se operó en esta internación sin consentimiento
-                        nuevo; con marca de Admisión va "Re-Cx" y con cirugía viva la pill Cx (mismo lugar). */}
-                    {bed.quirurgicoPendiente && (
-                      <div
-                        className="absolute top-0.5 left-1/2 -translate-x-1/2 flex items-center justify-center px-1 min-w-[14px] h-3 md:h-3.5 rounded-full ring-1 ring-white shadow-xs text-[7px] md:text-[8px] font-black z-10 bg-amber-100 text-amber-800 border border-amber-300"
-                        title={`Paciente quirúrgico (PROGAL) — pendiente de su cirugía${bed.expectedSurgeryDate ? ` · probable: ${new Date(bed.expectedSurgeryDate).toLocaleDateString('es-AR')}` : ''}`}
-                      >
-                        Q
-                      </div>
-                    )}
-                    {/* Limpieza de RUTINA en curso: badge celeste (spray). Esquina inf. izq.; si hay
-                        multi-aislamiento (que también va ahí) se corre a la derecha para no pisarse. */}
-                    {bed.routineCleaningActive && (
-                      <div
-                        className={cn(
-                          'absolute bottom-0.5 w-3 h-3 md:w-3.5 md:h-3.5 rounded-full bg-sky-500 ring-1 ring-white shadow-xs flex items-center justify-center z-10',
-                          isMultiIso ? 'left-5' : 'left-0.5',
-                        )}
-                        title={`Limpieza de rutina en curso${bed.routineCleaningBy ? ` · ${bed.routineCleaningBy}` : ''}`}
-                      >
-                        <SprayCan className="w-2 h-2 md:w-2.5 md:h-2.5 text-white" strokeWidth={2.5} />
-                      </div>
-                    )}
-                    {((canViewComanda && hasAnyMealLoad(bed.meals)) || hasLiveFasting(bed.fasting) || suggestedSex) && (
-                      <div className="absolute bottom-0.5 right-0.5 flex items-center gap-0.5">
-                        {/* Sexo SUGERIDO para una cama libre, derivado de quién ocupa el resto de
-                            la habitación. Es una sugerencia, NO un dato del paciente: por eso va
-                            en outline (fondo blanco) y no en sólido como los indicadores duros. */}
-                        {suggestedSex && (
-                          <div
-                            className={cn(
-                              'flex items-center justify-center w-3.5 h-3.5 md:w-4 md:h-4 rounded-full bg-white ring-1 shadow-xs text-[8px] md:text-[9px] font-black leading-none',
-                              suggestedSex === 'M' ? 'text-sky-600 ring-sky-400' : 'text-pink-600 ring-pink-400',
-                            )}
-                            title={`Sugerido: ${suggestedSex === 'M' ? 'masculino' : 'femenino'} — la habitación ya aloja ${suggestedSex === 'M' ? 'pacientes masculinos' : 'pacientes femeninos'}`}
-                          >
-                            {suggestedSex}
-                          </div>
-                        )}
-                        {/* Tenedor de comanda, con el color según el estado:
-                            · INDIGO (fuerte) = hay al menos una bandeja PENDIENTE de entregar → "hay algo para servir".
-                            · VERDE apagado = había comanda pero YA se entregó todo → se sabe que se cargó, sin gritar acción.
-                            Antes se mostraba indigo aunque estuviera todo entregado, y parecía que faltaba servir. */}
-                        {canViewComanda && hasAnyMealLoad(bed.meals) && (() => {
-                          const pendiente = hasPendingMealLoad(bed.meals);
-                          return (
-                            <div
-                              className={cn(
-                                'flex items-center justify-center w-3.5 h-3.5 md:w-4 md:h-4 rounded-full ring-1 ring-white shadow-xs',
-                                pendiente ? 'bg-indigo-500 text-white' : 'bg-emerald-100 text-emerald-600',
-                              )}
-                              title={pendiente ? 'Comanda pendiente de entregar' : 'Comanda cargada — ya entregada'}
-                            >
-                              <Utensils className="w-2.5 h-2.5 md:w-3 md:h-3" strokeWidth={3} />
-                            </div>
-                          );
-                        })()}
-                        {hasLiveFasting(bed.fasting) && (
-                          <div
-                            className="flex items-center gap-0.5 px-1 h-3 md:h-3.5 rounded-full bg-amber-500 text-white text-[7px] md:text-[8px] font-black ring-1 ring-white shadow-xs"
-                            title="Ayuno programado"
-                          >
-                            <UtensilsCrossed className="w-2 h-2 md:w-2.5 md:h-2.5" strokeWidth={3} />
-                            <span>Ayuno</span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    <span className="text-[9px] sm:text-[10px] md:text-xs font-black tracking-tighter mt-0.5">
-                      {shortCode}
-                    </span>
-
-                    {/* Desktop extra info preview */}
-                    <div className="hidden md:flex flex-col items-center mt-0 w-full px-0.5 opacity-80 group-hover:opacity-100 transition-opacity">
-                      {bed.status === BedStatus.OCCUPIED && (
-                        <span className="text-[7px] md:text-[8px] font-bold truncate w-full text-center leading-none">
-                          {bed.patientName}
-                        </span>
-                      )}
-                      {bed.status !== BedStatus.OCCUPIED && bedTicketMap.get(bed.label) && (
-                        <span
-                          className="text-[7px] md:text-[8px] font-bold italic truncate w-full text-center leading-none text-slate-600"
-                          title={`Asignada a ${bedTicketMap.get(bed.label)!.patientName}`}
-                        >
-                          → {bedTicketMap.get(bed.label)!.patientName}
-                        </span>
-                      )}
-                      {/* Cama reservada por una devolución de cirugía (no por un ticket): quién llega. */}
-                      {bed.status !== BedStatus.OCCUPIED && !bedTicketMap.get(bed.label) && bed.cirugia?.role === 'destino' && bed.cirugia.pacienteNombre && (
-                        <span
-                          className="text-[7px] md:text-[8px] font-bold italic truncate w-full text-center leading-none text-violet-600"
-                          title={`Llega de cirugía: ${bed.cirugia.pacienteNombre} (viene de ${formatBedName(bed.cirugia.camaOrigen)})`}
-                        >
-                          → {bed.cirugia.pacienteNombre}
-                        </span>
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-      </div>
 
       {/* Bed Details Modal */}
       <Dialog open={!!selectedBed} onOpenChange={(open) => !open && setSelectedBed(null)}>
@@ -3153,15 +2724,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
             tile del ícono y en el pill del estado, dentro del DialogHeader del kit. */}
         <DialogContent className="sm:max-w-lg">
           {selectedBed && (() => {
-            type A = { headerBg: string; iconBg: string; icon: string; pill: string; dot: string; patientBg: string; patientBorder: string; label: string };
-            const theme: Record<BedStatus, A> = {
-              [BedStatus.AVAILABLE]:   { headerBg: 'bg-emerald-50',  iconBg: 'bg-emerald-100', icon: 'text-emerald-600', pill: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', patientBg: 'bg-emerald-50',  patientBorder: 'border-emerald-100', label: 'text-emerald-500' },
-              [BedStatus.OCCUPIED]:    { headerBg: 'bg-red-50',      iconBg: 'bg-red-100',     icon: 'text-red-500',     pill: 'bg-red-100 text-red-600',         dot: 'bg-red-500',     patientBg: 'bg-red-50',      patientBorder: 'border-red-100',     label: 'text-red-400'     },
-              [BedStatus.PREPARATION]: { headerBg: 'bg-amber-50',    iconBg: 'bg-amber-100',   icon: 'text-amber-600',   pill: 'bg-amber-100 text-amber-700',     dot: 'bg-amber-500',   patientBg: 'bg-amber-50',    patientBorder: 'border-amber-100',   label: 'text-amber-500'   },
-              [BedStatus.ASSIGNED]:    { headerBg: 'bg-indigo-50',   iconBg: 'bg-indigo-100',  icon: 'text-indigo-600',  pill: 'bg-indigo-100 text-indigo-700',   dot: 'bg-indigo-500',  patientBg: 'bg-indigo-50',   patientBorder: 'border-indigo-100',  label: 'text-indigo-400'  },
-              [BedStatus.DISABLED]:    { headerBg: 'bg-muted',       iconBg: 'bg-muted',       icon: 'text-muted-foreground', pill: 'bg-muted text-muted-foreground', dot: 'bg-muted-foreground', patientBg: 'bg-muted/50', patientBorder: 'border-border', label: 'text-muted-foreground' },
-            };
-            const t = theme[selectedBed.status];
+            const infoEstado = estadoCama(selectedBed.status);
 
             const isOccupied  = selectedBed.status === BedStatus.OCCUPIED;
             const isAssigned  = selectedBed.status === BedStatus.ASSIGNED;
@@ -3171,19 +2734,17 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
 
             return (
               <>
-                {/* Header */}
+                {/* Header: tile neutro + título; el estado va en el StatusBadge, junto al sector. */}
                 <DialogHeader>
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className={cn("size-10 rounded-lg flex items-center justify-center shrink-0", t.iconBg)}>
-                      <BedDouble className={cn("size-5", t.icon)} />
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+                      <BedDouble className="size-5 text-muted-foreground" aria-hidden="true" />
                     </div>
-                    <div className="flex-1 min-w-0">
+                    <div className="min-w-0 flex-1">
                       <DialogTitle className="block truncate">Hab. {selectedBed.roomCode} — Cama {selectedBed.bedCode}</DialogTitle>
-                      <DialogDescription className="mt-1">
-                        <span className={cn("inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider", t.pill)}>
-                          <span className={cn("size-1.5 rounded-full", t.dot)} />
-                          {selectedBed.status}
-                        </span>
+                      <DialogDescription className="mt-1 flex flex-wrap items-center gap-2">
+                        <StatusBadge tono={infoEstado.tono}>{infoEstado.label}</StatusBadge>
+                        <span>{AREA_LABELS[selectedBed.area] ?? selectedBed.area}</span>
                       </DialogDescription>
                     </div>
                   </div>
@@ -3202,15 +2763,13 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     const canClean = can(currentUser, 'confirmar_limpieza') && areaOk;
                     const canRevert = can(currentUser, 'limpieza_revertir') && areaOk && !!onRevertirLimpieza;
                     if (selectedBed.cleaned) {
-                      const when = selectedBed.cleanedAt
-                        ? new Date(selectedBed.cleanedAt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })
-                        : '';
+                      const when = fechaHoraSegura(selectedBed.cleanedAt);
                       return (
-                        <div className="bg-emerald-50 rounded-lg p-3.5 border border-emerald-200 flex items-center gap-3">
-                          <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-bold text-emerald-800 uppercase tracking-wide">Limpia ✓</p>
-                            <p className="text-[11px] text-emerald-700 font-medium truncate">
+                        <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-emerald-700">
+                          <CheckCircle2 className="size-5 shrink-0" aria-hidden="true" />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold">Habitación limpia</p>
+                            <p className="truncate text-xs">
                               {selectedBed.cleanedBy ? `Por ${selectedBed.cleanedBy}` : 'Marcada limpia'}{when ? ` · ${when}` : ''}
                             </p>
                           </div>
@@ -3228,10 +2787,10 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     // Volvió a "En preparación" por un rollback: quién y cuándo (+ deshacer para quien tiene el permiso).
                     const vuelta = selectedBed.vueltaPreparacion;
                     const vueltaNota = vuelta && (
-                      <div className="bg-amber-50 rounded-lg p-3 border border-amber-200 flex items-center gap-2.5">
-                        <Undo2 className="w-4 h-4 text-amber-600 shrink-0" />
-                        <p className="flex-1 min-w-0 text-[11px] font-medium text-amber-900">
-                          Volvió a <strong>En preparación</strong> (estaba sucia) · {vuelta.by}{vuelta.at ? ` · ${new Date(vuelta.at).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}` : ''}
+                      <div className="flex items-center gap-2.5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-700">
+                        <Undo2 className="size-4 shrink-0" aria-hidden="true" />
+                        <p className="min-w-0 flex-1 text-sm">
+                          Volvió a <strong>En preparación</strong> (estaba sucia) · {vuelta.by}{vuelta.at ? ` · ${fechaHoraSegura(vuelta.at)}` : ''}
                         </p>
                         {canRevert && onUndoClean && (
                           <Button type="button" variant="outline" size="sm" onClick={() => { onUndoClean(selectedBed.label); setSelectedBed(null); }}
@@ -3255,14 +2814,11 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                       const reservadaPor = bedTicketMap.get(selectedBed.label);
                       if (reservadaPor) {
                         return (
-                          <div className="bg-indigo-50 rounded-lg p-3.5 border border-indigo-200 flex items-start gap-2.5">
-                            <Info className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
-                            <p className="text-[11px] leading-snug font-medium text-indigo-800">
-                              Reservada por un traslado en curso ({reservadaPor.patientName}). La limpieza
-                              previa al ingreso se confirma con <strong>“Habitación Lista”</strong> desde
-                              Operativa, no con la marca de limpieza.
-                            </p>
-                          </div>
+                          <AvisoInline tono="info" icono={Info}>
+                            Reservada por un traslado en curso ({reservadaPor.patientName}). La limpieza
+                            previa al ingreso se confirma con <strong>“Habitación Lista”</strong> desde
+                            Operativa, no con la marca de limpieza.
+                          </AvisoInline>
                         );
                       }
                       return (
@@ -3312,23 +2868,13 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     const sug = suggestedSexFor(selectedBed);
                     if (!sug) return null;
                     return (
-                      <div>
-                        <div className={cn(
-                          'flex items-start gap-2.5 px-3 py-2.5 rounded-lg border',
-                          sug === 'M' ? 'bg-sky-50 border-sky-200' : 'bg-pink-50 border-pink-200',
-                        )}>
-                          <div className={cn(
-                            'flex items-center justify-center w-6 h-6 rounded-full shrink-0 text-[11px] font-bold bg-card ring-1',
-                            sug === 'M' ? 'text-sky-600 ring-sky-400' : 'text-pink-600 ring-pink-400',
-                          )}>{sug}</div>
-                          <div className="min-w-0">
-                            <p className={cn('text-[11px] font-bold', sug === 'M' ? 'text-sky-800' : 'text-pink-800')}>
-                              Sugerido: {sug === 'M' ? 'masculino' : 'femenino'}
-                            </p>
-                            <p className={cn('text-[10px] leading-snug mt-0.5', sug === 'M' ? 'text-sky-700' : 'text-pink-700')}>
-                              La habitación ya aloja {sug === 'M' ? 'pacientes masculinos' : 'pacientes femeninos'}. Es una sugerencia, no una restricción.
-                            </p>
-                          </div>
+                      <div className="flex items-start gap-2.5 rounded-lg border bg-muted/30 p-3">
+                        <div className="flex size-6 shrink-0 items-center justify-center rounded-full border border-dashed text-[11px] font-semibold text-muted-foreground">{sug}</div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium">Sugerido: {sug === 'M' ? 'masculino' : 'femenino'}</p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            La habitación ya aloja {sug === 'M' ? 'pacientes masculinos' : 'pacientes femeninos'}. Es una sugerencia, no una restricción.
+                          </p>
                         </div>
                       </div>
                     );
@@ -3337,22 +2883,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                   {/* OCCUPIED — patient info organized in tabs */}
                   {isOccupied && (() => {
                     const spinner = <Loader2 className="inline-block size-4 animate-spin text-muted-foreground" />;
-                    const fmtDate = (iso?: string) => {
-                      if (!iso) return '—';
-                      try {
-                        const d = new Date(iso);
-                        if (isNaN(d.getTime())) return iso;
-                        return d.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
-                      } catch { return iso; }
-                    };
-                    const fmtDateOnly = (iso?: string) => {
-                      if (!iso) return '—';
-                      try {
-                        const d = new Date(iso);
-                        if (isNaN(d.getTime())) return iso;
-                        return d.toLocaleDateString('es-AR');
-                      } catch { return iso; }
-                    };
+                    // '—' sin dato; un ISO que no parsea se muestra tal cual (como antes).
+                    const fmtDate = (iso?: string) => (!iso ? '—' : fechaHoraSegura(iso) || iso);
+                    const fmtDateOnly = (iso?: string) => (!iso ? '—' : fechaSegura(iso) || iso);
                     const daysSinceAdmission = (iso?: string): number | null => {
                       if (!iso) return null;
                       const d = new Date(iso);
@@ -3388,72 +2921,56 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     return (
                       <>
                         {/* Header paciente — siempre visible */}
-                        <div className={cn("rounded-lg p-3.5 border", t.patientBg, t.patientBorder)}>
-                          <div className="flex items-center gap-1.5 mb-1">
-                            <UserIcon className={cn("w-3.5 h-3.5", t.label)} />
-                            <span className={cn("text-[10px] font-semibold uppercase tracking-wider", t.label)}>Paciente</span>
+                        <div className="rounded-lg border bg-card p-3">
+                          <div className="mb-1 flex items-center gap-1.5">
+                            <UserIcon className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                            <span className={MICRO}>Paciente</span>
                           </div>
                           <div className="flex items-center justify-between gap-2">
-                            <p className="text-lg font-bold text-foreground leading-snug min-w-0 truncate">{selectedBed.patientName}</p>
+                            <p className="min-w-0 truncate text-lg font-semibold">{selectedBed.patientName}</p>
                             {selectedBed.patientName && (
                               (patientTickets.length > 0 || patientHasCirugias) ? (
-                                <button
-                                  type="button"
-                                  onClick={() => setJourneyOpen(true)}
-                                  className="shrink-0 inline-flex items-center gap-1 px-2 h-7 rounded-md border bg-card text-muted-foreground text-xs font-medium whitespace-nowrap hover:bg-muted/50 hover:text-foreground transition-colors"
-                                >
-                                  <History className="w-3 h-3" />
-                                  Historial del paciente
-                                </button>
+                                <Button variant="outline" size="sm" onClick={() => setJourneyOpen(true)} className="h-8 shrink-0 gap-1.5 px-3 text-xs">
+                                  <History className="size-3.5" /> Historial del paciente
+                                </Button>
                               ) : (patientTicketsLoading || !patientCirugiasLoaded) ? (
-                                <span className="shrink-0 text-[10px] font-medium text-muted-foreground whitespace-nowrap">Cargando…</span>
+                                <span className="flex shrink-0 items-center gap-1.5 text-xs whitespace-nowrap text-muted-foreground">
+                                  <Loader2 className="size-3 animate-spin" aria-hidden="true" /> Cargando…
+                                </span>
                               ) : patientTicketsLoaded ? (
-                                <span className="shrink-0 text-[10px] font-medium text-muted-foreground italic whitespace-nowrap">Sin historial</span>
+                                <span className="shrink-0 text-xs whitespace-nowrap text-muted-foreground">Sin historial</span>
                               ) : null
                             )}
                           </div>
                         </div>
 
-                        {/* Tab bar — scrolleable en X para que en mobile los 4 tabs no
-                            desborden el fondo gris (cada tab mantiene su ancho). */}
-                        <div className="flex gap-1 bg-muted rounded-md p-1 overflow-x-auto">
-                          {tabs.map(tab => {
-                            const isActive = tab.key === activeTab;
-                            return (
-                              <button
-                                key={tab.key}
-                                type="button"
-                                onClick={() => setDetailTab(tab.key)}
-                                className={cn(
-                                  "shrink-0 px-3 py-1.5 rounded-sm text-xs font-medium whitespace-nowrap transition-colors",
-                                  isActive
-                                    ? "bg-background text-foreground shadow-xs"
-                                    : "text-muted-foreground hover:text-foreground"
-                                )}
-                              >
-                                {tab.label}
-                              </button>
-                            );
-                          })}
-                        </div>
+                        {/* Solapas del detalle: control segmentado del kit (Tabs, §6.6); a lo ancho para
+                            que las 4 entren en mobile. */}
+                        <Tabs value={activeTab} onValueChange={(v) => setDetailTab(v as typeof activeTab)}>
+                          <TabsList className="w-full">
+                            {tabs.map(tab => (
+                              <TabsTrigger key={tab.key} value={tab.key} className="flex-1 px-2 text-xs sm:text-sm">{tab.label}</TabsTrigger>
+                            ))}
+                          </TabsList>
+                        </Tabs>
 
                         {/* Tab: Generales */}
                         {activeTab === 'general' && (
                           <>
-                            <div className="grid grid-cols-6 gap-2.5">
-                              <div className="col-span-2 bg-muted/50 rounded-lg p-3 border border-border">
+                            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-6">
+                              <div className="bg-muted/50 rounded-lg p-3 border border-border sm:col-span-2">
                                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">DNI</p>
                                 <p className="text-sm font-mono font-bold text-foreground">{enrichLoading ? spinner : (displayBed?.dni || '—')}</p>
                               </div>
-                              <div className="col-span-1 bg-muted/50 rounded-lg p-3 border border-border">
+                              <div className="bg-muted/50 rounded-lg p-3 border border-border sm:col-span-1">
                                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Edad</p>
                                 <p className="text-sm font-bold text-foreground">{enrichLoading ? spinner : (displayBed?.age != null ? `${displayBed.age}` : '—')}</p>
                               </div>
-                              <div className="col-span-1 bg-muted/50 rounded-lg p-3 border border-border">
+                              <div className="bg-muted/50 rounded-lg p-3 border border-border sm:col-span-1">
                                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Sexo</p>
                                 <p className="text-sm font-bold text-foreground">{enrichLoading ? spinner : (displayBed?.sex === 'M' ? 'M' : displayBed?.sex === 'F' ? 'F' : '—')}</p>
                               </div>
-                              <div className="col-span-2 bg-muted/50 rounded-lg p-3 border border-border">
+                              <div className="bg-muted/50 rounded-lg p-3 border border-border sm:col-span-2">
                                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Evento</p>
                                 <p className="text-sm font-mono font-bold text-foreground whitespace-nowrap">
                                   {selectedBed.eventOrigin && selectedBed.eventNumber
@@ -3523,20 +3040,23 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                                     : (displayBed?.authorizedDays != null ? displayBed.authorizedDays : '—')}
                                 </p>
                                 {displayBed?.authorizedDays != null && stayDays != null && !enrichLoading && (
-                                  <p className={cn("text-[10px] mt-0.5 font-semibold",
-                                    stayDays > displayBed.authorizedDays ? "text-red-600" :
-                                    stayDays >= displayBed.authorizedDays ? "text-amber-600" : "text-muted-foreground")}>
-                                    {stayDays > displayBed.authorizedDays
-                                      ? `Excede ${stayDays - displayBed.authorizedDays}`
-                                      : `${displayBed.authorizedDays - stayDays} restantes`}
-                                  </p>
+                                  // Excedido → pill roja; en el límite → ámbar; con margen → texto muted.
+                                  stayDays >= displayBed.authorizedDays ? (
+                                    <StatusBadge tono={stayDays > displayBed.authorizedDays ? 'peligro' : 'aviso'} className="mt-1">
+                                      {stayDays > displayBed.authorizedDays
+                                        ? `Excede ${stayDays - displayBed.authorizedDays}`
+                                        : `${displayBed.authorizedDays - stayDays} restantes`}
+                                    </StatusBadge>
+                                  ) : (
+                                    <p className="mt-0.5 text-[10px] text-muted-foreground">{displayBed.authorizedDays - stayDays} restantes</p>
+                                  )
                                 )}
                               </div>
                             </div>
                             {displayBed?.expectedSurgeryDate && (
-                              <div className="bg-blue-50 rounded-lg p-3 border border-blue-100">
-                                <p className="text-[10px] font-semibold uppercase tracking-wider text-blue-500 mb-1">Fecha Probable de Cirugía</p>
-                                <p className="text-sm font-bold text-blue-900">{fmtDateOnly(displayBed.expectedSurgeryDate)}</p>
+                              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-blue-700">
+                                <p className="mb-1 text-[10px] font-semibold tracking-wider uppercase">Fecha probable de cirugía</p>
+                                <p className="text-sm font-bold">{fmtDateOnly(displayBed.expectedSurgeryDate)}</p>
                               </div>
                             )}
                             {/* Marca "va a cirugía" (Admisión): habilita el circuito Cx para un paciente
@@ -3551,7 +3071,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                                 onMarcar={onMarcarVaCirugia} onDesmarcar={onDesmarcarVaCirugia} />
                             )}
                             {!enrichLoading && !hasInternacionData && (
-                              <p className="text-xs text-muted-foreground italic text-center py-2">Sin datos de internación disponibles</p>
+                              <p className="py-2 text-center text-xs text-muted-foreground">Sin datos de internación disponibles</p>
                             )}
                           </>
                         )}
@@ -3562,13 +3082,11 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                             {/* Dieta del paciente PRIMERO (tipo + condiciones + formulario) para que
                                 Nutrición sepa qué dieta tiene ANTES de cargar el menú (abajo). */}
                             {displayBed?.dietTags && displayBed.dietTags.length > 0 && (
-                              <div className="bg-emerald-50/60 rounded-lg p-3 border border-emerald-100">
-                                <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700 mb-2">Condiciones y Tipo</p>
+                              <div className="rounded-lg border bg-muted/30 p-3">
+                                <p className="mb-2 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">Condiciones y tipo</p>
                                 <div className="flex flex-wrap gap-1.5">
                                   {displayBed.dietTags.map(tag => (
-                                    <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded-full bg-card border border-emerald-300 text-[10px] font-bold text-emerald-800">
-                                      {tag}
-                                    </span>
+                                    <StatusBadge key={tag} tono="exito">{tag}</StatusBadge>
                                   ))}
                                 </div>
                               </div>
@@ -3590,8 +3108,8 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                                             <div key={idx} className="flex items-center justify-between gap-2 text-[11px] min-w-0">
                                               <span className="text-muted-foreground truncate">{d.descripcion}</span>
                                               <span className={cn(
-                                                "font-bold shrink-0",
-                                                isNo ? "text-muted-foreground" : "text-emerald-700"
+                                                "shrink-0 font-semibold",
+                                                isNo ? "text-muted-foreground" : "text-foreground"
                                               )}>
                                                 {resp || '—'}
                                               </span>
@@ -3602,8 +3120,8 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                                     </div>
                                   )}
                                   {longDiets.length > 0 && (
-                                    <div className="bg-amber-50/40 rounded-lg p-3 border border-amber-100 space-y-2">
-                                      <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-700">Notas</p>
+                                    <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
+                                      <p className="text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">Notas</p>
                                       {longDiets.map((d, idx) => (
                                         <div key={idx} className="space-y-0.5">
                                           <p className="text-[10px] font-semibold uppercase text-muted-foreground">{d.descripcion}</p>
@@ -3618,10 +3136,10 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                               );
                             })()}
                             {!enrichLoading && !hasDietData && (
-                              <p className="text-xs text-muted-foreground italic text-center py-2">Sin datos de dieta disponibles</p>
+                              <p className="py-2 text-center text-xs text-muted-foreground">Sin datos de dieta disponibles</p>
                             )}
                             {enrichLoading && (
-                              <p className="text-xs text-muted-foreground italic text-center py-2">Cargando...</p>
+                              <p className="flex items-center justify-center gap-1.5 py-2 text-xs text-muted-foreground"><Loader2 className="size-3 animate-spin" aria-hidden="true" /> Cargando…</p>
                             )}
                             {/* Carga de menú por Nutrición (15.CargasDieta) — DEBAJO del detalle de
                                 dieta: se carga el menú sabiendo qué dieta/condiciones tiene el paciente.
@@ -3643,10 +3161,10 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                               if (!canViewComanda) return null;              // sin permiso → no ve la sección
                               if (!canEditAny && !hasAnyMeal) return null;   // solo-lectura y nada cargado → nada
                               return (
-                                <div className="rounded-lg p-3 border border-indigo-100 bg-indigo-50/40 space-y-2">
+                                <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
                                   <div className="flex items-center gap-1.5">
-                                    <UtensilsCrossed className="w-3.5 h-3.5 text-indigo-500" />
-                                    <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-700 tracking-wider">Menú{canEditAny ? ' — Nutrición' : ''}</p>
+                                    <ClipboardList className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                                    <p className={MICRO}>Menú{canEditAny ? ' — Nutrición' : ''}</p>
                                   </div>
                                   {MEAL_SLOTS.map(({ slot, label }) => (
                                     <MealSlotEditor key={slot} bed={liveBed} slot={slot} label={label}
@@ -3676,12 +3194,12 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                             {hasFastingData && (
                               <div className="space-y-2">
                                 {liveFastingInds.map(({ ind, occ }) => (
-                                  <div key={ind.indicationId} className="bg-amber-50/60 rounded-lg p-3 border border-amber-100">
-                                    <div className="flex items-center justify-between mb-1.5">
-                                      <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-700">Indicación #{ind.indicationId}</p>
-                                      <span className="text-[10px] font-bold text-amber-800">
+                                  <div key={ind.indicationId} className="rounded-lg border bg-muted/30 p-3">
+                                    <div className="mb-1.5 flex items-center justify-between gap-2">
+                                      <p className="text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">Indicación #{ind.indicationId}</p>
+                                      <StatusBadge tono={MARCAS_CAMA.ayuno.tono}>
                                         {occ.length} ayuno{occ.length === 1 ? '' : 's'}
-                                      </span>
+                                      </StatusBadge>
                                     </div>
                                     <ul className="space-y-0.5">
                                       {occ.map((iso, idx) => (
@@ -3695,10 +3213,10 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                               </div>
                             )}
                             {!enrichLoading && !hasFastingData && (
-                              <p className="text-xs text-muted-foreground italic text-center py-2">Sin ayunos vigentes</p>
+                              <p className="py-2 text-center text-xs text-muted-foreground">Sin ayunos vigentes</p>
                             )}
                             {enrichLoading && (
-                              <p className="text-xs text-muted-foreground italic text-center py-2">Cargando...</p>
+                              <p className="flex items-center justify-center gap-1.5 py-2 text-xs text-muted-foreground"><Loader2 className="size-3 animate-spin" aria-hidden="true" /> Cargando…</p>
                             )}
                           </>
                         )}
@@ -3710,24 +3228,23 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     const assignedTicket = bedTicketMap.get(selectedBed.label);
                     return (
                       <>
-                        <div className="bg-indigo-50 rounded-lg p-3 border border-indigo-100 flex items-center gap-2">
-                          <Info className="w-4 h-4 text-indigo-400 shrink-0" />
-                          <p className="text-xs font-bold text-indigo-800">Reservada — traslado en curso</p>
-                        </div>
+                        <AvisoInline tono="info" icono={Info}>
+                          <span className="font-medium">Reservada — traslado en curso</span>
+                        </AvisoInline>
                         {assignedTicket && (
                           <>
-                            <div className={cn("rounded-lg p-3 border", t.patientBg, t.patientBorder)}>
-                              <span className={cn("text-[10px] font-semibold uppercase tracking-wider", t.label)}>Paciente en traslado</span>
-                              <p className="text-sm font-bold text-foreground">{assignedTicket.patientName}</p>
+                            <div className="rounded-lg border bg-card p-3">
+                              <span className={MICRO}>Paciente en traslado</span>
+                              <p className="text-sm font-semibold">{assignedTicket.patientName}</p>
                             </div>
                             <div className="grid grid-cols-2 gap-2">
-                              <div className="bg-muted/50 rounded-lg p-2.5 border border-border">
-                                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-0.5">Origen</p>
-                                <p className="text-xs font-bold text-foreground truncate">{assignedTicket.origin}</p>
+                              <div className="rounded-lg border bg-muted/30 p-2.5">
+                                <p className="mb-0.5 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">Origen</p>
+                                <p className="truncate text-xs font-semibold">{assignedTicket.origin}</p>
                               </div>
-                              <div className="bg-muted/50 rounded-lg p-2.5 border border-border">
-                                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-0.5">Estado</p>
-                                <p className="text-xs font-bold text-foreground">{assignedTicket.status}</p>
+                              <div className="rounded-lg border bg-muted/30 p-2.5">
+                                <p className="mb-0.5 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">Estado</p>
+                                <p className="text-xs font-semibold">{assignedTicket.status}</p>
                               </div>
                             </div>
                           </>
@@ -3736,57 +3253,42 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     );
                   })()}
 
-                  {isAvailable && (
-                    <div className="bg-emerald-50 rounded-lg p-3 border border-emerald-100 flex items-center justify-center gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                      <p className="text-xs font-semibold text-emerald-700">Lista para recibir paciente</p>
-                    </div>
+                  {/* Bloqueada por aislamiento: no se dice "lista para recibir" al lado del cartel rojo de abajo. */}
+                  {isAvailable && !blockedByIsolation.has(selectedBed.label) && (
+                    <AvisoInline tono="exito" icono={CheckCircle2}>Lista para recibir paciente</AvisoInline>
                   )}
 
                   {isPrep && (
-                    <div className="bg-amber-50 rounded-lg p-3 border border-amber-100 flex items-center gap-2">
-                      <Info className="w-4 h-4 text-amber-400 shrink-0" />
-                      <p className="text-xs font-semibold text-amber-700">En preparación para nuevo ingreso</p>
-                    </div>
+                    <AvisoInline tono="aviso" icono={Info}>En preparación para nuevo ingreso</AvisoInline>
                   )}
 
                   {isDisabled && (
-                    <div className="bg-muted rounded-lg p-3 border border-border flex items-center justify-center gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground" />
-                      <p className="text-xs font-semibold text-muted-foreground">Fuera de servicio</p>
-                    </div>
-                  )}
-
-                  {isDisabled && selectedBed.disabledReason && (
-                    <div className="bg-amber-50 rounded-lg p-3 border border-amber-200 flex items-start gap-2">
-                      <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                      <div className="min-w-0">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-700 mb-0.5 tracking-wide">Motivo de Inhabilitación</p>
-                        <p className="text-sm font-medium text-amber-900 leading-snug wrap-break-word">{selectedBed.disabledReason}</p>
-                      </div>
-                    </div>
+                    <AvisoInline tono="neutro" icono={Info}>
+                      <p className="font-medium text-foreground">Fuera de servicio</p>
+                      {selectedBed.disabledReason && (
+                        <p className="mt-0.5 wrap-break-word">Motivo: {selectedBed.disabledReason}</p>
+                      )}
+                    </AvisoInline>
                   )}
 
                   {/* Aislamiento (PROGAL — solo lectura). Tipos + observaciones del evento.
                       Usa displayBed (= enrichedBed ?? selectedBed) para mostrarlos también
-                      cuando la cama todavía no fue procesada por el cron y se enriquece on-demand. */}
+                      cuando la cama todavía no fue procesada por el cron y se enriquece on-demand.
+                      Cada tipo: punto de la cartelería + nombre (el color solo no alcanza, son 9+). */}
                   {displayBed?.isolations && displayBed.isolations.length > 0 && (() => {
                     const bed = displayBed!;
-                    const isoC = getIsolationColor(bed);
                     const tipos = bed.isolations!;
                     const plural = tipos.length > 1;
                     // Si TODOS los aislamientos son Contacto preventivo, las camas contiguas
                     // no se bloquean (solo se señalizan). Sino, la habitación queda bloqueada.
                     const onlyPreventive = isPreventiveOnlyBed(bed);
                     return (
-                      <div className="rounded-lg p-3.5 border border-border bg-muted/50 space-y-2.5">
-                        <div className="flex items-start gap-3">
-                          <span className={cn("w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5", isoC.bg)}>
-                            <ShieldAlert className="size-3 text-background" strokeWidth={3} />
-                          </span>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-bold text-foreground">Aislamiento{plural ? 's' : ''} activo{plural ? 's' : ''}</p>
-                            <p className="text-[10px] text-muted-foreground">{
+                      <div className="space-y-2.5 rounded-lg border bg-card p-3">
+                        <div className="flex items-start gap-2.5">
+                          <ICONO_AISLAMIENTO className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold">Aislamiento{plural ? 's' : ''} activo{plural ? 's' : ''}</p>
+                            <p className="text-xs text-muted-foreground">{
                               onlyPreventive ? 'Camas contiguas señalizadas (no bloqueadas)'
                               // Quemado: el mapa igual bloquea (no sabe a quién van a traer), pero el
                               // selector de destino SÍ deja convivir Q con Q. Se aclara para que no
@@ -3797,37 +3299,32 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                             }</p>
                           </div>
                         </div>
-                        <div className="space-y-1.5">
-                          {tipos.map((iso, i) => {
-                            const c = ISOLATION_COLORS[iso.color] ?? DEFAULT_ISO_COLOR;
-                            return (
-                              <div key={`${iso.name}-${i}`} className="flex flex-wrap items-center gap-1.5">
-                                <span className={cn("inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold", c.pill)}>
-                                  <span className={cn("w-2 h-2 rounded-full", c.dot)} />
-                                  {iso.name}
-                                  {isolationSigla(iso.name) && <span className="opacity-70">({isolationSigla(iso.name)})</span>}
-                                </span>
-                                {iso.observation && (
-                                  <span className="text-[11px] text-muted-foreground italic wrap-break-word">— {iso.observation}</span>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
+                        <ul className="space-y-1.5">
+                          {tipos.map((iso, i) => (
+                            <li key={`${iso.name}-${i}`} className="flex flex-wrap items-center gap-1.5">
+                              <span className="inline-flex items-center gap-1.5 rounded-full border bg-background px-2 py-0.5 text-xs font-medium">
+                                <span className={cn('size-2 rounded-full', puntoAislamiento(iso.color))} aria-hidden="true" />
+                                {iso.name}
+                                {isolationSigla(iso.name) && <span className="text-muted-foreground">({isolationSigla(iso.name)})</span>}
+                              </span>
+                              {iso.observation && (
+                                <span className="text-xs wrap-break-word text-muted-foreground">— {iso.observation}</span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
                       </div>
                     );
                   })()}
                   {blockedByIsolation.has(selectedBed.label) && (
-                    <div className="bg-violet-50 rounded-lg p-3.5 border border-violet-200 flex items-center gap-3">
-                      <ShieldAlert className="w-5 h-5 text-violet-400 shrink-0" />
-                      <p className="text-xs font-bold text-violet-700">Bloqueada — paciente aislado en esta habitación</p>
-                    </div>
+                    <AvisoInline tono="peligro" icono={MARCAS_CAMA.bloqueada.icono}>
+                      <span className="font-medium">Bloqueada — paciente aislado en esta habitación</span>
+                    </AvisoInline>
                   )}
                   {preventiveContactAdjacent.has(selectedBed.label) && (
-                    <div className="bg-cyan-50 rounded-lg p-3.5 border border-cyan-200 flex items-center gap-3">
-                      <ShieldAlert className="w-5 h-5 text-cyan-500 shrink-0" />
-                      <p className="text-xs font-bold text-cyan-700">Contacto preventivo en esta habitación — cama habilitada, usar con precaución</p>
-                    </div>
+                    <AvisoInline tono="info" icono={MARCAS_CAMA.preventivo.icono}>
+                      <span className="font-medium">Contacto preventivo en esta habitación — cama habilitada, usar con precaución</span>
+                    </AvisoInline>
                   )}
 
                 </DialogBody>
