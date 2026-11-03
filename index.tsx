@@ -4,6 +4,10 @@ import './index.css';
 import App from './App';
 import { AppAlertHost } from './components/AppAlertHost';
 import { registrarServiceWorker } from './lib/version/serviceWorker';
+import { IS_TESTING } from './lib/env';
+
+// Entorno de prueba: la sidebar pasa a gris pizarra (tokens en index.css).
+if (IS_TESTING) document.documentElement.dataset.entorno = 'testing';
 
 // PWA: cómo se aplica una versión nueva está en lib/version/serviceWorker.ts.
 registrarServiceWorker();

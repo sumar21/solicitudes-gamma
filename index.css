@@ -1,72 +1,466 @@
-@import 'tailwindcss';
+/* ─────────────────────────────────────────────────────────────────────────
+   Estilo 1 · Minimalista zinc — tema sobre la base de Sumar (BASE.md §2).
+   MediFlow · Grupo Gamma: rediseño que conserva el verde de la app como
+   `primary`, marca y sidebar; el resto es el Estilo 1 (neutros zinc, Inter,
+   sombra mínima). La sidebar es gris pizarra en el entorno de prueba
+   ([data-entorno="testing"], lo pone index.tsx).
+   ───────────────────────────────────────────────────────────────────────── */
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "@fontsource-variable/inter";
 
-@theme {
-  --breakpoint-xs: 400px;
+/* Noche por clase: `.dark` en <html> (la pone src/lib/tema.ts). */
+@custom-variant dark (&:where(.dark, .dark *));
 
-  --color-gamma-50: #f0fdf4;
-  --color-gamma-100: #dcfce7;
-  --color-gamma-200: #bbf7d0;
-  --color-gamma-300: #079271;
-  --color-gamma-400: #059669;
-  --color-gamma-500: #034334;
-  --color-gamma-600: #022c22;
-  --color-gamma-700: #022c22;
-  --color-gamma-800: #011f18;
-  --color-gamma-900: #011610;
-
-  --color-hospital-50: #f0f9ff;
-  --color-hospital-100: #e0f2fe;
-  --color-hospital-500: #0ea5e9;
-  --color-hospital-600: #0284c7;
-  --color-hospital-900: #0c4a6e;
+/* Variantes de estado de shadcn (antes venían de "shadcn/tailwind.css"; las
+   traemos acá para no depender del paquete en runtime). */
+@custom-variant data-open {
+  &:where([data-state="open"]),
+  &:where([data-open]:not([data-open="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-closed {
+  &:where([data-state="closed"]),
+  &:where([data-closed]:not([data-closed="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-checked {
+  &:where([data-state="checked"]),
+  &:where([data-checked]:not([data-checked="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-unchecked {
+  &:where([data-state="unchecked"]),
+  &:where([data-unchecked]:not([data-unchecked="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-selected {
+  &:where([data-selected="true"]) {
+    @slot;
+  }
+}
+@custom-variant data-disabled {
+  &:where([data-disabled="true"]),
+  &:where([data-disabled]:not([data-disabled="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-active {
+  &:where([data-state="active"]),
+  &:where([data-active]:not([data-active="false"])) {
+    @slot;
+  }
+}
+@custom-variant data-horizontal {
+  &:where([data-orientation="horizontal"]) {
+    @slot;
+  }
+}
+@custom-variant data-vertical {
+  &:where([data-orientation="vertical"]) {
+    @slot;
+  }
 }
 
-/*
-  The default border color has changed to `currentcolor` in Tailwind CSS v4,
-  so we've added these compatibility styles to make sure everything still
-  looks the same as it did with Tailwind CSS v3.
+@utility no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
 
-  If we ever want to remove these styles, we need to add an explicit border
-  color utility to any element that depends on these defaults.
-*/
+/* ── Utilidades semánticas (BASE §2) ───────────────────────────────────────
+   Las pantallas de la base las usan en vez de escribir clases que dependen del
+   estilo. Acá tienen los valores del Estilo 1 (DESIGN §1.2–§1.5); todas salen
+   de tokens, así que funcionan igual de día y de noche. Lo que se escribe al
+   lado (color, tamaño, márgenes) le gana: una utilidad con varias propiedades
+   va antes que las de una sola en el CSS que arma Tailwind. */
+
+/* Micro-etiqueta: encabezado de sección chica, label de KPI, header de tabla.
+   Sin color: va con text-muted-foreground. */
+@utility micro {
+  @apply text-[11px] font-medium tracking-wider uppercase;
+}
+
+/* Título grande: título de página, cifra protagonista. */
+@utility display {
+  @apply text-2xl font-bold tracking-tight;
+}
+
+/* Título de bloque chico (nombre de la app, encabezado de una sección o de una
+   tarjeta suelta): igual que CardTitle. */
+@utility titulo {
+  @apply text-sm font-semibold;
+}
+
+/* Monto o número destacado dentro de un texto o una fila. */
+@utility cifra {
+  @apply font-semibold tabular-nums;
+}
+
+/* Caja de aviso o nota dentro de un panel: borde fino sobre gris sutil.
+   Un aviso semántico le suma su color: `recuadro bg-success/10 border-success/30`. */
+@utility recuadro {
+  @apply rounded-lg border bg-muted/50 p-3;
+}
+
+/* Ficha cuadrada con iniciales o un ícono (logo provisorio, tile de ícono, §1.7).
+   El tamaño y el color los pone quien la usa: `ficha size-9 bg-brand text-brand-foreground`. */
+@utility ficha {
+  @apply grid shrink-0 place-items-center rounded-lg font-semibold;
+}
+
+/* Texto de acento: la marca, en los lugares donde el estilo la deja como acento
+   (§1.1: dashboards, demo). Para texto: pasa 4.5 sobre card y lienzo. */
+@utility acento {
+  color: var(--color-brand);
+}
+
+/* Panel que flota sin ser de Radix (tarjeta del recorrido, celular flotante):
+   el mismo material que un modal (§1.3–§1.5). */
+@utility flotante {
+  @apply rounded-xl border bg-popover text-popover-foreground shadow-2xl;
+}
+
+/* Lista de filas dentro de una Card (productos del portal): una línea fina
+   entre fila y fila (§1.3). Cada fila pone su propio padding. */
+@utility lista {
+  display: flex;
+  flex-direction: column;
+  & > :not(:last-child) {
+    border-bottom: 1px solid var(--color-border);
+  }
+}
+
+/* Panel grande en el color de la marca (la mitad de marca del login, §3.5): de
+   borde a borde. */
+@utility panel-marca {
+  @apply bg-brand text-brand-foreground;
+}
+
+/* Barras fijas (header sticky del portal · barra de acción al pie, §4.3): fondo
+   del lienzo translúcido y una línea que la separa del contenido. */
+@utility barra-superior {
+  @apply border-b bg-background/95 backdrop-blur-sm;
+}
+@utility barra-inferior {
+  @apply border-t bg-background/95 backdrop-blur-sm;
+}
+
+/* ── Tokens ────────────────────────────────────────────────────────────────
+   Contraste WCAG 2 verificado con `node scripts/contraste.mjs src/index.css`
+   (el script está en el kit; texto ≥ 4.5, foco y bordes de controles ≥ 3).
+   "sup. 10 %" = el color como texto sobre `bg-<color>/10` apoyado en card,
+   que es como se usan StatusBadge, banners y chips. Si cambia un token (la
+   marca del cliente, por ejemplo), se vuelve a correr.
+
+   Par                              DÍA     NOCHE
+   foreground / background         19.90    19.06
+   muted-foreground / background    5.28     7.76
+   muted-foreground / card          5.28     7.36
+   muted-foreground / muted         4.81     6.41
+   primary-foreground / primary    16.67    16.97
+   brand-foreground / brand        10.83     7.18
+   brand / card (texto de marca)   10.83     6.81
+   destructive-fg / destructive     5.74     7.19
+   destructive / card               5.74     6.82
+   destructive / sup. 10 %          4.89     6.01
+   success / sup. 10 %              4.78     8.37
+   warning / sup. 10 %              5.02     9.46
+   info / sup. 10 %                 5.72     6.45
+   ring / background (foco)         4.83     7.76
+   ring / card (foco)               4.83     7.36
+   borde checkbox/radio / fondo     5.28     7.76
+   riel switch apagado / fondo      3.48     5.29
+   muted-fg / sidebar-accent        4.56     5.81
+   ───────────────────────────────────────────────────────────────────────── */
+
+:root {
+  color-scheme: light;
+
+  /* Neutros zinc */
+  --background: #ffffff;
+  --foreground: #09090b;
+  --card: #ffffff;
+  --card-foreground: #09090b;
+  --popover: #ffffff;
+  --popover-foreground: #09090b;
+
+  /* primary = el verde Gamma (en un rediseño se conserva el color principal
+     de la app; el negro del kit es para apps sin color propio). */
+  --primary: #022c22;
+  --primary-foreground: #fafafa;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #18181b;
+  --muted: #f4f4f5;
+  --muted-foreground: #6b6b73;
+  --accent: #f4f4f5;
+  --accent-foreground: #18181b;
+
+  /* Semánticos: un paso más oscuro que los "500" de Tailwind para que pasen
+     4.5 como texto sobre su superficie al 10 % y como fondo de texto blanco. */
+  --destructive: #c81e1e;
+  --destructive-foreground: #ffffff;
+  --success: #047857;
+  --success-foreground: #ffffff;
+  --warning: #a8490b;
+  --warning-foreground: #ffffff;
+  --info: #1d4ed8;
+  --info-foreground: #ffffff;
+
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  /* Anillo de foco: zinc-500 (≥ 3:1 sobre blanco; el #a1a1aa original daba 2.6). */
+  --ring: #71717a;
+
+  /* ── COLOR DE MARCA DEL CLIENTE ────────────────────────────────────────
+     Único bloque a reemplazar por empresa (y su espejo MARCA en
+     lib/marca.ts). Grupo Gamma = verde #022c22 (theme-color del PWA). Ojo:
+     en .dark hay una versión aclarada que también hay que recalcular. */
+  --brand: #022c22;
+  --brand-foreground: #ffffff;
+
+  /* Series de gráficos (DATAVIZ.md §3): slot 1 = paso claro de la marca. */
+  --chart-1: #0f7a5f;
+  --chart-2: #2563eb;
+  --chart-3: #0891b2;
+  --chart-4: #d97706;
+  --chart-5: #7c3aed;
+
+  /* Sidebar verde Gamma (la de la app original). sidebar-primary = verde claro
+     de acento (sede, indicador activo). */
+  --sidebar: #022c22;
+  --sidebar-foreground: #fafafa;
+  --sidebar-accent: #163f35;
+  --sidebar-accent-foreground: #fafafa;
+  --sidebar-border: #163f35;
+  --sidebar-primary: #34d399;
+  --sidebar-primary-foreground: #022c22;
+  --sidebar-ring: #34d399;
+}
+
+/* Entorno de prueba: la sidebar pasa a gris pizarra para que nadie confunda
+   TESTING con producción (lib/env.ts). Solo cambia la sidebar. */
+[data-entorno="testing"] {
+  --sidebar: #334155;
+  --sidebar-accent: #475569;
+  --sidebar-border: #475569;
+  --sidebar-primary: #cbd5e1;
+  --sidebar-primary-foreground: #0f172a;
+  --sidebar-ring: #cbd5e1;
+}
+
+.dark {
+  color-scheme: dark;
+
+  /* Zinc oscuro: el lienzo es casi negro y las superficies suben de a un paso
+     (lienzo → card → popover) en vez de usar sombras, que en oscuro no se ven. */
+  --background: #09090b;
+  --foreground: #fafafa;
+  --card: #111113;
+  --card-foreground: #fafafa;
+  --popover: #18181b;
+  --popover-foreground: #fafafa;
+
+  /* primary: el verde aclarado, con texto verde oscuro. */
+  --primary: #34d399;
+  --primary-foreground: #022c22;
+  --secondary: #27272a;
+  --secondary-foreground: #fafafa;
+  --muted: #1f1f23;
+  --muted-foreground: #a1a1aa;
+  --accent: #27272a;
+  --accent-foreground: #fafafa;
+
+  /* En oscuro un mismo rojo no puede ser a la vez texto legible sobre el lienzo
+     (necesita luminancia alta) y fondo de texto blanco (necesita baja). Por eso
+     los semánticos de noche son tonos "400" con texto oscuro encima. */
+  --destructive: #f87171;
+  --destructive-foreground: #09090b;
+  --success: #34d399;
+  --success-foreground: #09090b;
+  --warning: #fbbf24;
+  --warning-foreground: #09090b;
+  --info: #60a5fa;
+  --info-foreground: #09090b;
+
+  --border: #27272a;
+  --input: #3f3f46;
+  --ring: #a1a1aa;
+
+  /* Marca aclarada para que contraste sobre fondos oscuros (mismo matiz que
+     #022c22). Recalcular si cambia el cliente. */
+  --brand: #34d399;
+  --brand-foreground: #022c22;
+
+  --chart-1: #34d399;
+  --chart-2: #60a5fa;
+  --chart-3: #22d3ee;
+  --chart-4: #fbbf24;
+  --chart-5: #a78bfa;
+
+  --sidebar: #04150f;
+  --sidebar-foreground: #fafafa;
+  --sidebar-accent: #0f2a22;
+  --sidebar-accent-foreground: #fafafa;
+  --sidebar-border: #0f2a22;
+  --sidebar-primary: #34d399;
+  --sidebar-primary-foreground: #022c22;
+  --sidebar-ring: #34d399;
+}
+
+.dark[data-entorno="testing"] {
+  --sidebar: #0f172a;
+  --sidebar-accent: #1e293b;
+  --sidebar-border: #1e293b;
+}
+
+/* Tokens que leen variables (cambian por cliente o por tema). */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Acordeón (Radix) — antes en "shadcn/tailwind.css". */
+  @keyframes accordion-down {
+    from {
+      height: 0;
+    }
+    to {
+      height: var(--radix-accordion-content-height, var(--accordion-panel-height, auto));
+    }
+  }
+  @keyframes accordion-up {
+    from {
+      height: var(--radix-accordion-content-height, var(--accordion-panel-height, auto));
+    }
+    to {
+      height: 0;
+    }
+  }
+}
+
+/* Tokens fijos del estilo. */
+@theme {
+  /* Breakpoint propio de la app (botones del header en mobile chico). */
+  --breakpoint-xs: 400px;
+
+  --font-sans: "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  /* Radios: controles md · cards lg · modales xl · tabs/ítems sm. */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+
+  /* Capas (BASE §2): iguales en todos los estilos. Prohibido otro número. */
+  --z-index-nav: 20;
+  --z-index-header: 30;
+  --z-index-overlay: 50;
+  --z-index-tour: 100;
+  --z-index-toast: 110;
+
+  --animate-accordion-down: accordion-down 200ms ease-out;
+  --animate-accordion-up: accordion-up 200ms ease-out;
+}
+
 @layer base {
+  /* Defaults que Tailwind 4 cambió y el kit asume: */
+  /* - borde: gris del tema (`border` pelado = 1px gris), no currentColor. */
   *,
   ::after,
   ::before,
   ::backdrop,
   ::file-selector-button {
-    border-color: var(--color-gray-200, currentcolor);
+    border-color: var(--color-border);
+  }
+  /* - placeholder: gris del tema, no el texto al 50 %. */
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-muted-foreground);
+  }
+  /* - cursor: v4 ya no pone pointer en los botones. */
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  /* Scrollbar fino y del color del borde. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-input) transparent;
+  }
+
+  /* Clamp del documento al ancho del viewport: sin esto, algo que desborda en
+     mobile hace que un backdrop `fixed inset-0` no cubra todo el ancho. */
+  html {
+    overflow-x: hidden;
+    font-family: var(--font-sans);
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* Reservar el gutter del scrollbar solo en desktop (en mobile el scrollbar es
+     overlay y dejaría una franja fantasma). */
+  @media (min-width: 768px) {
+    html {
+      scrollbar-gutter: stable;
+    }
+  }
+  body {
+    @apply bg-background text-sm text-foreground antialiased;
+    margin: 0;
+    overflow-x: hidden;
+    max-width: 100vw;
+    font-feature-settings: "cv11", "ss01";
   }
 }
 
-/* Custom Scrollbar Styles */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-  margin-block: 8px;
-}
-::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
-}
-
-/* Firefox */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: #cbd5e1 transparent;
-}
+/* ── Propio de MediFlow ─────────────────────────────────────────────────── */
 
 /* Botonera de solapas (modal de Roles): cuando hay muchos módulos la fila desborda y scrollea.
    El overflow-x-auto vive en un contenedor externo transparente, así el scrollbar cae en una
-   franja DEBAJO del pill gris (fuera de él, sin tapar el texto) y queda visible cuando corresponde.
-   El padding-top separa el scrollbar del pill; se anula el margin-block del track global (pensado
-   para scrollbars verticales) que acá lo descentraba. */
+   franja DEBAJO del pill gris (fuera de él, sin tapar el texto) y queda visible cuando corresponde. */
 .tabs-x-scroll {
   padding-bottom: 0.5rem;
 }
@@ -75,11 +469,9 @@
 }
 .tabs-x-scroll::-webkit-scrollbar-track {
   background: transparent;
-  margin-block: 0;
-  margin-inline: 0;
 }
 .tabs-x-scroll::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: var(--color-input);
   border-radius: 9999px;
 }
 
