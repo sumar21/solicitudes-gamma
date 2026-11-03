@@ -1,181 +1,138 @@
-
 import * as React from "react"
-import { X } from "lucide-react"
-import { cn } from "../../lib/utils"
+import { Dialog as DialogPrimitive } from "radix-ui"
+import { XIcon } from "lucide-react"
 
-const DialogContext = React.createContext<{
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}>({ open: false, onOpenChange: () => {} });
+import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 
-const Dialog = ({ children, open, onOpenChange }: { children?: React.ReactNode; open?: boolean; onOpenChange?: (open: boolean) => void }) => {
-  const [internalOpen, setInternalOpen] = React.useState(false);
-  const isControlled = open !== undefined;
-  const isOpen = isControlled ? open : internalOpen;
-  
-  const handleOpenChange = (newOpen: boolean) => {
-    if (!isControlled) setInternalOpen(newOpen);
-    onOpenChange?.(newOpen);
-  };
+function Dialog(props: React.ComponentProps<typeof DialogPrimitive.Root>) {
+  return <DialogPrimitive.Root data-slot="dialog" {...props} />
+}
 
+function DialogTrigger(props: React.ComponentProps<typeof DialogPrimitive.Trigger>) {
+  return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />
+}
+
+function DialogPortal(props: React.ComponentProps<typeof DialogPrimitive.Portal>) {
+  return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />
+}
+
+function DialogClose(props: React.ComponentProps<typeof DialogPrimitive.Close>) {
+  return <DialogPrimitive.Close data-slot="dialog-close" {...props} />
+}
+
+// Backdrop canónico del kit: negro al 60 % con blur chico (DESIGN §1.3 y §3.3).
+function DialogOverlay({ className, ...props }: React.ComponentProps<typeof DialogPrimitive.Overlay>) {
   return (
-    <DialogContext.Provider value={{ open: !!isOpen, onOpenChange: handleOpenChange }}>
-      {children}
-    </DialogContext.Provider>
-  );
-};
+    <DialogPrimitive.Overlay
+      data-slot="dialog-overlay"
+      className={cn(
+        "fixed inset-0 isolate z-overlay bg-black/60 backdrop-blur-xs duration-200 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        className
+      )}
+      {...props}
+    />
+  )
+}
 
-const DialogTrigger = React.forwardRef<HTMLElement, React.HTMLAttributes<HTMLElement> & { asChild?: boolean }>(
-  ({ className, children, onClick, ...props }, ref) => {
-    const { onOpenChange } = React.useContext(DialogContext);
-    
-    if (React.isValidElement(children)) {
-      const child = children as React.ReactElement<any>;
-      return React.cloneElement(child, {
-        onClick: (e: React.MouseEvent) => {
-            child.props.onClick?.(e);
-            onOpenChange(true);
-        },
-        ...props,
-        ref
-      });
-    }
-
-    // Fix: Wrapped spread props in curly braces
-    return (
-      <button
-        ref={ref as any}
-        type="button"
-        onClick={() => onOpenChange(true)}
-        className={cn(className)}
+// Modal: card centrada también en mobile (no full-screen), con gutter de 16px y
+// el cuerpo con scroll si no entra (DESIGN §3.3).
+function DialogContent({
+  className,
+  children,
+  showCloseButton = true,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Content> & {
+  showCloseButton?: boolean
+}) {
+  return (
+    <DialogPortal>
+      <DialogOverlay />
+      <DialogPrimitive.Content
+        data-slot="dialog-content"
+        className={cn(
+          "fixed top-1/2 left-1/2 z-overlay grid max-h-[calc(100dvh-2rem)] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-5 overflow-y-auto rounded-xl border bg-popover p-6 text-sm text-popover-foreground shadow-2xl duration-200 outline-hidden sm:max-w-lg data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          className
+        )}
         {...props}
       >
         {children}
-      </button>
-    );
-  }
-);
-DialogTrigger.displayName = "DialogTrigger";
+        {showCloseButton && (
+          <DialogPrimitive.Close data-slot="dialog-close" asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="absolute top-4 right-4 text-muted-foreground hover:text-foreground"
+              aria-label="Cerrar"
+            >
+              <XIcon />
+            </Button>
+          </DialogPrimitive.Close>
+        )}
+      </DialogPrimitive.Content>
+    </DialogPortal>
+  )
+}
 
-const DialogContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement> & { noPadding?: boolean }>(
-  ({ className, children, noPadding, ...props }, ref) => {
-    const { open, onOpenChange } = React.useContext(DialogContext);
+function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
+  return <div data-slot="dialog-header" className={cn("flex flex-col gap-1.5 pr-8", className)} {...props} />
+}
 
-    React.useEffect(() => {
-      if (!open) return;
-      const handleKeyDown = (e: KeyboardEvent) => {
-        if (e.key === 'Escape') onOpenChange(false);
-      };
-      document.addEventListener('keydown', handleKeyDown);
-      return () => document.removeEventListener('keydown', handleKeyDown);
-    }, [open, onOpenChange]);
-
-    if (!open) return null;
-
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        {/* Overlay */}
-        <div
-            className="fixed inset-0 bg-black/40 backdrop-blur-[2px] transition-opacity animate-in fade-in"
-            onClick={() => onOpenChange(false)}
-        />
-        <div
-          ref={ref}
-          className={cn(
-            "relative z-50 flex flex-col w-[94vw] max-w-lg border border-slate-100 bg-white shadow-xl duration-200 animate-in zoom-in-95 rounded-2xl md:w-full max-h-[85vh]",
-            className
-          )}
-          style={{ isolation: 'isolate', overflow: 'clip' }}
-          {...props}
-        >
-          {/* Close button — fixed at top, outside scroll */}
-          <button
-            type="button"
-            onClick={() => onOpenChange(false)}
-            className="absolute right-4 top-4 z-10 rounded-full p-1 bg-white/80 backdrop-blur-xs opacity-70 ring-offset-white transition-opacity hover:opacity-100 focus:outline-hidden"
-          >
-            <X className="h-4 w-4" />
-            <span className="sr-only">Close</span>
-          </button>
-          {/* Scrollable content */}
-          {/* grid-cols-1 = minmax(0,1fr): la columna queda acotada al ancho del modal (no crece a
-              max-content). Sin esto, un hijo ancho sin-wrap (p.ej. una botonera de tabs) estira el
-              modal en vez de dejar que su propio overflow-x-auto scrollee. */}
-          <div className={cn("overflow-y-auto flex-1 grid grid-cols-1 gap-4 rounded-[inherit] max-h-[inherit]", noPadding ? "p-0" : "p-6")}>
-            {children}
-          </div>
-        </div>
-      </div>
-    );
-  }
-);
-DialogContent.displayName = "DialogContent";
-
-const DialogHeader = ({
+// Footer: en mobile los botones van apilados y a lo ancho; en sm+ en línea a la derecha.
+function DialogFooter({
   className,
+  showCloseButton = false,
+  children,
   ...props
-}: React.HTMLAttributes<HTMLDivElement>) => (
-  // Fix: Wrapped spread props in curly braces
-  <div
-    className={cn(
-      "flex flex-col space-y-1.5 text-center sm:text-left",
-      className
-    )}
-    {...props}
-  />
-)
-DialogHeader.displayName = "DialogHeader"
+}: React.ComponentProps<"div"> & { showCloseButton?: boolean }) {
+  return (
+    <div
+      data-slot="dialog-footer"
+      className={cn(
+        "flex flex-col-reverse gap-2 *:w-full sm:flex-row sm:justify-end sm:*:w-auto",
+        className
+      )}
+      {...props}
+    >
+      {children}
+      {showCloseButton && (
+        <DialogPrimitive.Close asChild>
+          <Button variant="outline">Cerrar</Button>
+        </DialogPrimitive.Close>
+      )}
+    </div>
+  )
+}
 
-const DialogFooter = ({
-  className,
-  ...props
-}: React.HTMLAttributes<HTMLDivElement>) => (
-  // Fix: Wrapped spread props in curly braces
-  <div
-    className={cn(
-      "flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2",
-      className
-    )}
-    {...props}
-  />
-)
-DialogFooter.displayName = "DialogFooter"
+function DialogTitle({ className, ...props }: React.ComponentProps<typeof DialogPrimitive.Title>) {
+  return (
+    <DialogPrimitive.Title
+      data-slot="dialog-title"
+      className={cn("text-lg leading-tight font-bold tracking-tight", className)}
+      {...props}
+    />
+  )
+}
 
-const DialogTitle = React.forwardRef<
-  HTMLHeadingElement,
-  React.HTMLAttributes<HTMLHeadingElement>
->(({ className, ...props }, ref) => (
-  // Fix: Wrapped spread props in curly braces
-  <h3
-    ref={ref}
-    className={cn(
-      "text-lg font-semibold leading-none tracking-tight text-slate-900",
-      className
-    )}
-    {...props}
-  />
-))
-DialogTitle.displayName = "DialogTitle"
-
-const DialogDescription = React.forwardRef<
-  HTMLParagraphElement,
-  React.HTMLAttributes<HTMLParagraphElement>
->(({ className, ...props }, ref) => (
-  // Fix: Wrapped spread props in curly braces
-  <p
-    ref={ref}
-    className={cn("text-sm text-slate-500", className)}
-    {...props}
-  />
-))
-DialogDescription.displayName = "DialogDescription"
+function DialogDescription({ className, ...props }: React.ComponentProps<typeof DialogPrimitive.Description>) {
+  return (
+    <DialogPrimitive.Description
+      data-slot="dialog-description"
+      className={cn("text-sm text-muted-foreground *:[a]:underline *:[a]:underline-offset-3", className)}
+      {...props}
+    />
+  )
+}
 
 export {
   Dialog,
-  DialogTrigger,
+  DialogClose,
   DialogContent,
-  DialogHeader,
-  DialogFooter,
-  DialogTitle,
   DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogOverlay,
+  DialogPortal,
+  DialogTitle,
+  DialogTrigger,
 }

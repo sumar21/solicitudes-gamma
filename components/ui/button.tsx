@@ -1,38 +1,69 @@
 import * as React from "react"
-import { cn } from "../../lib/utils"
+import { cva, type VariantProps } from "class-variance-authority"
+import { Slot } from "radix-ui"
 
-export interface ButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link"
-  size?: "default" | "sm" | "lg" | "icon"
-}
+import { cn } from "@/lib/utils"
 
-const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant = "default", size = "default", ...props }, ref) => {
-    return (
-      <button
-        ref={ref}
-        className={cn(
-          "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-white transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
-          {
-            "bg-emerald-950 text-slate-50 hover:bg-emerald-900": variant === "default",
-            "bg-red-500 text-slate-50 hover:bg-red-600": variant === "destructive",
-            "border border-slate-200 bg-white hover:bg-slate-50 hover:text-slate-900 text-slate-700": variant === "outline",
-            "bg-slate-100 text-slate-900 hover:bg-slate-200": variant === "secondary",
-            "hover:bg-slate-100 hover:text-slate-900": variant === "ghost",
-            "text-slate-900 underline-offset-4 hover:underline": variant === "link",
-            "h-10 px-4 py-2": size === "default",
-            "h-9 rounded-md px-3": size === "sm",
-            "h-11 rounded-md px-8": size === "lg",
-            "h-10 w-10": size === "icon",
-          },
-          className
-        )}
-        {...props}
-      />
-    )
+// Estilo 1: rounded-md, h-10 por defecto, foco con anillo de 2px separado del borde.
+// `destructive` es rojo sólido (como el kit), no el tinte de shadcn.
+const buttonVariants = cva(
+  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap ring-offset-background transition-colors outline-hidden select-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 aria-invalid:ring-2 aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  {
+    variants: {
+      variant: {
+        default: "bg-primary text-primary-foreground shadow-xs hover:bg-primary/90",
+        secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        outline:
+          "border border-input bg-background shadow-xs hover:bg-accent hover:text-accent-foreground aria-expanded:bg-accent aria-expanded:text-accent-foreground",
+        ghost:
+          "hover:bg-accent hover:text-accent-foreground aria-expanded:bg-accent aria-expanded:text-accent-foreground",
+        destructive:
+          "bg-destructive text-destructive-foreground shadow-xs hover:bg-destructive/90 focus-visible:ring-destructive",
+        link: "text-primary underline-offset-4 hover:underline",
+      },
+      size: {
+        default: "h-10 px-4 has-[>svg]:px-3",
+        sm: "h-9 gap-1.5 px-3 has-[>svg]:px-2.5",
+        lg: "h-11 px-8 has-[>svg]:px-6",
+        icon: "size-10",
+        "icon-sm": "size-8",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+      size: "default",
+    },
   }
 )
-Button.displayName = "Button"
 
-export { Button }
+/**
+ * Botón del kit. Por defecto es `type="button"` (no hace submit sin querer);
+ * para el submit de un formulario pasá `type="submit"`.
+ * Los botones de solo ícono llevan `aria-label`.
+ */
+function Button({
+  className,
+  variant = "default",
+  size = "default",
+  asChild = false,
+  type,
+  ...props
+}: React.ComponentProps<"button"> &
+  VariantProps<typeof buttonVariants> & {
+    asChild?: boolean
+  }) {
+  const Comp = asChild ? Slot.Root : "button"
+
+  return (
+    <Comp
+      data-slot="button"
+      data-variant={variant}
+      data-size={size}
+      type={asChild ? type : (type ?? "button")}
+      className={cn(buttonVariants({ variant, size, className }))}
+      {...props}
+    />
+  )
+}
+
+export { Button, buttonVariants }

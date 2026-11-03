@@ -7,7 +7,9 @@ import { Card } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { Calendar } from '../components/ui/calendar';
-import { StatusBadge } from '../components/StatusBadge';
+import { aIso, deIso } from '../lib/fechaIso';
+import { StatusBadge } from '../components/ui/status-badge';
+import { ESTADOS_TICKET } from '../lib/estados';
 import { StatCard } from '../components/dashboard/StatCard';
 import { VolumeBarChart } from '../components/dashboard/VolumeBarChart';
 import { StatusDonutChart } from '../components/dashboard/StatusDonutChart';
@@ -214,7 +216,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ tickets, onRefresh
               </button>
             </PopoverTrigger>
             <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
-              <Calendar selected={startDate} onSelect={(d) => { setStartDate(d); if (d > endDate) setEndDate(d); setOpenStart(false); }} />
+              <Calendar mode="single" required selected={deIso(startDate)} onSelect={(dia: Date) => { const d = aIso(dia); setStartDate(d); if (d > endDate) setEndDate(d); setOpenStart(false); }} />
             </PopoverContent>
           </Popover>
           <Popover open={openEnd} onOpenChange={setOpenEnd}>
@@ -228,7 +230,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ tickets, onRefresh
               </button>
             </PopoverTrigger>
             <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
-              <Calendar selected={endDate} onSelect={(d) => { setEndDate(d); if (d < startDate) setStartDate(d); setOpenEnd(false); }} />
+              <Calendar mode="single" required selected={deIso(endDate)} onSelect={(dia: Date) => { const d = aIso(dia); setEndDate(d); if (d < startDate) setStartDate(d); setOpenEnd(false); }} />
             </PopoverContent>
           </Popover>
         </div>
@@ -285,7 +287,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ tickets, onRefresh
               <div className="w-1 h-4 bg-amber-500 rounded-full" />
               <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest">Admisión Pendiente</h3>
             </div>
-            <Badge variant="warning" className="rounded-full px-2 py-0 text-[10px] font-black">{live.pending.length}</Badge>
+            <StatusBadge tono="aviso">{live.pending.length}</StatusBadge>
           </div>
 
           {live.pending.length === 0 ? (
@@ -301,7 +303,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ tickets, onRefresh
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] font-black font-mono text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded-sm border border-slate-100">{t.id}</span>
-                        <StatusBadge status={t.status} />
+                        <StatusBadge tono={ESTADOS_TICKET[t.status].tono}>{ESTADOS_TICKET[t.status].label}</StatusBadge>
                       </div>
                       <h4 className="font-bold text-slate-900 text-sm tracking-tight">{t.patientName}</h4>
                       <p className="text-[10px] text-slate-400 font-bold uppercase flex items-center gap-1.5">
@@ -325,7 +327,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ tickets, onRefresh
               <div className="w-1 h-4 bg-blue-500 rounded-full" />
               <h3 className="text-sm font-black text-slate-800 uppercase tracking-widest">En Ejecución</h3>
             </div>
-            <Badge variant="info" className="rounded-full px-2 py-0 text-[10px] font-black">{live.inProcess.length}</Badge>
+            <StatusBadge tono="info">{live.inProcess.length}</StatusBadge>
           </div>
 
           {live.inProcess.length === 0 ? (
@@ -341,7 +343,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ tickets, onRefresh
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] font-black font-mono text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded-sm border border-slate-100">{t.id}</span>
-                        <StatusBadge status={t.status} />
+                        <StatusBadge tono={ESTADOS_TICKET[t.status].tono}>{ESTADOS_TICKET[t.status].label}</StatusBadge>
                       </div>
                       <h4 className="font-bold text-slate-900 text-sm tracking-tight">{t.patientName}</h4>
                       <div className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase">
@@ -352,8 +354,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ tickets, onRefresh
                     </div>
                     <div className="flex flex-col items-end gap-2">
                        {t.isBedClean ?
-                        <Badge variant="success" className="text-[8px] font-black uppercase tracking-widest py-0">Limpia</Badge> :
-                        <Badge variant="destructive" className="text-[8px] font-black uppercase tracking-widest py-0">Sucia</Badge>
+                        <StatusBadge tono="exito">Limpia</StatusBadge> :
+                        <StatusBadge tono="peligro">Sucia</StatusBadge>
                       }
                       <span className="text-[10px] font-black text-slate-400 tabular-nums">{formatDateTime(t.createdAt)}</span>
                     </div>

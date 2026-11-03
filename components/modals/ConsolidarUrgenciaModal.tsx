@@ -3,7 +3,7 @@ import { Bed, BedStatus, Ticket } from '../../types';
 import type { UrgenciaLink } from '../../hooks/useHospitalState';
 import { Button } from '../ui/button';
 import { Label } from '../ui/label';
-import { SearchableSelect } from '../ui/searchable-select';
+import { Combobox } from '../ui/combobox';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { bedEventKey, formatBedName } from '../../lib/utils';
 import { Siren, UserCheck, AlertTriangle } from 'lucide-react';
@@ -103,16 +103,15 @@ export const ConsolidarUrgenciaModal: React.FC<Props> = ({ open, onOpenChange, t
 
           <div className="grid gap-2">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Paciente en PROGAL <span className="text-red-500">*</span></Label>
-            <SearchableSelect
+            <Combobox obligatorio
               value={patientCode}
-              onValueChange={(v) => { pickedByUser.current = true; setPatientCode(v); }}
-              options={candidates.map(b => ({
+              onChange={(v) => { pickedByUser.current = true; setPatientCode(v); }}
+              opciones={candidates.map(b => ({
                 label: `${b.patientName} — ${formatBedName(b.label)}${b.dni ? ` · DNI ${b.dni}` : ''}`,
                 value: String(b.patientCode).trim(),
               }))}
               placeholder="Buscar paciente internado…"
-              searchPlaceholder="Buscar por nombre, cama o DNI..."
-              listMaxHeight="max-h-[260px]"
+              buscar="Buscar por nombre, cama o DNI..."
             />
             {!picked && !suggested && (
               <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200">

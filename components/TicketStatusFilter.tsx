@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { TicketStatus } from '../types';
 import { Filter, ChevronDown, X } from './Icons';
 import { Siren } from 'lucide-react';
-import { statusLabel } from './StatusBadge';
+import { statusLabel } from '../lib/estados';
 import { cn } from '../lib/utils';
 
 /**

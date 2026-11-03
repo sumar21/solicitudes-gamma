@@ -7,7 +7,7 @@ import { Card } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table';
-import { SearchableSelect } from '../components/ui/searchable-select';
+import { Combobox } from '../components/ui/combobox';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Badge } from '../components/ui/badge';
 import { cn } from '../lib/utils';
@@ -475,17 +475,16 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({ currentU
             <div className="grid grid-cols-3 gap-3">
               <div className="grid gap-1.5">
                 <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Rol / Perfil *</Label>
-                <SearchableSelect
+                <Combobox obligatorio
                   value={form.role}
-                  onValueChange={val => setForm(f => ({
+                  onChange={val => setForm(f => ({
                     ...f,
                     role: val,
                     // Si el nuevo rol no filtra por pisos, limpiar la selección previa.
                     assignedFloors: roleFiltersByFloors(val) ? f.assignedFloors : [],
                   }))}
-                  options={roleOptions}
+                  opciones={roleOptions}
                   placeholder="Seleccionar rol"
-                  showSearch={false}
                 />
               </div>
               <div className="grid gap-1.5">

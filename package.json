@@ -31,7 +31,8 @@
     "tailwind-merge": "^3.7.0",
     "vite-plugin-pwa": "^1.2.0",
     "web-push": "^3.6.7",
-    "xlsx": "0.18.5"
+    "xlsx": "0.18.5",
+    "zustand": "^5.0.16"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.4",

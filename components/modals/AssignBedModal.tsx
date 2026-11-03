@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { Button } from '../ui/button';
 import { Label } from '../ui/label';
-import { SearchableSelect } from '../ui/searchable-select';
+import { Combobox } from '../ui/combobox';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { HOSPITAL_LOCATIONS } from '../../lib/constants';
 
@@ -37,15 +37,15 @@ export const AssignBedModal: React.FC<AssignBedModalProps> = ({ open, onOpenChan
           <p className="text-sm text-slate-500">Seleccione la cama de destino para el paciente.</p>
           <div className="grid gap-2">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Cama / Habitación</Label>
-            <SearchableSelect
+            <Combobox obligatorio
               value={bedInput}
-              onValueChange={setBedInput}
-              options={HOSPITAL_LOCATIONS.filter(l => l.includes('Habitación')).map(loc => ({
+              onChange={setBedInput}
+              opciones={HOSPITAL_LOCATIONS.filter(l => l.includes('Habitación')).map(loc => ({
                 label: loc,
                 value: loc
               }))}
               placeholder="Seleccionar Cama"
-              searchPlaceholder="Buscar cama..."
+              buscar="Buscar cama..."
             />
           </div>
         </div>

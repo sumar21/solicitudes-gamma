@@ -8,6 +8,7 @@ import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { Calendar } from '../components/ui/calendar';
+import { aIso, deIso } from '../lib/fechaIso';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Label } from '../components/ui/label';
 import { Utensils, User as UserIcon, Clock, RefreshCw, Calendar as CalendarIcon, FileDown, FileSpreadsheet, CalendarDays, Check, X, Undo2, Loader2, Search } from 'lucide-react';
@@ -367,14 +368,14 @@ const CambiosDietaPanel: React.FC = () => {
           <Popover open={openFrom} onOpenChange={setOpenFrom}>
             <PopoverTrigger asChild><DateRangeTrigger label="Desde" value={from} className="h-full text-xs" /></PopoverTrigger>
             <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
-              <Calendar selected={from} onSelect={(date) => { setFrom(date); setOpenFrom(false); }} />
+              <Calendar mode="single" required selected={deIso(from)} onSelect={(dia: Date) => { const date = aIso(dia); setFrom(date); setOpenFrom(false); }} />
             </PopoverContent>
           </Popover>
           <div className="w-px h-5 bg-slate-100 shrink-0" />
           <Popover open={openTo} onOpenChange={setOpenTo}>
             <PopoverTrigger asChild><DateRangeTrigger label="Hasta" value={to} className="h-full text-xs" /></PopoverTrigger>
             <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
-              <Calendar selected={to} onSelect={(date) => { setTo(date); setOpenTo(false); }} />
+              <Calendar mode="single" required selected={deIso(to)} onSelect={(dia: Date) => { const date = aIso(dia); setTo(date); setOpenTo(false); }} />
             </PopoverContent>
           </Popover>
         </div>
@@ -833,14 +834,14 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
               <Popover open={openFrom} onOpenChange={setOpenFrom}>
                 <PopoverTrigger asChild><DateRangeTrigger label="Desde" value={from} className="h-full text-xs" /></PopoverTrigger>
                 <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
-                  <Calendar selected={from} onSelect={(date) => { setFrom(date); setOpenFrom(false); }} />
+                  <Calendar mode="single" required selected={deIso(from)} onSelect={(dia: Date) => { const date = aIso(dia); setFrom(date); setOpenFrom(false); }} />
                 </PopoverContent>
               </Popover>
               <div className="w-px h-5 bg-slate-100 shrink-0" />
               <Popover open={openTo} onOpenChange={setOpenTo}>
                 <PopoverTrigger asChild><DateRangeTrigger label="Hasta" value={to} className="h-full text-xs" /></PopoverTrigger>
                 <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
-                  <Calendar selected={to} onSelect={(date) => { setTo(date); setOpenTo(false); }} />
+                  <Calendar mode="single" required selected={deIso(to)} onSelect={(dia: Date) => { const date = aIso(dia); setTo(date); setOpenTo(false); }} />
                 </PopoverContent>
               </Popover>
             </div>

@@ -1,33 +1,45 @@
 import * as React from "react"
-import { cn } from "../../lib/utils"
+import { cva, type VariantProps } from "class-variance-authority"
+import { Slot } from "radix-ui"
 
-export interface BadgeProps extends React.HTMLAttributes<HTMLDivElement> {
-  variant?: "default" | "secondary" | "destructive" | "outline" | "success" | "warning" | "info" | "purple" | "fuchsia"
-  className?: string
-  children?: React.ReactNode
-}
+import { cn } from "@/lib/utils"
 
-function Badge({ className, variant = "default", ...props }: BadgeProps) {
+// Pill: rounded-full, text-xs semibold. Para estados de negocio usá StatusBadge.
+const badgeVariants = cva(
+  "inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-full border border-transparent px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap ring-offset-background transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 [&>svg]:pointer-events-none [&>svg]:size-3",
+  {
+    variants: {
+      variant: {
+        default: "bg-primary text-primary-foreground [a&]:hover:bg-primary/90",
+        secondary: "bg-secondary text-secondary-foreground [a&]:hover:bg-secondary/80",
+        destructive: "bg-destructive text-destructive-foreground [a&]:hover:bg-destructive/90",
+        outline: "border-border text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
+        ghost: "text-muted-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
+        link: "text-primary underline-offset-4 [a&]:hover:underline",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+    },
+  }
+)
+
+function Badge({
+  className,
+  variant = "default",
+  asChild = false,
+  ...props
+}: React.ComponentProps<"span"> & VariantProps<typeof badgeVariants> & { asChild?: boolean }) {
+  const Comp = asChild ? Slot.Root : "span"
+
   return (
-    <div
-      className={cn(
-        "inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-hidden focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
-        {
-          "border-transparent bg-emerald-950 text-slate-50 hover:bg-emerald-950/80": variant === "default",
-          "border-transparent bg-slate-100 text-slate-600 hover:bg-slate-200": variant === "secondary",
-          "border-transparent bg-red-50 text-red-700 border-red-200 hover:bg-red-100": variant === "destructive",
-          "text-slate-600 border-slate-200": variant === "outline",
-          "border-transparent bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100": variant === "success",
-          "border-transparent bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100": variant === "warning",
-          "border-transparent bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100": variant === "info",
-          "border-transparent bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100": variant === "purple",
-          "border-transparent bg-fuchsia-100 text-fuchsia-800 border-fuchsia-300 hover:bg-fuchsia-200": variant === "fuchsia",
-        },
-        className
-      )}
+    <Comp
+      data-slot="badge"
+      data-variant={variant}
+      className={cn(badgeVariants({ variant }), className)}
       {...props}
     />
   )
 }
 
-export { Badge }
+export { Badge, badgeVariants }

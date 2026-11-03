@@ -3,7 +3,7 @@ import { Area, Bed, BedStatus, Ticket } from '../../types';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
-import { SearchableSelect } from '../ui/searchable-select';
+import { Combobox } from '../ui/combobox';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { MOVIMIENTOS_PRETICKET, REQUISITOS_CAMA, REQUISITO_SIN } from '../../lib/constants';
 import { formatBedName, isHitArea, isHraArea, cn } from '../../lib/utils';
@@ -217,12 +217,12 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
                 <>
                   <div className="grid gap-2">
                     <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Paciente internado <span className="text-red-500">*</span></Label>
-                    <SearchableSelect
+                    <Combobox obligatorio
                       value={originBedLabel}
-                      onValueChange={setOriginBedLabel}
-                      options={patientOptions}
+                      onChange={setOriginBedLabel}
+                      opciones={patientOptions}
                       placeholder="Seleccionar paciente"
-                      searchPlaceholder="Buscar por paciente o cama..."
+                      buscar="Buscar por paciente o cama..."
                     />
                   </div>
                   {blockingTicket && <OriginBedBusyNotice ticket={blockingTicket} beds={beds} />}
@@ -262,12 +262,12 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
               )}
               <div className="grid gap-2">
                 <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Destino (Disponible/Prep) <span className="text-red-500">*</span></Label>
-                <SearchableSelect
+                <Combobox obligatorio
                   value={destinoBedLabel}
-                  onValueChange={setDestinoBedLabel}
-                  options={destinoOptions}
+                  onChange={setDestinoBedLabel}
+                  opciones={destinoOptions}
                   placeholder="Seleccionar cama destino"
-                  searchPlaceholder="Buscar cama de destino..."
+                  buscar="Buscar cama de destino..."
                 />
               </div>
             </>
@@ -275,12 +275,12 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
           <>
           <div className="grid gap-2">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Paciente</Label>
-            <SearchableSelect
+            <Combobox obligatorio
               value={originBedLabel}
-              onValueChange={setOriginBedLabel}
-              options={patientOptions}
+              onChange={setOriginBedLabel}
+              opciones={patientOptions}
               placeholder="Seleccionar paciente"
-              searchPlaceholder="Buscar por paciente o cama..."
+              buscar="Buscar por paciente o cama..."
             />
           </div>
           {blockingTicket && <OriginBedBusyNotice ticket={blockingTicket} beds={beds} />}
@@ -305,12 +305,11 @@ export const PreTicketModal: React.FC<PreTicketModalProps> = ({ open, onOpenChan
 
           <div className="grid gap-2">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Movimiento <span className="text-red-500">*</span></Label>
-            <SearchableSelect
+            <Combobox obligatorio
               value={movimiento}
-              onValueChange={setMovimiento}
-              options={MOVIMIENTOS_PRETICKET.map(m => ({ label: m, value: m }))}
+              onChange={setMovimiento}
+              opciones={MOVIMIENTOS_PRETICKET.map(m => ({ label: m, value: m }))}
               placeholder="Seleccione el movimiento"
-              showSearch={false}
             />
           </div>
 

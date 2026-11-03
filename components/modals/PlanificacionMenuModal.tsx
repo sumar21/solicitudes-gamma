@@ -25,6 +25,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Popover, PopoverTrigger, PopoverContent } from '../ui/popover';
 import { Calendar } from '../ui/calendar';
+import { aIso, deIso } from '../../lib/fechaIso';
 import { Button } from '../ui/button';
 import { Plus, Pencil, Trash2, CalendarDays, AlertCircle, Loader2, X, Check } from 'lucide-react';
 
@@ -265,7 +266,7 @@ export const PlanificacionMenuModal: React.FC<Props> = ({ open, onOpenChange, cu
                   </button>
                 </PopoverTrigger>
                 <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
-                  <Calendar selected={d[key]} onSelect={(date) => { setDraft({ ...d, [key]: date }); (setOpen as any)(false); }} />
+                  <Calendar mode="single" required selected={deIso(d[key])} onSelect={(dia: Date) => { const date = aIso(dia); setDraft({ ...d, [key]: date }); (setOpen as any)(false); }} />
                 </PopoverContent>
               </Popover>
             </div>

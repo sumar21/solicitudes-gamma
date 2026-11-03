@@ -1,86 +1,80 @@
 import * as React from "react"
-import { cn } from "../../lib/utils"
+import { cva, type VariantProps } from "class-variance-authority"
+import { Tabs as TabsPrimitive } from "radix-ui"
 
-const TabsContext = React.createContext<{
-  value: string
-  onValueChange: (value: string) => void
-} | null>(null)
+import { cn } from "@/lib/utils"
 
-interface TabsProps extends React.HTMLAttributes<HTMLDivElement> {
-  defaultValue?: string
-  value?: string
-  onValueChange?: (value: string) => void
-  children?: React.ReactNode
-  className?: string
-}
-
-const Tabs = ({ children, defaultValue, value, onValueChange, className, ...props }: TabsProps) => {
-  const [internalValue, setInternalValue] = React.useState(defaultValue || "")
-  const activeValue = value !== undefined ? value : internalValue
-  const handleValueChange = onValueChange || setInternalValue
-
+function Tabs({ className, orientation = "horizontal", ...props }: React.ComponentProps<typeof TabsPrimitive.Root>) {
   return (
-    <TabsContext.Provider value={{ value: activeValue, onValueChange: handleValueChange }}>
-      <div className={cn("", className)} {...props}>
-        {children}
-      </div>
-    </TabsContext.Provider>
+    <TabsPrimitive.Root
+      data-slot="tabs"
+      data-orientation={orientation}
+      orientation={orientation}
+      className={cn("group/tabs flex gap-2 data-horizontal:flex-col", className)}
+      {...props}
+    />
   )
 }
 
-const TabsList = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
-  ({ className, ...props }, ref) => (
-    <div
-      ref={ref}
+// default: segmentado sobre bg-muted (DESIGN §2). line: tab bar con subrayado de
+// marca (DESIGN §2 y §3.8), para navegar secciones de un dashboard.
+const tabsListVariants = cva(
+  "group/tabs-list inline-flex w-fit max-w-full items-center text-muted-foreground group-data-vertical/tabs:h-fit group-data-vertical/tabs:flex-col",
+  {
+    variants: {
+      variant: {
+        default: "h-10 justify-center rounded-md bg-muted p-1",
+        line: "h-11 gap-1 overflow-x-auto border-b",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+    },
+  }
+)
+
+function TabsList({
+  className,
+  variant = "default",
+  ...props
+}: React.ComponentProps<typeof TabsPrimitive.List> & VariantProps<typeof tabsListVariants>) {
+  return (
+    <TabsPrimitive.List
+      data-slot="tabs-list"
+      data-variant={variant}
+      className={cn(tabsListVariants({ variant }), className)}
+      {...props}
+    />
+  )
+}
+
+function TabsTrigger({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
+  return (
+    <TabsPrimitive.Trigger
+      data-slot="tabs-trigger"
       className={cn(
-        "inline-flex h-10 items-center justify-center rounded-md bg-slate-100 p-1 text-slate-500",
+        "relative inline-flex items-center justify-center gap-1.5 rounded-sm px-3 py-1.5 text-sm font-medium whitespace-nowrap ring-offset-background transition-all outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 group-data-vertical/tabs:w-full group-data-vertical/tabs:justify-start [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "group-data-[variant=default]/tabs-list:h-full group-data-[variant=default]/tabs-list:data-active:bg-background group-data-[variant=default]/tabs-list:data-active:text-foreground group-data-[variant=default]/tabs-list:data-active:shadow-xs",
+        "group-data-[variant=line]/tabs-list:h-full group-data-[variant=line]/tabs-list:px-4 group-data-[variant=line]/tabs-list:data-active:text-brand",
+        "after:absolute after:inset-x-2 after:-bottom-px after:h-0.5 after:rounded-full after:bg-brand after:opacity-0 after:transition-opacity group-data-[variant=line]/tabs-list:data-active:after:opacity-100",
         className
       )}
       {...props}
     />
   )
-)
-TabsList.displayName = "TabsList"
+}
 
-const TabsTrigger = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement> & { value: string }>(
-  ({ className, value, ...props }, ref) => {
-    const context = React.useContext(TabsContext)
-    const isActive = context?.value === value
+function TabsContent({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.Content>) {
+  return (
+    <TabsPrimitive.Content
+      data-slot="tabs-content"
+      className={cn(
+        "mt-2 flex-1 rounded-md text-sm ring-offset-background outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 data-active:animate-in data-active:fade-in data-active:slide-in-from-bottom-2",
+        className
+      )}
+      {...props}
+    />
+  )
+}
 
-    return (
-      <button
-        ref={ref}
-        type="button"
-        onClick={() => context?.onValueChange(value)}
-        className={cn(
-          "inline-flex items-center justify-center whitespace-nowrap rounded-xs px-3 py-1.5 text-sm font-medium ring-offset-white transition-all focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
-          isActive && "bg-white text-slate-950 shadow-xs",
-          className
-        )}
-        {...props}
-      />
-    )
-  }
-)
-TabsTrigger.displayName = "TabsTrigger"
-
-const TabsContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement> & { value: string }>(
-  ({ className, value, ...props }, ref) => {
-    const context = React.useContext(TabsContext)
-    if (context?.value !== value) return null
-
-    return (
-      <div
-        ref={ref}
-        className={cn(
-          "mt-2 ring-offset-white focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2",
-          className
-        )}
-        {...props}
-      />
-    )
-  }
-)
-TabsContent.displayName = "TabsContent"
-
-export { Tabs, TabsList, TabsTrigger, TabsContent }
+export { Tabs, TabsList, TabsTrigger, TabsContent, tabsListVariants }

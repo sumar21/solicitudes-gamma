@@ -14,7 +14,8 @@ import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Badge } from '../components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table';
 import { Dialog, DialogContent, DialogTitle, DialogHeader, DialogFooter } from '../components/ui/dialog';
-import { StatusBadge } from '../components/StatusBadge';
+import { StatusBadge } from '../components/ui/status-badge';
+import { ESTADOS_TICKET } from '../lib/estados';
 import { TicketStatusFilter } from '../components/TicketStatusFilter';
 import { visibleStatusChips, countByStatus, applyStatusFilter, toggleStatus, showUrgenciasChip, applyUrgenciaFilter } from '../lib/ticketFilters';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
@@ -735,7 +736,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
               <div className="flex justify-between items-start">
                 <div className="space-y-1 flex-1">
                   <div className="flex items-center gap-2">
-                    <StatusBadge status={ticket.status} />
+                    <StatusBadge tono={ESTADOS_TICKET[ticket.status].tono}>{ESTADOS_TICKET[ticket.status].label}</StatusBadge>
                     <span className="text-[9px] font-black font-mono text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded-sm border border-slate-100">{ticket.id}</span>
                   </div>
                   <div className="flex items-center gap-1.5 flex-wrap">
@@ -866,7 +867,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
                 sortedTickets.map((ticket) => (
                   <TableRow key={ticket.id} className={cn("group hover:bg-slate-50/60 transition-colors", ticket.status === TicketStatus.REJECTED && "bg-red-50/40")}>
                     <TableCell className="max-w-[130px]">
-                      <StatusBadge status={ticket.status} wrap />
+                      <StatusBadge tono={ESTADOS_TICKET[ticket.status].tono} className="whitespace-normal leading-tight">{ESTADOS_TICKET[ticket.status].label}</StatusBadge>
                       <div className="flex items-center gap-1.5 text-slate-400 text-[10px] font-bold tabular-nums mt-2">
                         <Clock className="w-3 h-3 opacity-50" /> {formatDateTime(ticket.createdAt)}
                       </div>

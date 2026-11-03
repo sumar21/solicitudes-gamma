@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { Card } from '../ui/card';
-import { Badge } from '../ui/badge';
+import { StatusBadge } from '../ui/status-badge';
 import { cn } from '../../lib/utils';
 import { TrendingUp, TrendingDown } from '../Icons';
 
@@ -29,10 +29,10 @@ export const StatCard: React.FC<StatCardProps> = ({ title, value, description, t
         {React.cloneElement(icon as React.ReactElement<any>, { size: 20 })}
       </div>
       {trend && (
-        <Badge variant={trend.positive ? "success" : "destructive"} className="text-[10px] font-black tracking-tight rounded-full px-2">
+        <StatusBadge tono={trend.positive ? "exito" : "peligro"}>
           {trend.positive ? <TrendingUp className="w-3 h-3 mr-1" /> : <TrendingDown className="w-3 h-3 mr-1" />}
           {trend.value}
-        </Badge>
+        </StatusBadge>
       )}
     </div>
     <div>

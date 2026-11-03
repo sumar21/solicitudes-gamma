@@ -1,28 +1,29 @@
-
 import * as React from "react"
-import { cn } from "../../lib/utils"
+import { Checkbox as CheckboxPrimitive } from "radix-ui"
+import { CheckIcon, MinusIcon } from "lucide-react"
 
-export interface CheckboxProps
-  extends React.InputHTMLAttributes<HTMLInputElement> {
-  onCheckedChange?: (checked: boolean) => void
+import { cn } from "@/lib/utils"
+
+// Borde en muted-foreground (≥ 3:1 contra el fondo, WCAG 1.4.11); tildado en
+// primary. El `after:` agranda el área táctil sin cambiar el dibujo.
+function Checkbox({ className, ...props }: React.ComponentProps<typeof CheckboxPrimitive.Root>) {
+  return (
+    <CheckboxPrimitive.Root
+      data-slot="checkbox"
+      className={cn(
+        "peer relative flex size-4 shrink-0 items-center justify-center rounded-sm border border-muted-foreground bg-background shadow-xs ring-offset-background transition-colors outline-hidden after:absolute after:-inset-x-3 after:-inset-y-2 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-destructive/30 data-checked:border-primary data-checked:bg-primary data-checked:text-primary-foreground data-[state=indeterminate]:border-primary data-[state=indeterminate]:bg-primary data-[state=indeterminate]:text-primary-foreground",
+        className
+      )}
+      {...props}
+    >
+      <CheckboxPrimitive.Indicator
+        data-slot="checkbox-indicator"
+        className="grid place-content-center text-current [&>svg]:size-3.5"
+      >
+        {props.checked === "indeterminate" ? <MinusIcon /> : <CheckIcon />}
+      </CheckboxPrimitive.Indicator>
+    </CheckboxPrimitive.Root>
+  )
 }
-
-const Checkbox = React.forwardRef<HTMLInputElement, CheckboxProps>(
-  ({ className, onCheckedChange, ...props }, ref) => {
-    return (
-      <input
-        type="checkbox"
-        className={cn(
-          "peer h-4 w-4 shrink-0 rounded-xs border border-zinc-200 border-zinc-900 ring-offset-white focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-zinc-950 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-800 dark:border-zinc-50 dark:ring-offset-zinc-950 dark:focus-visible:ring-zinc-300",
-          className
-        )}
-        ref={ref}
-        onChange={(e) => onCheckedChange?.(e.target.checked)}
-        {...props}
-      />
-    )
-  }
-)
-Checkbox.displayName = "Checkbox"
 
 export { Checkbox }

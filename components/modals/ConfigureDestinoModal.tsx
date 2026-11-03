@@ -3,7 +3,7 @@ import { Bed, BedStatus, Ticket } from '../../types';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
-import { SearchableSelect } from '../ui/searchable-select';
+import { Combobox } from '../ui/combobox';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { isHitArea, isHraArea, roomSexConflict, formatBedName } from '../../lib/utils';
 import { roomCheckFor } from '../../lib/roomCheck';
@@ -108,12 +108,12 @@ export const ConfigureDestinoModal: React.FC<ConfigureDestinoModalProps> = ({
 
           <div className="grid gap-2">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Destino (Disponible/Prep) <span className="text-red-500">*</span></Label>
-            <SearchableSelect
+            <Combobox obligatorio
               value={destination}
-              onValueChange={setDestination}
-              options={allowedDestinations.map(bed => ({ label: `${bed.label} (${bed.status})`, value: bed.label }))}
+              onChange={setDestination}
+              opciones={allowedDestinations.map(bed => ({ label: `${bed.label} (${bed.status})`, value: bed.label }))}
               placeholder="Seleccionar Destino"
-              searchPlaceholder="Buscar cama de destino..."
+              buscar="Buscar cama de destino..."
             />
             {isolationBlocked.length > 0 && (
               <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-300">

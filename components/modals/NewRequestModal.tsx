@@ -5,7 +5,7 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
-import { SearchableSelect } from '../ui/searchable-select';
+import { Combobox } from '../ui/combobox';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { ITR_SOURCES, ROOM_CHANGE_REASONS } from '../../lib/constants';
 import { isHitArea, isHraArea, roomSexConflict } from '../../lib/utils';
@@ -133,7 +133,7 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
 
   // El destino se elige ANTES o DESPUÉS del origen, indistinto. Si ya había uno cargado y el
   // origen que se elige después lo vuelve incompatible (p. ej. pasa a ser un paciente DP), hay
-  // que soltarlo: el SearchableSelect dejaría de mostrarlo pero el estado seguiría teniendo la
+  // que soltarlo: el Combobox dejaría de mostrarlo pero el estado seguiría teniendo la
   // cama vieja y el submit la mandaría igual, salteando la regla.
   React.useEffect(() => {
     if (destination && !allowedDestinations.some(b => b.label === destination)) setDestination('');
@@ -159,9 +159,9 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
         <form id="create-ticket-form" onSubmit={handleSubmit} className="grid gap-4 py-2">
           <div className="grid gap-2">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Tipo de Escenario</Label>
-            <SearchableSelect
+            <Combobox obligatorio
               value={workflow}
-              onValueChange={(val) => {
+              onChange={(val) => {
                 const next = val as WorkflowType;
                 if (next !== workflow) {
                   // El filtro de origen depende del workflow → si el origen cargado
@@ -174,32 +174,31 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
                 }
                 setWorkflow(next);
               }}
-              options={[
+              opciones={[
                 { label: "Traslado Interno", value: WorkflowType.INTERNAL },
                 { label: "Sala de Espera Admisión", value: WorkflowType.ITR_TO_FLOOR },
                 { label: "Ingreso de ITR", value: WorkflowType.INGRESO_A_ITR },
               ]}
               placeholder="Seleccione flujo"
-              showSearch={false}
             />
           </div>
           
           <div className="grid gap-2">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Origen (Cama Ocupada)</Label>
-            <SearchableSelect
+            <Combobox obligatorio
               value={origin}
-              onValueChange={(val) => {
+              onChange={(val) => {
                 setOrigin(val);
                 const bed = beds.find(b => b.label === val);
                 if (bed?.patientName) setPatientName(bed.patientName);
                 if (bed?.institution) setItrSource(bed.institution);
               }}
-              options={availableOrigins.map(bed => ({
+              opciones={availableOrigins.map(bed => ({
                 label: `${bed.label} (${bed.patientName || 'Sin Nombre'})`,
                 value: bed.label
               }))}
               placeholder="Seleccionar Origen"
-              searchPlaceholder="Buscar cama de origen..."
+              buscar="Buscar cama de origen..."
             />
             {origin && activeTicketByOrigin.has(origin) && (
               <OriginBedBusyNotice ticket={activeTicketByOrigin.get(origin)!} beds={beds} />
@@ -220,15 +219,15 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
 
           <div className="grid gap-2">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Destino (Disponible/Prep)</Label>
-            <SearchableSelect
+            <Combobox obligatorio
               value={destination}
-              onValueChange={setDestination}
-              options={allowedDestinations.map(bed => ({
+              onChange={setDestination}
+              opciones={allowedDestinations.map(bed => ({
                 label: `${bed.label} (${bed.status})`,
                 value: bed.label
               }))}
               placeholder="Seleccionar Destino"
-              searchPlaceholder="Buscar cama de destino..."
+              buscar="Buscar cama de destino..."
             />
             {isolationBlocked.length > 0 && (
               <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-300">
@@ -256,12 +255,11 @@ export const NewRequestModal: React.FC<NewRequestModalProps> = ({ open, onOpenCh
           {workflow === WorkflowType.INTERNAL && (
             <div className="grid gap-2">
               <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Motivo del Traslado <span className="text-red-500">*</span></Label>
-              <SearchableSelect
+              <Combobox obligatorio
                 value={reason}
-                onValueChange={setReason}
-                options={ROOM_CHANGE_REASONS.map(r => ({ label: r, value: r }))}
+                onChange={setReason}
+                opciones={ROOM_CHANGE_REASONS.map(r => ({ label: r, value: r }))}
                 placeholder="Seleccione Motivo"
-                showSearch={false}
               />
             </div>
           )}

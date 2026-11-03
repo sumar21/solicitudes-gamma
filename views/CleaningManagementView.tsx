@@ -8,6 +8,7 @@ import { Input } from '../components/ui/input';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { Calendar } from '../components/ui/calendar';
+import { aIso, deIso } from '../lib/fechaIso';
 import { RejectionModal } from '../components/modals/RejectionModal';
 import { CheckCircle2, DoorClosed, User as UserIcon, Clock, RefreshCw, Calendar as CalendarIcon, Search, X, SprayCan, Info, XCircle } from 'lucide-react';
 
@@ -311,7 +312,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                   <DateRangeTrigger label="Desde" value={from} className="h-full text-xs" />
                 </PopoverTrigger>
                 <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
-                  <Calendar selected={from} onSelect={(date) => { setFrom(date); setOpenFrom(false); }} />
+                  <Calendar mode="single" required selected={deIso(from)} onSelect={(dia: Date) => { const date = aIso(dia); setFrom(date); setOpenFrom(false); }} />
                 </PopoverContent>
               </Popover>
               <div className="w-px h-5 bg-slate-100 shrink-0" />
@@ -320,7 +321,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                   <DateRangeTrigger label="Hasta" value={to} className="h-full text-xs" />
                 </PopoverTrigger>
                 <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
-                  <Calendar selected={to} onSelect={(date) => { setTo(date); setOpenTo(false); }} />
+                  <Calendar mode="single" required selected={deIso(to)} onSelect={(dia: Date) => { const date = aIso(dia); setTo(date); setOpenTo(false); }} />
                 </PopoverContent>
               </Popover>
             </div>
@@ -413,7 +414,7 @@ export const CleaningManagementView: React.FC<Props> = ({ beds, currentUser, onC
                   <DateRangeTrigger label="Día" value={routineDate} className="h-full text-xs" />
                 </PopoverTrigger>
                 <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
-                  <Calendar selected={routineDate} onSelect={(date) => { setRoutineDate(date); setOpenRoutineDate(false); }} />
+                  <Calendar mode="single" required selected={deIso(routineDate)} onSelect={(dia: Date) => { const date = aIso(dia); setRoutineDate(date); setOpenRoutineDate(false); }} />
                 </PopoverContent>
               </Popover>
             </div>

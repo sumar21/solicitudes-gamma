@@ -13,11 +13,13 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { Calendar } from '../components/ui/calendar';
+import { aIso, deIso } from '../lib/fechaIso';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/table';
 import { Badge } from '../components/ui/badge';
+import { StatusBadge } from '../components/ui/status-badge';
 import { AuditModal } from '../components/AuditModal';
 import { PatientJourney } from '../components/PatientJourney';
-import { SearchableSelect } from '../components/ui/searchable-select';
+import { Combobox } from '../components/ui/combobox';
 import { movementLabel } from '../lib/ticketEvents';
 import { cn, formatDateReadable, formatDateTime, calculateTicketMetrics, formatBedName, formatTicketDestination } from '../lib/utils';
 import { WORKFLOW_LABELS } from '../lib/constants';
@@ -125,7 +127,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
 
   // Trayectoria: opciones del combobox "Seleccionar paciente" (pacientes únicos ya en
   // memoria — sin fetch aparte). Label = nombre · #código · habitación actual; el buscador
-  // interno del SearchableSelect filtra sobre el label (así se puede tipear la habitación).
+  // interno del Combobox (cmdk) busca también en el label (así se puede tipear la habitación).
   // Habitación actual = destino (o, si falta, origen) del ticket más reciente por createdAt.
   // Orden alfabético para un default legible.
   const patientOptions = useMemo(
@@ -349,14 +351,13 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
           </div>
         ) : (
           <div className="flex-1 min-w-[180px] max-w-sm">
-            <SearchableSelect
-              options={patientOptions}
+            <Combobox obligatorio
+              opciones={patientOptions}
               value={journeyPatientKey ?? ''}
-              onValueChange={key => setJourneyPatientKey(key)}
+              onChange={key => setJourneyPatientKey(key)}
               placeholder="Seleccionar paciente"
-              searchPlaceholder="Buscar paciente…"
+              buscar="Buscar paciente…"
               className="h-9 text-xs"
-              listMaxHeight="max-h-[420px]"
             />
           </div>
         )}
@@ -393,7 +394,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
               <DateRangeTrigger label="Desde" value={startDate} placeholder="---" className="h-full text-xs" />
             </PopoverTrigger>
             <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
-              <Calendar selected={startDate} onSelect={(date) => { setStartDate(date); setOpenStart(false); }} />
+              <Calendar mode="single" required selected={deIso(startDate)} onSelect={(dia: Date) => { const date = aIso(dia); setStartDate(date); setOpenStart(false); }} />
             </PopoverContent>
           </Popover>
           <div className="w-px h-5 bg-slate-100 shrink-0" />
@@ -402,7 +403,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
               <DateRangeTrigger label="Hasta" value={endDate} placeholder="---" className="h-full text-xs" />
             </PopoverTrigger>
             <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
-              <Calendar selected={endDate} onSelect={(date) => { setEndDate(date); setOpenEnd(false); }} />
+              <Calendar mode="single" required selected={deIso(endDate)} onSelect={(dia: Date) => { const date = aIso(dia); setEndDate(date); setOpenEnd(false); }} />
             </PopoverContent>
           </Popover>
         </div>
@@ -511,9 +512,9 @@ export const HistoryView: React.FC<HistoryViewProps> = ({ tickets, onRefresh, re
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     {t.status === TicketStatus.REJECTED ? (
-                      <Badge variant="destructive" className="text-[8px] uppercase font-black px-1.5 py-0">Rechazado</Badge>
+                      <StatusBadge tono="peligro">Rechazado</StatusBadge>
                     ) : (
-                      <Badge variant="success" className="text-[8px] uppercase font-black px-1.5 py-0">Finalizado</Badge>
+                      <StatusBadge tono="exito">Finalizado</StatusBadge>
                     )}
                     <span className="text-[10px] font-black font-mono text-slate-400 tabular-nums">{formatDateTime(t.createdAt)}</span>
                   </div>

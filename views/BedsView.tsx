@@ -7,6 +7,7 @@ import { Input } from '../components/ui/input';
 import { cn, dietRequiresCustomComanda, suggestedRoomSex, formatBedName, formatDateReadable, bedEventKey, isIndividualBoxArea } from '../lib/utils';
 import { BedDouble, User as UserIcon, Info, Search, X, Plus, ChevronDown, ChevronRight, Check, AlertTriangle, AlertCircle, CheckCircle2, ShieldAlert, RefreshCw, Utensils, UtensilsCrossed, Clock, FileText, ArrowDownAZ, SlidersHorizontal, MoreVertical, SprayCan, History, Lock, Activity, ArrowRight, Undo2, Calendar as CalendarIcon } from 'lucide-react';
 import { Calendar } from '../components/ui/calendar';
+import { aIso, deIso } from '../lib/fechaIso';
 import { Dialog, DialogContent, DialogTitle } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
@@ -1110,11 +1111,11 @@ const AdmissionDateFilter: React.FC<{
     <div className="flex flex-col sm:flex-row gap-4">
       <div>
         <p className="text-[9px] font-bold uppercase text-slate-400 mb-1.5 px-1">Desde</p>
-        <Calendar selected={from} onSelect={setFrom} />
+        <Calendar mode="single" required selected={deIso(from)} onSelect={(dia: Date) => setFrom(aIso(dia))} />
       </div>
       <div>
         <p className="text-[9px] font-bold uppercase text-slate-400 mb-1.5 px-1">Hasta</p>
-        <Calendar selected={to} onSelect={setTo} />
+        <Calendar mode="single" required selected={deIso(to)} onSelect={(dia: Date) => setTo(aIso(dia))} />
       </div>
     </div>
   );
@@ -1143,11 +1144,11 @@ const AdmissionDateFilter: React.FC<{
             <div className="flex flex-col items-center gap-4 py-1">
               <div className="w-full">
                 <p className="text-[10px] font-bold uppercase text-slate-400 mb-1.5">Desde</p>
-                <Calendar selected={from} onSelect={setFrom} />
+                <Calendar mode="single" required selected={deIso(from)} onSelect={(dia: Date) => setFrom(aIso(dia))} />
               </div>
               <div className="w-full">
                 <p className="text-[10px] font-bold uppercase text-slate-400 mb-1.5">Hasta</p>
-                <Calendar selected={to} onSelect={setTo} />
+                <Calendar mode="single" required selected={deIso(to)} onSelect={(dia: Date) => setTo(aIso(dia))} />
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-1">
@@ -3144,7 +3145,7 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
 
       {/* Bed Details Modal */}
       <Dialog open={!!selectedBed} onOpenChange={(open) => !open && setSelectedBed(null)}>
-        <DialogContent noPadding className="sm:max-w-[550px] rounded-3xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="gap-0 p-0 sm:max-w-[550px] rounded-3xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
           {selectedBed && (() => {
             type A = { headerBg: string; iconBg: string; icon: string; pill: string; dot: string; patientBg: string; patientBorder: string; label: string };
             const theme: Record<BedStatus, A> = {

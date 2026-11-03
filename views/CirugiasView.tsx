@@ -8,6 +8,7 @@ import { Card } from '../components/ui/card';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
 import { Calendar } from '../components/ui/calendar';
+import { aIso, deIso } from '../lib/fechaIso';
 import {
   Activity, ArrowRight, BedDouble, CheckCircle2, Clock, RefreshCw, Search, X, XCircle, AlertTriangle,
   Calendar as CalendarIcon, Eye, User as UserIcon, Undo2,
@@ -587,7 +588,7 @@ export const CirugiasView: React.FC<Props> = ({
                   <DateRangeTrigger label="Desde" value={from} className="h-full text-xs" />
                 </PopoverTrigger>
                 <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
-                  <Calendar selected={from} onSelect={(date) => { setFrom(date); setOpenFrom(false); }} />
+                  <Calendar mode="single" required selected={deIso(from)} onSelect={(dia: Date) => { const date = aIso(dia); setFrom(date); setOpenFrom(false); }} />
                 </PopoverContent>
               </Popover>
               <div className="w-px h-5 bg-slate-100 shrink-0" />
@@ -596,7 +597,7 @@ export const CirugiasView: React.FC<Props> = ({
                   <DateRangeTrigger label="Hasta" value={to} className="h-full text-xs" />
                 </PopoverTrigger>
                 <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
-                  <Calendar selected={to} onSelect={(date) => { setTo(date); setOpenTo(false); }} />
+                  <Calendar mode="single" required selected={deIso(to)} onSelect={(dia: Date) => { const date = aIso(dia); setTo(date); setOpenTo(false); }} />
                 </PopoverContent>
               </Popover>
             </div>

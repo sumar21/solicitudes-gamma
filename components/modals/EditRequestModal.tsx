@@ -4,7 +4,7 @@ import { Area, Bed, BedStatus, Ticket, WorkflowType } from '../../types';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
-import { SearchableSelect } from '../ui/searchable-select';
+import { Combobox } from '../ui/combobox';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { ROOM_CHANGE_REASONS } from '../../lib/constants';
 import { formatBedName, isHitArea, isHraArea } from '../../lib/utils';
@@ -146,9 +146,9 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
         <form id="edit-ticket-form" onSubmit={handleSubmit} className="grid gap-3 py-2">
           <div className="grid gap-1.5">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Tipo de Escenario</Label>
-            <SearchableSelect
+            <Combobox obligatorio
               value={workflow}
-              onValueChange={(val) => {
+              onChange={(val) => {
                 const next = val as WorkflowType;
                 if (next !== workflow) {
                   setItrSource('');
@@ -156,13 +156,12 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
                 }
                 setWorkflow(next);
               }}
-              options={[
+              opciones={[
                 { label: "Traslado Interno", value: WorkflowType.INTERNAL },
                 { label: "Sala de Espera Admisión", value: WorkflowType.ITR_TO_FLOOR },
                 { label: "Ingreso a ITR", value: WorkflowType.INGRESO_A_ITR },
               ]}
               placeholder="Seleccione flujo"
-              showSearch={false}
             />
           </div>
 
@@ -191,17 +190,17 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
 
           <div className="grid gap-1.5">
             <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Destino</Label>
-            <SearchableSelect
+            <Combobox obligatorio
               value={destination}
-              onValueChange={setDestination}
-              options={allowedDestinations.map(bed => ({
+              onChange={setDestination}
+              opciones={allowedDestinations.map(bed => ({
                 label: bed.label === ticket.destination
                   ? `${bed.label} (actual)`
                   : `${bed.label} (${bed.status})`,
                 value: bed.label
               }))}
               placeholder="Seleccionar Destino"
-              searchPlaceholder="Buscar cama de destino..."
+              buscar="Buscar cama de destino..."
             />
             {isolationBlocked.length > 0 && (
               <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-300">
@@ -261,12 +260,11 @@ export const EditRequestModal: React.FC<EditRequestModalProps> = ({ open, onOpen
           {workflow === WorkflowType.INTERNAL && (
             <div className="grid gap-1.5">
               <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest">Motivo del Traslado <span className="text-red-500">*</span></Label>
-              <SearchableSelect
+              <Combobox obligatorio
                 value={reason}
-                onValueChange={setReason}
-                options={ROOM_CHANGE_REASONS.map(r => ({ label: r, value: r }))}
+                onChange={setReason}
+                opciones={ROOM_CHANGE_REASONS.map(r => ({ label: r, value: r }))}
                 placeholder="Seleccione Motivo"
-                showSearch={false}
               />
             </div>
           )}

@@ -7,6 +7,7 @@ import {
 import { MessageSquare } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
 import { Badge } from './ui/badge';
+import { StatusBadge } from './ui/status-badge';
 import { cn, formatDateTime, formatTime, formatBedName, formatDateReadable, formatTicketDestination } from '../lib/utils';
 import { eventConfigFor, parseModification } from '../lib/ticketEvents';
 import { CIRUGIA_ESTADO_LABEL, CIRUGIA_PILL_CLASS, CIRUGIA_TIPO_PREVIA } from '../lib/constants';
@@ -472,7 +473,7 @@ const EpisodeCard: React.FC<{
             ) : active ? (
               <Badge className="text-[8px] uppercase font-black px-1.5 py-0 bg-blue-100 text-blue-700 border-none">{ticket.status}</Badge>
             ) : (
-              <Badge variant="success" className="text-[8px] uppercase font-black px-1.5 py-0">Consolidado</Badge>
+              <StatusBadge tono="exito">Consolidado</StatusBadge>
             )}
             <Badge variant="outline" className="text-[8px] font-bold uppercase tracking-wide bg-white text-slate-500 border-slate-200 px-1.5 py-0">
               {workflowLabels[ticket.workflow]}

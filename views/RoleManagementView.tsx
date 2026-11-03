@@ -558,7 +558,7 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
           modal de detalle de cama): General + una solapa por módulo habilitado + Notificaciones.
           El panel usa el ancho completo y crece según la solapa; header y barra quedan fijos arriba. */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-        <DialogContent noPadding className="sm:max-w-[900px] rounded-3xl">
+        <DialogContent className="gap-0 p-0 sm:max-w-[900px] rounded-3xl">
          <div className="flex flex-col max-h-[85vh] min-w-0">
           <DialogHeader className="px-6 pt-6 pb-4 text-left shrink-0">
             <DialogTitle className="text-xl">{editingRole ? 'Editar Rol' : 'Nuevo Rol'}</DialogTitle>
