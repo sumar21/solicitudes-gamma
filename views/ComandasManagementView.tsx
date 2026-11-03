@@ -2,17 +2,23 @@ import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { Bed, User, Area, MealSlot, MEAL_SLOTS, mealSlotFromSp, mealSlotLabel, COMANDA_STATUS, ComandaStatus } from '../types';
 import { cn, formatBedName, formatDateReadable, normalizeText } from '../lib/utils';
 import { can } from '../lib/permissions';
-import { comandaTipoPill } from './BedsView';
 import { PlanificacionMenuModal } from '../components/modals/PlanificacionMenuModal';
 import { Button } from '../components/ui/button';
-import { Card } from '../components/ui/card';
-import { Popover, PopoverTrigger, PopoverContent } from '../components/ui/popover';
-import { Calendar } from '../components/ui/calendar';
+import { Badge } from '../components/ui/badge';
 import { aIso, deIso } from '../lib/fechaIso';
+import { fechaHora } from '../lib/formato';
+import { estadoComanda, PUNTO_TURNO, tipoComanda } from '../lib/estados-comandas';
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Textarea } from '../components/ui/textarea';
 import { Label } from '../components/ui/label';
-import { Utensils, User as UserIcon, Clock, RefreshCw, Calendar as CalendarIcon, FileDown, FileSpreadsheet, CalendarDays, Check, X, Undo2, Loader2, Search } from 'lucide-react';
+import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs';
+import { DataTable, type Columna } from '../components/ui/data-table';
+import { Vacio } from '../components/ui/estados';
+import { StatusBadge } from '../components/ui/status-badge';
+import { DateRangePicker, type DateRange } from '../components/ui/date-picker';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip';
+import { AlertCircle, ArrowRight, CalendarDays, Check, CheckCircle2, Clock, FileDown, FileSpreadsheet, Loader2, RefreshCw, Search, Undo2, User as UserIcon, Utensils, X, XCircle } from 'lucide-react';
 import { Input } from '../components/ui/input';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -89,33 +95,31 @@ const fmtWhen = (iso?: string) => {
   return isNaN(d.getTime()) ? iso : d.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
 };
 
-// Color por turno. Es un `Record<MealSlot, …>` a propósito: si mañana se suma un turno al
-// catálogo de types.ts, `tsc` obliga a darle color acá en vez de pintarlo como Cena.
-// Progresión cromática a lo largo del día: amanecer → mediodía → tarde → noche.
-const MEAL_PILL_CLS: Record<MealSlot, string> = {
-  desayuno: 'bg-orange-50 text-orange-700 border-orange-200',
-  almuerzo: 'bg-sky-50 text-sky-700 border-sky-200',
-  merienda: 'bg-rose-50 text-rose-700 border-rose-200',
-  cena:     'bg-violet-50 text-violet-700 border-violet-200',
+// Fecha y hora para mostrar (lib/formato). Una fecha que no se puede leer sale tal cual (fechaHora
+// tira con una fecha inválida y las filas vienen de SharePoint). El Excel/PDF siguen con fmtWhen.
+const cuando = (iso?: string) => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? iso : fechaHora(d);
 };
-const NEUTRAL_PILL_CLS = 'bg-slate-50 text-slate-600 border-slate-200';
 
-// `slot` null = turno desconocido (fila vieja de SP): se muestra el crudo, sin inventar.
-const comidaPill = (slot: MealSlot | null, raw: string): { label: string; cls: string } =>
-  slot
-    ? { label: mealSlotLabel(slot), cls: MEAL_PILL_CLS[slot] }
-    : { label: raw || '—', cls: NEUTRAL_PILL_CLS };
+// Texto del turno. `slot` null = turno desconocido (fila vieja de SP): se muestra el crudo, sin inventar.
+const comidaLabel = (slot: MealSlot | null, raw: string): string =>
+  slot ? mealSlotLabel(slot) : (raw || '—');
 
-const STATUS_PILL: Record<ComandaStatus, { label: string; cls: string }> = {
-  [COMANDA_STATUS.PENDIENTE]: { label: 'Pendiente', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
-  [COMANDA_STATUS.ENTREGADO]: { label: 'Entregado', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-  [COMANDA_STATUS.ANULADA]:   { label: 'Anulada',   cls: 'bg-slate-100 text-slate-400 border-slate-200' },
-};
+// Turno en pantalla: punto de color + texto (lib/estados-comandas.ts). Es la hora del día, no un
+// estado, así que no va como pill; el desconocido, punto gris.
+const Turno: React.FC<{ slot: MealSlot | null; raw: string }> = ({ slot, raw }) => (
+  <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+    <span className={cn('size-2 shrink-0 rounded-full', slot ? PUNTO_TURNO[slot] : 'bg-muted-foreground')} aria-hidden="true" />
+    <span className="font-medium">{comidaLabel(slot, raw)}</span>
+  </span>
+);
 
 // ── Colores de los pills para el PDF ────────────────────────────────────────
-// El PDF "como la grilla" repite los mismos tonos de pantalla; jspdf necesita RGB, no clases.
-// Turno = bg-*-50 / text-*-700 (MEAL_PILL_CLS); Tipo = bg-*-100 / text-*-700 (comandaTipoPill de
-// BedsView); Estado = los tonos de STATUS_PILL. Si cambia un color en pantalla, cambiarlo acá.
+// jspdf necesita RGB, no clases. Son los tonos de la grilla VIEJA (turno naranja/sky/rosa/violeta,
+// tipo y estado como los de lib/estados-comandas.ts): el papel no se tocó en el rediseño. Si se
+// quiere el PDF igual a la pantalla nueva, el mapa está en lib/estados-comandas.ts.
 type Rgb = [number, number, number];
 const PDF_TURNO_RGB: Record<MealSlot, { fill: Rgb; text: Rgb }> = {
   desayuno: { fill: [255, 247, 237], text: [194, 65, 12] },   // orange-50 / orange-700
@@ -133,12 +137,6 @@ const pdfEstadoRgb = (s: ComandaStatus): { fill: Rgb; text: Rgb } =>
   : s === COMANDA_STATUS.ANULADA ? { fill: [241, 245, 249], text: [148, 163, 184] } // slate-100 / slate-400
   : { fill: [255, 251, 235], text: [180, 83, 9] };                                  // amber-50 / amber-700
 
-/**
- * Estado de la bandeja + sus acciones.
- *   Pendiente → [✓ entregar] [✕ anular]
- *   Entregado → [↩ volver a pendiente]  (para un check tocado por error)
- *   Anulada   → sin acciones (es histórico: se reponen cargándola de nuevo desde la tarjeta)
- */
 /**
  * Hora de cierre (entrega/anulación) para mostrar junto al estado. Solo la hora si el
  * cierre fue el mismo día ART que la carga (el caso normal); con día ("22/7 13:45") si
@@ -158,62 +156,62 @@ const fmtCierre = (closedAt: string, at: string): string => {
   return hora;
 };
 
-const StatusCell: React.FC<{
-  r: ComandaRow; busy: boolean; canAct: boolean;
+// Botones de acción dentro de una fila de la tabla (igual que Traslados y Limpiezas).
+const BOTON_FILA = 'h-8 gap-1.5 px-3 text-xs';
+
+/**
+ * Acciones de la bandeja (DESIGN §7.6, como en Traslados): el paso del circuito con texto y lo
+ * secundario en íconos con tooltip. En mobile, botones a lo ancho con texto (es la card entera).
+ *   Pendiente → [✓ Entregar] [✕ anular]
+ *   Entregado → [↩ volver a pendiente]  (para un "Entregar" tocado por error)
+ *   Anulada   → sin acciones (es histórico: se reponen cargándola de nuevo desde la tarjeta)
+ * Mientras la acción viaja, los botones de ESA fila quedan deshabilitados y el ícono gira.
+ */
+const AccionesComanda: React.FC<{
+  r: ComandaRow; busy: boolean; mobile?: boolean;
   onAction: (spItemId: string, action: 'entregar' | 'pendiente' | 'anular', label?: string) => void;
-}> = ({ r, busy, canAct, onAction }) => {
-  const p = STATUS_PILL[r.status] ?? STATUS_PILL[COMANDA_STATUS.PENDIENTE];
-  const anulada = r.status === COMANDA_STATUS.ANULADA;
-  const cierre = r.status !== COMANDA_STATUS.PENDIENTE ? fmtCierre(r.closedAt, r.at) : '';
+}> = ({ r, busy, mobile = false, onAction }) => {
+  if (r.status === COMANDA_STATUS.ANULADA) return null;
+  const girando = <Loader2 className="animate-spin" aria-hidden="true" />;
+
+  // Acción secundaria: ícono `ghost` con tooltip en desktop; botón outline con texto en mobile.
+  const secundaria = (icono: React.ReactNode, label: string, onClick: () => void, peligro = false) => mobile ? (
+    <Button type="button" variant="outline" disabled={busy} onClick={onClick}
+      className={cn('flex-1', peligro && 'text-destructive hover:bg-destructive/10 hover:text-destructive')}>
+      {icono} {label}
+    </Button>
+  ) : (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button type="button" variant="ghost" size="icon-sm" aria-label={label} disabled={busy} onClick={onClick}
+          className={cn('text-muted-foreground', peligro ? 'hover:bg-destructive/10 hover:text-destructive' : 'hover:text-foreground')}>
+          {icono}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+
+  if (r.status === COMANDA_STATUS.PENDIENTE) {
+    return (
+      <div className={mobile ? 'flex gap-2' : 'flex items-center justify-end gap-1'}>
+        <Button type="button" size={mobile ? 'default' : 'sm'} className={mobile ? 'flex-1' : BOTON_FILA}
+          disabled={busy} onClick={() => onAction(r.spItemId, 'entregar')}>
+          {busy ? girando : <Check />} Entregar
+        </Button>
+        {secundaria(<XCircle className="size-4" />, 'Anular comanda',
+          () => onAction(r.spItemId, 'anular', `${r.patientName} · ${r.comida}`), true)}
+      </div>
+    );
+  }
+  // Entregado (o un status raro que no es pendiente ni anulada): solo "volver a pendiente".
   return (
-    <div className="flex items-center gap-1.5">
-      <span className={cn('text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border', p.cls)}>{p.label}</span>
-      {cierre && (
-        <span className="text-[10px] font-bold text-slate-400 tabular-nums whitespace-nowrap"
-          title={anulada ? 'Hora de anulación' : 'Hora de entrega'}>
-          {cierre}
-        </span>
-      )}
-      {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-300" />
-        : canAct && !anulada && (
-          r.status === COMANDA_STATUS.PENDIENTE ? (
-            <>
-              <button onClick={() => onAction(r.spItemId, 'entregar')} title="Marcar entregada" aria-label="Marcar entregada"
-                className="h-9 w-9 md:h-6 md:w-6 rounded-xl md:rounded-md flex items-center justify-center border border-emerald-200 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 active:scale-95 md:border-transparent md:bg-transparent md:text-slate-500 md:hover:bg-emerald-50 md:hover:text-emerald-600 transition-all">
-                <Check className="w-4 h-4 md:w-3.5 md:h-3.5" strokeWidth={2.75} />
-              </button>
-              <button onClick={() => onAction(r.spItemId, 'anular', `${r.patientName} · ${r.comida}`)} title="Anular comanda" aria-label="Anular comanda"
-                className="h-9 w-9 md:h-6 md:w-6 rounded-xl md:rounded-md flex items-center justify-center border border-red-200 bg-red-50 text-red-500 hover:bg-red-100 active:scale-95 md:border-transparent md:bg-transparent md:text-slate-500 md:hover:bg-red-50 md:hover:text-red-500 transition-all">
-                <X className="w-4 h-4 md:w-3.5 md:h-3.5" strokeWidth={2.75} />
-              </button>
-            </>
-          ) : (
-            <button onClick={() => onAction(r.spItemId, 'pendiente')} title="Volver a pendiente" aria-label="Volver a pendiente"
-              className="h-9 md:h-6 px-3 md:px-0 md:w-6 rounded-xl md:rounded-md flex items-center justify-center gap-1.5 border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 active:scale-95 md:border-transparent md:bg-transparent md:text-slate-500 md:hover:bg-amber-50 md:hover:text-amber-600 transition-all">
-              <Undo2 className="w-4 h-4 md:w-3.5 md:h-3.5" strokeWidth={2.75} />
-              <span className="text-[11px] font-bold md:hidden">Volver</span>
-            </button>
-          )
-        )}
+    <div className={mobile ? 'flex' : 'flex justify-end'}>
+      {secundaria(busy ? girando : <Undo2 className="size-4" />, 'Volver a pendiente',
+        () => onAction(r.spItemId, 'pendiente'))}
     </div>
   );
 };
-
-const DateRangeTrigger = React.forwardRef<
-  HTMLButtonElement,
-  { label: string; value: string } & React.ButtonHTMLAttributes<HTMLButtonElement>
->(({ label, value, className, ...props }, ref) => (
-  <button ref={ref} type="button"
-    className={cn("w-full h-full px-4 flex items-center gap-3 text-left hover:bg-slate-50 transition-colors outline-hidden", className)}
-    {...props}>
-    <CalendarIcon className="w-3.5 h-3.5 text-slate-400" />
-    <div className="flex flex-col justify-center pointer-events-none">
-      <span className="text-[7px] uppercase font-bold text-slate-400 leading-none mb-0.5">{label}</span>
-      <span className="text-xs font-bold leading-none text-slate-900">{value ? formatDateReadable(value) : '---'}</span>
-    </div>
-  </button>
-));
-DateRangeTrigger.displayName = 'DateRangeTrigger';
 
 // Una comanda cargada (activa o histórica). Ambas tabs salen del endpoint /api/dietas
 // ("De hoy" del GET de vivas; "Histórico" de /api/dietas?history=1) — no del overlay del mapa.
@@ -248,11 +246,11 @@ const rowHaystack = (r: ComandaRow): string => normalizeText([
   r.area, areaLabel(r.area), areaLabel(r.area).replace(/\s+/g, ''),
   r.comida,
   r.comensal,
-  comandaTipoPill(r.tipo).label,
+  tipoComanda(r.tipo).label,
   r.detalle,
   r.observaciones,
   r.by,
-  (STATUS_PILL[r.status] ?? STATUS_PILL[COMANDA_STATUS.PENDIENTE]).label,
+  estadoComanda(r.status).label,
 ].join(' '));
 
 /**
@@ -309,19 +307,80 @@ interface DietaCambio {
 }
 type FiltroTipo = 'todos' | 'CAMBIO' | 'INICIO_DIETA';
 
+// Dietas de un cambio: las de antes tachadas y apagadas, las nuevas con borde (no son estados, así
+// que van como Badge del kit y no como StatusBadge). La flecha entre las dos listas dice el sentido.
 const TagList: React.FC<{ tags: string[]; tone: 'prev' | 'new' }> = ({ tags, tone }) => {
-  if (!tags.length) return <span className={cn('text-[11px] italic', tone === 'prev' ? 'text-slate-400' : 'text-slate-500')}>sin dieta especial</span>;
+  if (!tags.length) return <span className="text-[11px] text-muted-foreground italic">sin dieta especial</span>;
   return (
     <span className="flex flex-wrap gap-1">
       {tags.map((t, i) => (
-        <span key={i} className={cn('inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold border',
-          tone === 'prev' ? 'bg-slate-50 text-slate-400 border-slate-200 line-through' : 'bg-emerald-50 text-emerald-700 border-emerald-200')}>
+        <Badge key={i} variant={tone === 'prev' ? 'secondary' : 'outline'}
+          className={cn('text-[11px]', tone === 'prev' && 'text-muted-foreground line-through')}>
           {t}
-        </span>
+        </Badge>
       ))}
     </span>
   );
 };
+
+/**
+ * Header de página + toolbar (DESIGN §4.4 y §5.2), el mismo para las tres solapas. El título se
+ * oculta en mobile: ahí el nombre de la sección lo dice la solapa activa.
+ */
+const EncabezadoComandas: React.FC<{ titulo: string; subtitulo: React.ReactNode; children: React.ReactNode }> = ({ titulo, subtitulo, children }) => (
+  <div className="flex shrink-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+    <div className="hidden shrink-0 md:block">
+      <h2 className="text-2xl font-bold tracking-tight">{titulo}</h2>
+      <p className="mt-1 text-sm text-muted-foreground">{subtitulo}</p>
+    </div>
+    <div className="flex flex-wrap items-center gap-2 lg:justify-end">{children}</div>
+  </div>
+);
+
+// Buscador de la toolbar (§5.2): ícono, `h-9`, botón para limpiar.
+const Buscador: React.FC<{ value: string; onChange: (v: string) => void; placeholder: string; label: string }> = ({ value, onChange, placeholder, label }) => (
+  <div className="relative min-w-[7rem] flex-1 sm:w-56 sm:flex-none">
+    <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+    <Input
+      placeholder={placeholder}
+      aria-label={label}
+      className="h-9 pr-8 pl-8 text-sm"
+      value={value}
+      onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
+    />
+    {value && (
+      <button type="button" onClick={() => onChange('')} aria-label="Limpiar búsqueda" className="absolute top-1/2 right-2 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground hover:text-foreground">
+        <X className="size-3.5" />
+      </button>
+    )}
+  </div>
+);
+
+// Banner suave de error (DESIGN §9.4): una acción que falló o una recarga que no llegó.
+const BannerError: React.FC<{ children: React.ReactNode; onCerrar?: () => void }> = ({ children, onCerrar }) => (
+  <div role="alert" className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+    <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+    <span className="flex-1">{children}</span>
+    {onCerrar && (
+      <button type="button" onClick={onCerrar} aria-label="Cerrar aviso" className="-m-0.5 rounded-sm p-0.5 text-red-700/70 hover:text-red-700">
+        <X className="size-3.5" />
+      </button>
+    )}
+  </div>
+);
+
+// Puente entre el DateRangePicker (Date) y las fechas "YYYY-MM-DD" de los filtros (lib/fechaIso), como
+// en Cirugías. Con un solo día elegido, el rango es ese día; "Limpiar" vuelve a la última semana (el
+// listado siempre tiene rango, igual que con los dos calendarios de antes).
+const rangoDe = (from: string, to: string): DateRange => ({ from: deIso(from), to: deIso(to) });
+const alCambiarRango = (setFrom: (s: string) => void, setTo: (s: string) => void, desdeDefault: string, hastaDefault: string) =>
+  (r?: DateRange) => {
+    if (!r?.from) { setFrom(desdeDefault); setTo(hastaDefault); return; }
+    setFrom(aIso(r.from));
+    setTo(aIso(r.to ?? r.from));
+  };
+
+const TIPOS_CAMBIO: [FiltroTipo, string][] = [['todos', 'Todos los registros'], ['CAMBIO', 'Cambios de dieta'], ['INICIO_DIETA', 'Iniciar dieta (cirugía)']];
 
 const CambiosDietaPanel: React.FC = () => {
   const todayStr   = new Date().toISOString().slice(0, 10);
@@ -330,18 +389,20 @@ const CambiosDietaPanel: React.FC = () => {
   const [to, setTo]     = useState(todayStr);
   const [rows, setRows] = useState<DietaCambio[]>([]);
   const [loading, setLoading] = useState(false);
+  // La última carga falló (DESIGN §9 / regla del repo "fallas visibles"): solo para mostrarlo; la
+  // lista sigue con lo que tenía.
+  const [error, setError] = useState(false);
   const [search, setSearch] = useState('');
   const [tipo, setTipo] = useState<FiltroTipo>('todos');
-  const [openFrom, setOpenFrom] = useState(false);
-  const [openTo, setOpenTo]     = useState(false);
 
   const fetchCambios = useCallback(async () => {
     setLoading(true);
     try {
       const token = localStorage.getItem('mediflow_token');
       const r = await fetch(`/api/dieta-cambios?from=${from}&to=${to}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-      if (r.ok) { const d = await r.json(); setRows((d.cambios ?? []) as DietaCambio[]); }
-    } catch { /* mantiene lo previo */ }
+      if (r.ok) { const d = await r.json(); setRows((d.cambios ?? []) as DietaCambio[]); setError(false); }
+      else setError(true);
+    } catch { setError(true); /* mantiene lo previo */ }
     finally { setLoading(false); }
   }, [from, to]);
 
@@ -361,98 +422,101 @@ const CambiosDietaPanel: React.FC = () => {
   const nInicio = useMemo(() => rows.filter(c => kindOf(c) === 'INICIO_DIETA').length, [rows]);
 
   const tagChips = (s: string) => (s || '').split(';').map(t => t.trim()).filter(Boolean);
+  const filtrando = !!search.trim() || tipo !== 'todos';
+
+  // Celdas compartidas por la tabla y la tarjeta mobile.
+  const ubicacion = (c: DietaCambio) => [c.area, c.roomCode && formatBedName(c.roomCode)].filter(Boolean).join(' · ') || '—';
+  const evento = (c: DietaCambio) => kindOf(c) === 'INICIO_DIETA' ? (
+    <div className="flex flex-col items-start gap-1">
+      <StatusBadge tono="exito"><Utensils className="size-3" aria-hidden="true" /> Iniciar dieta</StatusBadge>
+      <span className="text-[10px] text-muted-foreground">post cirugía — ya puede comer{c.by ? ` · ${c.by}` : ''}</span>
+    </div>
+  ) : (
+    <div className="flex flex-wrap items-center gap-2">
+      <TagList tags={tagChips(c.tagsPrev)} tone="prev" />
+      <ArrowRight className="size-3.5 shrink-0 text-muted-foreground" aria-label="pasó a" />
+      <TagList tags={tagChips(c.tagsNew)} tone="new" />
+    </div>
+  );
+
+  // Columnas agrupadas (DESIGN §7.2 "2 líneas"): paciente arriba, ubicación abajo.
+  const columnas: Columna<DietaCambio>[] = [
+    { id: 'fecha', titulo: 'Fecha y hora', clase: 'whitespace-nowrap', celda: (c) => <span className="tabular-nums">{cuando(c.changedAt)}</span> },
+    {
+      id: 'paciente',
+      titulo: 'Paciente',
+      celda: (c) => (
+        <div className="flex flex-col">
+          <span className="font-medium">{c.patientName || '—'}</span>
+          <span className="text-[10px] text-muted-foreground">{ubicacion(c)}</span>
+        </div>
+      ),
+    },
+    { id: 'evento', titulo: 'Cambio de dieta / evento', clase: 'min-w-[260px] whitespace-normal', celda: evento },
+  ];
+
+  const tarjeta = (c: DietaCambio) => (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-col">
+        <span className="font-medium">{c.patientName || '—'}</span>
+        <span className="text-[11px] text-muted-foreground">{ubicacion(c)}</span>
+      </div>
+      {evento(c)}
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground tabular-nums">
+        <Clock className="size-3.5 shrink-0" aria-hidden="true" />{cuando(c.changedAt)}
+      </p>
+    </div>
+  );
+
+  const n = (v: number) => <span className="font-medium text-foreground tabular-nums">{v}</span>;
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center bg-white border border-slate-200 rounded-xl overflow-hidden h-9">
-          <Popover open={openFrom} onOpenChange={setOpenFrom}>
-            <PopoverTrigger asChild><DateRangeTrigger label="Desde" value={from} className="h-full text-xs" /></PopoverTrigger>
-            <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
-              <Calendar mode="single" required selected={deIso(from)} onSelect={(dia: Date) => { const date = aIso(dia); setFrom(date); setOpenFrom(false); }} />
-            </PopoverContent>
-          </Popover>
-          <div className="w-px h-5 bg-slate-100 shrink-0" />
-          <Popover open={openTo} onOpenChange={setOpenTo}>
-            <PopoverTrigger asChild><DateRangeTrigger label="Hasta" value={to} className="h-full text-xs" /></PopoverTrigger>
-            <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
-              <Calendar mode="single" required selected={deIso(to)} onSelect={(dia: Date) => { const date = aIso(dia); setTo(date); setOpenTo(false); }} />
-            </PopoverContent>
-          </Popover>
-        </div>
-        <Button variant="outline" size="sm" onClick={() => fetchCambios()} disabled={loading}
-          className="h-9 px-3 rounded-lg gap-2 text-xs font-bold text-slate-600">
-          <RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} /> Actualizar
+    <>
+      <EncabezadoComandas
+        titulo="Cambios de dieta"
+        subtitulo={<>{n(filtered.length)}{filtrando && filtered.length !== rows.length && <> de {n(rows.length)}</>} {filtered.length === 1 ? 'registro' : 'registros'}{nInicio > 0 && <> · {n(nInicio)} {nInicio === 1 ? 'inicio' : 'inicios'} de dieta</>}</>}
+      >
+        <Buscador value={search} onChange={setSearch} placeholder="Paciente, sector, dieta…" label="Buscar cambios de dieta" />
+        {/* Filtros de una dimensión cada uno, inline en la toolbar (§5.2), como el período de Cirugías. */}
+        {/* En mobile, tipo y período bajan a su propia línea (order-last) para que Actualizar quede
+            al lado del buscador. */}
+        <Select value={tipo} onValueChange={(v) => setTipo(v as FiltroTipo)}>
+          <SelectTrigger size="sm" className="order-last w-full sm:order-none sm:w-52" aria-label="Tipo de registro">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {TIPOS_CAMBIO.map(([k, label]) => (
+              <SelectItem key={k} value={k}>{k === 'INICIO_DIETA' && nInicio ? `${label} · ${nInicio}` : label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <span id="cambios-periodo" className="sr-only">Período</span>
+        <DateRangePicker value={rangoDe(from, to)} onChange={alCambiarRango(setFrom, setTo, weekAgoStr, todayStr)}
+          aria-describedby="cambios-periodo" className="order-last h-9 w-full sm:order-none sm:w-64" />
+        <Button type="button" variant="outline" onClick={() => fetchCambios()} disabled={loading} aria-label="Actualizar" className="h-9 shrink-0 gap-1.5 px-3">
+          <RefreshCw className={cn('size-3.5', loading && 'animate-spin')} aria-hidden="true" />
+          <span className="hidden sm:inline">Actualizar</span>
         </Button>
-        <div className="relative flex-1 min-w-[180px] max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-          <Input placeholder="Paciente, sector, dieta..." value={search}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)}
-            className="pl-9 pr-8 h-9 text-xs rounded-xl border-slate-200" />
-          {search && <button onClick={() => setSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>}
-        </div>
-        <div className="flex items-center bg-white border border-slate-200 rounded-xl p-0.5 h-9">
-          {([['todos', 'Todos'], ['CAMBIO', 'Cambios de dieta'], ['INICIO_DIETA', `Iniciar dieta (cirugía)${nInicio ? ` · ${nInicio}` : ''}`]] as [FiltroTipo, string][]).map(([k, label]) => (
-            <button key={k} type="button" onClick={() => setTipo(k)} aria-pressed={tipo === k}
-              className={cn('px-2.5 h-full rounded-lg text-[11px] font-bold whitespace-nowrap transition-colors',
-                tipo === k ? 'bg-emerald-950 text-white' : 'text-slate-500 hover:bg-slate-50')}>
-              {label}
-            </button>
-          ))}
-        </div>
-        <p className="text-xs text-slate-500 font-medium ml-auto self-center">{filtered.length} {filtered.length === 1 ? 'registro' : 'registros'}</p>
-      </div>
+      </EncabezadoComandas>
 
-      {loading ? (
-        <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400 text-sm">Cargando…</div>
-      ) : filtered.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400">
-          <Utensils className="w-10 h-10 mx-auto mb-3 text-slate-300" />
-          <p className="font-bold text-sm text-slate-500">Sin registros en el período</p>
-          <p className="text-xs">Cada vez que Progal cambia la dieta de un paciente internado, o Enfermería da "Iniciar dieta" al cerrar una cirugía, queda registrado acá.</p>
-        </div>
-      ) : (
-        <Card className="overflow-hidden border-slate-200">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-400 border-b border-slate-100">
-                  <th className="px-4 py-3 text-left font-bold">Fecha y hora</th>
-                  <th className="px-4 py-3 text-left font-bold">Paciente</th>
-                  <th className="px-4 py-3 text-left font-bold">Ubicación</th>
-                  <th className="px-4 py-3 text-left font-bold min-w-[260px]">Cambio de dieta / evento</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {filtered.map(c => (
-                  <tr key={c.spItemId} className="hover:bg-slate-50/50">
-                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap"><span className="flex items-center gap-1"><Clock className="w-3 h-3 text-slate-400" />{fmtWhen(c.changedAt)}</span></td>
-                    <td className="px-4 py-3 font-semibold text-slate-800">{c.patientName || '—'}</td>
-                    <td className="px-4 py-3 text-slate-500 min-w-[160px]">{[c.area, c.roomCode && formatBedName(c.roomCode)].filter(Boolean).join(' · ') || '—'}</td>
-                    <td className="px-4 py-3">
-                      {kindOf(c) === 'INICIO_DIETA' ? (
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wide whitespace-nowrap border bg-green-100 text-green-800 border-green-300">
-                            <Utensils className="w-3 h-3" /> Iniciar dieta
-                          </span>
-                          <span className="text-[11px] text-slate-500">post cirugía — ya puede comer{c.by ? ` · ${c.by}` : ''}</span>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <TagList tags={tagChips(c.tagsPrev)} tone="prev" />
-                          <span className="text-slate-400 font-bold">→</span>
-                          <TagList tags={tagChips(c.tagsNew)} tone="new" />
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+      {/* Falló una recarga y hay datos de antes: se avisa sin esconderlos. */}
+      {error && rows.length > 0 && !loading && (
+        <BannerError><span className="font-semibold">No pudimos actualizar los cambios de dieta.</span> Lo que ves puede estar desactualizado.</BannerError>
       )}
-    </div>
+      <DataTable
+        filas={filtered}
+        columnas={columnas}
+        clave={(c) => c.spItemId}
+        tarjeta={tarjeta}
+        porPagina={Number.POSITIVE_INFINITY}
+        cargando={loading}
+        error={error && rows.length === 0 ? { mensaje: 'No pudimos traer los cambios de dieta. Revisá tu conexión y probá de nuevo.', onReintentar: () => { fetchCambios(); } } : undefined}
+        vacio={filtrando && rows.length > 0
+          ? <Vacio icono={Search} titulo="Sin resultados" descripcion="Probá con otro texto, otro tipo o limpiá el buscador." />
+          : <Vacio icono={Utensils} titulo="Sin registros en el período"
+              descripcion={'Cada vez que Progal cambia la dieta de un paciente internado, o Enfermería da "Iniciar dieta" al cerrar una cirugía, queda registrado acá.'} />}
+      />
+    </>
   );
 };
 
@@ -470,6 +534,9 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
   // (necesita authFetch); fetchTodayRef permite refrescar tras una acción; todaySeqRef = última gana.
   const [todayRows, setTodayRows] = useState<ComandaRow[]>([]);
   const [loadingToday, setLoadingToday] = useState(true);
+  // La última carga de "De hoy" falló (DESIGN §9 / regla del repo "fallas visibles"): solo para
+  // mostrarlo; la grilla sigue con lo que tenía.
+  const [errorToday, setErrorToday] = useState(false);
   const fetchTodayRef = React.useRef<null | (() => void)>(null);
   const todaySeqRef = React.useRef(0);
   const rows = todayRows;
@@ -488,8 +555,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
   const [to, setTo]     = useState(todayStr);
   const [history, setHistory] = useState<ComandaRow[]>([]);
   const [loadingHist, setLoadingHist] = useState(false);
-  const [openFrom, setOpenFrom] = useState(false);
-  const [openTo, setOpenTo]     = useState(false);
+  const [errorHist, setErrorHist] = useState(false); // igual que errorToday: solo para mostrarlo
   const [planOpen, setPlanOpen] = useState(false);
   const [searchFilter, setSearchFilter] = useState('');
   // Sub-vista de "De hoy": Pendientes es el default (lo accionable); Entregadas es la foto
@@ -556,8 +622,9 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
             String(b.at).localeCompare(String(a.at)) ||
             slotOrder(a.slot) - slotOrder(b.slot));
         setHistory(rows);
-      }
-    } catch { /* mantiene lo previo */ }
+        setErrorHist(false);
+      } else setErrorHist(true);
+    } catch { setErrorHist(true); /* mantiene lo previo */ }
     finally { setLoadingHist(false); }
   }, [authFetch, from, to, areaOk]);
 
@@ -580,9 +647,9 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
           .filter((m: any) => areaOk(String(m.area ?? '')))
           .map(mapComandaRow)
           .sort(comandaDispatchCompare);
-        if (seq === todaySeqRef.current) setTodayRows(rows);
-      }
-    } catch { /* mantiene lo previo */ }
+        if (seq === todaySeqRef.current) { setTodayRows(rows); setErrorToday(false); }
+      } else if (seq === todaySeqRef.current) setErrorToday(true);
+    } catch { if (seq === todaySeqRef.current) setErrorToday(true); /* mantiene lo previo */ }
     finally { if (seq === todaySeqRef.current) setLoadingToday(false); }
   }, [authFetch, areaOk]);
 
@@ -633,7 +700,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
     const body: string[][] = [...filtered].sort(comandaDispatchCompare).map(r => [
       r.patientName,
       formatBedName(r.bedLabel) + (sectorEsRedundante(r.area, r.bedLabel) ? '' : ` · ${areaLabel(r.area)}`),
-      r.comida, r.comensal, comandaTipoPill(r.tipo).label,
+      r.comida, r.comensal, tipoComanda(r.tipo).label,
       r.detalle || '—', r.observaciones || '—', r.operador || r.by || '—',
       ...(showDate ? [fmtWhen(r.at)] : []),
       ...(showEntrega ? [
@@ -674,7 +741,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
       const bedLine = formatBedName(r.bedLabel) + (verSector ? ` · ${areaLabel(r.area)}` : '');
       const anulada = r.status === COMANDA_STATUS.ANULADA;
       const cierre = r.status !== COMANDA_STATUS.PENDIENTE ? fmtCierre(r.closedAt, r.at) : '';
-      const est = STATUS_PILL[r.status] ?? STATUS_PILL[COMANDA_STATUS.PENDIENTE];
+      const est = estadoComanda(r.status);
       return { r, esAcomp, verSector, bedLine, anulada, cierre, est };
     });
 
@@ -682,8 +749,8 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
       // Col 0 (Paciente): se dibuja a mano en didDrawCell (nombre en negrita + cama en gris + pill
       // de acompañante). El contenido de texto acá es solo para que autotable calcule la altura.
       `${g.esAcomp ? g.r.comensal + '\n' : ''}${g.r.patientName}\n${g.bedLine}`,
-      comidaPill(g.r.slot, g.r.comida).label,                    // Turno
-      comandaTipoPill(g.r.tipo).label,                            // Tipo
+      comidaLabel(g.r.slot, g.r.comida),               // Turno
+      tipoComanda(g.r.tipo).label,                            // Tipo
       // Comanda + observaciones (la grilla siempre dice algo; un hueco vacío se lee como dato faltante).
       `${g.r.detalle || '—'}\n${g.r.observaciones || 'Sin observaciones'}${g.anulada && g.r.motivoAnulacion ? `\nMotivo anulación: ${g.r.motivoAnulacion}` : ''}`,
       `${g.r.operador || g.r.by || '—'}\n${fmtWhen(g.r.at)}`,                      // Registró (quién + cuándo)
@@ -764,265 +831,231 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
   // Mensaje del vacío: el buscador manda (decir "no hay comandas" cuando el filtro no
   // matcheó sería mentir), después la tab y, en "De hoy", la sub-vista.
   const vacio = filtrando
-    ? { titulo: 'Sin resultados para la búsqueda', sub: 'Probá con otro término o limpiá el filtro.' }
+    ? { icono: Search, titulo: 'Sin resultados para la búsqueda', sub: 'Probá con otro término o limpiá el filtro.' }
     : tab === 'historico'
-      ? { titulo: 'Sin comandas en el rango', sub: 'Ajustá las fechas para ver el histórico.' }
+      ? { icono: Clock, titulo: 'Sin comandas en el rango', sub: 'Ajustá las fechas para ver el histórico.' }
       : vistaHoy === 'entregadas'
-        ? { titulo: 'Todavía no se entregó ninguna comanda hoy', sub: 'Marcá el check verde en una pendiente y aparece acá.' }
+        ? { icono: Utensils, titulo: 'Todavía no se entregó ninguna comanda hoy', sub: 'Tocá «Entregar» en una pendiente y aparece acá.' }
         : rows.length > 0
-          ? { titulo: 'No quedan comandas pendientes', sub: 'Todo lo de hoy ya se entregó — está en «Entregadas».' }
-          : { titulo: 'No hay comandas cargadas hoy', sub: 'Las comandas que carga Nutrición desde el mapa de camas aparecen acá.' };
+          ? { icono: CheckCircle2, titulo: 'No quedan comandas pendientes', sub: 'Todo lo de hoy ya se entregó — está en «Entregadas».' }
+          : { icono: Utensils, titulo: 'No hay comandas cargadas hoy', sub: 'Las comandas que carga Nutrición desde el mapa de camas aparecen acá.' };
+
+  // El histórico es lectura: entregar/anular se hace en "De hoy", donde está lo que todavía se
+  // puede accionar.
+  const canAct = !!onSetMealStatus && tab === 'activas';
+  const esAnulada = (r: ComandaRow) => r.status === COMANDA_STATUS.ANULADA;
+  const cierreDe = (r: ComandaRow) => (r.status !== COMANDA_STATUS.PENDIENTE ? fmtCierre(r.closedAt, r.at) : '');
+
+  // ── Celdas compartidas por la tabla y la tarjeta mobile ─────────────────────
+  // Paciente + habitación (DESIGN §7.2 "2 líneas"). Si la bandeja es de un acompañante, se
+  // antepone la etiqueta: la fila sigue siendo "de" ese paciente, y la etiqueta dice de quién es
+  // la bandeja. Así no hace falta una columna Comensal aparte.
+  const celdaPaciente = (r: ComandaRow) => (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {r.comensal !== 'Paciente' && <Badge variant="outline" className="px-1.5 text-[10px]">{r.comensal}</Badge>}
+        <span className="leading-tight font-medium wrap-break-word">{r.patientName}</span>
+      </div>
+      <span className="text-[10px] text-muted-foreground">
+        {formatBedName(r.bedLabel)}{!sectorEsRedundante(r.area, r.bedLabel) && ` · ${areaLabel(r.area)}`}
+      </span>
+    </div>
+  );
+
+  // Comanda + observaciones. Siempre se dice algo: un hueco vacío no distingue "no tiene
+  // observaciones" de "no se ve el dato". El motivo de anulación no va tachado: es la
+  // explicación, no parte del pedido.
+  const celdaComanda = (r: ComandaRow) => (
+    <div className="flex flex-col gap-0.5">
+      <span className={cn('leading-snug font-medium wrap-break-word', esAnulada(r) && 'line-through')}>
+        {r.detalle || <span className="text-muted-foreground">—</span>}
+      </span>
+      <span className={cn('text-[10px] leading-snug wrap-break-word text-muted-foreground', !r.observaciones && 'italic')}>
+        {r.observaciones || 'Sin observaciones'}
+      </span>
+      {esAnulada(r) && r.motivoAnulacion && (
+        <span className="text-[10px] leading-snug font-medium wrap-break-word text-destructive">Motivo anulación: {r.motivoAnulacion}</span>
+      )}
+    </div>
+  );
+
+  // Estado + hora de cierre (entrega o anulación) abajo.
+  const celdaEstado = (r: ComandaRow) => {
+    const e = estadoComanda(r.status);
+    const cierre = cierreDe(r);
+    return (
+      <div className="flex flex-col items-start gap-1">
+        <StatusBadge tono={e.tono}>{e.label}</StatusBadge>
+        {cierre && (
+          <span className="text-[10px] text-muted-foreground tabular-nums" title={esAnulada(r) ? 'Hora de anulación' : 'Hora de entrega'}>
+            <span className="sr-only">{esAnulada(r) ? 'Hora de anulación: ' : 'Hora de entrega: '}</span>{cierre}
+          </span>
+        )}
+      </div>
+    );
+  };
+
+  // Columnas agrupadas (DESIGN §7.2 + §5.4): valor arriba, metadato abajo. Mismas columnas que el
+  // PDF (Paciente · Turno · Tipo · Comanda · Registró · Estado), así el papel se lee igual. Sin
+  // `ordenar`: las filas ya llegan en orden de despacho (De hoy) o por paciente (Histórico).
+  const columnas: Columna<ComandaRow>[] = [
+    { id: 'paciente', titulo: 'Paciente', clase: 'min-w-[180px]', celda: celdaPaciente },
+    { id: 'turno', titulo: 'Turno', celda: (r) => <Turno slot={r.slot} raw={r.comida} /> },
+    { id: 'tipo', titulo: 'Tipo', celda: (r) => { const t = tipoComanda(r.tipo); return <StatusBadge tono={t.tono}>{t.label}</StatusBadge>; } },
+    { id: 'comanda', titulo: 'Comanda', clase: 'min-w-[220px]', celda: celdaComanda },
+    {
+      id: 'registro',
+      titulo: 'Registró',
+      ocultarEn: 'md',
+      clase: 'whitespace-nowrap',
+      celda: (r) => (
+        <div className="flex flex-col">
+          <span className="max-w-[180px] truncate">{r.operador || r.by || '—'}</span>
+          <span className="text-[10px] text-muted-foreground tabular-nums">{cuando(r.at)}</span>
+        </div>
+      ),
+    },
+    { id: 'estado', titulo: 'Estado', clase: 'whitespace-nowrap', celda: celdaEstado },
+    ...(canAct ? [{
+      id: 'acciones',
+      titulo: 'Acciones',
+      alinear: 'der' as const,
+      clase: 'whitespace-nowrap',
+      celda: (r: ComandaRow) => <AccionesComanda r={r} busy={busyId === r.spItemId} onAction={doAction} />,
+    }] : []),
+  ];
+
+  // Card mobile (§5.4b): paciente y estado arriba, turno + tipo, la comanda, quién y cuándo, y las
+  // acciones al pie.
+  const tarjeta = (r: ComandaRow) => {
+    const t = tipoComanda(r.tipo);
+    const cierre = cierreDe(r);
+    return (
+      <div className="flex flex-col gap-2.5">
+        <div className="flex items-start justify-between gap-2">
+          {celdaPaciente(r)}
+          <StatusBadge tono={estadoComanda(r.status).tono}>{estadoComanda(r.status).label}</StatusBadge>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-[13px]">
+          <Turno slot={r.slot} raw={r.comida} />
+          <StatusBadge tono={t.tono}>{t.label}</StatusBadge>
+        </div>
+        {celdaComanda(r)}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5"><UserIcon className="size-3.5 shrink-0" aria-hidden="true" />{r.operador || r.by || '—'}</span>
+          {tab === 'historico' && <span className="flex items-center gap-1.5 tabular-nums"><Clock className="size-3.5 shrink-0" aria-hidden="true" />{cuando(r.at)}</span>}
+          {cierre && <span className="tabular-nums">{esAnulada(r) ? 'Anulada' : 'Entregada'} {cierre}</span>}
+        </div>
+        {canAct && !esAnulada(r) && (
+          <div className="border-t pt-3">
+            <AccionesComanda r={r} busy={busyId === r.spItemId} mobile onAction={doAction} />
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ── Header: subtítulo con los conteos de la solapa ──────────────────────────
+  const n = (v: number) => <span className="font-medium text-foreground tabular-nums">{v}</span>;
+  const deTotal = filtrando && filtered.length !== data.length ? <> · {n(filtered.length)} de {n(data.length)} con la búsqueda</> : null;
+  const subtitulo = tab === 'historico' ? (
+    <>{n(filtered.length)}{filtrando && filtered.length !== data.length && <> de {n(data.length)}</>} {filtered.length === 1 ? 'comanda' : 'comandas'} en el período</>
+  ) : (
+    <>{n(pendientes.length)} {pendientes.length === 1 ? 'pendiente' : 'pendientes'} · {n(entregadas.length)} {entregadas.length === 1 ? 'entregada' : 'entregadas'} hoy{deTotal}</>
+  );
+
+  const cargando = (loadingHist && tab === 'historico') || (loadingToday && tab === 'activas' && todayRows.length === 0);
+  const actualizando = tab === 'historico' && loadingHist;
+  const errorCarga = tab === 'historico' ? errorHist : errorToday;
+  const hayDatos = tab === 'historico' ? history.length > 0 : todayRows.length > 0;
+  const reintentar = () => { if (tab === 'historico') fetchHistory(); else fetchToday(); };
 
   return (
-    <div className="p-4 md:p-8 max-w-full w-full space-y-4 md:space-y-5 pb-24 md:pb-8">
-      {/* Tabs */}
-      <div className="flex items-center gap-1 border-b border-slate-200 mb-4">
-        {(['activas', 'historico', 'cambios'] as const).map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            className={cn(
-              "px-4 py-2 text-xs font-bold uppercase tracking-wide border-b-2 -mb-px transition-colors",
-              tab === t ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400 hover:text-slate-600"
-            )}>
-            {t === 'activas' ? 'De hoy' : t === 'historico' ? 'Histórico' : 'Cambios de dieta'}
-          </button>
-        ))}
-      </div>
+    <div className="flex w-full flex-col gap-4 p-3 md:p-8">
+      {/* Secciones del módulo: tab bar con subrayado de marca (DESIGN §8.7), como Operativa. */}
+      <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
+        <TabsList variant="line" className="w-full justify-start" aria-label="Secciones de comandas">
+          <TabsTrigger value="activas">De hoy</TabsTrigger>
+          <TabsTrigger value="historico">Histórico</TabsTrigger>
+          <TabsTrigger value="cambios">Cambios de dieta</TabsTrigger>
+        </TabsList>
+      </Tabs>
 
-      {tab === 'cambios' && <CambiosDietaPanel />}
-      {tab !== 'cambios' && (<>
-
-      {/* Barra de acciones / filtros */}
-      <div className="flex flex-wrap items-center gap-3 mb-4">
-        {tab === 'activas' && (
-          /* Botonera Pendientes/Entregadas — mismo patrón segmentado que el selector de período
-             del Monitor (DashboardView). Por defecto las entregadas NO están en la grilla; el
-             contador avisa que existen. */
-          <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1">
-            {([
-              ['pendientes', `Pendientes (${pendientes.length})`],
-              ['entregadas', `Entregadas (${entregadas.length})`],
-            ] as const).map(([k, label]) => (
-              <button key={k} type="button" onClick={() => setVistaHoy(k)}
-                className={cn(
-                  'px-3 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wide transition-colors tabular-nums',
-                  vistaHoy === k ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-700',
-                )}>
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
-        {/* Buscador — aplica a las DOS tabs (comparten `data`, tabla, tarjetas, contador y PDF).
-            max-w-sm es lo que preserva el ml-auto del contador de más abajo: no sacarlo. */}
-        <div className="relative flex-1 min-w-[180px] max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
-          <Input
-            placeholder="Paciente, cama, sector, turno, comanda, obs..."
-            value={searchFilter}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchFilter(e.target.value)}
-            className="pl-9 pr-8 h-9 text-xs rounded-xl border-slate-200"
-          />
-          {searchFilter && (
-            <button onClick={() => setSearchFilter('')} title="Limpiar búsqueda"
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-              <X className="h-3.5 w-3.5" />
-            </button>
+      {tab === 'cambios' ? <CambiosDietaPanel /> : (<>
+        {/* HEADER + TOOLBAR (DESIGN §4.4 y §5.2) */}
+        <EncabezadoComandas titulo={tab === 'historico' ? 'Histórico' : 'Comandas de hoy'} subtitulo={subtitulo}>
+          {/* Buscador — aplica a las DOS tabs (comparten `data`, tabla, tarjetas, contador y PDF). */}
+          <Buscador value={searchFilter} onChange={setSearchFilter} placeholder="Paciente, cama, sector, turno, comanda…" label="Buscar comandas" />
+          {/* Histórico: período por fecha de carga, inline en la toolbar (§5.2) como en Cirugías. En
+              mobile baja a su propia línea (order-last) para que las acciones queden al lado del buscador. */}
+          {tab === 'historico' && (
+            <>
+              <span id="comandas-periodo" className="sr-only">Período, por fecha de carga</span>
+              <DateRangePicker value={rangoDe(from, to)} onChange={alCambiarRango(setFrom, setTo, weekAgoStr, todayStr)}
+                aria-describedby="comandas-periodo" className="order-last h-9 w-full sm:order-none sm:w-64" />
+            </>
           )}
-        </div>
-        {tab === 'historico' && (
-          <>
-            <div className="flex items-center bg-white border border-slate-200 rounded-xl overflow-hidden h-9">
-              <Popover open={openFrom} onOpenChange={setOpenFrom}>
-                <PopoverTrigger asChild><DateRangeTrigger label="Desde" value={from} className="h-full text-xs" /></PopoverTrigger>
-                <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
-                  <Calendar mode="single" required selected={deIso(from)} onSelect={(dia: Date) => { const date = aIso(dia); setFrom(date); setOpenFrom(false); }} />
-                </PopoverContent>
-              </Popover>
-              <div className="w-px h-5 bg-slate-100 shrink-0" />
-              <Popover open={openTo} onOpenChange={setOpenTo}>
-                <PopoverTrigger asChild><DateRangeTrigger label="Hasta" value={to} className="h-full text-xs" /></PopoverTrigger>
-                <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
-                  <Calendar mode="single" required selected={deIso(to)} onSelect={(dia: Date) => { const date = aIso(dia); setTo(date); setOpenTo(false); }} />
-                </PopoverContent>
-              </Popover>
-            </div>
-            <Button variant="outline" size="sm" onClick={() => fetchHistory()} disabled={loadingHist}
-              className="h-9 px-3 rounded-lg gap-2 text-xs font-bold text-slate-600">
-              <RefreshCw className={cn("w-4 h-4", loadingHist && "animate-spin")} /> Actualizar
+          <Button type="button" variant="outline" aria-label="Actualizar" disabled={actualizando} className="h-9 shrink-0 gap-1.5 px-3"
+            onClick={() => { if (tab === 'historico') fetchHistory(); else { fetchToday(); onRefresh?.(); } }}>
+            <RefreshCw className={cn('size-3.5', actualizando && 'animate-spin')} aria-hidden="true" />
+            <span className="hidden sm:inline">Actualizar</span>
+          </Button>
+          {/* Exportan lo FILTRADO en pantalla (§7.10): el PDF reproduce la grilla; el Excel, la tabla plana. */}
+          <Button type="button" variant="outline" aria-label="Exportar a PDF" onClick={handlePdf} disabled={filtered.length === 0} className="h-9 shrink-0 gap-1.5 px-3">
+            <FileDown className="size-3.5" aria-hidden="true" /><span className="hidden sm:inline">PDF</span>
+          </Button>
+          <Button type="button" variant="outline" aria-label="Exportar a Excel" onClick={handleExcel} disabled={filtered.length === 0} className="h-9 shrink-0 gap-1.5 px-3">
+            <FileSpreadsheet className="size-3.5" aria-hidden="true" /><span className="hidden sm:inline">XLS</span>
+          </Button>
+          {canSeePlan && (
+            <Button type="button" variant="outline" aria-label="Planificación de menú" onClick={() => setPlanOpen(true)} className="h-9 shrink-0 gap-1.5 px-3">
+              <CalendarDays className="size-3.5" aria-hidden="true" /><span className="hidden sm:inline">Planificación</span>
             </Button>
-          </>
-        )}
+          )}
+        </EncabezadoComandas>
+
+        {/* Pendientes / Entregadas: control segmentado (§6.6), como las sub-solapas de Cirugías, en su
+            propia fila arriba de la grilla (en la toolbar no entraba con las exportaciones). Por defecto
+            las entregadas NO están en la grilla; el contador avisa que existen. */}
         {tab === 'activas' && (
-          <Button variant="outline" size="sm" onClick={() => { fetchToday(); onRefresh?.(); }}
-            className="h-9 px-3 rounded-lg gap-2 text-xs font-bold text-slate-600">
-            <RefreshCw className="w-4 h-4" /> Actualizar
-          </Button>
+          <Tabs value={vistaHoy} onValueChange={(v) => setVistaHoy(v as typeof vistaHoy)}>
+            <TabsList className="h-9 w-full sm:w-fit" aria-label="Pendientes o entregadas">
+              <TabsTrigger value="pendientes" className="flex-1 sm:flex-none">
+                Pendientes <span className="text-xs text-muted-foreground tabular-nums">{pendientes.length}</span>
+              </TabsTrigger>
+              <TabsTrigger value="entregadas" className="flex-1 sm:flex-none">
+                Entregadas <span className="text-xs text-muted-foreground tabular-nums">{entregadas.length}</span>
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
         )}
-        <Button variant="outline" size="sm" onClick={handlePdf} disabled={filtered.length === 0}
-          className="h-9 px-3 rounded-lg gap-2 text-xs font-bold text-indigo-700 border-indigo-200 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50">
-          <FileDown className="w-4 h-4" /> PDF
-        </Button>
-        <Button variant="outline" size="sm" onClick={handleExcel} disabled={filtered.length === 0}
-          className="h-9 px-3 rounded-lg gap-2 text-xs font-bold text-green-700 border-green-200 bg-green-50 hover:bg-green-100 disabled:opacity-50">
-          <FileSpreadsheet className="w-4 h-4" /> Excel
-        </Button>
-        {canSeePlan && (
-          <Button variant="outline" size="sm" onClick={() => setPlanOpen(true)}
-            className="h-9 px-3 rounded-lg gap-2 text-xs font-bold text-emerald-700 border-emerald-200 bg-emerald-50 hover:bg-emerald-100">
-            <CalendarDays className="w-4 h-4" /> Planificación
-          </Button>
+
+        {actionError && <BannerError onCerrar={() => setActionError(null)}>{actionError}</BannerError>}
+        {/* Falló una recarga y hay datos de antes: se avisa sin esconderlos (banner suave §9.4). */}
+        {errorCarga && hayDatos && !cargando && (
+          <BannerError>
+            <span className="font-semibold">No pudimos actualizar {tab === 'historico' ? 'el histórico' : 'las comandas de hoy'}.</span> Lo que ves puede estar desactualizado; probá con Actualizar.
+          </BannerError>
         )}
-        <p className="text-xs text-slate-500 font-medium ml-auto self-center">
-          {filtered.length} {filtered.length === 1 ? 'comanda' : 'comandas'}
-          {filtrando && filtered.length !== data.length && <span className="text-slate-400"> de {data.length}</span>}
-        </p>
-      </div>
+
+        {/* TABLA (desktop) + CARDS (mobile) sobre el mismo array (§4.4, §7.1). */}
+        <DataTable
+          filas={filtered}
+          columnas={columnas}
+          clave={(r) => r.key}
+          tarjeta={tarjeta}
+          // Todas en una página: es una grilla operativa (y el orden de despacho no se corta).
+          porPagina={Number.POSITIVE_INFINITY}
+          cargando={cargando}
+          error={errorCarga && !hayDatos ? { mensaje: tab === 'historico' ? 'No pudimos traer el histórico de comandas. Revisá tu conexión y probá de nuevo.' : 'No pudimos traer las comandas de hoy. Revisá tu conexión y probá de nuevo.', onReintentar: reintentar } : undefined}
+          // Anulada = auditoría (se pidió y se canceló): se muestra atenuada para que no compita
+          // con lo que sí se va a servir.
+          claseFila={(r) => (esAnulada(r) ? 'opacity-60' : undefined)}
+          vacio={<Vacio icono={vacio.icono} titulo={vacio.titulo} descripcion={vacio.sub} />}
+        />
+      </>)}
 
       <PlanificacionMenuModal open={planOpen} onOpenChange={setPlanOpen} currentUser={currentUser} />
-
-      {actionError && (
-        <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200">
-          <p className="text-xs font-medium text-red-700">{actionError}</p>
-          <button onClick={() => setActionError(null)} className="text-red-400 hover:text-red-600"><X className="w-3.5 h-3.5" /></button>
-        </div>
-      )}
-
-      {((loadingHist && tab === 'historico') || (loadingToday && tab === 'activas' && todayRows.length === 0)) ? (
-        <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400 text-sm">Cargando…</div>
-      ) : filtered.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400">
-          <Utensils className="w-10 h-10 mx-auto mb-3 text-slate-300" />
-          <p className="font-bold text-sm text-slate-500">{vacio.titulo}</p>
-          <p className="text-xs">{vacio.sub}</p>
-        </div>
-      ) : (
-        <>
-          {/* Mobile — tarjetas */}
-          <div className="grid grid-cols-1 gap-3 md:hidden">
-            {filtered.map(r => {
-              const tp = comandaTipoPill(r.tipo);
-              const cp = comidaPill(r.slot, r.comida);
-              return (
-                <div key={r.key} className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 space-y-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="font-black text-sm text-slate-800 leading-tight">{r.patientName}</p>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <span className={cn("text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border", cp.cls)}>{cp.label}</span>
-                      <span className={cn("text-[9px] font-bold uppercase px-2 py-0.5 rounded-full", tp.cls)}>{tp.label}</span>
-                    </div>
-                  </div>
-                  <p className="text-[11px] text-slate-500 font-medium">
-                    {formatBedName(r.bedLabel)}
-                    {!sectorEsRedundante(r.area, r.bedLabel) && <span className="text-slate-400"> · {areaLabel(r.area)}</span>}
-                    <span className={cn("ml-2 font-bold uppercase", r.comensal !== 'Paciente' ? "text-teal-600" : "text-slate-400")}>{r.comensal}</span>
-                  </p>
-                  {r.detalle && <p className="text-[12px] font-semibold text-slate-800">{r.detalle}</p>}
-                  {r.observaciones && <p className="text-[11px] text-slate-500">Obs: {r.observaciones}</p>}
-                  {r.status === COMANDA_STATUS.ANULADA && r.motivoAnulacion && (
-                    <p className="text-[11px] text-red-500">Motivo anulación: {r.motivoAnulacion}</p>
-                  )}
-                  <div className="text-[10px] text-slate-400 flex items-center gap-3 pt-1 flex-wrap">
-                    <span className="flex items-center gap-1"><UserIcon className="w-3 h-3" />{r.operador || r.by || '—'}</span>
-                    {tab === 'historico' && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{fmtWhen(r.at)}</span>}
-                    {/* Estado + hora + acciones (entregar/anular/volver) — mismo StatusCell que el desktop */}
-                    <StatusCell r={r} busy={busyId === r.spItemId}
-                      canAct={!!onSetMealStatus && tab === 'activas'} onAction={doAction} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Desktop — grilla */}
-          <Card className="hidden md:block shadow-xs border-slate-200 overflow-hidden bg-white rounded-2xl">
-            {/* table-fixed + colgroup: los anchos los manda el diseño, no el contenido → sin
-                scroll horizontal y sin columnas que salten de ancho entre polls. */}
-            <table className="w-full text-sm table-fixed">
-              <colgroup>
-                <col className="w-[24%]" /><col className="w-[10%]" /><col className="w-[9%]" />
-                <col className="w-[26%]" /><col className="w-[14%]" /><col className="w-[17%]" />
-              </colgroup>
-              <thead>
-                <tr className="bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500 font-bold">
-                  <th className="px-4 py-3">Paciente</th>
-                  <th className="px-4 py-3">Turno</th>
-                  <th className="px-4 py-3">Tipo</th>
-                  <th className="px-4 py-3">Comanda</th>
-                  <th className="px-4 py-3">Registró</th>
-                  <th className="px-4 py-3">Estado</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filtered.map(r => {
-                  const tp = comandaTipoPill(r.tipo);
-                  const cp = comidaPill(r.slot, r.comida);
-                  const esAcomp = r.comensal !== 'Paciente';
-                  const verSector = !sectorEsRedundante(r.area, r.bedLabel);
-                  return (
-                    <tr key={r.key} className={cn('align-middle hover:bg-slate-50/60',
-                      // Anulada = histórico. Se muestra (es auditoría: se pidió y se canceló)
-                      // pero atenuada, para que no compita con lo que sí se va a servir.
-                      r.status === COMANDA_STATUS.ANULADA && 'opacity-45')}>
-                      {/* Paciente + habitación. Si la bandeja es de un acompañante, se antepone
-                          el pill: la fila sigue siendo "de" ese paciente, y el pill dice de quién
-                          es la bandeja. Así no hace falta una columna Comensal aparte. */}
-                      <td className="px-4 py-3">
-                        {esAcomp && (
-                          <span className="inline-block mb-1 text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-teal-50 text-teal-700 border border-teal-200">
-                            {r.comensal}
-                          </span>
-                        )}
-                        <p className="font-bold text-slate-800 leading-tight wrap-break-word">{r.patientName}</p>
-                        <p className="text-[11px] text-slate-500 mt-0.5">
-                          {formatBedName(r.bedLabel)}
-                          {verSector && <span className="text-slate-400"> · {areaLabel(r.area)}</span>}
-                        </p>
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <span className={cn('inline-block text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border', cp.cls)}>{cp.label}</span>
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <span className={cn('inline-block text-[10px] font-bold uppercase px-2 py-0.5 rounded-full', tp.cls)}>{tp.label}</span>
-                      </td>
-                      {/* Comanda + observaciones */}
-                      <td className="px-4 py-3">
-                        <p className={cn('text-slate-800 font-medium wrap-break-word leading-snug',
-                          r.status === COMANDA_STATUS.ANULADA && 'line-through')}>{r.detalle || <span className="text-slate-300">—</span>}</p>
-                        {/* Siempre se dice algo: un hueco vacío no distingue "no tiene
-                            observaciones" de "no se ve el dato". */}
-                        <p className={cn('text-[11px] wrap-break-word mt-0.5 leading-snug',
-                          r.observaciones ? 'text-slate-500' : 'text-slate-300 italic')}>
-                          {r.observaciones || 'Sin observaciones'}
-                        </p>
-                        {/* Motivo de anulación: solo en las anuladas (auditoría). No usa
-                            line-through — es la explicación, no parte del pedido tachado. */}
-                        {r.status === COMANDA_STATUS.ANULADA && r.motivoAnulacion && (
-                          <p className="text-[11px] wrap-break-word mt-1 leading-snug text-red-500 font-medium">
-                            Motivo anulación: {r.motivoAnulacion}
-                          </p>
-                        )}
-                      </td>
-                      {/* Quién + cuándo */}
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <p className="text-[12px] text-slate-600 leading-tight truncate">{r.operador || r.by || '—'}</p>
-                        <p className="text-[10px] text-slate-400 mt-0.5">{fmtWhen(r.at)}</p>
-                      </td>
-                      {/* Estado + acciones */}
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        {/* El histórico es lectura: entregar/anular se hace en "De hoy", donde
-                            está lo que todavía se puede accionar. */}
-                        <StatusCell r={r} busy={busyId === r.spItemId}
-                          canAct={!!onSetMealStatus && tab === 'activas'} onAction={doAction} />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </Card>
-        </>
-      )}
-      </>)}
 
       {/* Modal de motivo de anulación — obligatorio, queda en el histórico para auditoría. */}
       <Dialog open={!!anularTarget} onOpenChange={(v) => { if (!v) setAnularTarget(null); }}>
