@@ -61,6 +61,20 @@ export default defineConfig(({ mode }) => {
       },
     }),
   ],
+  build: {
+    rollupOptions: {
+      output: {
+        // Librerías pesadas en chunks propios: el bundle principal pasaba los 2 MiB que precachea el
+        // service worker (injectManifest) y el build fallaba. El SW sigue precacheando todos los chunks.
+        manualChunks: {
+          radix: ['radix-ui', 'cmdk', 'react-day-picker'],
+          supabase: ['@supabase/supabase-js'],
+          pdf: ['jspdf', 'jspdf-autotable'],
+          xlsx: ['xlsx'],
+        },
+      },
+    },
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, '.'),
