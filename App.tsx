@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Home as HomeIcon, History, Info,
   Mail, Lock, Eye, EyeOff, User, Settings, Users
 } from './components/Icons';
-import { BedDouble, Globe, Loader2, MapPin as MapPinIcon, RefreshCw, Utensils } from 'lucide-react';
+import { AlertCircle, ArrowRight, BedDouble, Globe, Loader2, MapPin as MapPinIcon, RefreshCw, Utensils } from 'lucide-react';
 import { AppShell, type ItemNav } from './components/layout/app-shell';
 import { Aviso, BloqueUsuario, EntornoDePrueba, PieSesion } from './components/layout/partes-shell';
 import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
@@ -75,8 +75,43 @@ const SprayCanIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+// Pantalla de acceso (DESIGN §12.1, split-screen): a la izquierda el panel de marca (solo desktop), a la
+// derecha el formulario. La usan el login y el gate de cuentas compartidas.
+const PantallaAcceso: React.FC<{ titulo: string; bajada: string; children: React.ReactNode }> = ({ titulo, bajada, children }) => (
+  <div className="flex min-h-dvh w-full flex-col bg-background animate-in fade-in duration-500 md:flex-row">
+    {/* Panel de marca (verde Gamma) */}
+    <div className="panel-marca relative hidden w-1/2 flex-col justify-between overflow-hidden p-12 md:flex lg:w-3/5">
+      <GammaLogo size={520} className="pointer-events-none absolute -right-32 -bottom-40 opacity-[0.07]" />
+      <div className="relative flex items-center gap-3">
+        <GammaLogo size={40} />
+        <span className="text-xl font-bold tracking-tight">Gamma</span>
+      </div>
+      <div className="relative">
+        <h1 className="mb-6 text-4xl leading-tight font-extrabold tracking-tight lg:text-6xl">Gestión de Traslados</h1>
+        <p className="max-w-md border-l-2 border-brand-foreground/30 pl-4 text-lg text-brand-foreground/80">
+          Solicitud, cama, limpieza, traslado y consolidación, en un solo lugar.
+        </p>
+      </div>
+      <p className="relative text-xs font-medium tracking-wide text-brand-foreground/60 uppercase">Grupo Gamma · Red de Salud</p>
+    </div>
+    {/* Formulario */}
+    <div className="relative flex flex-1 items-center justify-center p-6">
+      <div className="w-full max-w-sm">
+        <GammaLogo size={56} className="mb-6 text-brand md:hidden" />
+        <h2 className="text-3xl font-bold tracking-tight text-primary">{titulo}</h2>
+        <p className="mb-6 text-sm text-muted-foreground">{bajada}</p>
+        {children}
+      </div>
+    </div>
+  </div>
+);
+
+// Label e input del login (§12.1): micro-etiqueta y campo h-12 sobre bg-secondary/30.
+const LABEL_ACCESO = 'ml-1 mb-1.5 block text-xs font-semibold tracking-wider text-muted-foreground uppercase';
+const INPUT_ACCESO = 'h-12 border-border bg-secondary/30 transition-all focus:border-primary focus:bg-background';
+
 // Gate de identificación para CUENTAS COMPARTIDAS: cuando el rol lo exige y no hay operador de
-// sesión, se bloquea la app con "¿Quién sos?" (mismo look que el login). El nombre (texto libre)
+// sesión, se bloquea la app con "¿Quién sos?" (mismo layout que el login). El nombre (texto libre)
 // queda como responsable de las transacciones hasta el "cambio de turno".
 const IdentificationGate: React.FC<{
   accountName: string;
@@ -86,34 +121,26 @@ const IdentificationGate: React.FC<{
   const [name, setName] = useState('');
   const submit = (e: React.FormEvent) => { e.preventDefault(); const n = name.trim(); if (n) onConfirm(n); };
   return (
-    <div className="h-screen w-full flex flex-col items-center bg-slate-50 overflow-auto">
-      <div className="w-full flex flex-col items-center pt-12 pb-28 md:pt-16 md:pb-32 px-4" style={{ background: 'linear-gradient(180deg, #022C22 0%, #034334 60%, #04604b 100%)' }}>
-        <GammaLogo size={64} className="text-white mb-5" />
-        <h1 className="text-3xl md:text-4xl font-black text-white tracking-tight">¿Quién sos?</h1>
-        <p className="text-emerald-300/80 text-sm font-medium mt-1">Identificate para registrar tus operaciones</p>
-      </div>
-      <Card className="w-full max-w-md -mt-20 mx-4 p-6 md:p-10 shadow-xl rounded-3xl border-none bg-white relative z-10">
-        <div className="flex flex-col items-center mb-6">
-          <div className="w-14 h-14 rounded-full bg-emerald-50 border-2 border-emerald-100 flex items-center justify-center -mt-12 md:-mt-14 mb-4 shadow-xs">
-            <User className="w-6 h-6 text-emerald-700" />
-          </div>
-          <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">Cuenta compartida</p>
-          <h2 className="text-lg font-bold text-slate-900 tracking-tight">{accountName}</h2>
+    <PantallaAcceso titulo="¿Quién sos?" bajada="Identificate para registrar tus operaciones.">
+      <div className="mb-6 flex items-center gap-3 rounded-lg border bg-muted/20 p-3">
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand"><User className="size-4" /></div>
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Cuenta compartida</p>
+          <p className="truncate text-sm font-medium">{accountName}</p>
         </div>
-        <form onSubmit={submit} className="space-y-4">
-          <div className="space-y-1.5">
-            <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest ml-1">Tu nombre</Label>
-            <Input autoFocus type="text" placeholder="Nombre y apellido" value={name} onChange={e => setName(e.target.value)}
-              className="h-12 rounded-xl border-emerald-200 focus:border-emerald-500 focus:ring-emerald-500/20" />
-            <p className="text-[11px] text-slate-400 ml-1">Todas tus operaciones van a quedar registradas a tu nombre hasta el cambio de turno.</p>
-          </div>
-          <Button type="submit" disabled={!name.trim()} className="w-full h-12 rounded-xl text-white font-bold disabled:opacity-40" style={{ backgroundColor: '#022C22' }}>
-            Continuar
-          </Button>
-        </form>
-        <button type="button" onClick={onLogout} className="w-full mt-4 text-xs font-bold text-slate-400 hover:text-slate-600">Cerrar sesión</button>
-      </Card>
-    </div>
+      </div>
+      <form onSubmit={submit} className="space-y-4">
+        <div>
+          <label htmlFor="operador" className={LABEL_ACCESO}>Tu nombre</label>
+          <Input id="operador" autoFocus type="text" placeholder="Nombre y apellido" value={name} onChange={e => setName(e.target.value)} className={INPUT_ACCESO} />
+          <p className="mt-1.5 ml-1 text-xs text-muted-foreground">Todas tus operaciones van a quedar registradas a tu nombre hasta el cambio de turno.</p>
+        </div>
+        <Button type="submit" disabled={!name.trim()} className="h-12 w-full text-base font-semibold shadow-lg shadow-primary/20 transition-all hover:scale-[1.01]">
+          Continuar <ArrowRight className="ml-1 size-4" />
+        </Button>
+      </form>
+      <Button type="button" variant="ghost" onClick={onLogout} className="mt-3 w-full text-muted-foreground">Cerrar sesión</Button>
+    </PantallaAcceso>
   );
 };
 
@@ -308,123 +335,95 @@ export default function App() {
 
   if (!state.currentUser) {
     return (
-      <div className="h-screen w-full flex flex-col items-center bg-slate-50 overflow-auto">
-        {/* Green gradient header */}
-        <div className="w-full flex flex-col items-center pt-12 pb-28 md:pt-16 md:pb-32 px-4" style={{ background: 'linear-gradient(180deg, #022C22 0%, #034334 60%, #04604b 100%)' }}>
-          <GammaLogo size={64} className="text-white mb-5" />
-          <h1 className="text-3xl md:text-4xl font-black text-white tracking-tight">Bienvenido</h1>
-          <p className="text-emerald-300/80 text-sm font-medium mt-1">Gestión de Traslados</p>
-        </div>
-
-        {/* Login card overlapping the header */}
-        <Card className="w-full max-w-md -mt-20 mx-4 p-6 md:p-10 shadow-xl rounded-3xl border-none bg-white relative z-10">
-          <div className="flex flex-col items-center mb-8">
-            <div className="w-14 h-14 rounded-full bg-emerald-50 border-2 border-emerald-100 flex items-center justify-center -mt-12 md:-mt-14 mb-4 shadow-xs">
-              <User className="w-6 h-6 text-emerald-700" />
+      <PantallaAcceso titulo="Bienvenido" bajada="Ingresá con tu usuario de MediFlow.">
+        <form onSubmit={actions.handleLogin} className="space-y-4">
+          {/* Banner de error (§6.2) */}
+          {state.loginError && (
+            <div role="alert" className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 animate-in fade-in slide-in-from-top-2">
+              <AlertCircle className="mt-0.5 size-4 shrink-0" /> {state.loginError}
             </div>
-            <h2 className="text-lg font-bold text-slate-900 tracking-tight">Iniciar Sesión</h2>
+          )}
+          <div>
+            <label htmlFor="login-usuario" className={LABEL_ACCESO}>Usuario o correo electrónico</label>
+            <div className="relative">
+              <Mail className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                id="login-usuario"
+                type="text"
+                autoComplete="username"
+                placeholder="azafatap5 o correo@grupogamma.com"
+                value={state.loginEmail}
+                onChange={e => actions.setLoginEmail(e.target.value)}
+                aria-invalid={!!state.loginError || undefined}
+                className={cn(INPUT_ACCESO, 'pl-10')}
+              />
+            </div>
           </div>
-
-          <form onSubmit={actions.handleLogin} className="space-y-5">
-            <div className="space-y-1.5">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest ml-1">Usuario o Correo Electrónico</Label>
-              <div className="relative">
-                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <Input
-                  type="text"
-                  autoComplete="username"
-                  placeholder="azafatap5 o correo@grupogamma.com"
-                  value={state.loginEmail}
-                  onChange={e => actions.setLoginEmail(e.target.value)}
-                  className="h-12 pl-11 rounded-xl border-emerald-200 focus:border-emerald-500 focus:ring-emerald-500/20"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-[10px] font-bold uppercase text-slate-400 tracking-widest ml-1">Contraseña</Label>
-              <div className="relative">
-                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <Input
-                  type={showPassword ? 'text' : 'password'}
-                  autoComplete="current-password"
-                  placeholder="••••••••"
-                  value={state.loginPass}
-                  onChange={e => actions.setLoginPass(e.target.value)}
-                  className="h-12 pl-11 pr-11 rounded-xl border-emerald-200 focus:border-emerald-500 focus:ring-emerald-500/20"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(v => !v)}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
-                >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-
-            {state.loginError && <p className="text-red-500 text-xs font-bold text-center">{state.loginError}</p>}
-
-            <Button
-              type="submit"
-              disabled={state.loginLoading}
-              className="w-full h-12 rounded-xl text-white font-bold text-sm disabled:opacity-60 hover:opacity-90 shadow-lg"
-              style={{ backgroundColor: '#022C22' }}
-            >
-              {state.loginLoading ? 'Verificando...' : 'Ingresar'}
-            </Button>
-          </form>
-
-          <div className="mt-3 text-center text-[10px] font-mono text-slate-400 select-all" title="Versión del cliente">{APP_VERSION}</div>
-
-          {/* Zócalo de debug — IP que ve el server + geo del browser. Útil para que
-              el usuario nos mande captura si le rebota la validación de ubicación. */}
-          <div className="mt-6 pt-4 border-t border-slate-100">
-            <div className="flex items-stretch gap-2">
-              <div className="flex-1 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2">
-                <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest text-slate-400">
-                  <Globe className="w-3 h-3" />
-                  IP Conexión
-                </div>
-                <div className="text-xs font-bold text-slate-700 tabular-nums mt-0.5 truncate">
-                  {clientIp ?? '—'}
-                </div>
-              </div>
-              <div className="flex-1 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2">
-                <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest text-slate-400">
-                  <MapPinIcon className="w-3 h-3" />
-                  Geo (Lat/Lng)
-                </div>
-                <div className="text-xs font-bold text-slate-700 tabular-nums mt-0.5 truncate">
-                  {clientGeo
-                    ? `${clientGeo.lat.toFixed(3)} / ${clientGeo.lng.toFixed(3)}`
-                    : geoError ?? '—'}
-                </div>
-              </div>
+          <div>
+            <label htmlFor="login-clave" className={LABEL_ACCESO}>Contraseña</label>
+            <div className="relative">
+              <Lock className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                id="login-clave"
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="current-password"
+                placeholder="••••••••"
+                value={state.loginPass}
+                onChange={e => actions.setLoginPass(e.target.value)}
+                aria-invalid={!!state.loginError || undefined}
+                className={cn(INPUT_ACCESO, 'pr-11 pl-10')}
+              />
+              {/* Mostrar / ocultar (§6.8) */}
               <button
                 type="button"
-                onClick={refreshDebugInfo}
-                disabled={loadingDebug}
-                title="Reintentar"
-                className="shrink-0 rounded-xl border border-slate-200 bg-white px-3 hover:bg-slate-50 disabled:opacity-50 transition-colors"
+                onClick={() => setShowPassword(v => !v)}
+                aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                className="absolute top-1/2 right-3 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground transition-colors hover:text-foreground"
               >
-                <RefreshCw className={cn('w-4 h-4 text-slate-500', loadingDebug && 'animate-spin')} />
+                {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
               </button>
             </div>
           </div>
+          <Button
+            type="submit"
+            disabled={state.loginLoading}
+            className="mt-2 h-12 w-full text-base font-semibold shadow-lg shadow-primary/20 transition-all hover:scale-[1.01]"
+          >
+            {state.loginLoading ? <><Loader2 className="size-4 animate-spin" /> Verificando…</> : <>Ingresar <ArrowRight className="ml-1 size-4" /></>}
+          </Button>
+        </form>
 
-          <div className="mt-6 pt-5 border-t border-slate-100 text-center">
-            {IS_TESTING && (
-              <span className="mb-2 inline-flex items-center gap-1.5 rounded-md bg-slate-600 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-white shadow-xs">
-                <span className="h-1.5 w-1.5 rounded-full bg-slate-300 animate-pulse" />
-                Entorno de prueba
-              </span>
-            )}
-            <p className="text-xs text-slate-400 font-medium">Grupo Gamma &bull; Red de Salud</p>
-            <p className="text-[10px] text-slate-300 mt-0.5">MediFlow v1.0</p>
-          </div>
-        </Card>
-      </div>
+        <p className="mt-6 text-center font-mono text-xs tracking-wide text-muted-foreground/70 select-all" title="Versión del cliente">{APP_VERSION}</p>
+
+        {/* Zócalo de debug — IP que ve el server + geo del browser. Útil para que
+            el usuario nos mande captura si le rebota la validación de ubicación. */}
+        <div className="mt-6 flex items-stretch gap-2 border-t pt-4">
+          {[
+            { icono: Globe, label: 'IP de conexión', valor: clientIp ?? '—' },
+            { icono: MapPinIcon, label: 'Ubicación (lat / lng)', valor: clientGeo ? `${clientGeo.lat.toFixed(3)} / ${clientGeo.lng.toFixed(3)}` : geoError ?? '—' },
+          ].map(({ icono: Icono, label, valor }) => (
+            <div key={label} className="min-w-0 flex-1 rounded-lg border bg-muted/20 px-3 py-2">
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+                <Icono className="size-3" /> {label}
+              </div>
+              <div className="mt-0.5 truncate text-xs font-medium tabular-nums">{valor}</div>
+            </div>
+          ))}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button type="button" variant="outline" size="icon" onClick={refreshDebugInfo} disabled={loadingDebug} aria-label="Reintentar IP y ubicación" className="h-auto shrink-0">
+                <RefreshCw className={cn('size-4', loadingDebug && 'animate-spin')} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Reintentar</TooltipContent>
+          </Tooltip>
+        </div>
+
+        <div className="mt-6 flex flex-col items-center gap-2 text-center">
+          {IS_TESTING && <EntornoDePrueba />}
+          <p className="text-xs text-muted-foreground">Grupo Gamma · Red de Salud</p>
+        </div>
+      </PantallaAcceso>
     );
   }
 
