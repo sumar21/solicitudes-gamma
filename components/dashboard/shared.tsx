@@ -71,6 +71,7 @@ export const KpiCard: React.FC<{
 
 /** Tooltip de recharts (§4.6): siempre TooltipShell + TipRow, nunca el default. */
 export const TooltipShell: React.FC<{ title?: React.ReactNode; children: React.ReactNode }> = ({ title, children }) => (
+  // sumar-validar-ignorar: sombras-pesadas tooltip de gráfico (§1.4: shadow-lg es de toasts y tooltips)
   <div className="min-w-[160px] rounded-lg border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg">
     {title && <p className="mb-1.5 font-semibold">{title}</p>}
     <div className="space-y-1">{children}</div>
@@ -118,6 +119,7 @@ export interface FilaRanking {
 export const HBarList: React.FC<{ filas: FilaRanking[]; etiquetaValor: string; anchoEtiqueta?: number }> = ({ filas, etiquetaValor, anchoEtiqueta = 132 }) => (
   <ResponsiveContainer width="100%" height={Math.max(120, filas.length * 36 + 8)}>
     <BarChart data={filas} layout="vertical" margin={{ top: 0, right: 56, left: 0, bottom: 0 }} barCategoryGap={8}>
+      {/* sumar-validar-ignorar: numero-montos eje numérico de recharts, no un input */}
       <XAxis type="number" hide domain={[0, 'dataMax']} />
       <YAxis type="category" dataKey="label" width={anchoEtiqueta} tick={{ ...EJE_TICK, fill: 'var(--color-foreground)' }} {...SIN_LINEA} interval={0} />
       <Tooltip
