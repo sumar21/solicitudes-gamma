@@ -86,14 +86,13 @@ const cuando = (iso?: string): string | null => {
 const camaCorta = (label: string) => formatBedName(label).replace(/ - /g, ' - ');
 
 // Hora por paso del circuito: cada una muestra cuándo se alcanzó ese estado (de c.pasos, poblado por
-// el backend). El label es el pedido por negocio, no el técnico.
+// el backend). El label es el MISMO nombre del estado que se ve en la pill y en los botones
+// (CIRUGIA_ESTADO_LABEL): antes decía "Retirado" / "Recibido" y no se entendía a qué paso
+// correspondía (pedido 04/11/2026).
 // TOLERANCIA_EVALUADA NO va acá: al evaluarse cierra la operatoria y la saca de Activas → nunca se
 // llenaría. La hora de tolerancia se ve en el detalle del Histórico.
-const STEP_COLS: { key: string; label: string }[] = [
-  { key: 'EN_TRASLADO',   label: 'Retirado' },
-  { key: 'EN_CIRUGIA',    label: 'En cirugía' },
-  { key: 'EN_DEVOLUCION', label: 'Regreso' },
-];
+const STEP_COLS: { key: CirugiaEstado; label: string }[] = (['EN_TRASLADO', 'EN_CIRUGIA', 'EN_DEVOLUCION'] as const)
+  .map(key => ({ key, label: CIRUGIA_ESTADO_LABEL[key] }));
 
 // Duración entre dos ISO (inicio → cierre). "—" si falta o es incoherente.
 const fmtDuracion = (a?: string, b?: string): string => {
@@ -376,8 +375,9 @@ export const CirugiasView: React.FC<Props> = ({
     );
   };
 
-  // Indicador del circuito (5 pasos) + la hora de los pasos que pidió negocio (Retirado / En cirugía /
-  // Regreso). Vacío ("—") si el paso no se hizo aún.
+  // Indicador del circuito (5 pasos) + la hora de los pasos que pidió negocio (En traslado a cirugía /
+  // En cirugía / Regreso de cirugía). Vacío ("—") si el paso no se hizo aún. `items-end`: un título
+  // que ocupa dos líneas no desalinea las horas.
   const renderCircuito = (c: CirugiaTraslado) => {
     const actual = ORDEN_ESTADO[c.estado] ?? -1;
     return (
@@ -389,7 +389,7 @@ export const CirugiasView: React.FC<Props> = ({
               className={cn('h-1.5 flex-1 rounded-full', i <= actual ? 'bg-primary' : 'bg-border')} />
           ))}
         </div>
-        <dl className="grid grid-cols-3 gap-x-3">
+        <dl className="grid grid-cols-3 items-end gap-x-3">
           {STEP_COLS.map(col => {
             const iso = c.pasos?.[col.key];
             const t = cuando(iso);
