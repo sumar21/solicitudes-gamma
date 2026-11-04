@@ -192,7 +192,7 @@ async function handler(req: any, res: any) {
       if (error) { console.error('[cirugia] GET failed:', error.message); return res.status(200).json({ cirugias: [] }); }
       const rows = (data ?? []) as any[];
       // Timestamps por paso (cirugia_eventos) de las vivas → habilita las columnas de HORA de cada
-      // paso en la grilla (Retirado / En cirugía / Recibido / …). 1 query con `in`; la hora de cada paso
+      // paso en la grilla (En traslado a cirugía / En cirugía / Regreso de cirugía). 1 query con `in`; la hora de cada paso
       // la arma pasosDesdeEventos (contempla "Volver un paso").
       const pasosById = new Map<string, Record<string, string>>();
       const ids = rows.map(r => String(r.id)).filter(Boolean);

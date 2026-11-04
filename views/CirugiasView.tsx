@@ -70,14 +70,13 @@ const fmtWhen = (iso?: string) => {
 const camaCorta = (label: string) => formatBedName(label).replace(/ - /g, '\u00a0-\u00a0');
 
 // Columnas de HORA por paso en la grilla Activas: cada una muestra cuándo se alcanzó ese estado
-// (de c.pasos, poblado por el backend). El label es el pedido por negocio, no el técnico.
+// (de c.pasos, poblado por el backend). El label es el MISMO nombre del estado que se ve en la pill
+// y en los botones (CIRUGIA_ESTADO_LABEL): antes decía "Retirado" / "Recibido" y no se entendía a
+// qué paso correspondía (pedido 04/11/2026).
 // TOLERANCIA_EVALUADA NO va acá: al evaluarse cierra la operatoria y la saca de Activas → esa
 // columna nunca se llenaría. La hora de tolerancia se ve en el detalle del Histórico.
-const STEP_COLS: { key: string; label: string }[] = [
-  { key: 'EN_TRASLADO',   label: 'Retirado' },
-  { key: 'EN_CIRUGIA',    label: 'En cirugía' },
-  { key: 'EN_DEVOLUCION', label: 'Regreso' },
-];
+const STEP_COLS: { key: CirugiaEstado; label: string }[] = (['EN_TRASLADO', 'EN_CIRUGIA', 'EN_DEVOLUCION'] as const)
+  .map(key => ({ key, label: CIRUGIA_ESTADO_LABEL[key] }));
 
 // Fecha+hora compactas de un paso ("18/08" + "12:40") o null si no se hizo aún.
 const pasoTime = (iso?: string): { dia: string; hora: string } | null => {
@@ -451,7 +450,7 @@ export const CirugiasView: React.FC<Props> = ({
             </span>
           )}
         </td>
-        {/* Hora de cada paso (Retirado / En cirugía / Recibido / Tolerancia) — vacío si no se hizo aún */}
+        {/* Hora de cada paso (En traslado a cirugía / En cirugía / Regreso de cirugía) — vacío si no se hizo aún */}
         {STEP_COLS.map(col => {
           const t = pasoTime(c.pasos?.[col.key]);
           return (
@@ -549,9 +548,7 @@ export const CirugiasView: React.FC<Props> = ({
                       <th className="px-4 py-3">Estado</th>
                       <th className="px-4 py-3">Paciente</th>
                       <th className="px-4 py-3">Cama</th>
-                      <th className="px-4 py-3">Retirado</th>
-                      <th className="px-4 py-3">En cirugía</th>
-                      <th className="px-4 py-3">Recibido</th>
+                      {STEP_COLS.map(col => <th key={col.key} className="px-4 py-3">{col.label}</th>)}
                       <th className="px-4 py-3">Acciones</th>
                     </tr>
                   </thead>
