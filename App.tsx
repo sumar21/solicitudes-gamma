@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Home as HomeIcon, History, Info,
   Mail, Lock, Eye, EyeOff, User, Settings, Users
 } from './components/Icons';
-import { AlertCircle, ArrowRight, BedDouble, Globe, Loader2, MapPin as MapPinIcon, RefreshCw, Utensils } from 'lucide-react';
+import { Activity, AlertCircle, ArrowRight, BedDouble, Globe, Loader2, MapPin as MapPinIcon, RefreshCw, Utensils } from 'lucide-react';
 import { AppShell, type ItemNav } from './components/layout/app-shell';
 import { Aviso, BloqueUsuario, EntornoDePrueba, PieSesion, SelectorTema } from './components/layout/partes-shell';
 import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
@@ -43,7 +43,8 @@ import { can, hasModule, receivesAnyNotif } from './lib/permissions';
 import { NotificationsDropdown } from './components/NotificationsDropdown';
 import { Popover, PopoverTrigger, PopoverContent } from './components/ui/popover';
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './components/ui/dialog';
-import { AISLAMIENTOS, ORDEN_ESTADOS_CAMA, estadoCama, puntoAislamiento } from './lib/estados-camas';
+import { AISLAMIENTOS, MARCAS_CAMA, ORDEN_ESTADOS_CAMA, estadoCama, puntoAislamiento } from './lib/estados-camas';
+import { PASOS_CIRUGIA, estadoCirugia } from './lib/estados-cirugia';
 import { Bell } from './components/Icons';
 
 // Modals
@@ -920,6 +921,36 @@ export default function App() {
                     <span>{a.nombre}{a.sigla && <span className="text-muted-foreground"> ({a.sigla})</span>}</span>
                   </li>
                 ))}
+              </ul>
+            </div>
+            {/* Marcas de la celda: en el mapa van solo con ícono (celda compacta); acá, qué es cada una. */}
+            <div className="space-y-2 border-t pt-4">
+              <p className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">Marcas en la cama</p>
+              <ul className="space-y-1.5">
+                {Object.entries(MARCAS_CAMA).map(([clave, m]) => (
+                  <li key={clave} className="flex items-center gap-3 text-xs">
+                    <span className="flex w-12 shrink-0 justify-center">
+                      <StatusBadge tono={m.tono} className={cn('h-4 gap-0.5 px-1 py-0', clave === 'vaCirugia' && 'border border-dashed border-violet-400')}>
+                        {clave === 'vaCirugia' || clave === 'quirurgico' ? m.label : <m.icono className="size-3" />}
+                      </StatusBadge>
+                    </span>
+                    <span className="text-muted-foreground">{m.descripcion}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="space-y-2 border-t pt-4">
+              <p className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">Cirugía (Cx)</p>
+              <ul className="grid grid-cols-2 gap-1.5">
+                {PASOS_CIRUGIA.map((paso) => {
+                  const cx = estadoCirugia(paso);
+                  return (
+                    <li key={paso} className="flex items-center gap-2 text-xs">
+                      <StatusBadge tono={cx.tono} className="h-4 gap-0.5 px-1 py-0"><Activity className="size-3" aria-hidden="true" />Cx</StatusBadge>
+                      <span>{cx.titulo}</span>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           </DialogBody>

@@ -3,17 +3,21 @@ import type { CirugiaEstado } from "../types";
 import { CIRUGIA_ESTADO_LABEL, CIRUGIA_ESTADO_SHORT } from "./constants";
 
 /**
- * Estados de la cirugía (Operativa → Cirugías) y su tono en el StatusBadge (DESIGN.md §3.11). Un tono
- * por ETAPA del circuito, no uno por estado (§3.11 regla 1): los que significan "falta lo mismo"
- * comparten tono y los distingue el texto.
- *   aviso   → pendiente: marcado listo, falta que lo vayan a buscar
- *   info    → en camino al quirófano (búsqueda + traslado: el paciente se está moviendo)
- *   violeta → en cirugía
- *   exito   → la cirugía terminó y vuelve al piso (falta iniciar la dieta, que cierra la operatoria)
- *   neutro  → cerrada (dieta iniciada)
- *   peligro → cancelada
- * Separación de matiz entre los que conviven en la grilla de activas (§3.11 regla 2): ámbar ~38°,
- * esmeralda ~160°, azul ~217°, violeta ~263° → el par más cercano (azul–violeta) está a 46°.
+ * Estados de la cirugía (Operativa → Cirugías y pill "Cx" del Mapa de Camas) y su tono en el
+ * StatusBadge (DESIGN.md §3.11).
+ *
+ * LOS COLORES SON LOS ACORDADOS en el plan (docs/planes/plan-traslados-cirugia.html) y los que ya
+ * conocían en el hospital: uno por estado, porque enfermería sigue al paciente por el color de la
+ * pill en el mapa. El rediseño (nov-2026) los había agrupado por etapa (azul / violeta / verde) y se
+ * restauraron:
+ *   aviso    (ámbar)    → Listo para cirugía
+ *   naranja             → Búsqueda para cirugía
+ *   amarillo            → En traslado a cirugía
+ *   cian                → En cirugía
+ *   violeta             → Regreso de cirugía
+ *   exito    (verde)    → Iniciar dieta / Cerrada
+ *   peligro  (rojo)     → Cancelada
+ * Ámbar, naranja y amarillo están cerca de matiz: siempre van con su texto (la pill dice el estado).
  * El label es el corto (sin el prefijo "Cx": acá ya estamos en la solapa Cirugías); el largo va en
  * `titulo` para el tooltip.
  */
@@ -25,11 +29,11 @@ interface InfoEstadoCirugia {
 
 const TONO: Record<CirugiaEstado, Tono> = {
   LISTO_PARA_CIRUGIA: "aviso",
-  VAN_A_BUSCAR: "info",
-  EN_TRASLADO: "info",
-  EN_CIRUGIA: "violeta",
-  EN_DEVOLUCION: "exito",
-  TOLERANCIA_EVALUADA: "neutro",
+  VAN_A_BUSCAR: "naranja",
+  EN_TRASLADO: "amarillo",
+  EN_CIRUGIA: "cian",
+  EN_DEVOLUCION: "violeta",
+  TOLERANCIA_EVALUADA: "exito",
   CANCELADO: "peligro",
 };
 

@@ -17,6 +17,12 @@ export type Tono =
   | "violeta" // despachado / el otro signo
   | "peligro" // rojo: cancelado / error
   | "marca" // etiqueta propia del cliente (no estado)
+  // Propios de MediFlow (no vienen del kit): colores ACORDADOS con el hospital antes del rediseño, que
+  // el kit no trae — cian (contiguo a Contacto preventivo, Cx en cirugía), naranja y amarillo (Cx en
+  // búsqueda / en traslado). Ver lib/estados-camas.ts y lib/estados-cirugia.ts.
+  | "cian"
+  | "naranja"
+  | "amarillo"
 
 const TONOS: Record<Tono, string> = {
   neutro: "bg-muted text-muted-foreground",
@@ -28,6 +34,9 @@ const TONOS: Record<Tono, string> = {
   violeta: "bg-violet-100 text-violet-700",
   peligro: "bg-red-100 text-red-700",
   marca: "bg-brand/10 text-brand",
+  cian: "bg-cyan-100 text-cyan-700",
+  naranja: "bg-orange-100 text-orange-700",
+  amarillo: "bg-yellow-100 text-yellow-700",
 }
 
 /** Punto del color de un tono (opciones de filtro, leyendas). */
@@ -41,6 +50,9 @@ export const PUNTO_TONO: Record<Tono, string> = {
   violeta: "bg-violet-500",
   peligro: "bg-red-500",
   marca: "bg-brand",
+  cian: "bg-cyan-500",
+  naranja: "bg-orange-500",
+  amarillo: "bg-yellow-500",
 }
 
 // Pill de estado (§3.11): rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide.

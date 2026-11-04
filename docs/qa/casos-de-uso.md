@@ -313,10 +313,10 @@ traslado ni "Marcar limpia". Catering además recibe push `DIET_CHANGE` / `FASTI
 - **Objetivo:** ver el estado de las camas por sector.
 - **Pasos:**
   1. Entrar (landing = Mapa de Camas).
-  2. Ver la grilla coloreada: **verde**=Disponible, **rojo**=Ocupada, **ámbar**=En preparación, **índigo**=Asignada, **gris**=Inhabilitada.
+  2. Ver la grilla coloreada: **verde**=Disponible, **rojo**=Ocupada, **ámbar**=En preparación, **índigo**=Asignada, **gris**=Inhabilitada. La celda es **compacta** (número de cama + paciente + marcas con ícono) para que entren la mayor cantidad de camas por pantalla; el resto va en el **tooltip** (desktop) y en el **detalle** (click).
   3. Filtrar con el **buscador** (paciente/evento/financiador/médico/habitación), el **multiselect de sectores**, los **chips de estado**, y los toggles **Aislamiento / Dietas / Ayunos**.
 - **Resultado esperado:** la grilla respeta todos los filtros. El **techo por área** se aplica antes que cualquier filtro UI: un rol de piso nunca ve camas de otro piso aunque manipule los filtros. El badge de conteo **excluye HRA** (sillones, no camas).
-- **Archivo:** `BedsView.tsx` (`getStatusColor`, `filteredBeds`).
+- **Archivo:** `BedsView.tsx` (`filteredBeds`, celda de la grilla) + `lib/estados-camas.ts` (`cardEstadoCama`, colores).
 
 ### CU-VER-02 — Abrir el detalle de un paciente
 
@@ -335,7 +335,7 @@ traslado ni "Marcar limpia". Catering además recibe push `DIET_CHANGE` / `FASTI
 
 - **Actor:** cualquiera que mire el mapa
 - **Objetivo:** entender por qué una cama libre aparece bloqueada.
-- **Resultado esperado:** un paciente con aislamiento **"duro"** (no preventivo) **bloquea** las camas libres (Disponible/En preparación) de **su habitación** → celda violeta opacity-60 con "X". **"Contacto preventivo" NO bloquea**: solo señaliza las camas contiguas en **cyan**. Exento en áreas críticas **HUC/HUT/HIT/HRA**. En camas libres, un chip outline sugiere el **sexo** según el resto de ocupantes (sugerencia, no restricción).
+- **Resultado esperado:** un paciente con aislamiento **"duro"** (no preventivo) **bloquea** las camas libres (Disponible/En preparación) de **su habitación** → card violeta con la marca **"Bloqueada"** (el estado real sigue en su pill). **"Contacto preventivo" NO bloquea**: solo señaliza las camas contiguas en **cyan**. Exento en áreas críticas **HUC/HUT/HIT/HRA**. En camas libres, un chip outline sugiere el **sexo** según el resto de ocupantes (sugerencia, no restricción).
 - **Archivo:** `computeIsolationBlocks` en `BedsView.tsx`.
 
 ### CU-VER-04 — Exportar PDFs del mapa

@@ -18,7 +18,7 @@ import { MultiCombobox } from '../components/ui/combobox';
 import { DateRangePicker } from '../components/ui/date-picker';
 import { Cargando, ErrorEstado, Vacio } from '../components/ui/estados';
 import { diaMes, fecha, fechaHora, hora } from '../lib/formato';
-import { ESTADOS_CAMA, ORDEN_ESTADOS_CAMA, MARCAS_CAMA, ICONO_AISLAMIENTO, estadoCama, puntoEstadoCama, acentoEstadoCama, puntoAislamiento } from '../lib/estados-camas';
+import { ESTADOS_CAMA, ORDEN_ESTADOS_CAMA, MARCAS_CAMA, ICONO_AISLAMIENTO, estadoCama, puntoEstadoCama, cardEstadoCama, puntoAislamiento, anilloAislamiento } from '../lib/estados-camas';
 import { estadoCirugia } from '../lib/estados-cirugia';
 import { PatientJourney } from '../components/PatientJourney';
 import { WORKFLOW_LABELS, CIRUGIA_ESTADO_LABEL, CIRUGIA_TIPO_PREVIA, cirugiaRetrocesoDe } from '../lib/constants';
@@ -116,13 +116,16 @@ const fechaSegura = (iso?: string): string => {
 
 // Aviso inline suave (DESIGN §9.4): bg-{c}-50 + border-{c}-200 + text-{c}-700, con ícono. Un solo
 // componente para los carteles del detalle de la cama (limpieza, dieta, cirugía, bloqueos).
-type TonoAviso = 'exito' | 'aviso' | 'peligro' | 'info' | 'neutro';
+type TonoAviso = 'exito' | 'aviso' | 'peligro' | 'info' | 'neutro' | 'violeta' | 'cian';
 const CLASE_AVISO: Record<TonoAviso, string> = {
   exito: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   aviso: 'border-amber-200 bg-amber-50 text-amber-700',
   peligro: 'border-red-200 bg-red-50 text-red-700',
   info: 'border-blue-200 bg-blue-50 text-blue-700',
   neutro: 'bg-muted/40 text-muted-foreground',
+  // Marcas de aislamiento del mapa (lib/estados-camas.ts): bloqueada = violeta, preventivo = cian.
+  violeta: 'border-violet-200 bg-violet-50 text-violet-700',
+  cian: 'border-cyan-200 bg-cyan-50 text-cyan-700',
 };
 const AvisoInline: React.FC<{
   tono: TonoAviso;
@@ -2572,7 +2575,9 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                   </span>
                   <div className="h-px flex-1 bg-border" aria-hidden="true" />
                 </div>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
+                {/* Columnas automáticas: entran tantas celdas como permita el ancho (~20 en un monitor grande,
+                    4 en un celular). */}
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] gap-1.5">
                   {areaBeds.map(bed => {
                     const shortCode = `${bed.roomCode}-${bed.bedCode}`;
                     const info = estadoCama(bed.status);
@@ -2588,125 +2593,108 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     const comanda = comandaVisible && hasPendingMealLoad(bed.meals) ? MARCAS_CAMA.comandaPendiente : MARCAS_CAMA.comandaEntregada;
                     const ayuno = hasLiveFasting(bed.fasting);
 
-                    // Quién ocupa / quién llega + un dato de contexto (micro, muted).
-                    let ocupante: React.ReactNode = null;
+                    // Tarjeta RESUMEN compacta (acordado antes del rediseño: que entren la mayor cantidad
+                    // de camas por pantalla). Solo: número de cama + quién ocupa / llega + marcas con
+                    // ícono. El estado es el COLOR de la tarjeta; el resto (financiador, nombres de
+                    // aislamiento, etapa de la Cx, motivo de inhabilitación…) va en el tooltip y en el
+                    // detalle (click).
+                    let ocupante: string | undefined;
+                    let llega = false;
                     let meta: string | undefined;
                     if (bed.status === BedStatus.OCCUPIED) {
                       ocupante = bed.patientName;
                       meta = bed.institution;
                     } else if (ticketAsignado) {
-                      ocupante = <>→ {ticketAsignado.patientName}</>;
+                      ocupante = ticketAsignado.patientName; llega = true;
                       meta = 'Traslado en curso';
                     } else if (llegaDeCx) {
-                      ocupante = <>→ {bed.cirugia!.pacienteNombre}</>;
+                      ocupante = bed.cirugia!.pacienteNombre; llega = true;
                       meta = `Llega de cirugía · de ${formatBedName(bed.cirugia!.camaOrigen)}`;
                     } else if (bed.status === BedStatus.DISABLED) {
                       meta = bed.disabledReason || info.descripcion;
                     }
 
-                    const hayMarcas = isoTipos.length > 0 || isBlocked || isPreventiveAdj || !!bed.cirugia || (bed.goingToSurgery && !bed.cirugia)
-                      || bed.quirurgicoPendiente || bed.routineCleaningActive || comandaVisible || ayuno || !!suggestedSex;
+                    // Marcas: ícono (+ texto mínimo cuando el ícono solo no alcanza: "Cx", "Q", "C→Q").
+                    // `txt` arma el tooltip y el nombre accesible de la tarjeta.
+                    const CHIP = 'h-4 gap-0.5 px-1 py-0';
+                    // Sigla / ícono DENTRO del círculo del color de la cartelería (dato del hospital, no un token).
+                    // sumar-validar-ignorar: colores-crudos rótulo DENTRO del relleno de color de la cartelería de aislamiento (blanco sobre el color)
+                    const SOBRE_CARTEL = 'text-white';
+                    const marcas: { key: string; txt: string; nodo: React.ReactNode }[] = [];
+                    isoTipos.forEach((iso, i) => {
+                      const sigla = isolationSigla(iso.name);
+                      marcas.push({
+                        key: `iso-${i}`, txt: `Aislamiento: ${iso.name}${sigla ? ` (${sigla})` : ''}`,
+                        nodo: sigla
+                          ? <span className={cn('inline-flex h-4 items-center rounded-full px-1 text-[10px] leading-none font-bold', SOBRE_CARTEL, puntoAislamiento(iso.color))}>{sigla}</span>
+                          : <span className={cn('inline-flex size-4 items-center justify-center rounded-full', SOBRE_CARTEL, puntoAislamiento(iso.color))}><ICONO_AISLAMIENTO className="size-2.5" /></span>,
+                      });
+                    });
+                    if (isBlocked) marcas.push({ key: 'bloq', txt: MARCAS_CAMA.bloqueada.descripcion,
+                      nodo: <StatusBadge tono={MARCAS_CAMA.bloqueada.tono} className={CHIP}><MARCAS_CAMA.bloqueada.icono className="size-3" /></StatusBadge> });
+                    if (isPreventiveAdj) marcas.push({ key: 'prev', txt: MARCAS_CAMA.preventivo.descripcion,
+                      nodo: <StatusBadge tono={MARCAS_CAMA.preventivo.tono} className={CHIP}><MARCAS_CAMA.preventivo.icono className="size-3" /></StatusBadge> });
+                    // Cirugía viva: color por etapa (lib/estados-cirugia.ts). `role: 'destino'` = cama destino en limbo.
+                    if (bed.cirugia) marcas.push({
+                      key: 'cx', txt: `Cirugía: ${CIRUGIA_ESTADO_LABEL[bed.cirugia.estado]}${bed.cirugia.role === 'destino' ? ' (cama destino)' : ''}`,
+                      nodo: <StatusBadge tono={estadoCirugia(bed.cirugia.estado).tono} className={CHIP}><Activity className="size-3" />Cx</StatusBadge>,
+                    });
+                    // "Va a cirugía" de Admisión sin operatoria viva: "C→Q" (clínico → quirúrgico) o "Re-Cx".
+                    if (bed.goingToSurgery && !bed.cirugia) marcas.push({
+                      key: 'vacx', txt: `${esQ ? 'Nueva cirugía autorizada' : 'De clínico a quirúrgico'} — marcado por Admisión${bed.goingToSurgeryBy ? ` · ${bed.goingToSurgeryBy}` : ''}`,
+                      nodo: <StatusBadge tono={MARCAS_CAMA.vaCirugia.tono} className={cn(CHIP, 'border border-dashed border-violet-400')}>{esQ ? 'Re-Cx' : MARCAS_CAMA.vaCirugia.label}</StatusBadge>,
+                    });
+                    // "Q": quirúrgico (PROGAL) pendiente de su cirugía en esta internación (lib/cirugiaQ.ts).
+                    if (bed.quirurgicoPendiente) marcas.push({
+                      key: 'q', txt: `Paciente quirúrgico (PROGAL) — pendiente de su cirugía${bed.expectedSurgeryDate ? ` · probable: ${fechaSegura(bed.expectedSurgeryDate)}` : ''}`,
+                      nodo: <StatusBadge tono={MARCAS_CAMA.quirurgico.tono} className={CHIP}>{MARCAS_CAMA.quirurgico.label}</StatusBadge>,
+                    });
+                    if (ayuno) marcas.push({ key: 'ayuno', txt: MARCAS_CAMA.ayuno.descripcion,
+                      nodo: <StatusBadge tono={MARCAS_CAMA.ayuno.tono} className={CHIP}><MARCAS_CAMA.ayuno.icono className="size-3" /></StatusBadge> });
+                    if (comandaVisible) marcas.push({ key: 'comanda', txt: comanda.descripcion,
+                      nodo: <StatusBadge tono={comanda.tono} className={CHIP}><comanda.icono className="size-3" /></StatusBadge> });
+                    if (bed.routineCleaningActive) marcas.push({ key: 'rutina', txt: `${MARCAS_CAMA.rutina.descripcion}${bed.routineCleaningBy ? ` · ${bed.routineCleaningBy}` : ''}`,
+                      nodo: <StatusBadge tono={MARCAS_CAMA.rutina.tono} className={CHIP}><MARCAS_CAMA.rutina.icono className="size-3" /></StatusBadge> });
+                    // Sexo SUGERIDO (sugerencia, no dato del paciente) → outline dashed; celeste = M, rosa = F.
+                    if (suggestedSex) marcas.push({
+                      key: 'sexo', txt: `Sugerido: ${suggestedSex === 'M' ? 'masculino' : 'femenino'} — la habitación ya aloja ${suggestedSex === 'M' ? 'pacientes masculinos' : 'pacientes femeninos'}`,
+                      nodo: <span className={cn('inline-flex size-4 items-center justify-center rounded-full border border-dashed bg-background text-[10px] leading-none font-semibold',
+                        suggestedSex === 'M' ? 'border-sky-400 text-sky-700' : 'border-pink-400 text-pink-700')}>{suggestedSex}</span>,
+                    });
+
+                    const tooltip = [
+                      `${shortCode} · ${info.label}`,
+                      ocupante && `${llega ? '→ ' : ''}${ocupante}`,
+                      meta,
+                      ...marcas.map(m => m.txt),
+                    ].filter(Boolean).join('\n');
 
                     return (
                       <button
                         key={bed.id}
                         type="button"
                         onClick={() => setSelectedBed(bed)}
-                        title={bed.status === BedStatus.DISABLED && bed.disabledReason ? `Inhabilitada — ${bed.disabledReason}` : undefined}
+                        title={tooltip}
+                        aria-label={tooltip.replace(/\n/g, '. ')}
                         className={cn(
-                          'flex min-w-0 flex-col gap-1.5 rounded-lg border border-l-[3px] bg-card p-3 text-left shadow-xs transition-all outline-hidden hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.99]',
-                          acentoEstadoCama(bed.status),
-                          // Bloqueada por aislamiento: no se asigna → se apaga, pero sigue legible.
-                          isBlocked && 'bg-muted/40',
+                          'flex min-h-16 min-w-0 flex-col gap-0.5 rounded-md border p-1.5 text-left transition-all outline-hidden hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.98]',
+                          // Color del estado (acordado: verde / rojo / ámbar / índigo / gris). Bloqueada
+                          // (violeta) y contigua a preventivo (cian) pintan la celda con su marca, como antes.
+                          cardEstadoCama(bed.status, isBlocked ? 'bloqueada' : isPreventiveAdj ? 'preventivo' : undefined),
+                          // Aislada: anillo del color de la cartelería (se ve de lejos).
+                          isoTipos.length > 0 && anilloAislamiento(isoTipos[0].color),
                         )}
                       >
-                        <div className="flex items-start justify-between gap-2">
-                          <span className="text-sm font-semibold tabular-nums">{shortCode}</span>
-                          <StatusBadge tono={info.tono} className="shrink-0">{info.corto}</StatusBadge>
-                        </div>
-                        <div className="min-w-0">
-                          {ocupante
-                            ? <p className="truncate text-[13px] font-medium">{ocupante}</p>
-                            : <p className="truncate text-[13px] text-muted-foreground">{bed.status === BedStatus.DISABLED ? 'Fuera de servicio' : 'Sin paciente'}</p>}
-                          {meta && <p className="truncate text-[10px] text-muted-foreground">{meta}</p>}
-                        </div>
-                        {hayMarcas && (
-                          <div className="flex flex-wrap items-center gap-1">
-                            {/* Aislamientos: punto de la cartelería + NOMBRE (nunca color solo; son 9+ tipos). */}
-                            {isoTipos.map((iso, i) => (
-                              <span key={`${iso.name}-${i}`} title={`Aislamiento: ${iso.name}`}
-                                className="inline-flex max-w-full items-center gap-1 rounded-full border bg-background px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap">
-                                <span className={cn('size-2 shrink-0 rounded-full', puntoAislamiento(iso.color))} aria-hidden="true" />
-                                <span className="truncate">{isolationSigla(iso.name) ? `${iso.name} (${isolationSigla(iso.name)})` : iso.name}</span>
-                              </span>
-                            ))}
-                            {isBlocked && (
-                              <StatusBadge tono={MARCAS_CAMA.bloqueada.tono}>
-                                <MARCAS_CAMA.bloqueada.icono className="size-3" aria-hidden="true" />{MARCAS_CAMA.bloqueada.label}
-                              </StatusBadge>
-                            )}
-                            {isPreventiveAdj && (
-                              <span title="Contacto preventivo en la habitación — habilitada, usar con precaución">
-                                <StatusBadge tono={MARCAS_CAMA.preventivo.tono}>
-                                  <MARCAS_CAMA.preventivo.icono className="size-3" aria-hidden="true" />{MARCAS_CAMA.preventivo.label}
-                                </StatusBadge>
-                              </span>
-                            )}
-                            {/* Cirugía viva: tono por etapa (lib/estados-cirugia.ts). `role: 'destino'` = cama
-                                destino en limbo (EN_DEVOLUCION con cambio de cama). */}
-                            {bed.cirugia && (
-                              <span title={`Cirugía: ${CIRUGIA_ESTADO_LABEL[bed.cirugia.estado]}${bed.cirugia.role === 'destino' ? ' (cama destino)' : ''}`}>
-                                <StatusBadge tono={estadoCirugia(bed.cirugia.estado).tono}>
-                                  <Activity className="size-3" aria-hidden="true" />Cx · {estadoCirugia(bed.cirugia.estado).label}
-                                </StatusBadge>
-                              </span>
-                            )}
-                            {/* Marca "va a cirugía" de Admisión sin operatoria viva: "C→Q" (de clínico a
-                                quirúrgico) o "Re-Cx" (quirúrgico re-habilitado para otra cirugía). */}
-                            {bed.goingToSurgery && !bed.cirugia && (
-                              <span title={`${esQ ? 'Nueva cirugía autorizada' : 'De clínico a quirúrgico'} — marcado por Admisión${bed.goingToSurgeryBy ? ` · ${bed.goingToSurgeryBy}` : ''}`}>
-                                <StatusBadge tono={MARCAS_CAMA.vaCirugia.tono} className="border border-dashed border-muted-foreground/40">
-                                  <Activity className="size-3" aria-hidden="true" />{esQ ? 'Re-Cx' : MARCAS_CAMA.vaCirugia.label}
-                                </StatusBadge>
-                              </span>
-                            )}
-                            {/* "Q": paciente quirúrgico (PROGAL) pendiente de su cirugía en esta internación (lib/cirugiaQ.ts). */}
-                            {bed.quirurgicoPendiente && (
-                              <span title={`Paciente quirúrgico (PROGAL) — pendiente de su cirugía${bed.expectedSurgeryDate ? ` · probable: ${fechaSegura(bed.expectedSurgeryDate)}` : ''}`}>
-                                <StatusBadge tono={MARCAS_CAMA.quirurgico.tono}>{MARCAS_CAMA.quirurgico.label}</StatusBadge>
-                              </span>
-                            )}
-                            {ayuno && (
-                              <StatusBadge tono={MARCAS_CAMA.ayuno.tono}>
-                                <MARCAS_CAMA.ayuno.icono className="size-3" aria-hidden="true" />{MARCAS_CAMA.ayuno.label}
-                              </StatusBadge>
-                            )}
-                            {/* Comanda (solo si el rol la puede ver): pendiente de entregar vs. ya entregada. */}
-                            {comandaVisible && (
-                              <span title={comanda.descripcion}>
-                                <StatusBadge tono={comanda.tono}>
-                                  <comanda.icono className="size-3" aria-hidden="true" />{comanda.label}
-                                </StatusBadge>
-                              </span>
-                            )}
-                            {bed.routineCleaningActive && (
-                              <span title={`Limpieza de rutina en curso${bed.routineCleaningBy ? ` · ${bed.routineCleaningBy}` : ''}`}>
-                                <StatusBadge tono={MARCAS_CAMA.rutina.tono}>
-                                  <MARCAS_CAMA.rutina.icono className="size-3" aria-hidden="true" />{MARCAS_CAMA.rutina.label}
-                                </StatusBadge>
-                              </span>
-                            )}
-                            {/* Sexo SUGERIDO para una cama libre (según quién ocupa el resto de la
-                                habitación): es una sugerencia, no un dato del paciente → neutro, con borde. */}
-                            {suggestedSex && (
-                              <span
-                                title={`Sugerido: ${suggestedSex === 'M' ? 'masculino' : 'femenino'} — la habitación ya aloja ${suggestedSex === 'M' ? 'pacientes masculinos' : 'pacientes femeninos'}`}
-                                className="inline-flex items-center rounded-full border border-dashed px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap text-muted-foreground"
-                              >
-                                Sug. {suggestedSex}
-                              </span>
-                            )}
-                          </div>
+                        <span className="text-xs font-semibold whitespace-nowrap tabular-nums">{shortCode}</span>
+                        {ocupante && (
+                          <span className={cn('line-clamp-2 text-[10px] leading-tight wrap-break-word', llega ? 'text-muted-foreground italic' : 'font-medium')}>
+                            {llega && '→ '}{ocupante}
+                          </span>
+                        )}
+                        {marcas.length > 0 && (
+                          <span className="mt-auto flex flex-wrap items-center gap-0.5 pt-0.5" aria-hidden="true">
+                            {marcas.map(m => <React.Fragment key={m.key}>{m.nodo}</React.Fragment>)}
+                          </span>
                         )}
                       </button>
                     );
@@ -2744,6 +2732,13 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                       <DialogTitle className="block truncate">Hab. {selectedBed.roomCode} — Cama {selectedBed.bedCode}</DialogTitle>
                       <DialogDescription className="mt-1 flex flex-wrap items-center gap-2">
                         <StatusBadge tono={infoEstado.tono}>{infoEstado.label}</StatusBadge>
+                        {/* Etapa de la Cx a la vista de TODOS los roles: la celda del mapa solo dice "Cx"
+                            (color) y el bloque de cirugía de abajo aparece solo con permisos cirugia_*. */}
+                        {selectedBed.cirugia && (
+                          <StatusBadge tono={estadoCirugia(selectedBed.cirugia.estado).tono}>
+                            <Activity className="size-3" aria-hidden="true" />Cx · {estadoCirugia(selectedBed.cirugia.estado).label}
+                          </StatusBadge>
+                        )}
                         <span>{AREA_LABELS[selectedBed.area] ?? selectedBed.area}</span>
                       </DialogDescription>
                     </div>
@@ -3317,12 +3312,12 @@ export const BedsView: React.FC<BedsViewProps> = ({ beds, tickets, currentUser, 
                     );
                   })()}
                   {blockedByIsolation.has(selectedBed.label) && (
-                    <AvisoInline tono="peligro" icono={MARCAS_CAMA.bloqueada.icono}>
+                    <AvisoInline tono="violeta" icono={MARCAS_CAMA.bloqueada.icono}>
                       <span className="font-medium">Bloqueada — paciente aislado en esta habitación</span>
                     </AvisoInline>
                   )}
                   {preventiveContactAdjacent.has(selectedBed.label) && (
-                    <AvisoInline tono="info" icono={MARCAS_CAMA.preventivo.icono}>
+                    <AvisoInline tono="cian" icono={MARCAS_CAMA.preventivo.icono}>
                       <span className="font-medium">Contacto preventivo en esta habitación — cama habilitada, usar con precaución</span>
                     </AvisoInline>
                   )}

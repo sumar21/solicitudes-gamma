@@ -403,6 +403,12 @@
   --color-rose-200: color-mix(in oklab, oklch(64.5% 0.246 16.439) 32%, transparent);
   --color-rose-600: oklch(71.2% 0.194 13.428);
   --color-rose-700: oklch(81% 0.117 11.638);
+  /* Rosa: sexo sugerido F en el mapa de camas. */
+  --color-pink-50: color-mix(in oklab, oklch(65.6% 0.241 354.308) 10%, transparent);
+  --color-pink-100: color-mix(in oklab, oklch(65.6% 0.241 354.308) 18%, transparent);
+  --color-pink-200: color-mix(in oklab, oklch(65.6% 0.241 354.308) 32%, transparent);
+  --color-pink-600: oklch(71.8% 0.202 349.761);
+  --color-pink-700: oklch(82.3% 0.12 346.018);
 }
 
 .dark[data-entorno="testing"] {

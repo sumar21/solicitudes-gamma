@@ -88,6 +88,8 @@ de tema en el header, `SelectorTema` de `components/layout/partes-shell.tsx`, de
 cero 🔴 en los archivos que se tocan antes de mergear. Excepciones aceptadas (`.sumar-validar.json`): sin
 recorrido guiado (app en producción; ver `PRODUCTO.md`).
 
+**Colores acordados con el hospital (no se cambian por una regla del kit):** Mapa de Camas — verde Disponible, rojo Ocupada, ámbar En preparación, índigo Asignada, gris Inhabilitada, violeta Bloqueada, cian contigua a Contacto preventivo, anillo del color de la cartelería en camas aisladas; pill Cx — ámbar Listo, naranja Búsqueda, amarillo En traslado, cian En cirugía, violeta Regreso, verde Dieta, rojo Cancelada. Fuente: `lib/estados-camas.ts` y `lib/estados-cirugia.ts` (comentarios con el porqué); documentado en [docs/qa/casos-de-uso.md](docs/qa/casos-de-uso.md). Un rediseño los respeta tal cual. **Densidad del mapa (también acordada):** la celda del mapa es un RESUMEN mínimo — número de cama, paciente y marcas con ícono, sin pill de estado (el estado es el color) — para que entre la mayor cantidad de camas por pantalla; todo lo demás va en el tooltip y en el detalle.
+
 **Reglas fijas:** solo tokens (nada de `bg-white`, `text-slate-*`, `emerald-*`, hex, `dark:`); `primary`
 para acciones y selección, la marca solo donde dice `DESIGN.md` §1.1; estados con `StatusBadge` y
 `lib/estados.ts`; fechas con `fechaHora()` / `fecha()`; listas con cargando / vacío / error. Una vista

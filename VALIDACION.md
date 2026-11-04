@@ -45,7 +45,7 @@ con datos sintéticos (TESTING devolvía 503 en `/api/beds`), interceptados solo
 | Operativa · Limpiezas | ✅ | ✅ | |
 | Operativa · Cirugías | ✅ | ✅ | |
 | Historial (+ auditoría y trayectoria) | ✅ | ✅ | |
-| Mapa de Camas (+ detalle, leyenda) | ✅ | ✅ | Ocupada pasa de rojo a azul (rojo = peligro en el kit): a confirmar con usuarios |
+| Mapa de Camas (+ detalle, leyenda) | ✅ | ✅ | Colores acordados restaurados (04/11/2026): Ocupada roja, Asignada índigo, Bloqueada violeta, Contacto prev. cian, Cx por etapa; celda compacta sin pill de estado (el estado es el color) y grilla con columnas automáticas (~15 a 1280 px, 4 en celular) para que entren la mayor cantidad de camas. Ver `lib/estados-camas.ts` |
 | Comandas (hoy, histórico, cambios de dieta) | ✅ | ✅ | |
 | Usuarios y Roles | ✅ | ✅ | |
 

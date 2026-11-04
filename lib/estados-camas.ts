@@ -4,20 +4,24 @@ import { PUNTO_TONO, type Tono } from "@/components/ui/status-badge";
 import { BedStatus } from "../types";
 
 /**
- * Estados de una cama (Mapa de Camas) y su tono en el StatusBadge (DESIGN.md §3.11). Mismo eje que
- * lib/estados.ts: un tono por etapa, con los significados del mapa canónico del kit.
- *   exito    → Disponible: lista para recibir un paciente
- *   aviso    → En preparación: falta algo (limpieza / consolidar en PROGAL)
- *   info     → Ocupada: comprometida ("azul = comprometido" del kit). NO es rojo: rojo es peligro
- *              (cancelado / error) y casi todas las camas están ocupadas → el mapa se leía en alarma.
- *   violeta  → Asignada: reservada por un traslado en curso (el "otro camino" de una cama libre)
- *   neutro   → Inhabilitada: fuera de servicio
- * Separación de matiz entre los que conviven en la grilla (§3.11 regla 2): ámbar ~38°, esmeralda
- * ~160°, azul ~217°, violeta ~263° → el par más cercano (azul–violeta) está a 46°. Índigo NO: con el
- * azul de Ocupada quedaba a ~15° y en celdas vecinas se leían igual.
+ * Estados de una cama (Mapa de Camas) y su tono en el StatusBadge (DESIGN.md §3.11).
  *
- * Lo usan la grilla (BedsView) y la leyenda del mapa (App.tsx): cambiar un tono acá lo cambia en los dos.
- * El PDF dibuja con sus propios colores (jsPDF) y no pasa por acá.
+ * LOS COLORES ESTÁN ACORDADOS CON EL HOSPITAL y documentados (docs/qa/casos-de-uso.md, Mapa de
+ * Camas): enfermería, azafatas y catering leen el mapa por color. NO se cambian por una regla del
+ * kit — el rediseño (nov-2026) los había pasado a azul / violeta y se restauraron:
+ *   verde    (exito)   → Disponible
+ *   ámbar    (aviso)   → En preparación
+ *   rojo     (peligro) → Ocupada
+ *   índigo   (indigo)  → Asignada (traslado en curso)
+ *   gris     (neutro)  → Inhabilitada
+ * Marcas de aislamiento sobre camas LIBRES (docs/arquitectura/decisiones.md): violeta = bloqueada,
+ * cian = contigua a un Contacto preventivo (color propio, que no usa ningún estado).
+ * Índigo (Asignada) y violeta (Bloqueada) están cerca de matiz: la bloqueada se distingue además por
+ * el ícono + texto de su marca, como antes.
+ *
+ * Lo usan la grilla (BedsView) y la leyenda del mapa (App.tsx): cambiar un tono acá lo cambia en los
+ * dos. El PDF dibuja con sus propios colores (jsPDF, los mismos: rojo / índigo / verde / ámbar / gris)
+ * y no pasa por acá.
  */
 export interface InfoEstadoCama {
   /** Label completo (filtros, leyenda, modal). */
@@ -32,8 +36,8 @@ export interface InfoEstadoCama {
 export const ESTADOS_CAMA: Record<BedStatus, InfoEstadoCama> = {
   [BedStatus.AVAILABLE]: { label: "Disponible", corto: "Disponible", tono: "exito", descripcion: "Lista para recibir un paciente" },
   [BedStatus.PREPARATION]: { label: "En preparación", corto: "En prep.", tono: "aviso", descripcion: "Liberada, falta limpiarla o consolidarla" },
-  [BedStatus.OCCUPIED]: { label: "Ocupada", corto: "Ocupada", tono: "info", descripcion: "Con un paciente internado" },
-  [BedStatus.ASSIGNED]: { label: "Asignada", corto: "Asignada", tono: "violeta", descripcion: "Reservada por un traslado en curso" },
+  [BedStatus.OCCUPIED]: { label: "Ocupada", corto: "Ocupada", tono: "peligro", descripcion: "Con un paciente internado" },
+  [BedStatus.ASSIGNED]: { label: "Asignada", corto: "Asignada", tono: "indigo", descripcion: "Reservada por un traslado en curso" },
   [BedStatus.DISABLED]: { label: "Inhabilitada", corto: "Inhabilit.", tono: "neutro", descripcion: "Fuera de servicio" },
 };
 
@@ -54,21 +58,30 @@ export const estadoCama = (status: BedStatus | string): InfoEstadoCama =>
 export const puntoEstadoCama = (status: BedStatus | string): string => PUNTO_TONO[estadoCama(status).tono];
 
 /**
- * Acento fino del estado en el borde izquierdo de la card (§7.9: el estado se lee de un vistazo sin
- * pintar bloques saturados). Literales completos para que Tailwind los genere.
+ * Celda de la grilla pintada con el color del estado: tinte de fondo (100) + borde (200). La celda es
+ * compacta y NO lleva pill de estado (que entren la mayor cantidad de camas por pantalla): el estado
+ * ES el color, como antes del rediseño; el label va en el tooltip, la leyenda y el detalle. Sin bloques
+ * saturados (§7.9): de noche el 100 / 200 son el 500 translúcido (index.css), no un pastel.
+ * Literales completos para que Tailwind los genere.
  */
-const ACENTO_TONO: Record<Tono, string> = {
-  neutro: "border-l-muted-foreground/40",
-  aviso: "border-l-amber-500",
-  exito: "border-l-emerald-500",
-  info: "border-l-blue-500",
-  cielo: "border-l-sky-500",
-  indigo: "border-l-indigo-500",
-  violeta: "border-l-violet-500",
-  peligro: "border-l-red-500",
-  marca: "border-l-brand",
+const CARD_TONO: Record<Tono, string> = {
+  neutro: "border-border bg-muted text-muted-foreground",
+  aviso: "border-amber-200 bg-amber-100",
+  exito: "border-emerald-200 bg-emerald-100",
+  info: "border-blue-200 bg-blue-100",
+  cielo: "border-sky-200 bg-sky-100",
+  indigo: "border-indigo-200 bg-indigo-100",
+  violeta: "border-violet-200 bg-violet-100",
+  peligro: "border-red-200 bg-red-100",
+  marca: "border-brand/20 bg-brand/10",
+  cian: "border-cyan-200 bg-cyan-100",
+  naranja: "border-orange-200 bg-orange-100",
+  amarillo: "border-yellow-200 bg-yellow-100",
 };
-export const acentoEstadoCama = (status: BedStatus | string): string => ACENTO_TONO[estadoCama(status).tono];
+/** Clases de la celda de una cama. Bloqueada / contigua a preventivo pintan la celda con su marca (violeta /
+ *  cian) en vez del estado, como antes; el estado real se lee en el tooltip y en el detalle. */
+export const cardEstadoCama = (status: BedStatus | string, marca?: "bloqueada" | "preventivo"): string =>
+  CARD_TONO[marca ? MARCAS_CAMA[marca].tono : estadoCama(status).tono];
 
 /**
  * Marcas que se suman al estado en la card (y en la leyenda). Cada una lleva ícono + texto: el color
@@ -83,16 +96,16 @@ export interface InfoMarcaCama {
 
 export const MARCAS_CAMA = {
   /** Cama libre en una habitación con un aislamiento duro: no se asigna. */
-  bloqueada: { label: "Bloqueada", tono: "peligro", icono: ShieldX, descripcion: "Paciente aislado en la habitación: no se asigna" },
+  bloqueada: { label: "Bloqueada", tono: "violeta", icono: ShieldX, descripcion: "Paciente aislado en la habitación: no se asigna" },
   /** Cama libre junto a un "Contacto preventivo": se puede usar, con precaución. */
-  preventivo: { label: "Contacto prev.", tono: "cielo", icono: ShieldAlert, descripcion: "Contacto preventivo en la habitación: habilitada, con precaución" },
+  preventivo: { label: "Contacto prev.", tono: "cian", icono: ShieldAlert, descripcion: "Contacto preventivo en la habitación: habilitada, con precaución" },
   /** Paciente quirúrgico (PROGAL) pendiente de su cirugía en esta internación. */
   quirurgico: { label: "Q", tono: "aviso", icono: Activity, descripcion: "Paciente quirúrgico pendiente de su cirugía" },
   /** Admisión habilitó una cirugía (clínico → quirúrgico, o nueva cirugía de un quirúrgico). */
-  vaCirugia: { label: "C→Q", tono: "neutro", icono: Activity, descripcion: "Admisión lo habilitó para cirugía" },
+  vaCirugia: { label: "C→Q", tono: "violeta", icono: Activity, descripcion: "Admisión lo habilitó para cirugía" },
   ayuno: { label: "Ayuno", tono: "aviso", icono: UtensilsCrossed, descripcion: "Ayuno programado vigente" },
-  comandaPendiente: { label: "Comanda", tono: "info", icono: Utensils, descripcion: "Comanda pendiente de entregar" },
-  comandaEntregada: { label: "Entregada", tono: "neutro", icono: Utensils, descripcion: "Comanda cargada y ya entregada" },
+  comandaPendiente: { label: "Comanda", tono: "indigo", icono: Utensils, descripcion: "Comanda pendiente de entregar" },
+  comandaEntregada: { label: "Entregada", tono: "exito", icono: Utensils, descripcion: "Comanda cargada y ya entregada" },
   rutina: { label: "Limpieza", tono: "cielo", icono: SprayCan, descripcion: "Limpieza de rutina en curso" },
 } satisfies Record<string, InfoMarcaCama>;
 
@@ -123,6 +136,24 @@ const PUNTO_AISLAMIENTO: Record<string, string> = {
 
 /** Punto de la cartelería de un aislamiento según su clave de color (violeta si no se conoce). */
 export const puntoAislamiento = (color?: string): string => (color && PUNTO_AISLAMIENTO[color]) || PUNTO_AISLAMIENTO.violet;
+
+/** Anillo de la card de una cama aislada, del color de la cartelería del PRIMER aislamiento (como antes
+ *  del rediseño: el aislamiento se ve de lejos; el nombre va en el chip de adentro). */
+const ANILLO_AISLAMIENTO: Record<string, string> = {
+  pink: "ring-pink-400",
+  slate: "ring-muted-foreground",
+  green: "ring-green-400",
+  blue: "ring-blue-400",
+  yellow: "ring-yellow-400",
+  orange: "ring-orange-400",
+  teal: "ring-teal-400",
+  amber: "ring-amber-700",
+  fuchsia: "ring-fuchsia-400",
+  violet: "ring-violet-400",
+  englishGreen: "ring-emerald-800",
+};
+export const anilloAislamiento = (color?: string): string =>
+  `ring-2 ring-offset-1 ring-offset-background ${(color && ANILLO_AISLAMIENTO[color]) || ANILLO_AISLAMIENTO.violet}`;
 
 export interface InfoAislamiento {
   nombre: string;
