@@ -1924,3 +1924,15 @@ Dos pedidos, cada uno con su permiso propio en el ABM. No hay cambios de esquema
   - Sin cambios de esquema: queda en `motivo_cierre` como "CANCELADA: observación — cuenta (turno)".
   - El historial lo muestra como "Cancelada", con la observación en el tooltip.
   - El permiso se renombró en el ABM a "Cancelar limpiezas con observación (activas sin consolidar y de rutina)".
+
+## 58. Historial de cambios de ayuno (05/11/2026, main v20261105_1.15.4 · develop v20261105_1.16.3)
+
+Pedido del usuario: un histórico de los cambios de ayuno como el de dieta, filtrable por paciente y por fechas, con el antes y el después (sin la frase del push).
+
+- Solapa **Comandas → Cambios de ayuno**. Desde / Hasta (última semana por defecto), buscador por paciente, código o sector, y una fila por cambio: fecha, paciente (con código), ubicación, **Antes** (tachado) y **Después**, con los horarios agrupados por día ("05/11 · 10:00 · 11:00"). En mobile, tarjetas.
+- Fuente: `public.ayuno_cambios`, que el cron de enrich ya escribe desde el 27/08 (pase a PROD). **Sin tabla nueva ni migración.** Endpoint de solo lectura [api/ayuno-cambios.ts](../../api/ayuno-cambios.ts) (`from`/`to` en día AR, `paciente`), que no devuelve `detalle` (la frase del push). Un error de la base es **500**, no lista vacía: la vista muestra el error con "Reintentar".
+- **Horarios completos desde esta versión.** Antes, `resumen_prev`/`resumen_new` se guardaban con el formato del push, recortado a 3 horarios + "y N más". Ahora el cron guarda la lista entera (`formatFastingHours(…, Infinity)`); el push sigue recortado. Las filas viejas muestran "y N más" como una píldora punteada con tooltip.
+- Lectura del texto y de la ubicación en [lib/ayuno-resumen.ts](../../lib/ayuno-resumen.ts) (`leerResumenAyuno`, `ubicacionAyuno`: "Internacion 6° Piso · Hab. 607"; si la "habitación" de PROGAL no trae número, solo el sector). Un texto que no se puede leer se muestra tal cual.
+- Test: `scripts/check-ayuno-cambios.mts` (handler real: shape sin `detalle`, filtros, fecha inválida, 500, 405; y el parser).
+- Lo que sigue sin guardarse: la lista cruda `AYUNOS` de PROGAL (con su `PEA_ID_PLANIFICACION`). `enrich_camas` tiene el ayuno vigente agrupado por indicación, pero se pisa cada 15 min.
+

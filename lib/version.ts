@@ -9,7 +9,7 @@
 //
 // Al cambiar este literal cambia el hash del bundle (cache-bust). Un cliente que quedó con un build
 // viejo escribe la versión vieja (o '' si es anterior a este feature) → esa es la señal buscada.
-export const APP_VERSION = 'v20261104_1.16.2';
+export const APP_VERSION = 'v20261105_1.16.3';
 
 const FORMATO = /^v(\d{8})_(\d+)\.(\d+)\.(\d+)$/;
 

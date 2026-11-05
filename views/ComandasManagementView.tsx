@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { Bed, User, Area, MealSlot, MEAL_SLOTS, mealSlotFromSp, mealSlotLabel, COMANDA_STATUS, ComandaStatus } from '../types';
 import { cn, formatBedName, formatDateReadable, normalizeText } from '../lib/utils';
+import { leerResumenAyuno, ubicacionAyuno } from '../lib/ayuno-resumen';
 import { can } from '../lib/permissions';
 import { PlanificacionMenuModal } from '../components/modals/PlanificacionMenuModal';
 import { Button } from '../components/ui/button';
@@ -324,7 +325,7 @@ const TagList: React.FC<{ tags: string[]; tone: 'prev' | 'new' }> = ({ tags, ton
 };
 
 /**
- * Header de página + toolbar (DESIGN §4.4 y §5.2), el mismo para las tres solapas. El título se
+ * Header de página + toolbar (DESIGN §4.4 y §5.2), el mismo para todas las solapas. El título se
  * oculta en mobile: ahí el nombre de la sección lo dice la solapa activa.
  */
 const EncabezadoComandas: React.FC<{ titulo: string; subtitulo: React.ReactNode; children: React.ReactNode }> = ({ titulo, subtitulo, children }) => (
@@ -520,6 +521,145 @@ const CambiosDietaPanel: React.FC = () => {
   );
 };
 
+// ── Apartado "Cambios de ayuno" ─────────────────────────────────────────────
+// Historial (append-only) de cada cambio de ayuno que detecta el cron: los horarios de antes → los
+// de después. Fuente: /api/ayuno-cambios (Supabase public.ayuno_cambios). Mismo armado que "Cambios
+// de dieta"; no muestra la frase del push, solo el antes y el después.
+interface AyunoCambio {
+  id: string; patientCode: string; patientName: string; area: string;
+  roomCode: string; eventKey: string; prev: string; next: string; changedAt: string;
+}
+
+// Horarios de un lado del cambio, agrupados por día ("05/11 · 10:00 · 11:00"). Como TagList: los de
+// antes tachados y apagados, los nuevos con borde. Las filas viejas recortadas suman "y N más".
+const HorariosAyuno: React.FC<{ texto: string; tone: 'prev' | 'new' }> = ({ texto, tone }) => {
+  const r = leerResumenAyuno(texto);
+  if (r.crudo) return <span className={cn('text-[11px]', tone === 'prev' && 'text-muted-foreground line-through')}>{r.crudo}</span>;
+  if (!r.dias.length) return <span className="text-[11px] text-muted-foreground italic">sin ayuno</span>;
+  return (
+    <span className="flex flex-wrap gap-1">
+      {r.dias.map(d => (
+        <Badge key={d.dia} variant={tone === 'prev' ? 'secondary' : 'outline'}
+          className={cn('gap-1 text-[11px] tabular-nums', tone === 'prev' && 'text-muted-foreground line-through')}>
+          <span className="font-semibold">{d.dia}</span>{d.horas.join(' · ')}
+        </Badge>
+      ))}
+      {r.resto > 0 && (
+        <Badge variant="outline" className="border-dashed text-[11px] text-muted-foreground"
+          title="Registro anterior al 05/11/2026: se guardaron solo los primeros 3 horarios">
+          y {r.resto} más
+        </Badge>
+      )}
+    </span>
+  );
+};
+
+const CambiosAyunoPanel: React.FC = () => {
+  const todayStr   = new Date().toISOString().slice(0, 10);
+  const weekAgoStr = new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10);
+  const [from, setFrom] = useState(weekAgoStr);
+  const [to, setTo]     = useState(todayStr);
+  const [rows, setRows] = useState<AyunoCambio[]>([]);
+  const [loading, setLoading] = useState(false);
+  // La última carga falló (DESIGN §9 / regla del repo "fallas visibles"): se avisa y la lista sigue
+  // con lo que tenía.
+  const [error, setError] = useState(false);
+  const [search, setSearch] = useState('');
+
+  const fetchCambios = useCallback(async () => {
+    setLoading(true);
+    try {
+      const token = localStorage.getItem('mediflow_token');
+      const r = await fetch(`/api/ayuno-cambios?from=${from}&to=${to}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (r.ok) { const d = await r.json(); setRows((d.cambios ?? []) as AyunoCambio[]); setError(false); }
+      else setError(true);
+    } catch { setError(true); /* mantiene lo previo */ }
+    finally { setLoading(false); }
+  }, [from, to]);
+
+  useEffect(() => { fetchCambios(); }, [fetchCambios]);
+
+  const filtered = useMemo(() => {
+    const terms = normalizeText(search).split(' ').filter(Boolean);
+    if (!terms.length) return rows;
+    return rows.filter(c => {
+      const hay = normalizeText([c.patientName, c.patientCode, c.area, ubicacionAyuno(c.area, c.roomCode)].join(' '));
+      return terms.every(t => hay.includes(t));
+    });
+  }, [rows, search]);
+  const filtrando = !!search.trim();
+
+  // Paciente arriba, código y ubicación abajo (DESIGN §7.2 "2 líneas").
+  const paciente = (c: AyunoCambio) => (
+    <div className="flex flex-col">
+      <span className="font-medium">{c.patientName || '—'}</span>
+      <span className="text-[10px] text-muted-foreground">
+        {[c.patientCode, ubicacionAyuno(c.area, c.roomCode)].filter(Boolean).join(' · ')}
+      </span>
+    </div>
+  );
+
+  const columnas: Columna<AyunoCambio>[] = [
+    { id: 'fecha', titulo: 'Fecha y hora', clase: 'whitespace-nowrap', celda: (c) => <span className="tabular-nums">{cuando(c.changedAt)}</span> },
+    { id: 'paciente', titulo: 'Paciente', celda: paciente },
+    { id: 'antes', titulo: 'Antes', clase: 'min-w-[200px] whitespace-normal', celda: (c) => <HorariosAyuno texto={c.prev} tone="prev" /> },
+    { id: 'despues', titulo: 'Después', clase: 'min-w-[200px] whitespace-normal', celda: (c) => <HorariosAyuno texto={c.next} tone="new" /> },
+  ];
+
+  const tarjeta = (c: AyunoCambio) => (
+    <div className="flex flex-col gap-2">
+      {paciente(c)}
+      <div className="grid grid-cols-[3.75rem_1fr] items-start gap-x-2 gap-y-1.5">
+        <span className="pt-0.5 text-[11px] text-muted-foreground">Antes</span>
+        <HorariosAyuno texto={c.prev} tone="prev" />
+        <span className="pt-0.5 text-[11px] text-muted-foreground">Después</span>
+        <HorariosAyuno texto={c.next} tone="new" />
+      </div>
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground tabular-nums">
+        <Clock className="size-3.5 shrink-0" aria-hidden="true" />{cuando(c.changedAt)}
+      </p>
+    </div>
+  );
+
+  const n = (v: number) => <span className="font-medium text-foreground tabular-nums">{v}</span>;
+
+  return (
+    <>
+      <EncabezadoComandas
+        titulo="Cambios de ayuno"
+        subtitulo={<>{n(filtered.length)}{filtrando && filtered.length !== rows.length && <> de {n(rows.length)}</>} {filtered.length === 1 ? 'cambio' : 'cambios'}</>}
+      >
+        <Buscador value={search} onChange={setSearch} placeholder="Paciente, código, sector…" label="Buscar cambios de ayuno" />
+        <span id="ayunos-periodo" className="sr-only">Período</span>
+        <DateRangePicker value={rangoDe(from, to)} onChange={alCambiarRango(setFrom, setTo, weekAgoStr, todayStr)}
+          aria-describedby="ayunos-periodo" className="order-last h-9 w-full sm:order-none sm:w-64" />
+        <Button type="button" variant="outline" onClick={() => fetchCambios()} disabled={loading} aria-label="Actualizar" className="h-9 shrink-0 gap-1.5 px-3">
+          <RefreshCw className={cn('size-3.5', loading && 'animate-spin')} aria-hidden="true" />
+          <span className="hidden sm:inline">Actualizar</span>
+        </Button>
+      </EncabezadoComandas>
+
+      {/* Falló una recarga y hay datos de antes: se avisa sin esconderlos. */}
+      {error && rows.length > 0 && !loading && (
+        <BannerError><span className="font-semibold">No pudimos actualizar los cambios de ayuno.</span> Lo que ves puede estar desactualizado.</BannerError>
+      )}
+      <DataTable
+        filas={filtered}
+        columnas={columnas}
+        clave={(c) => c.id}
+        tarjeta={tarjeta}
+        porPagina={Number.POSITIVE_INFINITY}
+        cargando={loading}
+        error={error && rows.length === 0 ? { mensaje: 'No pudimos traer los cambios de ayuno. Revisá tu conexión y probá de nuevo.', onReintentar: () => { fetchCambios(); } } : undefined}
+        vacio={filtrando && rows.length > 0
+          ? <Vacio icono={Search} titulo="Sin resultados" descripcion="Probá con otro texto o limpiá el buscador." />
+          : <Vacio icono={Clock} titulo="Sin cambios en el período"
+              descripcion="Cada vez que Progal programa, cambia o cancela el ayuno de un paciente internado, queda registrado acá." />}
+      />
+    </>
+  );
+};
+
 export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onRefresh, onSetMealStatus }) => {
   const areaOk = useCallback((area: string) =>
     !currentUser?.filterByFloors
@@ -546,7 +686,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
   const { pendientes, entregadas } = useMemo(() => splitComandasPorEntrega(rows), [rows]);
 
   // ── Histórico (por fecha de carga) ──────────────────────────────────────────
-  const [tab, setTab] = useState<'activas' | 'historico' | 'cambios'>('activas');
+  const [tab, setTab] = useState<'activas' | 'historico' | 'cambios' | 'ayunos'>('activas');
   // Día ART (mismo criterio que el server filtra FechaCarga), evita off-by-one de UTC de noche.
   const artDayStr = (ms: number) => new Date(ms).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' });
   const todayStr   = artDayStr(Date.now());
@@ -568,7 +708,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
   // Refs: `doAction` se declara antes que `fetchHistory`/`tab` y no queremos recrearlo en cada
   // cambio de tab (recrearlo remontaría los botones de todas las filas).
   const fetchHistoryRef = React.useRef<null | (() => void)>(null);
-  const tabRef = React.useRef<'activas' | 'historico' | 'cambios'>('activas');
+  const tabRef = React.useRef<'activas' | 'historico' | 'cambios' | 'ayunos'>('activas');
 
   // Ejecuta la acción contra el server (con motivo opcional para el anular).
   const runAction = useCallback(async (spItemId: string, action: 'entregar' | 'pendiente' | 'anular', motivo?: string) => {
@@ -978,10 +1118,11 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
           <TabsTrigger value="activas">De hoy</TabsTrigger>
           <TabsTrigger value="historico">Histórico</TabsTrigger>
           <TabsTrigger value="cambios">Cambios de dieta</TabsTrigger>
+          <TabsTrigger value="ayunos">Cambios de ayuno</TabsTrigger>
         </TabsList>
       </Tabs>
 
-      {tab === 'cambios' ? <CambiosDietaPanel /> : (<>
+      {tab === 'cambios' ? <CambiosDietaPanel /> : tab === 'ayunos' ? <CambiosAyunoPanel /> : (<>
         {/* HEADER + TOOLBAR (DESIGN §4.4 y §5.2) */}
         <EncabezadoComandas titulo={tab === 'historico' ? 'Histórico' : 'Comandas de hoy'} subtitulo={subtitulo}>
           {/* Buscador — aplica a las DOS tabs (comparten `data`, tabla, tarjetas, contador y PDF). */}
