@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { Bed, User, Area, MealSlot, MEAL_SLOTS, mealSlotFromSp, mealSlotLabel, COMANDA_STATUS, ComandaStatus } from '../types';
 import { cn, formatBedName, formatDateReadable, normalizeText } from '../lib/utils';
+import { leerResumenAyuno, ubicacionAyuno } from '../lib/ayuno-resumen';
 import { can } from '../lib/permissions';
 import { comandaTipoPill } from './BedsView';
 import { PlanificacionMenuModal } from '../components/modals/PlanificacionMenuModal';
@@ -454,6 +455,177 @@ const CambiosDietaPanel: React.FC = () => {
   );
 };
 
+// ── Apartado "Cambios de ayuno" ─────────────────────────────────────────────
+// Historial (append-only) de cada cambio de ayuno que detecta el cron: los horarios de antes → los
+// de después. Fuente: /api/ayuno-cambios (Supabase public.ayuno_cambios). Mismo armado que "Cambios
+// de dieta"; no muestra la frase del push, solo el antes y el después.
+interface AyunoCambio {
+  id: string; patientCode: string; patientName: string; area: string;
+  roomCode: string; eventKey: string; prev: string; next: string; changedAt: string;
+}
+
+const HorariosAyuno: React.FC<{ texto: string; tone: 'prev' | 'new' }> = ({ texto, tone }) => {
+  const r = leerResumenAyuno(texto);
+  if (r.crudo) return <span className={cn('text-[11px]', tone === 'prev' ? 'text-slate-400 line-through' : 'text-slate-700')}>{r.crudo}</span>;
+  if (!r.dias.length) return <span className={cn('text-[11px] italic', tone === 'prev' ? 'text-slate-400' : 'text-slate-500')}>sin ayuno</span>;
+  return (
+    <span className="flex flex-wrap gap-1">
+      {r.dias.map(d => (
+        <span key={d.dia} className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] border tabular-nums',
+          tone === 'prev' ? 'bg-slate-50 text-slate-400 border-slate-200 line-through' : 'bg-amber-50 text-amber-800 border-amber-200')}>
+          <span className="font-bold">{d.dia}</span>{d.horas.join(' · ')}
+        </span>
+      ))}
+      {r.resto > 0 && (
+        <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] text-slate-500 border border-dashed border-slate-300"
+          title="Registro anterior al 05/11/2026: se guardaron solo los primeros 3 horarios">
+          y {r.resto} más
+        </span>
+      )}
+    </span>
+  );
+};
+
+const CambiosAyunoPanel: React.FC = () => {
+  const todayStr   = new Date().toISOString().slice(0, 10);
+  const weekAgoStr = new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10);
+  const [from, setFrom] = useState(weekAgoStr);
+  const [to, setTo]     = useState(todayStr);
+  const [rows, setRows] = useState<AyunoCambio[]>([]);
+  const [loading, setLoading] = useState(false);
+  // La última carga falló (regla del repo "fallas visibles"): se avisa y se mantiene lo previo.
+  const [error, setError] = useState(false);
+  const [search, setSearch] = useState('');
+  const [openFrom, setOpenFrom] = useState(false);
+  const [openTo, setOpenTo]     = useState(false);
+
+  const fetchCambios = useCallback(async () => {
+    setLoading(true);
+    try {
+      const token = localStorage.getItem('mediflow_token');
+      const r = await fetch(`/api/ayuno-cambios?from=${from}&to=${to}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (r.ok) { const d = await r.json(); setRows((d.cambios ?? []) as AyunoCambio[]); setError(false); }
+      else setError(true);
+    } catch { setError(true); /* mantiene lo previo */ }
+    finally { setLoading(false); }
+  }, [from, to]);
+
+  useEffect(() => { fetchCambios(); }, [fetchCambios]);
+
+  const filtered = useMemo(() => {
+    const terms = normalizeText(search).split(' ').filter(Boolean);
+    if (!terms.length) return rows;
+    return rows.filter(c => {
+      const hay = normalizeText([c.patientName, c.patientCode, c.area, ubicacionAyuno(c.area, c.roomCode)].join(' '));
+      return terms.every(t => hay.includes(t));
+    });
+  }, [rows, search]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center bg-white border border-slate-200 rounded-xl overflow-hidden h-9">
+          <Popover open={openFrom} onOpenChange={setOpenFrom}>
+            <PopoverTrigger asChild><DateRangeTrigger label="Desde" value={from} className="h-full text-xs" /></PopoverTrigger>
+            <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
+              <Calendar selected={from} onSelect={(date) => { setFrom(date); setOpenFrom(false); }} />
+            </PopoverContent>
+          </Popover>
+          <div className="w-px h-5 bg-slate-100 shrink-0" />
+          <Popover open={openTo} onOpenChange={setOpenTo}>
+            <PopoverTrigger asChild><DateRangeTrigger label="Hasta" value={to} className="h-full text-xs" /></PopoverTrigger>
+            <PopoverContent align="start" className="w-auto p-4 bg-white shadow-2xl z-50">
+              <Calendar selected={to} onSelect={(date) => { setTo(date); setOpenTo(false); }} />
+            </PopoverContent>
+          </Popover>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => fetchCambios()} disabled={loading}
+          className="h-9 px-3 rounded-lg gap-2 text-xs font-bold text-slate-600">
+          <RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} /> Actualizar
+        </Button>
+        <div className="relative flex-1 min-w-[180px] max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
+          <Input placeholder="Paciente, código, sector..." value={search}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)}
+            className="pl-9 pr-8 h-9 text-xs rounded-xl border-slate-200" />
+          {search && <button onClick={() => setSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>}
+        </div>
+        <p className="text-xs text-slate-500 font-medium ml-auto self-center">{filtered.length} {filtered.length === 1 ? 'registro' : 'registros'}</p>
+      </div>
+
+      {error && rows.length > 0 && !loading && (
+        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
+          <span className="font-bold">No pudimos actualizar los cambios de ayuno.</span> Lo que ves puede estar desactualizado.
+        </div>
+      )}
+
+      {loading && rows.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400 text-sm">Cargando…</div>
+      ) : error && rows.length === 0 ? (
+        <div role="alert" className="bg-white rounded-2xl border border-red-200 p-10 text-center">
+          <p className="font-bold text-sm text-red-700">No pudimos traer los cambios de ayuno.</p>
+          <p className="text-xs text-slate-500 mb-3">Revisá tu conexión y probá de nuevo.</p>
+          <Button variant="outline" size="sm" onClick={() => fetchCambios()} className="h-8 text-xs font-bold">Reintentar</Button>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center text-slate-400">
+          <Clock className="w-10 h-10 mx-auto mb-3 text-slate-300" />
+          <p className="font-bold text-sm text-slate-500">{rows.length > 0 ? 'Sin resultados' : 'Sin registros en el período'}</p>
+          <p className="text-xs">{rows.length > 0 ? 'Probá con otro texto o limpiá el buscador.' : 'Cada vez que Progal programa, cambia o cancela el ayuno de un paciente internado, queda registrado acá.'}</p>
+        </div>
+      ) : (<>
+        {/* Mobile: tarjetas (la tabla obligaba a scrollear de costado para ver el antes/después). */}
+        <div className="md:hidden space-y-2">
+          {filtered.map(c => (
+            <Card key={c.id} className="p-3 border-slate-200 space-y-2">
+              <div>
+                <p className="font-semibold text-sm text-slate-800">{c.patientName || '—'}</p>
+                <p className="text-[11px] text-slate-500">{ubicacionAyuno(c.area, c.roomCode)}</p>
+              </div>
+              <div className="grid grid-cols-[3.5rem_1fr] gap-x-2 gap-y-1.5 items-start">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 pt-0.5">Antes</span>
+                <HorariosAyuno texto={c.prev} tone="prev" />
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 pt-0.5">Después</span>
+                <HorariosAyuno texto={c.next} tone="new" />
+              </div>
+              <p className="flex items-center gap-1 text-[11px] text-slate-500"><Clock className="w-3 h-3 text-slate-400" />{fmtWhen(c.changedAt)}</p>
+            </Card>
+          ))}
+        </div>
+        <Card className="hidden md:block overflow-hidden border-slate-200">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-400 border-b border-slate-100">
+                  <th className="px-4 py-3 text-left font-bold">Fecha y hora</th>
+                  <th className="px-4 py-3 text-left font-bold">Paciente</th>
+                  <th className="px-4 py-3 text-left font-bold">Ubicación</th>
+                  <th className="px-4 py-3 text-left font-bold min-w-[200px]">Antes</th>
+                  <th className="px-4 py-3 text-left font-bold min-w-[200px]">Después</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {filtered.map(c => (
+                  <tr key={c.id} className="hover:bg-slate-50/50 align-top">
+                    <td className="px-4 py-3 text-slate-600 whitespace-nowrap"><span className="flex items-center gap-1"><Clock className="w-3 h-3 text-slate-400" />{fmtWhen(c.changedAt)}</span></td>
+                    <td className="px-4 py-3">
+                      <span className="block font-semibold text-slate-800">{c.patientName || '—'}</span>
+                      {c.patientCode && <span className="block text-[10px] text-slate-400 tabular-nums">{c.patientCode}</span>}
+                    </td>
+                    <td className="px-4 py-3 text-slate-500 min-w-[160px]">{ubicacionAyuno(c.area, c.roomCode)}</td>
+                    <td className="px-4 py-3"><HorariosAyuno texto={c.prev} tone="prev" /></td>
+                    <td className="px-4 py-3"><HorariosAyuno texto={c.next} tone="new" /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </>)}
+    </div>
+  );
+};
+
 export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onRefresh, onSetMealStatus }) => {
   const areaOk = useCallback((area: string) =>
     !currentUser?.filterByFloors
@@ -477,7 +649,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
   const { pendientes, entregadas } = useMemo(() => splitComandasPorEntrega(rows), [rows]);
 
   // ── Histórico (por fecha de carga) ──────────────────────────────────────────
-  const [tab, setTab] = useState<'activas' | 'historico' | 'cambios'>('activas');
+  const [tab, setTab] = useState<'activas' | 'historico' | 'cambios' | 'ayunos'>('activas');
   // Día ART (mismo criterio que el server filtra FechaCarga), evita off-by-one de UTC de noche.
   const artDayStr = (ms: number) => new Date(ms).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' });
   const todayStr   = artDayStr(Date.now());
@@ -500,7 +672,7 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
   // Refs: `doAction` se declara antes que `fetchHistory`/`tab` y no queremos recrearlo en cada
   // cambio de tab (recrearlo remontaría los botones de todas las filas).
   const fetchHistoryRef = React.useRef<null | (() => void)>(null);
-  const tabRef = React.useRef<'activas' | 'historico' | 'cambios'>('activas');
+  const tabRef = React.useRef<'activas' | 'historico' | 'cambios' | 'ayunos'>('activas');
 
   // Ejecuta la acción contra el server (con motivo opcional para el anular).
   const runAction = useCallback(async (spItemId: string, action: 'entregar' | 'pendiente' | 'anular', motivo?: string) => {
@@ -775,19 +947,20 @@ export const ComandasManagementView: React.FC<Props> = ({ beds, currentUser, onR
     <div className="p-4 md:p-8 max-w-full w-full space-y-4 md:space-y-5 pb-24 md:pb-8">
       {/* Tabs */}
       <div className="flex items-center gap-1 border-b border-slate-200 mb-4">
-        {(['activas', 'historico', 'cambios'] as const).map(t => (
+        {(['activas', 'historico', 'cambios', 'ayunos'] as const).map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={cn(
               "px-4 py-2 text-xs font-bold uppercase tracking-wide border-b-2 -mb-px transition-colors",
               tab === t ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-400 hover:text-slate-600"
             )}>
-            {t === 'activas' ? 'De hoy' : t === 'historico' ? 'Histórico' : 'Cambios de dieta'}
+            {t === 'activas' ? 'De hoy' : t === 'historico' ? 'Histórico' : t === 'cambios' ? 'Cambios de dieta' : 'Cambios de ayuno'}
           </button>
         ))}
       </div>
 
       {tab === 'cambios' && <CambiosDietaPanel />}
-      {tab !== 'cambios' && (<>
+      {tab === 'ayunos' && <CambiosAyunoPanel />}
+      {tab !== 'cambios' && tab !== 'ayunos' && (<>
 
       {/* Barra de acciones / filtros */}
       <div className="flex flex-wrap items-center gap-3 mb-4">

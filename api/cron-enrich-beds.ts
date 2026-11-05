@@ -113,8 +113,9 @@ function hashDietTags(tags: string[] | undefined): string {
 
 // Formato "DD/MM HH:MM, ..." con ocurrencias únicas y ordenadas para el body del push.
 // Las fechas son naive ART → se formatean por partes (no Date, que aplicaría la TZ del
-// runtime Vercel/UTC). Si hay muchas, se acota para no inflar el cuerpo de la notif.
-function formatFastingHours(s: FastingSummary | undefined | null): string {
+// runtime Vercel/UTC). Si hay muchas, se acota para no inflar el cuerpo de la notif; el historial
+// (ayuno_cambios.resumen_*) las guarda todas (`limite` = Infinity) para mostrar el antes → después.
+function formatFastingHours(s: FastingSummary | undefined | null, limite = 4): string {
   if (!s) return '';
   const all = Array.from(new Set(s.indications.flatMap(i => i.occurrences ?? []))).sort();
   const fmt = (iso: string): string => {
@@ -122,7 +123,7 @@ function formatFastingHours(s: FastingSummary | undefined | null): string {
     return m ? `${m[3]}/${m[2]} ${m[4]}:${m[5]}` : iso;
   };
   const parts = all.map(fmt);
-  return parts.length <= 4 ? parts.join(', ') : `${parts.slice(0, 3).join(', ')} y ${parts.length - 3} más`;
+  return parts.length <= limite ? parts.join(', ') : `${parts.slice(0, 3).join(', ')} y ${parts.length - 3} más`;
 }
 
 // True si la fecha de ingreso es ≤24h atrás. Se usa para distinguir
@@ -597,8 +598,8 @@ export default async function handler(req: any, res: any) {
                 area:            b.areaName || null,
                 habitacion:      b.roomName || null,
                 event_key:       eventKey || null,
-                resumen_prev:    formatFastingHours(existing?.oldFasting) || 'sin ayuno',
-                resumen_new:     formatFastingHours(newFasting) || 'sin ayuno',
+                resumen_prev:    formatFastingHours(existing?.oldFasting, Infinity) || 'sin ayuno',
+                resumen_new:     formatFastingHours(newFasting, Infinity) || 'sin ayuno',
                 detalle:         fastingDetalle,
               });
             } catch (e: any) {

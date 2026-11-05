@@ -634,6 +634,11 @@ pasada manual aparte (no son automatizables por browser/API).
 - **Resultado esperado**: "hoy" = **día-ART (UTC-3)**; las fechas de planificación se comparan como
   string `'YYYY-MM-DD'` (nunca `new Date()`). Verificar que no haya corrimiento de día.
 
+### QA-COM-23 · Cambios de ayuno: antes / después, filtros y error visible
+- **Precondición**: hay filas en `ayuno_cambios` del entorno en el rango (alta, modificación y cancelación).
+- **Acción**: Comandas → **Cambios de ayuno**; cambiar Desde / Hasta; buscar por apellido y por código de paciente; cortar la red y tocar Actualizar.
+- **Resultado esperado**: una fila por cambio con **Antes** tachado y **Después** (o "sin ayuno"), horarios agrupados por día y sin la frase del push; filas anteriores al 05/11/2026 con la píldora "y N más". El buscador deja solo las del paciente. Con la base caída, `GET /api/ayuno-cambios` → **500** y la vista muestra "No pudimos traer los cambios de ayuno" con Reintentar (con datos previos, un aviso arriba y la lista queda).
+
 ### Códigos de error — Comandas
 - `POST /api/dietas`: 400 (bedLabel/comida/tipo/comensal inválidos, detalle OTROS vacío, >6
   acompañantes), 403 (turno no permitido), 409 (`sin_dieta`, `comanda_entregada`, "ya no existe"), 500,

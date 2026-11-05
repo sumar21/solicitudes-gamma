@@ -491,9 +491,15 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
       },
       {
         permission: "*",
-        title: "Ver los cambios de dieta/ayuno",
+        title: "Ver los cambios de dieta",
         description: "Mirá los cambios de dieta detectados en un rango de fechas (lo anterior vs lo nuevo), con buscador. Solo lectura.",
         uiLocation: "Comandas → solapa 'Cambios de dieta'",
+      },
+      {
+        permission: "*",
+        title: "Ver los cambios de ayuno",
+        description: "Mirá cada vez que Progal programó, cambió o canceló el ayuno de un paciente: los horarios de antes (tachados) y los de después. Elegí el rango Desde / Hasta y buscá por paciente, código o sector. Solo lectura.",
+        uiLocation: "Comandas → solapa 'Cambios de ayuno'",
       },
       {
         permission: "*",
