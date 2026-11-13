@@ -1699,7 +1699,7 @@ Diseño y archivos en [arquitectura.md §48](arquitectura.md). Acá, el *por qu�
 - `logo.svg` y `badge.svg` tienen `Cache-Control`;
 - el enrich de TESTING corre solo de lunes a viernes de 8 a 21 (ART).
 
-Helper en [lib/visibilidad.ts](../../lib/visibilidad.ts). Versión `v20261113_1.17.0`.
+Helper en [lib/visibilidad.ts](../../lib/visibilidad.ts). Versión `v20261113_1.17.0` en develop. En producción salió el 13/11 como hotfix `v20261113_1.15.5` sobre main, junto con el aviso de versión nueva (§33) y sin el rediseño.
 
 **Por qué:** el 19/10 se sumaron ~25 PCs de Enfermería y las invocaciones pasaron de ~190K a ~400K por día. Desde el 03/11 el equipo agotó los 10M de CDN Requests incluidos y cada request se paga. Las PCs quedan abiertas las 24 h y la mayoría oculta (~75% de día, ~94% de noche), pero cada una pedía ~8.600 requests por día. El 76% del tráfico eran cuatro polls: campanita 33%, camas 15%, `/api/me` 14% y ubicación 14%. Detalle de la medición en la memoria del proyecto (`costos-vercel-polling`).
 
