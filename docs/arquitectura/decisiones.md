@@ -1687,3 +1687,26 @@ Diseño y archivos en [arquitectura.md §48](arquitectura.md). Acá, el *por qu�
 - El diálogo no usa `ui/dialog`, que trae cruz y cierra con clic afuera.
 
 **Costo asumido:** §13.6 decía que el personal no entiende un cartel de "hay una versión nueva". El texto evita lo técnico, pero es un cartel: hay que mirar cómo lo recibe el equipo. La recarga de las 0:00 solo espera un guardado en curso; un formulario a medio completar se pierde si nadie lo guardó en los 10 minutos.
+
+## 35. Costos de Vercel: con la pestaña oculta no se pollea (2026-11-13)
+
+**Qué:** con la pestaña oculta (`document.visibilityState === 'hidden'`: minimizada, en otra pestaña o tapada por otra ventana) la app deja de pollear y de refetchear por Realtime. Al volver se pone al día: completo si estuvo ≥30 s afuera, y si no, solo lo que llegó por Realtime mientras tanto. Además:
+- la campanita llega por **Realtime** (`notificaciones-live`) con un respaldo cada 5 min a la vista;
+- `/api/me` va cada 10 min (antes 60 s; el rol se cachea 5 min en el server);
+- el foco sin cambio de visibilidad refetchea todo como mucho cada 5 min;
+- el ETag de `/api/beds` se arregló: nunca había dado un 304;
+- el heartbeat del push va como mucho una vez por hora;
+- `logo.svg` y `badge.svg` tienen `Cache-Control`;
+- el enrich de TESTING corre solo de lunes a viernes de 8 a 21 (ART).
+
+Helper en [lib/visibilidad.ts](../../lib/visibilidad.ts). Versión `v20261113_1.17.0`.
+
+**Por qué:** el 19/10 se sumaron ~25 PCs de Enfermería y las invocaciones pasaron de ~190K a ~400K por día. Desde el 03/11 el equipo agotó los 10M de CDN Requests incluidos y cada request se paga. Las PCs quedan abiertas las 24 h y la mayoría oculta (~75% de día, ~94% de noche), pero cada una pedía ~8.600 requests por día. El 76% del tráfico eran cuatro polls: campanita 33%, camas 15%, `/api/me` 14% y ubicación 14%. Detalle de la medición en la memoria del proyecto (`costos-vercel-polling`).
+
+**Lo que NO se pausa:** los traslados (Realtime + red de seguridad de 5 min). Su refetch hace sonar el ding de un traslado nuevo, que tiene que oírse con la pestaña en segundo plano. Tampoco `/api/me` (cada 10 min, también oculta): de eso depende la foto de sectores de la suscripción push.
+
+**Ubicación:** oculta no se valida. Al volver se valida en el acto. Tras un negativo, el 2º chequeo va a los 10 s y el que decide a los 65 s. Para expulsar hacen falta 3 negativos seguidos que cubran ≥65 s, más que el cache de reglas del server (60 s), así una lectura mala de SharePoint no expulsa sola. Quien se llevó la sesión fuera del hospital queda expulsado en ~1 min (antes, ~2–3 min con la pestaña a la vista). Además, el fetch tiene corte de 15 s y los negativos de antes de ocultarse no cuentan.
+
+**De paso:** el heartbeat del push usa el usuario vigente: antes regrababa la suscripción con los sectores del login. El origen automático no corre con la pestaña oculta ni con un mapa de más de 180 s, que el servidor rechaza: antes quemaba sus 3 intentos.
+
+**Costo asumido:** el banner de notificaciones sin leer >20 min puede tardar hasta 5 min más en aparecer (ninguna fila cambia al cumplir los 20 min). En TESTING, el enrich queda quieto de noche y los fines de semana.

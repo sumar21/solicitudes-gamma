@@ -2,6 +2,7 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Ticket, Role, TicketStatus, SortConfig, SortKey, WorkflowType, User, Bed, BedStatus, Area, IsolationEntry } from '../types';
 import { can } from '../lib/permissions';
+import { intervaloVisible } from '../lib/visibilidad';
 import {
   Search, Plus, Timer, ArrowRightLeft,
   CheckCircle2, BedDouble, Users, ClipboardCheck, AlertCircle, X, XCircle, Info, MapPin, Pencil, UserCheck
@@ -172,9 +173,10 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
         .catch(() => { /* fail-soft: sin indicador, el botón sigue funcionando */ });
     };
     load();
-    // Las observaciones de OTROS usuarios no tocan la fila del traslado (no llega Realtime): refresco cada minuto.
-    const id = setInterval(load, 60_000);
-    return () => { cancelled = true; clearInterval(id); };
+    // Las observaciones de OTROS usuarios no tocan la fila del traslado (no llega Realtime): refresco cada
+    // minuto, solo con la pestaña a la vista; al volver, en el acto (lib/visibilidad.ts).
+    const parar = intervaloVisible(load, 60_000, { alVolver: true });
+    return () => { cancelled = true; parar(); };
   }, [activeIdsKey, obsEnabled]);
 
   // Mantiene el scroll del hilo al final (lo más nuevo, pegado al redactor).

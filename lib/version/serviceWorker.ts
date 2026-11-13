@@ -38,7 +38,10 @@ export function registrarServiceWorker(): void {
       registro = registration;
       if (!registration) return;
       // Revisa el SW sin esperar a una navegación: las tabs quedan abiertas todo el día.
+      // Con la pestaña oculta no: al volver, el vigilante de /api/version pregunta y, si hay versión
+      // nueva, recargarConLaVersionNueva() le pide al SW que se actualice.
       setInterval(() => {
+        if (document.visibilityState === 'hidden') return;
         registration.update().catch(() => { /* red inestable — se reintenta en la próxima vuelta */ });
       }, CADA_CUANTO_REVISA_SW_MS);
     },

@@ -15,7 +15,7 @@ MediFlow es una aplicación web para gestionar traslados de pacientes dentro del
 | Base de datos transaccional | **Supabase (Postgres)** — traslados, limpiezas, comandas, roles, notificaciones, push_subscriptions |
 | Base de datos legacy | **SharePoint Online** (Microsoft Graph) — usuarios (login), enrich del mapa, geo-IP, dieta-snapshot |
 | API externa | Grupo Gamma REST API (mapa de camas en vivo, pacientes, eventos) |
-| Tiempo real | **Supabase Realtime** (traslados / limpiezas / comandas) + poll 60s (solo camas) |
+| Tiempo real | **Supabase Realtime** (traslados / limpiezas / comandas / campanita) + poll 60s (solo camas, solo con la pestaña a la vista) |
 | Autenticación | JWT de sesión HS256 (jose) ~10 años + "pase" de lectura ES256 para la RLS de Supabase (TTL 1h) |
 | Notificaciones | Web Push (VAPID) por **dos caminos**: Edge Function (traslados) + Vercel push-utils (dieta/ayuno/limpieza) |
 | Deploy | Vercel + Supabase (Edge Functions, migraciones SQL) |
@@ -62,7 +62,7 @@ MediFlow corre sobre **tres backends simultáneos**:
 |---|---|---|---|
 | `cron-enrich-beds` | `0,15,30,45 * * * *` | enrich del mapa (12.EnrichCamas) + detección dieta/ayuno → push | 300s |
 | `cron-cleanup-notifs` | `0 4 * * *` | poda `10.Notificaciones` **VIEJO** en SharePoint (cruft; no toca `public.notificaciones`) | 300s |
-| `cron-trigger-testing` | `5,20,35,50 * * * *` | forwarder que dispara el enrich de la partición TESTING contra el Preview de `develop` (env `TESTING_BASE_URL`) | 15s |
+| `cron-trigger-testing` | `5,20,35,50 11-23 * * 1-5` (lun a vie, 8 a 21 ART) | forwarder que dispara el enrich de la partición TESTING contra el Preview de `develop` (env `TESTING_BASE_URL`) | 15s |
 | `cron-diet-changes` | **desprogramado** | (sin schedule; la detección de dieta vive en `cron-enrich-beds`, §42) | 300s |
 
 ### 1.2. Dos JWT: sesión (SharePoint) vs pase (Supabase)
@@ -121,7 +121,7 @@ solicitudes-gamma/
 │   ├── diet-tags.ts         # parseDiets(); ayunos.ts, isolations-summary.ts, room-formatter.ts
 │   │  # — crons —
 │   ├── cron-enrich-beds.ts  # Precomputa 12.EnrichCamas + detección dieta/ayuno (0,15,30,45)
-│   ├── cron-trigger-testing.ts # Forwarder que dispara el enrich de TESTING (5,20,35,50)
+│   ├── cron-trigger-testing.ts # Forwarder que dispara el enrich de TESTING (5,20,35,50, lun-vie 8-21 ART)
 │   ├── cron-cleanup-notifs.ts  # Poda 10.Notificaciones VIEJO en SP (diario 4am)
 │   ├── cron-diet-changes.ts # DESPROGRAMADO (detección de dieta migró a cron-enrich-beds)
 │   │  # — infra —
@@ -268,8 +268,12 @@ Cada transición genera:
 - Al **(re)conectar** (status `SUBSCRIBED`) se hace **catch-up** con un fetch completo: Realtime **no** reenvía los eventos perdidos mientras el socket estuvo caído.
 - El `GET /api/tickets` quedó **on-demand**: `?all=1` (Monitor/Historial), `?patientCode=` (historia de un paciente) y una "vista viva" (activos + cerrados en ventana de gracia de 30 min) casi sin uso porque Realtime empuja los cambios.
 
+**Pestaña oculta (desde v20261113_1.17.0, [decisiones.md §35](decisiones.md)):** con `document.visibilityState === 'hidden'` no corre ningún poll (camas, respaldo de campanita, observaciones, ubicación, chequeo del SW) y los refetches de Realtime de limpiezas / comandas / cirugía / rutina / marcas se anotan para la vuelta ([lib/visibilidad.ts](../../lib/visibilidad.ts)). Al volver: catch-up completo si la ausencia fue ≥30 s (`AUSENCIA_CATCHUP_MS`), si no solo lo anotado. El foco sin cambio de visibilidad refetchea todo como mucho cada 5 min (`FOCO_CATCHUP_MS`). **Traslados no se pausan** (Realtime + red de seguridad de 5 min): su refetch dispara el ding de un traslado nuevo.
+
+**Campanita:** canal Realtime `notificaciones-live` sobre `public.notificaciones` (RLS por `sub` + `entorno` del pase). Un cambio refetchea `/api/notifications` (no leídas) + `?window=24h` (debounce 500 ms). Respaldo cada 5 min con la pestaña a la vista (`NOTIF_RESPALDO_MS`). Antes eran 2 GET cada 30 s por dispositivo.
+
 **Camas — único poll que queda (Gamma, sigue en SharePoint):**
-- `GET /api/beds` cada **60s** (`POLL_BEDS_MS`) con `If-None-Match`. Cache server-side de **45s** + ETag (combina firma del mapa + del enrich, §31.4). El enrich (DNI/dieta/ayuno/diagnóstico) lo **precomputa** el cron `cron-enrich-beds` en `12.EnrichCamas`; `/api/beds` lo lee en 1 query y lo mergea (ver §31). El click en cama usa `/api/bed-enrich` solo como fallback para camas que el cron aún no procesó.
+- `GET /api/beds` cada **60s** (`POLL_BEDS_MS`) a la vista, con `If-None-Match`. Cache server-side de **45s** + ETag: hash SHA-1 de la respuesta completa + firma del enrich, entre comillas, comparado también después de recalcular. Hasta el 13/11/2026 iba sin comillas y nunca daba 304. El enrich (DNI/dieta/ayuno/diagnóstico) lo **precomputa** el cron `cron-enrich-beds` en `12.EnrichCamas`; `/api/beds` lo lee en 1 query y lo mergea (ver §31). El click en cama usa `/api/bed-enrich` solo como fallback para camas que el cron aún no procesó.
 
 **Resiliencia en camas:** Si un poll de camas falla (error HTTP, JSON inválido, array vacío), se conservan los datos anteriores. Si Gamma responde con camas sin ocupación pero el estado anterior tenía ocupadas, se descarta la respuesta (fallo parcial de Gamma → sirve cache stale con `X-Beds-Stale`, evita mostrar ocupadas como Disponibles).
 
@@ -350,7 +354,7 @@ Verifica que el usuario acceda desde una ubicación autorizada:
 | `api/dietas.ts` | **Supabase** `comandas` (+ SP `12.EnrichCamas` para `sin_dieta`) | CRUD de comandas por turno/acompañante + reubicar al trasladar |
 | `api/carga-menu.ts` | **Supabase** `carga_menu` | CRUD de planificación de menú (rango sin solapamiento) |
 | `api/roles.ts` | **Supabase** `roles` | CRUD de roles (mantiene el shape SP para el front; `invalidateRoleCache()` en cada mutación) |
-| `api/me.ts` | **Supabase** `roles` (via role-cache) | `?roleName` → config vigente del rol (resync de sesión en caliente, pollea 60s) |
+| `api/me.ts` | **Supabase** `roles` (via role-cache) | `?roleName` → config vigente del rol (resync de sesión en caliente, cada 10 min) |
 | `api/notifications.ts` | **Supabase** `notificaciones` | Campanita in-app por usuario+entorno (GET no-leídas / PATCH marcar) |
 | `api/push-subscribe.ts` | **Supabase** `push_subscriptions` | Upsert por endpoint (UNIQUE) + heartbeat `last_seen_at` |
 | `api/supabase-token.ts` | — | Mintea el "pase" ES256 de lectura (RLS por entorno, §1.2) |
@@ -396,7 +400,9 @@ Responsabilidades:
 
 **Sincronización (ver §3.4):**
 - `tickets` / `limpiezas` / `comandas`: **Supabase Realtime** (canales `*-live`, refetch debounced 300ms). El poll de tickets de 8s **ya no existe**.
-- `beds`: poll cada 60 s (`POLL_BEDS_MS`) — único dominio que no está en Supabase.
+- `beds`: poll cada 60 s (`POLL_BEDS_MS`) con la pestaña a la vista — único dominio que no está en Supabase.
+- `notificaciones` (campanita): **Supabase Realtime** (`notificaciones-live`) + respaldo cada 5 min a la vista.
+- Con la pestaña oculta no se pollea ni se refetchea por Realtime, salvo traslados (ver §3.4).
 - `isolations`: **eliminado** — el aislamiento viaja en el enrich (`bed.isolations`), fuente única PROGAL (§46).
 
 ### 5.3. Vistas
@@ -462,7 +468,7 @@ Ya no hay roles "fijos por SharePoint": cualquier rol se crea/edita/elimina (sof
 - **Azafatas:** solo ven tickets cuyas camas de origen o destino estén en sus `assignedAreas` (pisos asignados vía el campo `PisosAzafata_u` en `00.Usuarios`). Al primer login sin áreas asignadas, se les muestra `AreaSelectionModal`.
 - **Enfermería y Catering:** al no tener acceso a Operativa ni Home, la app los redirige automáticamente a Mapa de Camas como vista por defecto.
 - **Configuración es dinámica:** cualquier rol con el módulo `Configuracion` + los permisos `abm_usuarios`/`abm_roles` entra al ABM. Ya **no** hay privilegio hardcodeado por rol "Admin".
-- **Resync en caliente + límite:** `syncSessionRole` pollea `/api/me?roleName` cada 60s y actualiza módulos/permisos/flags **sin re-loguear**. Limitación: refresca por el `roleName` al que el usuario ya pertenece; si un admin **reasigna** el usuario a OTRO rol, ese cambio se toma recién al re-loguear.
+- **Resync en caliente + límite:** `syncSessionRole` pide `/api/me?roleName` cada 10 min (`SYNC_ROL_MS`) y actualiza módulos/permisos/flags **sin re-loguear**. Limitación: refresca por el `roleName` al que el usuario ya pertenece; si un admin **reasigna** el usuario a OTRO rol, ese cambio se toma recién al re-loguear.
 - **Enforcement server-side:** `bypass_location_check` y el filtro de piso de la azafata se deciden server-side con lookup fresco del rol (no confían en el flag del cliente, que se hidrata en login y queda viejo).
 
 ### 6.5. Catálogo de permisos vigente (`types.ts` `PERMISSIONS`)

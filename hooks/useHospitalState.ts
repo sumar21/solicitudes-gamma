@@ -19,6 +19,7 @@ import { makeAreaScope } from '../lib/ticketFilters';
 import { bedsShrinkDecision } from '../lib/bedsGuard';
 import { mostrarQ, type CirugiaCompletada } from '../lib/cirugiaQ';
 import { CIRUGIA_ANTERIOR } from '../lib/constants';
+import { intervaloVisible, pestanaOculta } from '../lib/visibilidad';
 
 // ── JWT helpers (client-side, solo lectura — sin verificar firma) ─────────────
 function parseJwtPayload(token: string): Record<string, unknown> | null {
@@ -646,6 +647,27 @@ const POLL_BEDS_MS        = 60_000;  // beds: poll every 60s (tickets ahora van 
 const POLL_TICKETS_SAFETY_MS = 5 * 60_000;
 const TICKETS_RETRY_MS       = [5_000, 15_000, 30_000, 60_000];
 
+// Costos (13/11/2026, ver lib/visibilidad.ts): con la pestaña oculta no se pollea ni se refetchea por
+// Realtime (salvo traslados, que disparan el ding). Al volver, el catch-up trae TODO si la ausencia fue
+// de al menos AUSENCIA_CATCHUP_MS (el socket pudo morir en background, sobre todo en el celular); si fue
+// más corta, solo lo que llegó por Realtime mientras tanto. El foco sin cambio de visibilidad (en desktop,
+// pasar de una ventana a otra) ya no refetchea todo cada vez: como mucho una vez cada FOCO_CATCHUP_MS.
+const AUSENCIA_CATCHUP_MS = 30_000;
+const FOCO_CATCHUP_MS     = 5 * 60_000;
+// Campanita: llega por Realtime (tabla notificaciones). Este poll es solo el respaldo, y solo a la vista.
+const NOTIF_RESPALDO_MS   = 5 * 60_000;
+// Resync de rol/sectores (/api/me). El server cachea el rol 5 min, así que pedirlo cada 60 s no lo
+// hacía más fresco. Corre también oculta (6 por hora): la foto de sectores del push depende de esto.
+const SYNC_ROL_MS         = 10 * 60_000;
+// Heartbeat del push al volver a primer plano: como mucho uno por hora (antes, en cada vuelta).
+const TOUCH_PUSH_MIN_MS   = 60 * 60_000;
+// Edad máxima del mapa para el origen automático: espejo de MAPA_EDAD_MAX_MS de api/ticket-origen.ts
+// (el servidor rechaza un mapa más viejo; no tiene sentido gastar un intento).
+const MAPA_ORIGEN_MAX_MS  = 180_000;
+
+/** Recursos con refetch por Realtime que se difieren mientras la pestaña está oculta. */
+type RecursoDiferible = 'limpiezas' | 'comandas' | 'cirugia' | 'rutina' | 'marcas';
+
 /** Human-readable labels for status transitions (for poll-based notifications) */
 // Título de la notif de traslado NUEVO: "Ingreso" si el paciente entra desde Sala de Espera
 // (workflow ITR_TO_FLOOR), "Traslado" para el resto (interno / Ingreso a ITR). Pedido de Julieta 20/08.
@@ -1049,6 +1071,8 @@ export const useHospitalState = () => {
   // Marcas "va a cirugía" ACTIVAS (flag de Admisión), key = patientCode → SIGUE al paciente.
   const [cirugiaMarcas, setCirugiaMarcas]          = useState<Map<string, CirugiaMarcaInfo>>(new Map());
   const cirugiaMarcasWritingRef                    = React.useRef(0);
+  // Refetches de Realtime que llegaron con la pestaña oculta: se hacen al volver (ver AUSENCIA_CATCHUP_MS).
+  const pendientesOcultaRef                        = React.useRef<Set<RecursoDiferible>>(new Set());
   // Intents optimistas EN VUELO de la marca "va a cirugía", keyed por PACIENTE. Valor = la marca
   // (intención MARCAR) o `null` (intención DESMARCAR). Un refetch nunca revierte un intent pendiente:
   // así el toggle no "rebota" cuando la base todavía no refleja la última acción (read-lag). Cada
@@ -2194,6 +2218,10 @@ export const useHospitalState = () => {
   // intervalo fijo por dispositivo (era el mayor costo de Vercel). El refetch completo reconcilia
   // todo el set → robusto ante eventos perdidos por desconexión. Beds sigue con su poll de 60s
   // (no se migró; el mapa de camas se sirve desde Gamma/SharePoint).
+  //
+  // Pestaña oculta (lib/visibilidad.ts): beds no pollea y los refetches de Realtime se anotan en
+  // pendientesOcultaRef para el catch-up de la vuelta. Traslados NO: su refetch es el que hace sonar el
+  // ding de un traslado nuevo, y tiene que sonar también en segundo plano.
   useEffect(() => {
     if (!token) return;
     fetchBeds();
@@ -2203,8 +2231,14 @@ export const useHospitalState = () => {
     fetchCirugias();
     fetchRoutineCleanings();
     fetchCirugiaMarcas();
-    const bedPoll = setInterval(fetchBeds, POLL_BEDS_MS);
+    const pararBedPoll = intervaloVisible(fetchBeds, POLL_BEDS_MS);
     const ticketSafetyPoll = setInterval(fetchTickets, POLL_TICKETS_SAFETY_MS);
+    // true = la pestaña está oculta y el refetch quedó anotado para la vuelta.
+    const diferirSiOculta = (recurso: RecursoDiferible) => {
+      if (!pestanaOculta()) return false;
+      pendientesOcultaRef.current.add(recurso);
+      return true;
+    };
 
     // Realtime traslados: un cambio → refetch debounced. Reseteamos el ETag antes del refetch
     // para no comernos un 304 justo cuando acabamos de saber que algo cambió.
@@ -2222,30 +2256,33 @@ export const useHospitalState = () => {
     // Realtime limpiezas: un cambio en el overlay de camas limpias → refetch debounced.
     let cleaningDebounce: ReturnType<typeof setTimeout> | null = null;
     const triggerCleaningRefetch = () => {
+      if (diferirSiOculta('limpiezas')) return;
       if (cleaningDebounce) clearTimeout(cleaningDebounce);
       cleaningDebounce = setTimeout(() => { fetchCleanings(); }, 300);
     };
     const limpiezasChannel = supabase
       .channel('limpiezas-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'limpiezas' }, triggerCleaningRefetch)
-      .subscribe(status => { if (String(status) === 'SUBSCRIBED') fetchCleanings(); });
+      .subscribe(status => { if (String(status) === 'SUBSCRIBED' && !diferirSiOculta('limpiezas')) fetchCleanings(); });
 
     // Realtime limpiezas de rutina: un cambio en limpiezas_rutina → refetch debounced.
     let routineDebounce: ReturnType<typeof setTimeout> | null = null;
     const triggerRoutineRefetch = () => {
+      if (diferirSiOculta('rutina')) return;
       if (routineDebounce) clearTimeout(routineDebounce);
       routineDebounce = setTimeout(() => { fetchRoutineCleanings(); }, 300);
     };
     const routineChannel = supabase
       .channel('limpiezas-rutina-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'limpiezas_rutina' }, triggerRoutineRefetch)
-      .subscribe(status => { if (String(status) === 'SUBSCRIBED') fetchRoutineCleanings(); });
+      .subscribe(status => { if (String(status) === 'SUBSCRIBED' && !diferirSiOculta('rutina')) fetchRoutineCleanings(); });
 
     // Realtime comandas: un cambio en el overlay de meals → refetch debounced. Si hay una mutación
     // propia en vuelo (mealsWritingRef), se re-agenda para no pisar el update optimista (fetchMeals
     // hace REEMPLAZO TOTAL del Map, no merge).
     let mealsDebounce: ReturnType<typeof setTimeout> | null = null;
     const triggerMealRefetch = () => {
+      if (diferirSiOculta('comandas')) return;
       if (mealsDebounce) clearTimeout(mealsDebounce);
       mealsDebounce = setTimeout(() => {
         if (mealsWritingRef.current > 0) { triggerMealRefetch(); return; }
@@ -2264,6 +2301,7 @@ export const useHospitalState = () => {
     // pisar el optimista (fetchCirugias hace REEMPLAZO TOTAL del Map, no merge).
     let cirugiaDebounce: ReturnType<typeof setTimeout> | null = null;
     const triggerCirugiaRefetch = () => {
+      if (diferirSiOculta('cirugia')) return;
       if (cirugiaDebounce) clearTimeout(cirugiaDebounce);
       cirugiaDebounce = setTimeout(() => {
         if (cirugiasWritingRef.current > 0) { triggerCirugiaRefetch(); return; }
@@ -2280,6 +2318,7 @@ export const useHospitalState = () => {
     // con guard de cirugiaMarcasWritingRef para no pisar el optimista (fetchCirugiaMarcas reemplaza).
     let marcasDebounce: ReturnType<typeof setTimeout> | null = null;
     const triggerMarcasRefetch = () => {
+      if (diferirSiOculta('marcas')) return;
       if (marcasDebounce) clearTimeout(marcasDebounce);
       marcasDebounce = setTimeout(() => {
         if (cirugiaMarcasWritingRef.current > 0) { triggerMarcasRefetch(); return; }
@@ -2292,7 +2331,7 @@ export const useHospitalState = () => {
       .subscribe(status => { if (String(status) === 'SUBSCRIBED') triggerMarcasRefetch(); });
 
     return () => {
-      clearInterval(bedPoll);
+      pararBedPoll();
       clearInterval(ticketSafetyPoll);
       if (ticketRetryRef.current.timer) { clearTimeout(ticketRetryRef.current.timer); ticketRetryRef.current.timer = null; }
       ticketRetryRef.current.attempt = 0;
@@ -2318,31 +2357,64 @@ export const useHospitalState = () => {
   // recuperar red), hacemos DOS cosas: (1) un catch-up —refetch de todo— para que la data quede al
   // día al toque, sin importar el estado del socket; (2) un nudge de reconexión (realtime.connect()
   // es idempotente: reconecta si está caído, no-op si está vivo). Al reconectar, el cliente re-pide
-  // el "pase" (getPase) → también refresca la auth que expira cada ~1h. Debounce de 1s para no
-  // duplicar cuando visibilitychange y focus disparan juntos.
+  // el "pase" (getPase) → también refresca la auth que expira cada ~1h.
+  //
+  // Costos (13/11/2026): antes CADA foco o vuelta refetcheaba los 7 recursos. En desktop el foco salta
+  // cada vez que se pasa de una ventana a otra, y la pestaña visible ya está al día por Realtime. Ahora:
+  //   · vuelta tras una ausencia ≥ AUSENCIA_CATCHUP_MS, o recuperar red → catch-up completo (como antes);
+  //   · vuelta más corta → solo lo que llegó por Realtime con la pestaña oculta (pendientesOcultaRef);
+  //   · foco sin cambio de visibilidad → completo como mucho una vez cada FOCO_CATCHUP_MS.
   useEffect(() => {
     if (!token) return;
-    let last = 0;
-    const catchUp = () => {
-      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-      const now = Date.now();
-      if (now - last < 1000) return; // debounce visibilitychange + focus
-      last = now;
-      ticketsEtagRef.current = null;
-      fetchTickets(); fetchCleanings(); fetchMeals(); fetchCirugias(); fetchRoutineCleanings(); fetchCirugiaMarcas(); fetchBeds();
+    let ocultaDesde = pestanaOculta() ? Date.now() : 0;
+    let ultimoCompleto = Date.now(); // el efecto de polling acaba de traer todo
+    let completoPendiente = false;   // se recuperó la red con la pestaña oculta
+    const reconectarRealtime = () => {
       try {
         const rt: any = (supabase as any).realtime;
         if (rt && typeof rt.isConnected === 'function' && !rt.isConnected() && typeof rt.connect === 'function') rt.connect();
       } catch { /* best-effort */ }
     };
-    const onVis = () => { if (document.visibilityState === 'visible') catchUp(); };
+    const completo = () => {
+      ultimoCompleto = Date.now();
+      completoPendiente = false;
+      pendientesOcultaRef.current.clear();
+      ticketsEtagRef.current = null;
+      fetchTickets(); fetchCleanings(); fetchMeals(); fetchCirugias(); fetchRoutineCleanings(); fetchCirugiaMarcas(); fetchBeds();
+      reconectarRealtime();
+    };
+    const soloPendientes = () => {
+      const pendientes = [...pendientesOcultaRef.current];
+      pendientesOcultaRef.current.clear();
+      for (const recurso of pendientes) {
+        if (recurso === 'limpiezas') fetchCleanings();
+        else if (recurso === 'comandas') fetchMeals();
+        else if (recurso === 'cirugia') fetchCirugias();
+        else if (recurso === 'rutina') fetchRoutineCleanings();
+        else if (recurso === 'marcas') fetchCirugiaMarcas();
+      }
+      reconectarRealtime();
+    };
+    const onVis = () => {
+      if (pestanaOculta()) { if (!ocultaDesde) ocultaDesde = Date.now(); return; }
+      const ausencia = ocultaDesde ? Date.now() - ocultaDesde : 0;
+      ocultaDesde = 0;
+      if (completoPendiente || ausencia >= AUSENCIA_CATCHUP_MS) completo(); else soloPendientes();
+    };
+    // visibilitychange y focus disparan juntos al volver: el segundo encuentra ultimoCompleto recién
+    // puesto y los pendientes vacíos, así que no repite nada.
+    const onFocus = () => {
+      if (pestanaOculta()) return;
+      if (Date.now() - ultimoCompleto >= FOCO_CATCHUP_MS) completo(); else soloPendientes();
+    };
+    const onOnline = () => { if (pestanaOculta()) completoPendiente = true; else completo(); };
     document.addEventListener('visibilitychange', onVis);
-    window.addEventListener('online', catchUp);
-    window.addEventListener('focus', catchUp);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('focus', onFocus);
     return () => {
       document.removeEventListener('visibilitychange', onVis);
-      window.removeEventListener('online', catchUp);
-      window.removeEventListener('focus', catchUp);
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('focus', onFocus);
     };
   }, [token, fetchBeds, fetchTickets, fetchCleanings, fetchMeals, fetchCirugias, fetchRoutineCleanings, fetchCirugiaMarcas]);
 
@@ -2350,7 +2422,7 @@ export const useHospitalState = () => {
   // Los módulos/permisos sólo se hidratan en el login. Sin esto, cuando un admin edita
   // un rol, los usuarios con ese rol no ven el cambio en su navbar hasta re-loguear.
   // Lee la config vigente de /api/me (role-cache, 5 min) y actualiza la sesión si cambió.
-  // Se dispara solo cada 60s (abajo) y también a mano desde el botón del sidebar.
+  // Se dispara solo cada SYNC_ROL_MS (abajo) y también a mano desde el botón del sidebar.
   // Devuelve true si aplicó cambios (para dar feedback en el botón).
   const syncSessionRole = useCallback(async (): Promise<boolean> => {
     const roleName = currentUserRef.current?.roleName;
@@ -2411,7 +2483,9 @@ export const useHospitalState = () => {
   useEffect(() => {
     if (!token || !currentUser?.roleName) return;
     syncSessionRole();
-    const id = setInterval(syncSessionRole, 60_000);
+    // Corre también con la pestaña oculta (6 por hora): si un admin cambia los sectores de la cuenta,
+    // la suscripción push de una PC en segundo plano tiene que enterarse igual.
+    const id = setInterval(syncSessionRole, SYNC_ROL_MS);
     return () => clearInterval(id);
   }, [token, currentUser?.roleName, syncSessionRole]);
 
@@ -3522,6 +3596,11 @@ export const useHospitalState = () => {
   const reubicarIntentosRef = React.useRef(new Map<string, { n: number; at: number }>());
   useEffect(() => {
     if (!puedeReubicarOrigen || !rawBedsAtRef.current) return;
+    // Con la pestaña oculta el mapa no se refresca (lib/visibilidad.ts) pero los traslados siguen llegando por
+    // Realtime: sin esto se mandaban PATCH con un mapa que el servidor rechaza por viejo (MAPA_EDAD_MAX_MS de
+    // api/ticket-origen.ts) y se quemaban los 3 intentos. Al volver, el catch-up trae mapa y traslados y esto
+    // vuelve a correr.
+    if (pestanaOculta() || Date.now() - rawBedsAtRef.current > MAPA_ORIGEN_MAX_MS) return;
     for (const m of findOriginMoves(tickets, rawBeds)) {
       const t = tickets.find(x => x.id === m.ticketId);
       if (!t?.spItemId) continue;
@@ -4174,16 +4253,55 @@ export const useHospitalState = () => {
   // ── Unread SP notifications check (for banner) ────────────────────────────
   const [unreadSpNotifications, setUnreadSpNotifications] = useState<{ id: string; title: string; message: string; fecha: string }[]>([]);
 
+  // Campanita por Realtime (tabla public.notificaciones: RLS por sub + entorno del pase, replica identity
+  // full). Antes era un poll de 2 GET cada 30 s por dispositivo, también con la pestaña oculta: el 33% de
+  // los requests de Vercel (revisión de costos 13/11/2026), y el 90% respondía "sin cambios". Ahora un
+  // cambio en una fila del usuario dispara el refetch (debounced: "marcar todas" toca N filas de una).
+  // Respaldo: cada NOTIF_RESPALDO_MS solo a la vista, por si el socket perdió algo. Con la pestaña oculta
+  // el cambio queda anotado y se refresca al volver (los avisos en segundo plano son los del push).
+  // El banner de no leídas >20 min puede tardar hasta un respaldo en aparecer: ninguna fila cambia al
+  // cumplir los 20 minutos.
   useEffect(() => {
-    if (!token || !currentUser) return;
-    checkUnreadNotifications();
-    fetchNotificationHistory();
-    const interval = setInterval(() => {
+    if (!token || !currentUser?.id) return;
+    let ultimo = 0;
+    let pendiente = false;
+    const refrescar = () => {
+      ultimo = Date.now();
+      pendiente = false;
       checkUnreadNotifications();
       fetchNotificationHistory();
-    }, 30_000);
-    return () => clearInterval(interval);
-  }, [token, currentUser, checkUnreadNotifications, fetchNotificationHistory]);
+    };
+    refrescar();
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    const alCambiar = () => {
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        debounce = null;
+        if (pestanaOculta()) { pendiente = true; return; }
+        refrescar();
+      }, 500);
+    };
+    const canal = supabase
+      .channel('notificaciones-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notificaciones' }, alCambiar)
+      // Al (re)conectar: Realtime no reenvía lo que pasó con el socket caído. También el PRIMER SUBSCRIBED:
+      // una notif que entró entre el refrescar() de arriba y la suscripción no generó evento.
+      .subscribe(status => { if (String(status) === 'SUBSCRIBED') alCambiar(); });
+    const pararRespaldo = intervaloVisible(refrescar, NOTIF_RESPALDO_MS);
+    const alVolver = () => {
+      if (pestanaOculta()) return;
+      if (pendiente || Date.now() - ultimo >= NOTIF_RESPALDO_MS) refrescar();
+    };
+    document.addEventListener('visibilitychange', alVolver);
+    return () => {
+      if (debounce) clearTimeout(debounce);
+      pararRespaldo();
+      document.removeEventListener('visibilitychange', alVolver);
+      supabase.removeChannel(canal);
+    };
+  // currentUser?.id y no currentUser: el objeto cambia con cada resync de rol y eso recreaba el canal.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, currentUser?.id, checkUnreadNotifications, fetchNotificationHistory]);
 
   // ── Revalidación periódica de ubicación (cada 1 min) ─────────────────────────
   // Reemplaza la validación per-request (que generaba kicks por flake de
@@ -4192,14 +4310,17 @@ export const useHospitalState = () => {
   //
   // Triggers:
   //   · mount inicial (no esperar el primer tick del interval)
-  //   · setInterval cada 60s
+  //   · cada 60s CON LA PESTAÑA A LA VISTA (intervaloVisible)
+  //   · al volver a primer plano, si pasó al menos un intervalo desde el último chequeo
   //
-  // Decisión: NO usamos `visibilitychange` ni `focus` como triggers porque en
-  // móvil esos eventos se disparan demasiado (cada vez que aparece el teclado,
-  // scroll fuerte, notificación, etc.) y cada disparo terminaba pidiendo geo →
-  // prompt del browser → mala UX. El interval de 60s es suficiente para detectar
-  // que un usuario se fue (combinado con cache server-side de 60s, ventana máxima
-  // de kick = ~2 min).
+  // Pestaña oculta (costos, 13/11/2026): no se valida. Una pestaña oculta no se puede operar, así que
+  // la garantía es casi la misma: al volver se valida en el acto. Si ese chequeo da negativo, el 2º va a los
+  // 10 s y el que decide a los 65 s (ver VENTANA_KICK_MS): quien se llevó la sesión afuera queda expulsado en
+  // ~1 min, y la histéresis (3 negativos seguidos) sigue tolerando el flake de una IP o del cache de reglas.
+  //
+  // Por qué la vuelta no dispara un prompt de geo (la razón original para no usar `visibilitychange`:
+  // en móvil salta con el teclado, el scroll, etc.): el chequeo es IP-first con la geo cacheada, solo
+  // pide GPS si el permiso YA está concedido (silencioso) y no corre más de una vez por intervalo.
   //
   // Cache cliente (geoCacheRef): la posición se reusa por 30 min sin volver a
   // llamar a navigator.geolocation, así no acumulamos prompts de permiso en mobile.
@@ -4219,14 +4340,36 @@ export const useHospitalState = () => {
     let consecutiveFails = 0;
     const KICK_AFTER_FAILS = 3;
 
-    const postValidate = (coords: GeoCoords | null) =>
-      fetch('/api/validate-location', {
+    // Vuelta a primer plano (ver arriba): tras un negativo, el 2º chequeo va a los RAPIDO_MS. Para expulsar,
+    // además de 3 negativos seguidos, tienen que cubrir VENTANA_KICK_MS: más que el cache de reglas del
+    // server (RULES_TTL de 60 s en api/location-check.ts), así una lectura mala de SharePoint que quedó
+    // cacheada no suma ella sola los 3 negativos. Quien volvió desde afuera queda expulsado en ~65 s.
+    const RAPIDO_MS = 10_000;
+    const VENTANA_KICK_MS = 65_000;
+    // Un fetch colgado (conexión half-open al despertar la PC) no puede dejar `enCurso` trabado para siempre.
+    const CORTE_VALIDACION_MS = 15_000;
+    let ultimo = 0;
+    let rapido = false;
+    let enCurso = false;
+    let primerFallo = 0;
+    let seguimiento: ReturnType<typeof setTimeout> | null = null;
+
+    const postValidate = (coords: GeoCoords | null) => {
+      const ctrl = new AbortController();
+      const corte = setTimeout(() => ctrl.abort(), CORTE_VALIDACION_MS);
+      return fetch('/api/validate-location', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ sede: currentUser.sede, lat: coords?.lat, lng: coords?.lng }),
-      }).then(r => r.json().catch(() => ({} as any)));
+        signal: ctrl.signal,
+      }).then(r => r.json().catch(() => ({} as any))).finally(() => clearTimeout(corte));
+    };
 
     const revalidate = async () => {
+      if (enCurso || cancelled) return;
+      enCurso = true;
+      if (seguimiento) { clearTimeout(seguimiento); seguimiento = null; }
+      ultimo = Date.now();
       try {
         // IP-first: validamos con la geo cacheada (o sin geo) SIN pedir permiso.
         let coords = geoNoPrompt(geoCacheRef);
@@ -4241,7 +4384,7 @@ export const useHospitalState = () => {
         if (data?.allowed === false && data?.method === 'geo_unavailable' && !coords) {
           const perm = await geoPermissionState();
           if (cancelled) return;
-          if (perm !== 'granted') return; // no prompt en background, no logout
+          if (perm !== 'granted') { rapido = false; return; } // no prompt en background, no logout
           coords = await requestFreshGeo(geoCacheRef);
           if (cancelled) return;
           if (coords) { data = await postValidate(coords); if (cancelled) return; }
@@ -4249,29 +4392,58 @@ export const useHospitalState = () => {
 
         if (data?.allowed === false) {
           // Re-chequeo: si el bypass del rol ya sanó en la sesión (syncSessionRole), no patear.
-          if (currentUserRef.current?.bypassLocationCheck) { consecutiveFails = 0; return; }
+          if (currentUserRef.current?.bypassLocationCheck) { consecutiveFails = 0; rapido = false; return; }
+          if (consecutiveFails === 0) primerFallo = Date.now();
           consecutiveFails++;
-          if (consecutiveFails < KICK_AFTER_FAILS) return; // histéresis: esperar N fallos seguidos
+          const ventana = Date.now() - primerFallo;
+          // Histéresis: N negativos seguidos que cubran VENTANA_KICK_MS. Con la cadencia de 60 s el 3º llega a
+          // los 120 s (como siempre); en la vuelta: 0 s, 10 s y el que decide a los 65 s.
+          if (consecutiveFails < KICK_AFTER_FAILS || ventana < VENTANA_KICK_MS) {
+            if (rapido && !cancelled) {
+              const espera = consecutiveFails < KICK_AFTER_FAILS - 1
+                ? RAPIDO_MS
+                : Math.max(RAPIDO_MS, VENTANA_KICK_MS - ventana);
+              seguimiento = setTimeout(() => { void revalidate(); }, espera);
+            }
+            return;
+          }
           setLoginError(data?.reason ?? 'Ubicación no autorizada — re-ingresá desde una red autorizada.');
           handleLogout();
         } else {
           consecutiveFails = 0; // cualquier allowed (o respuesta no-false) resetea la cuenta
+          rapido = false;
         }
       } catch {
-        // Fail-open: errores de red NO patean al usuario.
+        // Fail-open: errores de red (y el corte de CORTE_VALIDACION_MS) NO patean al usuario.
+        rapido = false;
+      } finally {
+        enCurso = false;
       }
     };
 
     revalidate(); // chequeo inmediato al mount
 
-    const interval = setInterval(revalidate, REVALIDATE_MS);
-    return () => { cancelled = true; clearInterval(interval); };
+    const pararIntervalo = intervaloVisible(() => { void revalidate(); }, REVALIDATE_MS);
+    const alVolver = () => {
+      if (pestanaOculta() || Date.now() - ultimo < REVALIDATE_MS) return;
+      // Los negativos de antes de ocultarse (hace minutos u horas) no cuentan: la histéresis arranca de nuevo.
+      consecutiveFails = 0;
+      rapido = true;
+      void revalidate();
+    };
+    document.addEventListener('visibilitychange', alVolver);
+    return () => {
+      cancelled = true;
+      pararIntervalo();
+      if (seguimiento) clearTimeout(seguimiento);
+      document.removeEventListener('visibilitychange', alVolver);
+    };
   }, [token, currentUser?.id, currentUser?.sede, currentUser?.bypassLocationCheck, handleLogout]);
 
   // ── Heartbeat de la suscripción push ─────────────────────────────────────────
-  // Refresca el `lastModifiedDateTime` de la sub en SP mientras la sesión está activa:
-  // al montar, al volver a foreground y cada 6h. El server-side saltea (y limpia) las
-  // subs no refrescadas en >36h → un dispositivo deslogueado/cerrado deja de recibir push.
+  // Refresca el `last_seen_at` de la sub mientras la sesión está activa: al montar, al volver a
+  // foreground (como mucho una vez por hora) y cada 6h. El server-side saltea las subs no refrescadas
+  // en >90 días (STALE_SUB_MS de push-utils / notify-push) → un dispositivo abandonado deja de recibir push.
   // Solo "toca" si ya hay suscripción (no pide permiso ni crea una nueva).
   useEffect(() => {
     if (!token || !currentUser) return;
@@ -4279,14 +4451,24 @@ export const useHospitalState = () => {
     const touch = () => {
       import('../lib/pushSubscription').then(({ touchPushSubscription }) => {
         if (cancelled) return;
+        // El usuario VIGENTE (ref), no el capturado al crear el efecto: este efecto no se recrea cuando
+        // syncSessionRole cambia los sectores, y el heartbeat regrababa la suscripción con los viejos.
+        const u = currentUserRef.current ?? currentUser;
         touchPushSubscription(
-          token, currentUser.id, currentUser.roleName ?? currentUser.role,
-          currentUser.assignedAreas ?? [], currentUser.sede,
+          token, u.id, u.roleName ?? u.role,
+          u.assignedAreas ?? [], u.sede,
         );
       }).catch(() => {});
     };
+    let ultimoTouch = Date.now();
     touch(); // al montar / loguear
-    const onVisible = () => { if (document.visibilityState === 'visible') touch(); };
+    // Al volver a primer plano, como mucho uno por hora: antes era en CADA vuelta (~1.800 POST por día)
+    // y la sub recién se descarta tras 90 días sin tocar (STALE_SUB_MS de notify-push).
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible' || Date.now() - ultimoTouch < TOUCH_PUSH_MIN_MS) return;
+      ultimoTouch = Date.now();
+      touch();
+    };
     document.addEventListener('visibilitychange', onVisible);
     const id = setInterval(touch, 6 * 60 * 60 * 1000); // cada 6h mientras esté abierta
     return () => { cancelled = true; document.removeEventListener('visibilitychange', onVisible); clearInterval(id); };

@@ -25,7 +25,7 @@ Referencia para **QA de permisos** y soporte: qué módulos y permisos existen, 
 | Cache de roles | `api/role-cache.ts` | In-memory, TTL 5 min. `null` = fallo (sirve stale, no cachea) vs `[]` = sin roles (modo seguro). |
 | Usuario → rol | `api/auth.ts` (login) | **Los usuarios siguen en SharePoint `00.Usuarios`.** El join es por NOMBRE: `Perfil_U ↔ roles.name` (case-insensitive, `getRoleByName`). |
 | Hidratación de la sesión | `api/auth.ts:134-151` | Login copia al `User` (y al JWT): `permissions`, `modules`, `filterByFloors`, `bypassLocationCheck`, `roleName`. |
-| Resync en caliente | `api/me.ts?roleName` + `syncSessionRole` (cada 60 s) | Refresca módulos/permisos/flags **sin re-loguear**. LIMITACIÓN: refresca por el `roleName` al que el user YA pertenece; si un admin lo **reasigna a otro rol**, el cambio recién entra al re-loguear (`api/me.ts:10-12`). |
+| Resync en caliente | `api/me.ts?roleName` + `syncSessionRole` (cada 10 min) | Refresca módulos/permisos/flags **sin re-loguear**. LIMITACIÓN: refresca por el `roleName` al que el user YA pertenece; si un admin lo **reasigna a otro rol**, el cambio recién entra al re-loguear (`api/me.ts:10-12`). |
 | Safe-default | `lib/permissions.ts:12` | Rol ausente / mal escrito en `Perfil_U` → `permissions:[]`, `modules:[]` → **solo lectura**. `can()` y `hasModule()` devuelven `false` ante campo faltante. |
 
 **Helpers de gating** (`lib/permissions.ts`):
@@ -281,9 +281,13 @@ Flag del rol (`BypassUbicacion_RT` → columna `bypass_location_check`). Si es `
   rol y devuelve `allowed:true method='role_bypass'` — NO depende del flag del cliente (que se hidrata en
   login y queda viejo).
 - Sin bypass → `checkRequestLocationFull` (IP + GPS opcional) contra la lista SharePoint `99.ABM_GeoIPS`.
-- Cliente (`useHospitalState`): valida en login y revalida cada 60 s, con **histéresis de 3 fallos**
-  consecutivos (~3 min) antes de patear (`handleLogout`); fail-open ante errores de red; `SUMAR` y roles
-  con bypass se saltean; no dispara prompt de GPS en background.
+- Cliente (`useHospitalState`): valida en login y revalida cada 60 s **con la pestaña a la vista**, con
+  **histéresis de 3 fallos** consecutivos antes de patear (`handleLogout`); fail-open ante errores de red;
+  `SUMAR` y roles con bypass se saltean; no dispara prompt de GPS en background. Con la pestaña oculta no
+  valida; al volver valida en el acto: tras un negativo, el 2º chequeo va a los 10 s y el que decide a los
+  65 s. Para expulsar, los 3 negativos tienen que cubrir ≥65 s (más que el cache de reglas de 60 s del
+  server). Expulsión en ~1 min.
+  Ver [decisiones.md §35](decisiones.md).
 
 ---
 
