@@ -31,10 +31,9 @@ export default defineConfig(({ mode }) => {
       strategies: 'injectManifest',
       srcDir: 'src-sw',
       filename: 'sw.ts',
-      // "prompt" + onNeedRefresh handled in index.tsx → calls updateSW(true)
-      // to auto-apply updates without user interaction. Combined with
-      // skipWaiting/clientsClaim in sw.ts, this forces clients to update to
-      // the latest version on the next check (no manual hard refresh needed).
+      // "prompt": el SW nuevo espera. Con sesión se aplica desde el aviso de versión nueva;
+      // sin sesión, solo (lib/version/serviceWorker.ts). Con skipWaiting/clientsClaim de sw.ts
+      // nadie tiene que cerrar pestañas ni hacer un hard refresh.
       registerType: 'prompt',
       includeAssets: ['logo.svg'],
       manifest: {

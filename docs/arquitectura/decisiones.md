@@ -650,6 +650,8 @@ Registro de decisiones técnicas inferidas del código fuente. Cada entrada docu
 
 ### 13.6. PWA auto-update sin prompt al usuario
 
+> ⚠️ **Revertida el 30/10/2026 con sesión iniciada: ver §33.** Se conserva el porqué original.
+
 **Qué:** `vite-plugin-pwa` está en modo `registerType: 'autoUpdate'` con `skipWaiting: true` y `clientsClaim: true`. Cuando se despliega una nueva versión, los SW activos detectan la actualización, la activan y refrescan la página automáticamente. No hay banner ni prompt.
 
 **Por qué:** el cliente reportó que su personal (azafatas, admisión, enfermería) no tiene cómo refrescar manualmente y no entiende mensajes técnicos tipo "hay una nueva versión, click acá". La actualización tiene que ser invisible.
@@ -1484,6 +1486,8 @@ Alternativa a revertir del todo: **blindar** el canal de página en vez de elimi
 
 ### 28.10. Versionado de clientes con constante hardcodeada (no env var)
 
+> Desde el 30/10/2026 el literal también abre el aviso de versión nueva: ver §33.
+
 **Qué:** `APP_VERSION` es un **literal hardcodeado** en [lib/version.ts:11](../lib/version.ts#L11) (hoy `v20260731_1.0.1`, formato `vYYYYMMDD_<semver>`), no una variable de entorno. Se captura en el login (se persiste en la sesión), cada escritura transaccional la manda en el body, y el endpoint la guarda en la columna `version` de la fila. Badge en login y sidebar (migración `20260731120000_version_columns.sql`).
 
 **Por qué hardcodeada y NO env:** al cambiar el literal cambia el **hash del bundle** (cache-bust real). Una env var de Vercel NO cambia el bundle: un cliente con un build viejo cacheado seguiría corriendo el JS viejo y reportaría la versión "nueva" de la env → señal falsa. El literal baked-at-build garantiza que la versión reportada sea la del **código que realmente corre**. Un cliente que no recargó el deploy escribe la versión vieja (o `''` si es pre-feature) → esa es exactamente la señal que soporte busca.
@@ -1669,6 +1673,21 @@ Diseño y archivos en [arquitectura.md §48](arquitectura.md). Acá, el *por qu�
 - Restablecer destino avisa solo dentro de la app ("Destino liberado", desde la 1.13.0): con la app cerrada no llega push hasta que `notify-push` contemple la vuelta a Presolicitud.
 - La previa la puede registrar Enfermería además de Admisión (pedido del equipo); queda el actor en `created_by_id` y se puede deshacer.
 
+---
+
+## 33. Aviso de versión nueva (2026-10-30)
+
+**Qué:** se adopta el aviso de Fast Track: `GET /api/version` sin sesión devuelve `APP_VERSION`, y si no es la de la pestaña un diálogo ofrece actualizar ahora o en 10 minutos. Detalle en [arquitectura.md §12.5](arquitectura.md). **La numeración no cambia:** sigue `vYYYYMMDD_<semver>` bumpeada a mano (§28.10), no el contador por push de Fast Track; por eso el formato acepta varios dígitos por posición.
+
+**Por qué:** la recarga invisible de §13.6 interrumpía a quien estaba trabajando, sin aviso y en cualquier momento. Ahora la persona elige cuándo, dentro de un plazo acotado.
+
+**Tres diferencias con Fast Track:**
+- La recarga pasa por el service worker; con el precache, `location.reload()` trae el código viejo.
+- Sin sesión el SW se sigue aplicando solo, como en §13.6: el aviso solo se monta adentro de la app.
+- El diálogo no usa `ui/dialog`, que trae cruz y cierra con clic afuera.
+
+**Costo asumido:** §13.6 decía que el personal no entiende un cartel de "hay una versión nueva". El texto evita lo técnico, pero es un cartel: hay que mirar cómo lo recibe el equipo. La recarga de las 0:00 solo espera un guardado en curso; un formulario a medio completar se pierde si nadie lo guardó en los 10 minutos.
+
 ## 35. Costos de Vercel: con la pestaña oculta no se pollea (2026-11-13)
 
 **Qué:** con la pestaña oculta (`document.visibilityState === 'hidden'`: minimizada, en otra pestaña o tapada por otra ventana) la app deja de pollear y de refetchear por Realtime. Al volver se pone al día: completo si estuvo ≥30 s afuera, y si no, solo lo que llegó por Realtime mientras tanto. Además:
@@ -1676,11 +1695,11 @@ Diseño y archivos en [arquitectura.md §48](arquitectura.md). Acá, el *por qu�
 - `/api/me` va cada 10 min (antes 60 s; el rol se cachea 5 min en el server);
 - el foco sin cambio de visibilidad refetchea todo como mucho cada 5 min;
 - el ETag de `/api/beds` se arregló: nunca había dado un 304;
-- el heartbeat del push va como mucho una vez por hora (en main el chequeo del service worker cada 30 min sigue corriendo oculto: es lo que actualiza solas las pestañas en segundo plano);
+- el heartbeat del push va como mucho una vez por hora;
 - `logo.svg` y `badge.svg` tienen `Cache-Control`;
 - el enrich de TESTING corre solo de lunes a viernes de 8 a 21 (ART).
 
-Helper en [lib/visibilidad.ts](../../lib/visibilidad.ts). Versión `v20261113_1.15.5` en main (hotfix, sin el rediseño) y `v20261113_1.17.0` en develop.
+Helper en [lib/visibilidad.ts](../../lib/visibilidad.ts). Versión `v20261113_1.15.5` en main (junto con el aviso de versión nueva de §33, sin el rediseño) y `v20261113_1.17.0` en develop.
 
 **Por qué:** el 19/10 se sumaron ~25 PCs de Enfermería y las invocaciones pasaron de ~190K a ~400K por día. Desde el 03/11 el equipo agotó los 10M de CDN Requests incluidos y cada request se paga. Las PCs quedan abiertas las 24 h y la mayoría oculta (~75% de día, ~94% de noche), pero cada una pedía ~8.600 requests por día. El 76% del tráfico eran cuatro polls: campanita 33%, camas 15%, `/api/me` 14% y ubicación 14%. Detalle de la medición en la memoria del proyecto (`costos-vercel-polling`).
 
