@@ -10,8 +10,14 @@
  * llamadas de evento que timeouteaban a >60s.
  *
  * Server-side cache: 45s TTL para la respuesta completa. ETag para 304.
+ *
+ * ETag (arreglado el 13/11/2026): iba sin comillas y solo se comparaba en el hit del cache de 45s, así
+ * que el 304 no salía NUNCA (0 de ~66K pedidos por día; el mapa entero viajaba en cada poll). Ahora va
+ * entre comillas como pide HTTP (igual que /api/tickets), es el hash de la respuesta completa (un 304
+ * solo si el mapa es idéntico byte a byte) y se compara también después de recalcular.
  */
 
+import { createHash } from 'node:crypto';
 import { requireAuth } from './jwt.js';
 import {
   getToken, GAMMA_BASE, simpleHash, fetchWithTimeout, GAMMA_TIMEOUT_MS,
@@ -240,8 +246,9 @@ async function handler(req: any, res: any) {
     return res.status(503).json({ error: 'CLIENT_ID / CLIENT_SECRET not configured' });
   }
 
-  // Check ETag — if client has current data, return 304
-  const ifNoneMatch = req.headers?.['if-none-match'];
+  // Check ETag — if client has current data, return 304. Sin el prefijo W/ por si un intermediario
+  // lo debilita al comprimir: el contenido es el mismo.
+  const ifNoneMatch = String(req.headers?.['if-none-match'] ?? '').replace(/^W\//, '');
   if (bedsCache && Date.now() - bedsCache.timestamp < BEDS_CACHE_TTL) {
     if (ifNoneMatch === bedsCache.etag) {
       return res.status(304).end();
@@ -378,13 +385,13 @@ async function handler(req: any, res: any) {
     // refleja cambios de enrich mientras la cama no cambie de estado).
     const enrichSig = await enrichBedsFromCache(beds, occEventKeys);
 
-    // Update cache only on a fully successful response. El ETag combina el estado del
-    // mapa (id/status/paciente) + la firma del enrich.
-    const mapSig = beds.map(b => `${b.id}:${b.status}:${b.patientCode ?? ''}`).join('|');
-    const etag = simpleHash(`${mapSig}#${enrichSig}`);
+    // Update cache only on a fully successful response. El ETag es el hash de la respuesta completa
+    // (más la firma del enrich): cualquier diferencia en cualquier campo de cualquier cama da 200.
+    const etag = `"${createHash('sha1').update(`${enrichSig}#${JSON.stringify(beds)}`).digest('base64url')}"`;
     bedsCache = { beds, etag, timestamp: Date.now() };
 
     res.setHeader('ETag', etag);
+    if (ifNoneMatch === etag) return res.status(304).end();
     res.status(200).json({ beds });
   } catch (err: any) {
     console.error('[api/beds]', err);
