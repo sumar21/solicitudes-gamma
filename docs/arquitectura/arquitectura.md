@@ -1751,6 +1751,8 @@ Pedido de Gamma tras probar el paquete en TESTING.
   2. `cirugia_cambios` no tenía `GRANT` para `service_role` (daba 403). Lo arregla la migración `20261020130000_cirugia_cambios_grant_service_role.sql`.
 
   La primera corrida después del deploy aprende la cama de todos sin notificar (bootstrap); desde la siguiente, un cambio de cama de un paciente con cirugía abierta avisa.
+
+  **En "Regreso de cirugía", la cama nueva muestra al paciente instalado (desde el 13/11/2026).** `mergeBeds` la pinta **Ocupada**, con sus datos y la pill Cx de "Iniciar dieta", y libera la cama vieja si PROGAL todavía lo tiene ahí. Antes la dejaba **Asignada — traslado en curso** hasta "Iniciar dieta" (horas) aunque PROGAL ya lo tuviera en esa cama: venía del flujo con "Recibida", donde "Regreso" significaba "llegando". Caso del 13/11: MAIOLA y SIMONATO, pasados a UTI en PROGAL durante la cirugía, figuraban internados mientras estaban en quirófano y desaparecieron de su cama al marcar el regreso. Test: `scripts/check-merge-beds-cirugia.mts` (caso 9).
 - **"Q" en la celda del Mapa de Camas** ([lib/cirugiaQ.ts](../../lib/cirugiaQ.ts)): marca a los pacientes de internación **quirúrgica** (PROGAL `Q`) **pendientes de su cirugía en esta internación**. No aparece en estos casos:
   - ya se operó en esta internación (cerrada con "Iniciar dieta") y no hay consentimiento nuevo;
   - tiene marca de Admisión: en ese lugar va la pill "Re-Cx";
@@ -1863,7 +1865,7 @@ La 1.12.0 subió a producción y en paralelo se corrió una revisión adversaria
   - **Aviso "Destino liberado"** (revisión de QA): la azafata de origen ya había recibido "puede ser trasladado". El detector de cambios del hook avisa en la campanita y con un toast a quienes tenían el pedido en su grilla (áreas de origen y del destino viejo), cuando un pedido vivo vuelve a Presolicitud. Es **solo en la app**: el push con la app cerrada necesita sumar el caso en `notify-push` (hoy ignora Presolicitud) y desplegarlo, lo que queda pendiente.
   - **Acciones de azafata con la grilla atrasada** (revisión de QA): mandan `expectedDestination` y el PATCH filtra por `cama_destino`. Si Admisión restableció y reconfiguró a otra cama, "Iniciar traslado" o "Habitación lista" dan 409 en vez de aplicarse sobre una cama que nadie preparó.
 - **"Ubicación actual" en la trayectoria** (`PatientJourney`). Era el destino del último traslado de MediFlow, así que un paciente dado de alta seguía "en" esa cama. Caso consultado el 26/10: un paciente consolidado en la 405-02 el 15/09, dado de alta el 17/09, figuraba ahí hasta su reingreso del 22/10.
-  - Ahora, sin traslado en curso, sale del **mapa crudo de PROGAL** (`state.rawBeds`, sin los overlays de `mergeBeds`, que pasan a "Asignada" la cama de quien vuelve de cirugía): la cama donde está hoy, o "No internado" con "Última cama en MediFlow: X" debajo.
+  - Ahora, sin traslado en curso, sale del **mapa crudo de PROGAL** (`state.rawBeds`, sin los overlays de `mergeBeds`, que instalan en la cama nueva a quien vuelve de cirugía): la cama donde está hoy, o "No internado" con "Última cama en MediFlow: X" debajo.
   - Se rotula "Último destino" si no se sabe: el mapa no cargó, falló o vino parcial (`bedsError`), el paciente no tiene código, o (desde el detalle de la cama) la cama no tiene código de paciente.
   - Con un traslado en curso sigue mostrando "En curso".
   - `HistoryView` recibe `beds`; `BedsView` pasa la cama abierta.

@@ -81,4 +81,31 @@ assert(find(r, H825).cirugiaBloqueante?.estado === 'EN_DEVOLUCION', 'Regreso de 
 // 8) Terminales no entran al overlay.
 assert(buildCirugiaByBed([{ ...ops[1], estado: 'TOLERANCIA_EVALUADA' }, { ...ops[0], estado: 'CANCELADO' }]).size === 0, 'terminales afuera');
 
-console.log('OK — mergeBeds cirugía (pill + cirugiaBloqueante + prioridad en curso)');
+// 9) "Regreso de cirugía" con cambio de cama: el paciente queda INSTALADO (Ocupada) en la cama destino,
+//    no "Asignada" hasta "Iniciar dieta" (caso 13/11/2026: MAIOLA y SIMONATO, pasados a UTI en PROGAL
+//    durante la cirugía).
+{
+  const UTI8 = 'Unidad Terapia Intensiva HPR - Cama 08', ITR4 = 'Internación Transitoria HPR - Cama 04';
+  const op = { id: 'cx-m', estado: 'EN_DEVOLUCION', camaOrigen: ITR4, camaDestino: UTI8, pacienteCodigo: '3001', pacienteNombre: 'PACIENTE M', updatedAt: new Date().toISOString() };
+  // 9a) PROGAL ya lo tiene en la destino y la origen quedó libre.
+  let m = mergeBeds([
+    mk({ label: ITR4, status: AV }),
+    mk({ label: UTI8, status: OCC, patientCode: '3001', patientName: 'PACIENTE M', diagnosis: 'Trasplante hepático' }),
+  ], [], undefined, undefined, buildCirugiaByBed([op]));
+  assert(find(m, UTI8).status === OCC, 'destino con el paciente en PROGAL: Ocupada (instalado), no Asignada');
+  assert(find(m, UTI8).patientName === 'PACIENTE M' && find(m, UTI8).diagnosis === 'Trasplante hepático', 'destino conserva al paciente y su enrich');
+  assert(find(m, UTI8).cirugia?.role === 'destino' && find(m, UTI8).cirugia?.estado === 'EN_DEVOLUCION', 'destino lleva la pill Cx para Iniciar dieta');
+  assert(find(m, ITR4).status === AV && !find(m, ITR4).patientCode, 'la origen libre en PROGAL no se toca');
+  // 9b) PROGAL todavía lo muestra en la origen: se muda con su enrich y la origen queda en preparación.
+  m = mergeBeds([
+    mk({ label: ITR4, status: OCC, patientCode: '3001', patientName: 'PACIENTE M', diagnosis: 'Trasplante hepático' }),
+    mk({ label: UTI8, status: AV }),
+  ], [], undefined, undefined, buildCirugiaByBed([op]));
+  assert(find(m, UTI8).status === OCC && find(m, UTI8).patientCode === '3001' && find(m, UTI8).diagnosis === 'Trasplante hepático', 'se instala en la destino con su enrich');
+  assert(find(m, ITR4).status === 'En preparación' && !find(m, ITR4).patientCode && !find(m, ITR4).cirugia, 'la origen se libera (en preparación, sin pill)');
+  // 9c) La destino la ocupa OTRO paciente en PROGAL: no se pisa.
+  m = mergeBeds([mk({ label: UTI8, status: OCC, patientCode: '9999', patientName: 'OTRO' })], [], undefined, undefined, buildCirugiaByBed([op]));
+  assert(find(m, UTI8).patientCode === '9999' && find(m, UTI8).status === OCC, 'no pisa a otro ocupante');
+}
+
+console.log('OK — mergeBeds cirugía (pill + cirugiaBloqueante + prioridad en curso + regreso a otra cama instalado)');
