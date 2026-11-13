@@ -8,6 +8,12 @@
         { "key": "Service-Worker-Allowed", "value": "/" },
         { "key": "Cache-Control", "value": "no-cache" }
       ]
+    },
+    {
+      "source": "/(logo|badge).svg",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }
+      ]
     }
   ],
   "rewrites": [
@@ -24,7 +30,7 @@
     },
     {
       "path": "/api/cron-trigger-testing",
-      "schedule": "5,20,35,50 * * * *"
+      "schedule": "5,20,35,50 11-23 * * 1-5"
     }
   ],
   "functions": {

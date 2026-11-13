@@ -98,6 +98,7 @@ const routes: Record<string, () => Promise<any>> = {
   '/api/ticket-events': () => import('./api/ticket-events'),
   '/api/ticket-observations': () => import('./api/ticket-observations'),
   '/api/test':          () => import('./api/test'),
+  '/api/version':       () => import('./api/version'),
   '/api/users':              () => import('./api/users'),
   '/api/validate-location':  () => import('./api/validate-location'),
   '/api/isolations':         () => import('./api/isolations'),

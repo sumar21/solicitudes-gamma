@@ -8,7 +8,7 @@ de cada diseño, ver [decisiones.md](../arquitectura/decisiones.md); para el "qu
 > **Supabase** (`public.*`), no en SharePoint. Las lecturas del cliente entran por **Realtime**
 > (canales `*-live`) bajo RLS filtrada por un "pase" JWT ES256 (`/api/supabase-token`); las
 > escrituras van por los endpoints `api/*` con `service_role`. **Sigue en SharePoint/Gamma:** el
-> mapa de camas (`/api/beds`, único que aún pollea, 60s), los usuarios/login (`00.Usuarios`), el
+> mapa de camas (`/api/beds`, único que aún pollea, 60s y solo con la pestaña a la vista), los usuarios/login (`00.Usuarios`), el
 > enrich del mapa (`12.EnrichCamas`) y la validación de ubicación. Muchos síntomas nuevos nacen de
 > esa capa: entorno mal seteado, pase vencido, canal Realtime caído, build viejo cacheado.
 
@@ -32,7 +32,8 @@ de cada diseño, ver [decisiones.md](../arquitectura/decisiones.md); para el "qu
 | Otro usuario movió un traslado / cargó una comanda / marcó limpia y **mi pantalla no se refresca** | Se cayó el canal Realtime, o el pase JWT venció y la reconexión quedó anónima (sin RLS no ve nada) | En consola, ver que los canales `traslados-live` ([useHospitalState.ts:1307](../hooks/useHospitalState.ts)), `limpiezas-live` (:1319) y `comandas-live` (:1335) lleguen a estado `SUBSCRIBED`. Al (re)suscribir se hace **catch-up** con un fetch completo (Realtime NO reenvía lo perdido). Si sigue mudo, forzar F5 |
 | **Nada llega por Realtime pese a estar logueado** | El "pase" ES256 (`/api/supabase-token`) no se mintea o venció (TTL 1h) y el cliente quedó como `anon` → RLS lo deja sin filas | Ver que `GET /api/supabase-token` devuelva 200 y que el fetch use `cache: 'no-store'` ([supabase.ts:47](../lib/supabase.ts)) — sin eso el browser sirve un pase viejo vencido en loop. Confirmar que `mediflow_token` esté en localStorage (sin él, el pase es `''` = anon, fallback seguro) |
 | **Una tabla NO empuja cambios** aunque las otras sí | La tabla no está en la publicación `supabase_realtime` (una migración la agrega) | Las 4 publicadas hoy: `traslados` ([migración …163447:74](../supabase/migrations/20260729163447_traslados_dominio_inicial.sql)), `comandas`, `limpiezas`, `notificaciones`. Si se agrega una tabla nueva y no se refleja en vivo, falta el `alter publication supabase_realtime add table …` (y `replica identity` para ver el `old_record` en UPDATE/DELETE) `(verificar en la migración correspondiente)` |
-| **El mapa de camas no se actualiza en vivo** al mover un paciente en PROGAL | Esperado: **beds NO usa Realtime**, sigue con poll cada 60s (`POLL_BEDS_MS`) contra `/api/beds` (Gamma/SharePoint) | Esperar hasta ~60s. Beds es el único dominio que no se migró a Realtime |
+| **El mapa de camas no se actualiza en vivo** al mover un paciente en PROGAL | Esperado: **beds NO usa Realtime**, sigue con poll cada 60s (`POLL_BEDS_MS`) contra `/api/beds` (Gamma/SharePoint) | Esperar hasta ~60s. Beds es el único dominio que no se migró a Realtime. Con la pestaña oculta no pollea: se actualiza al volver |
+| Al volver a MediFlow después de un rato en otra ventana, **el mapa, las limpiezas o la campanita tardan un segundo en ponerse al día** | Esperado desde v20261113_1.17.0: con la pestaña oculta (minimizada, en otra pestaña o tapada por otra ventana) la app no pollea ni refetchea, para no gastar requests de Vercel; al volver trae todo en el acto. **Los traslados y su ding siguen en vivo** también en segundo plano | Si después de ~5 s sigue viejo: recargar. Si pasa con la pestaña a la vista, no es esto: revisar Realtime y `/api/beds` como en las filas de arriba |
 | Tras cortar y reconectar la red, la grilla queda **desincronizada** | Realtime no reenvía eventos perdidos durante el corte; la reconciliación es el fetch de catch-up al volver a `SUBSCRIBED` | Verificar que al reconectar se dispare el refetch (`fetchTickets`/`fetchCleanings`/`triggerMealRefetch` en el callback de `.subscribe`). Si no reconcilia, F5 fuerza el fetch completo |
 
 ## Entorno TESTING / PRODUCTIVO (aislamiento por columna)
@@ -61,6 +62,12 @@ de cada diseño, ver [decisiones.md](../arquitectura/decisiones.md); para el "qu
 |---------|----------------|---------------------|
 | Un usuario reporta un comportamiento **que ya se arregló** hace deploys | Corre un **build viejo cacheado** (no recargó / SW sirvió el bundle anterior) | Mirar el **badge de versión** en login/sidebar del usuario, y la columna `version` de sus últimas escrituras en Supabase. `APP_VERSION` (hoy `v20260731_1.0.1`, [version.ts:11](../lib/version.ts)) se estampa en cada escritura transaccional (traslados/limpiezas/comandas). Una fila con `version` vieja o `''`/NULL (pre-feature) = ese cliente no recargó → pedir hard-refresh / reinstalar PWA |
 | Quiero **saber quién corre qué versión** | La columna `version` está en todas las tablas transaccionales y en `push_subscriptions` | Query por `version` en `public.traslados`/`limpiezas`/`comandas` filtrando por `entorno`. El badge del sidebar muestra la versión corriendo en ese cliente |
+
+### El aviso de versión nueva no aparece o vuelve a aparecer
+
+- **`GET /api/version` devuelve la versión del deploy.** Si no contesta 200 con formato `vYYYYMMDD_<semver>`, el aviso no abre: una falla nunca abre ni cierra el aviso.
+- **Reaparece después de "Actualizar ahora":** el SW nuevo no llegó a instalarse y la recarga trajo el precache viejo. Revisar `sw.js` en DevTools → Application → Service Workers.
+- **El número no cambió después de un deploy:** no se bumpeó `APP_VERSION` en ese deploy: el aviso compara versiones, no builds.
 
 ## Limpieza de camas (`public.limpiezas` / overlay "Opción B")
 
