@@ -467,7 +467,10 @@ export const PERMISSIONS = [
 export type Permission = typeof PERMISSIONS[number];
 
 // Módulos visibles para el rol (Acceso_RT). Drive el sidebar / vistas.
-export const ROLE_MODULES = ['Home','Operativa','Historial','Mapa de Camas','Gestion Limpieza','Gestion Comandas','Configuracion'] as const;
+// 'Gestion Cirugia' (16/11/2026, pedido de Gamma): SOLO la solapa Operativa → Cirugías, sin Traslados ni
+// Limpiezas — para el Camillero de cirugía, que marca "En traslado a cirugía" en el momento en que se lleva
+// al paciente. Mismo patrón que 'Gestion Limpieza' (solapa de Operativa con módulo propio).
+export const ROLE_MODULES = ['Home','Operativa','Historial','Mapa de Camas','Gestion Limpieza','Gestion Cirugia','Gestion Comandas','Configuracion'] as const;
 export type RoleModule = typeof ROLE_MODULES[number];
 
 export interface User {

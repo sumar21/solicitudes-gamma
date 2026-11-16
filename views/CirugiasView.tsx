@@ -273,8 +273,9 @@ export const CirugiasView: React.FC<Props> = ({
           </Button>
         ) : null;
       case 'VAN_A_BUSCAR':
-        // El camillero llegó y la enfermera ENTREGA al paciente ("se lo llevó"). Acción de
-        // Enfermería (también en el mapa), expuesta acá para un rol que gestione todo.
+        // El camillero se lleva al paciente. Desde el 16/11/2026 lo marca el CAMILLERO DE CIRUGÍA en el
+        // momento (rol con el módulo 'Gestion Cirugia', que entra solo a esta solapa); antes lo marcaba
+        // Enfermería desde el mapa, que lo sigue teniendo para quien conserve el permiso.
         return can(currentUser, 'cirugia_entregar') ? (
           <Button size="sm" disabled={p} onClick={() => withPending(c.id, () => onEnTraslado(c.id))}
             className="h-8 text-[10px] uppercase font-bold tracking-tight bg-yellow-500 hover:bg-yellow-600 text-white">

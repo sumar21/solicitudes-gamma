@@ -1710,3 +1710,41 @@ Helper en [lib/visibilidad.ts](../../lib/visibilidad.ts). Versión `v20261113_1.
 **De paso:** el heartbeat del push usa el usuario vigente: antes regrababa la suscripción con los sectores del login. El origen automático no corre con la pestaña oculta ni con un mapa de más de 180 s, que el servidor rechaza: antes quemaba sus 3 intentos.
 
 **Costo asumido:** el banner de notificaciones sin leer >20 min puede tardar hasta 5 min más en aparecer (ninguna fila cambia al cumplir los 20 min). En TESTING, el enrich queda quieto de noche y los fines de semana.
+
+## 36. Camillero de cirugía: módulo propio de la solapa Cirugías (2026-11-16)
+
+**Qué:** "En traslado a cirugía" lo marca el **Camillero de cirugía**, no Enfermería. Para eso hay un módulo
+nuevo, `Gestion Cirugia` ("Operativa · Cirugías" en el ABM), que da acceso SOLO a la solapa Cirugías. El
+permiso es el que ya existía (`cirugia_entregar`), y el servidor ya lo exigía.
+
+**Por qué:** pedido de Gamma (Julieta Degani, con Anabel). El personal no marcaba los pasos a tiempo y eso
+demoraba el resto del circuito o terminaba en llamadas. El camillero es quien se lleva al paciente: es el que
+puede marcarlo en tiempo real.
+
+**Por qué un módulo y no Operativa:** con Operativa el camillero vería la lista de traslados, y Cirugías solo se
+podía ver con Operativa (o con Mapa de Camas, que tampoco abría Operativa). Es el mismo patrón que `Gestion
+Limpieza` (Limpiezas como solapa, ver [plan-3-features.md](../planes/plan-3-features.md)): módulo propio, mismo `value` para siempre y aterrizaje en su solapa.
+
+**ABM:** la solapa de permisos del módulo repite los `cirugia_*` del circuito (buscar, en traslado, operar,
+regreso, iniciar dieta, cancelar), porque un grupo solo aparece si su módulo está tildado. Al destildar un
+módulo, ahora solo se quitan los permisos que no estén en otro módulo que siga tildado (antes destildar
+Cirugías le habría sacado "En cirugía" a un rol que sigue con Operativa).
+
+**Puesta en marcha (datos, no código):** crear el rol (módulo Operativa · Cirugías + `cirugia_entregar` +
+`notif_cirugia_camillero`) y el usuario de los camilleros; destildar `cirugia_entregar` de Enfermeria. La
+tabla `roles` es una sola para TESTING y producción: destildar a Enfermería antes de que el código esté en
+producción deja el paso sin nadie que lo marque.
+
+**De paso:** la campanita aparece para cualquier rol que reciba algún aviso (`receivesAnyNotif`). Antes eran 4
+tipos de traslados/dietas, y al camillero, que solo recibe avisos de cirugía, le crecía el cartel de "sin
+confirmar hace más de 20 minutos" sin campanita donde verlos (de los roles activos al 16/11, ninguno más cambia:
+todos los que reciben avisos ya tenían alguno de esos 4). Y al loguearse, la solapa de Operativa vuelve a Traslados: si antes en la misma pestaña
+entró el camillero, el siguiente usuario aterrizaba en Cirugías.
+
+**Versiones:** develop `v20261116_1.18.0`; en producción salió el 16/11 como hotfix `v20261116_1.15.7`, sin el
+rediseño (en `main` la aclaración del mapa usa los estilos previos al Estilo 1).
+
+**Costo asumido:** el servidor exige el orden Búsqueda → En traslado → En cirugía. Si el camillero no marca,
+Quirófano no puede marcar "En cirugía" hasta que alguien con `cirugia_entregar` (supervisión) lo destrabe.
+Alternativa no hecha (a decidir con Gamma): dejar que Quirófano marque "En cirugía" desde "Búsqueda" y
+registrar el "En traslado" como no marcado.

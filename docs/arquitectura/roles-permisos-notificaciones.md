@@ -36,6 +36,9 @@ Referencia para **QA de permisos** y soporte: qué módulos y permisos existen, 
 - `canReceiveNotif(user, type)` → gatea la **campanita in-app** client-side vía `NOTIF_TYPE_TO_PERMISSION`.
   El servidor tiene el MISMO map (a propósito duplicado) en `api/push-utils.ts:140` y en la Edge Function
   `supabase/functions/notify-push/index.ts:42` → gatea el **envío real del push**.
+- `receivesAnyNotif(user)` → muestra el **ícono de la campanita** (y el aviso de notificaciones bloqueadas) si el rol
+  recibe algún tipo. Hasta el 16/11/2026 la campanita salía solo con 4 tipos de traslados/dietas, y un rol con
+  solo avisos de cirugía (el Camillero) no tenía dónde verlos.
 
 ---
 
@@ -51,6 +54,7 @@ persiste NO cambia aunque el label del ABM sí (`views/RoleManagementView.tsx:32
 | `Historial` | Historial | Auditoría + Trayectoria (`HistoryView`, `PatientJourney`) | `hasModule` |
 | `Mapa de Camas` | Mapa de Camas | Grilla de camas + detalle paciente + carga de comandas (`BedsView`) | `hasModule` |
 | `Gestion Limpieza` | **Operativa · Limpiezas** | Vista de supervisión de limpiezas (`CleaningManagementView`) | `hasModule` |
+| `Gestion Cirugia` | **Operativa · Cirugías** | SOLO la solapa Cirugías de Operativa (`CirugiasView`), sin Traslados ni Limpiezas. Pensado para el **Camillero de cirugía** (16/11/2026). Un rol con solo este módulo aterriza ahí | `hasModule` |
 | `Gestion Comandas` | Gestión de Comandas | Panel de comandas + planificación de menú (`ComandasManagementView`) | `hasModule` |
 | `Configuracion` | Configuración | ABM de Usuarios y Roles (`UserManagementView`, `RoleManagementView`) | `hasModule` |
 
@@ -58,9 +62,16 @@ persiste NO cambia aunque el label del ABM sí (`views/RoleManagementView.tsx:32
 > dentro de Operativa** (`operativaSubview` en `useHospitalState`). El módulo `Gestion Limpieza` sigue
 > existiendo como permiso independiente (label "Operativa · Limpiezas" en el ABM). El value NO se tocó
 > para no migrar los roles existentes. `ViewMode` ya no incluye `CLEANINGS` (`types.ts:335-339`).
+>
+> **Mismo patrón para Cirugías (16/11/2026):** la solapa Cirugías se ve con `Operativa`, con `Mapa de Camas`
+> (si además entra a Operativa) o con el módulo propio `Gestion Cirugia`. Este último existe para que el
+> Camillero de cirugía marque su paso sin ver la lista de traslados. Su solapa de permisos en el ABM repite
+> los `cirugia_*` del circuito (un permiso vale igual desde la solapa en que se tilde); por eso, al
+> destildar un módulo, el ABM conserva los permisos que también están en otro módulo que sigue tildado.
 
 Landing tras login = **primer módulo accesible** en el orden Home → Operativa → Mapa → Historial →
-Limpieza → Comandas. Enfermería/Catering (solo Mapa) aterrizan directo en Mapa de Camas.
+Limpieza → Cirugías → Comandas. Enfermería/Catering (solo Mapa) aterrizan directo en Mapa de Camas; un rol
+sin Operativa que llega por Limpieza o por Cirugías (el Camillero) abre esa solapa; el resto, Traslados.
 
 ---
 
@@ -125,6 +136,15 @@ Un permiso por acción de la máquina de estados (`cirugia_listo`, `cirugia_busc
 | `cirugia_previa` | "Ya se operó (fuera de MediFlow)" y su "Deshacer": registra una cirugía previa de la internación y saca la "Q" — **Coordinación** (26/10/2026, pedido de Gamma: no Enfermería) | UI (`App.tsx` → `BedsView`) + `api/cirugia.ts` (POST `previa`, PATCH `ANULAR_PREVIA`), con sector |
 
 "Volver un paso" no tiene permiso propio: pide el del paso que se deshace (`CIRUGIA_PERMISO_DEL_PASO`).
+
+**Quién marca cada paso** (pedido de Gamma del 16/11/2026, Julieta Degani / Anabel): "En traslado a cirugía"
+(`cirugia_entregar`) lo marca el **Camillero de cirugía** en el momento en que se lleva al paciente, desde
+Operativa → Cirugías (rol con el módulo `Gestion Cirugia`, `cirugia_entregar` y `notif_cirugia_camillero`
+para enterarse de a quién buscar). Sale del circuito de Enfermería: se le destilda `cirugia_entregar` al rol
+Enfermeria, y en el mapa la cama en "Búsqueda para cirugía" muestra "El camillero registra 'En traslado a
+cirugía'…" en vez del botón. El servidor exige el orden (Búsqueda → En traslado → En cirugía), así que si el
+camillero no lo marca, Quirófano no puede marcar "En cirugía": quien conserve `cirugia_entregar`
+(supervisión) es el respaldo.
 
 ### 3.3. Gestión de Comandas — planificación de menú
 

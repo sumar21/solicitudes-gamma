@@ -571,6 +571,37 @@ privilegio hardcodeado por rol). **Roles → Supabase `public.roles`**; **Usuari
 
 ---
 
+## 8. Rol CAMILLERO DE CIRUGÍA — Marcar "En traslado a cirugía" (16/11/2026)
+
+Pedido de Gamma: Enfermería no marcaba a tiempo el paso y eso demoraba el resto del circuito o terminaba en
+llamadas. Ahora lo marca el camillero, que es quien se lleva al paciente, en el momento.
+
+### CU-CAM-01 — Ir a buscar al paciente y marcar "En traslado a cirugía"
+
+- **Actor:** rol con el módulo **Operativa · Cirugías** (`Gestion Cirugia`) + `cirugia_entregar` + `notif_cirugia_camillero`.
+- **Pasos:** Quirófano marca "Búsqueda para cirugía" → al camillero le llega el aviso "Búsqueda para cirugía — PACIENTE — 705 - 01" →
+  abre la app (entra directo a Operativa → Cirugías: no ve Traslados, Limpiezas ni el mapa) → en la fila en "Búsqueda" toca
+  **En traslado a cirugía** al llevarse al paciente.
+- **Resultado esperado:** la cirugía pasa a "En traslado a cirugía" con la hora del momento, la cama de origen queda libre para
+  limpiar y sale el aviso "Paciente retirado a cirugía". Las demás filas no tienen botones para el camillero.
+- **Permiso / gating:** `cirugia_entregar` (UI + `api/cirugia.ts`, con sector si el rol filtra por pisos; el camillero no filtra).
+
+### CU-CAM-02 — Corregir un "En traslado" marcado por error
+
+- **Actor:** el mismo camillero (`cirugia_entregar`).
+- **Pasos:** Operativa → Cirugías → fila en "En traslado a cirugía" → **Volver un paso** → confirmar.
+- **Resultado esperado:** vuelve a "Búsqueda para cirugía" y queda en la trayectoria como "Volvió un paso".
+
+### CU-CAM-03 (borde) — Enfermería ya no marca el paso
+
+- **Actor:** rol Enfermeria sin `cirugia_entregar`.
+- **Pasos:** Mapa de Camas → cama con la cirugía en "Búsqueda para cirugía".
+- **Resultado esperado:** sin botón; el bloque de cirugía dice "El camillero registra 'En traslado a cirugía' cuando se lleva al
+  paciente". Si el camillero no lo marca, Quirófano no puede marcar "En cirugía" (el servidor exige el orden): lo destraba
+  quien conserve `cirugia_entregar` (supervisión).
+
+---
+
 ## Apéndice A — Quién dispara cada paso del traslado
 
 | Transición | Estado destino | Permiso | Quién (rol / piso) |
@@ -598,4 +629,4 @@ privilegio hardcodeado por rol). **Roles → Supabase `public.roles`**; **Usuari
 - **Realtime, no poll**: traslados / limpiezas / comandas se actualizan solos (canales `*-live`). **Beds** es el único con poll (60s). Al reconectar la red hay catch-up por refetch — Realtime no reenvía lo perdido.
 - **Aislamiento de entorno**: TESTING y PRODUCTIVO comparten proyecto Supabase; la RLS de lectura por el "pase" JWT ES256 (`/api/supabase-token`) impide que un entorno vea filas del otro. Verificar que el claim `entorno` del pase sea el correcto.
 - **Versionado de build**: cada escritura estampa `APP_VERSION` (`lib/version.ts`) en la columna `version`; badge en login/sidebar. Sirve para detectar clientes con build viejo cacheado.
-- **Feature planificada (NO construida)**: "Traslados a Cirugía" (`docs/plan-traslados-cirugia.html`) — es un plan, todavía no existe en la app. No testear como si estuviera.
+- **Cirugía (feature Cx)**: en producción desde el 27/08/2026. Escenarios en [escenarios-qa.md](escenarios-qa.md) (`QA-CX-*`); el camillero, en §8 de este documento.
