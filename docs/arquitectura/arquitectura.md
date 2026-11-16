@@ -485,7 +485,7 @@ Catálogo **cerrado** (`as const`). `can(user, perm)` gatea botones/mutaciones (
 | Configuración | `abm_usuarios`, `abm_roles` |
 | Notificaciones (una por tipo) | `notif_new_ticket`, `notif_pre_ticket` (también urgencias), `notif_ingreso_quirurgico`, `notif_status_update`, `notif_reception_confirmed`, `notif_por_consolidar` (**nuevo**: recordatorio de 15 min), `notif_diet_change`, `notif_fasting_change`, `notif_habitacion_limpia`, `notif_cirugia_*` (ver `types.ts`) |
 
-Módulos (`ROLE_MODULES`): `Home`, `Operativa`, `Historial`, `Mapa de Camas`, `Gestion Limpieza`, `Gestion Comandas`, `Configuracion`.
+Módulos (`ROLE_MODULES`): `Home`, `Operativa`, `Historial`, `Mapa de Camas`, `Gestion Limpieza`, `Gestion Cirugia` (solo la solapa Operativa → Cirugías: Camillero de cirugía, 16/11/2026), `Gestion Comandas`, `Configuracion`.
 
 ---
 

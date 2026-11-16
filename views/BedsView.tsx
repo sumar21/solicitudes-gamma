@@ -846,6 +846,13 @@ const CirugiaBedBlock: React.FC<{
             <ArrowRight className="w-4 h-4" /> {busy ? 'Registrando…' : 'En traslado a cirugía'}
           </button>
         )}
+        {/* Sin el permiso (Enfermería desde el 16/11/2026): el paso lo marca el Camillero de cirugía al
+            llevarse al paciente — se aclara para que nadie espere un botón que ya no le toca. */}
+        {cx.estado === 'VAN_A_BUSCAR' && !onCirugiaEnTraslado && (
+          <p className="text-[11px] font-medium text-slate-600">
+            El camillero registra "En traslado a cirugía" cuando se lleva al paciente.
+          </p>
+        )}
         {puedoTolerancia && onCirugiaTolerancia && (
           <button disabled={busy}
             onClick={async () => {

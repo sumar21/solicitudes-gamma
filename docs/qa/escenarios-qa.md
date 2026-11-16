@@ -1124,3 +1124,18 @@ Diseño en [arquitectura.md §48](../arquitectura/arquitectura.md). **Prerrequis
 - **Precondición**: operatoria en "En traslado a cirugía"; usuario con `cirugia_entregar`.
 - **Acción**: en Operativa → Cirugías (2000/1440/1280/390) tocar "Volver un paso" → confirmar. Repetir desde el detalle de la cama en el mapa.
 - **Resultado esperado**: tocar "Sí, volver" dos veces o desde dos dispositivos retrocede **un solo** paso (el segundo recibe "La cirugía cambió de estado"). Queda en "Búsqueda para cirugía", la hora de "Retirado" desaparece y el timeline muestra en ámbar "Volvió un paso: En traslado a cirugía → Búsqueda para cirugía". Sin push. El primer toque solo pide confirmación. Sin `cirugia_entregar` no aparece el botón. En "Listo para cirugía" no hay botón (se cancela).
+
+### QA-CX-10 · Camillero de cirugía: entra solo a Cirugías y marca "En traslado"
+- **Precondición**: usuario con un rol de módulo único **Operativa · Cirugías** (`Gestion Cirugia`) + `cirugia_entregar` + `notif_cirugia_camillero`; una cirugía en "Búsqueda para cirugía".
+- **Acción**: loguearse (390 y 1440) → mirar el menú y la solapa → tocar "En traslado a cirugía" en la fila en "Búsqueda".
+- **Resultado esperado**: aterriza en Operativa → Cirugías; el menú tiene solo Operativa y no hay barra de solapas (no ve Traslados ni Limpiezas). Solo la fila en "Búsqueda" tiene botón. Al tocarlo pasa a "En traslado a cirugía" y sale el push "Paciente retirado a cirugía". Cuando Quirófano marca "Búsqueda para cirugía", al camillero le llega el push con paciente y cama.
+
+### QA-CX-11 · Enfermería sin `cirugia_entregar` ve la aclaración, no el botón
+- **Precondición**: rol Enfermeria sin `cirugia_entregar`; una cirugía en "Búsqueda para cirugía" en su piso.
+- **Acción**: Mapa de Camas → abrir esa cama.
+- **Resultado esperado**: pill "Cx · Búsqueda para cirugía", sin botón "En traslado a cirugía" y con el texto "El camillero registra 'En traslado a cirugía' cuando se lleva al paciente". Con el permiso, el botón aparece y el texto no.
+
+### QA-CX-12 · ABM: el módulo Cirugías y los permisos compartidos
+- **Precondición**: usuario con `abm_roles`.
+- **Acción**: Nuevo rol → tildar Operativa y **Operativa · Cirugías** → en la solapa Operativa tildar "En cirugía" → ir a la solapa Cirugías → volver a General y destildar Operativa · Cirugías → mirar la solapa Operativa. **Cancelar** (no guardar).
+- **Resultado esperado**: aparece la solapa **Cirugías** con los 6 pasos y "En cirugía" ya tildado (es el mismo permiso). Al destildar el módulo, "En cirugía" sigue tildado en Operativa. Un rol con solo Operativa · Cirugías se guarda y su lista de roles muestra ese acceso.
