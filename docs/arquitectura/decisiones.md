@@ -1741,6 +1741,9 @@ confirmar hace más de 20 minutos" sin campanita donde verlos (de los roles acti
 todos los que reciben avisos ya tenían alguno de esos 4). Y al loguearse, la solapa de Operativa vuelve a Traslados: si antes en la misma pestaña
 entró el camillero, el siguiente usuario aterrizaba en Cirugías.
 
+**Versiones:** develop `v20261116_1.18.0`; en producción salió el 16/11 como hotfix `v20261116_1.15.7`, sin el
+rediseño (en `main` la aclaración del mapa usa los estilos previos al Estilo 1).
+
 **Costo asumido:** el servidor exige el orden Búsqueda → En traslado → En cirugía. Si el camillero no marca,
 Quirófano no puede marcar "En cirugía" hasta que alguien con `cirugia_entregar` (supervisión) lo destrabe.
 Alternativa no hecha (a decidir con Gamma): dejar que Quirófano marque "En cirugía" desde "Búsqueda" y
