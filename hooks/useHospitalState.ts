@@ -561,8 +561,8 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
   //
   // Cambio de cama al volver de cirugía = la APP sostiene el destino hasta que la operatoria cierra.
   // El destino ya NO se elige: lo detecta el cron desde PROGAL (graba cama_destino). En EN_DEVOLUCION
-  // / RECIBIDA con cama distinta: se MUEVE el paciente + enrich a la cama DESTINO y se LIBERA la
-  // origen, aunque Gamma la siga reportando Ocupada. Al cerrar (TOLERANCIA_EVALUADA) la operatoria
+  // con cama distinta: el paciente queda INSTALADO (Ocupada) en la cama DESTINO, con su enrich, y se
+  // LIBERA la origen aunque Gamma la siga reportando Ocupada. Al cerrar (TOLERANCIA_EVALUADA) la operatoria
   // sale de la cola y el mapa vuelve a confiar en PROGAL. Sin cambio de cama (o antes de la
   // devolución) es solo la pill Cx: nadie se mueve, el paciente sigue en su cama.
   if (cirugias && cirugias.size) {
@@ -626,9 +626,15 @@ export function mergeBeds(gammaBeds: Bed[], activeTickets: Ticket[], cleanings?:
       if (origin && originIsOurs) copyPatientToBed(origin, dest);
       dest.patientName = dest.patientName || info.pacienteNombre || '';
       dest.patientCode = dest.patientCode || info.pacienteCodigo || '';
-      // EN_DEVOLUCION ("Regreso de cirugía") = el paciente vuelve a esta cama (Asignada/llegando). Al
-      // cerrar con "Iniciar dieta" la operatoria sale del overlay y vuelve a mandar el estado de PROGAL.
-      dest.status = BedStatus.ASSIGNED;
+      // EN_DEVOLUCION ("Regreso de cirugía") es el último paso físico: desde el 20/08 no existe "Recibida".
+      // El paciente YA está en la cama nueva → se muestra INSTALADO (Ocupada, con sus datos y la pill Cx de
+      // "Iniciar dieta"). Hasta el 13/11/2026 quedaba "Asignada — traslado en curso" hasta "Iniciar dieta"
+      // (horas: mediana 1,5 h), aunque PROGAL ya lo tuviera ahí. Era un resto del flujo con "Recibida"
+      // (Regreso = llegando → Asignada; Recibida = recibido → Ocupada). Caso 13/11: MAIOLA y SIMONATO,
+      // pasados a UTI en PROGAL durante la cirugía, figuraban internados en quirófano y "desaparecieron" de
+      // su cama al marcar el regreso. Al cerrar con "Iniciar dieta" la operatoria sale del overlay y vuelve a
+      // mandar PROGAL.
+      dest.status = BedStatus.OCCUPIED;
       dest.cirugia = info;
       if (origin && originIsOurs) {
         clearPatientFromBed(origin);

@@ -820,10 +820,11 @@ const CirugiaBedBlock: React.FC<{
             <span className="text-[10px] font-bold text-violet-700">Cama destino</span>
           )}
         </div>
-        {/* Cama DESTINO: llega un paciente de otra cama → mostrar quién y de dónde. */}
+        {/* Cama DESTINO: el paciente volvió de cirugía a esta cama (ya instalado, ver mergeBeds) → quién y
+            de qué cama venía. */}
         {soyDestino && (
           <p className="text-[11px] font-medium text-slate-600">
-            Llega de cirugía: <strong>{cx.pacienteNombre ?? 'paciente'}</strong> (viene de {formatBedName(cx.camaOrigen)})
+            Volvió de cirugía: <strong>{cx.pacienteNombre ?? 'paciente'}</strong> (antes en {formatBedName(cx.camaOrigen)})
           </p>
         )}
         {/* Cama ORIGEN de un cambio: el paciente NO vuelve acá, se fue a la destino. */}
