@@ -837,6 +837,8 @@ export const useHospitalState = () => {
       // Limpiezas dejó de ser vista propia: es una solapa de Operativa. Un rol que SOLO
       // tenga 'Gestion Limpieza' aterriza en Operativa; la solapa la abre el efecto de rol.
       if (modules.includes('Gestion Limpieza')) return 'REQUESTS';
+      // Lo mismo el Camillero de cirugía ('Gestion Cirugia'): entra a Operativa → Cirugías.
+      if (modules.includes('Gestion Cirugia')) return 'REQUESTS';
       if (modules.includes('Gestion Comandas')) return 'COMANDAS';
     }
     return 'HOME';
@@ -3006,12 +3008,16 @@ export const useHospitalState = () => {
         : mods.includes('Mapa de Camas') ? 'BEDS'
         : mods.includes('Historial') ? 'HISTORY'
         : mods.includes('Gestion Limpieza') ? 'REQUESTS'
+        : mods.includes('Gestion Cirugia') ? 'REQUESTS'
         : mods.includes('Gestion Comandas') ? 'COMANDAS'
         : 'HOME';
       setCurrentView(landingView);
-      // Si llegó a Operativa SOLO por tener Limpieza, abrirle esa solapa: la de Traslados
-      // no la puede ver y le quedaría una pantalla vacía.
+      // Si llegó a Operativa SOLO por tener Limpieza (o Cirugías, el Camillero), abrirle esa solapa: la
+      // de Traslados no la puede ver y le quedaría una pantalla vacía. Al resto, Traslados: la solapa NO
+      // se resetea al salir, y si antes en esta pestaña entró el Camillero, Admisión aterrizaba en Cirugías.
       if (!mods.includes('Operativa') && mods.includes('Gestion Limpieza')) setOperativaSubview('limpiezas');
+      else if (!mods.includes('Operativa') && mods.includes('Gestion Cirugia')) setOperativaSubview('cirugias');
+      else setOperativaSubview('traslados');
 
       // Pre-fetch beds + tickets so HOSTESS view has data immediately
       fetchBeds();

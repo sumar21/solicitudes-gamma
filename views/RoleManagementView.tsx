@@ -45,6 +45,8 @@ const MODULES = [
   // hoy lo tienen siguen funcionando sin migrar una sola fila. Solo cambia el label, porque
   // Limpiezas dejó de ser una entrada del sidebar y pasó a ser una solapa dentro de Operativa.
   { label: 'Operativa · Limpiezas', value: 'Gestion Limpieza' },
+  // Solo la solapa Cirugías de Operativa, sin Traslados ni Limpiezas (Camillero de cirugía, 16/11/2026).
+  { label: 'Operativa · Cirugías', value: 'Gestion Cirugia' },
   { label: 'Gestión de Comandas', value: 'Gestion Comandas' },
   { label: 'Configuración', value: 'Configuracion' },
 ];
@@ -93,6 +95,22 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
   },
 
   {
+    // Módulo propio de la solapa Cirugías (16/11/2026): para un rol que entra SOLO a esa solapa, como el
+    // Camillero de cirugía. Son los mismos permisos que las solapas Operativa y Mapa de Camas (un permiso
+    // vale igual desde donde se tilde): se repiten acá porque un grupo solo aparece si su módulo está
+    // tildado, y sin esto un rol con solo este módulo no tendría dónde tildar sus pasos.
+    module: 'Gestion Cirugia', label: 'Cirugía — pasos del circuito (solapa Operativa · Cirugías)',
+    perms: [
+      { code: 'cirugia_buscar',     label: 'Búsqueda para cirugía (Quirófano despacha al camillero)' },
+      { code: 'cirugia_entregar',   label: 'En traslado a cirugía (Camillero: lo marca al llevarse al paciente)' },
+      { code: 'cirugia_operar',     label: 'En cirugía' },
+      { code: 'cirugia_devolver',   label: 'Regreso de cirugía' },
+      { code: 'cirugia_tolerancia', label: 'Iniciar dieta (paso final, cierra la operatoria)' },
+      { code: 'cirugia_cancelar',   label: 'Cancelar operatoria' },
+    ],
+  },
+
+  {
     module: 'Mapa de Camas', label: 'Mapa de Camas',
     perms: [
       { code: 'ver_dieta',    label: 'Ver comandas cargadas (Catering / Nutrición)' },
@@ -115,7 +133,7 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
       { code: 'cirugia_previa',   label: 'Registrar "Ya se operó (fuera de MediFlow)" (Coordinación; saca la "Q")' },
       { code: 'cirugia_volver_listo', label: 'Volver atrás un "Listo para cirugía" (anula la marca; también en Operativa → Cirugías)' },
       { code: 'cirugia_listo',    label: 'Marcar "listo para cirugía"' },
-      { code: 'cirugia_entregar', label: 'Registrar "en traslado a cirugía"' },
+      { code: 'cirugia_entregar', label: 'Registrar "en traslado a cirugía" (normalmente lo marca el Camillero de cirugía)' },
       { code: 'cirugia_tolerancia', label: 'Iniciar dieta (paso final, cierra la operatoria)' },
     ],
   },
@@ -167,6 +185,7 @@ const PERMISSION_GROUPS: { module: string; label: string; perms: { code: Permiss
 const PERM_TAB_MODULES: { key: string; label: string }[] = [
   { key: 'Operativa',       label: 'Operativa' },
   { key: 'Mapa de Camas',   label: 'Mapa de Camas' },
+  { key: 'Gestion Cirugia', label: 'Cirugías' },
   { key: 'Gestion Comandas', label: 'Comandas' },
   { key: 'Configuracion',   label: 'Configuración' },
 ];
@@ -275,9 +294,12 @@ export const RoleManagementView: React.FC<RoleManagementViewProps> = ({ currentU
       next.has(mod) ? next.delete(mod) : next.add(mod);
       const nextPerms = new Set(prev.selectedPermissions);
       if (!next.has(mod)) {
-        // Desactivar módulo → quitar sus permisos del Set.
+        // Desactivar módulo → quitar sus permisos del Set, SALVO los que también están en un grupo
+        // de otro módulo que sigue tildado (los cirugia_* se repiten en Operativa, Mapa de Camas y
+        // Cirugías): destildar Cirugías no le puede sacar "En cirugía" a un rol que sigue con Operativa.
+        const siguen = new Set(PERMISSION_GROUPS.filter(g => next.has(g.module)).flatMap(g => g.perms.map(p => p.code)));
         for (const group of PERMISSION_GROUPS) {
-          if (group.module === mod) group.perms.forEach(p => nextPerms.delete(p.code));
+          if (group.module === mod) group.perms.forEach(p => { if (!siguen.has(p.code)) nextPerms.delete(p.code); });
         }
       } else {
         // Reactivar módulo → restaurar los permisos que estaban al abrir el modal,

@@ -259,13 +259,16 @@ export default function App() {
   // Limpiezas vive DENTRO de Operativa como solapa, así que la entrada del sidebar se habilita
   // con cualquiera de los dos módulos. OJO: esto NO amplía acceso — cada solapa se gatea por
   // separado, así que un rol con solo Limpieza entra pero NO ve la lista de traslados.
-  const canViewOperativa = hasModule(state.currentUser, 'Operativa') || hasModule(state.currentUser, 'Gestion Limpieza');
+  // Lo mismo con Cirugías: el módulo 'Gestion Cirugia' (Camillero de cirugía) entra a Operativa
+  // viendo SOLO esa solapa.
+  const canViewOperativa = hasModule(state.currentUser, 'Operativa') || hasModule(state.currentUser, 'Gestion Limpieza') || hasModule(state.currentUser, 'Gestion Cirugia');
   const canSeeTraslados  = hasModule(state.currentUser, 'Operativa');
   const canSeeLimpiezas  = hasModule(state.currentUser, 'Gestion Limpieza');
-  // Cirugías vive como solapa de Operativa (feature Cirugía). El gating fino por permiso
-  // cirugia_* llega en F5/go-live; por ahora la ve cualquiera con Operativa o Mapa de Camas
-  // (así el Admin ve todo para testear). Ver contrato F4.
-  const canSeeCirugias   = hasModule(state.currentUser, 'Operativa') || hasModule(state.currentUser, 'Mapa de Camas');
+  // Cirugías vive como solapa de Operativa (feature Cirugía). La ve quien tenga Operativa, Mapa de
+  // Camas (si además entra a Operativa) o el módulo propio 'Gestion Cirugia'. Qué botones aparecen en
+  // cada fila lo decide el permiso cirugia_* de cada paso (CirugiasView), y el servidor lo vuelve a
+  // validar (api/cirugia.ts).
+  const canSeeCirugias   = hasModule(state.currentUser, 'Operativa') || hasModule(state.currentUser, 'Mapa de Camas') || hasModule(state.currentUser, 'Gestion Cirugia');
   // Solapas disponibles, en orden. La botonera solo aparece si hay más de una.
   const operativaTabDefs = ([
     canSeeTraslados && (['traslados', 'Traslados'] as const),
@@ -538,10 +541,10 @@ export default function App() {
           <TooltipContent>Referencias del mapa</TooltipContent>
         </Tooltip>
       )}
-      {(can(state.currentUser, 'notif_new_ticket')
-        || can(state.currentUser, 'notif_status_update')
-        || can(state.currentUser, 'notif_reception_confirmed')
-        || can(state.currentUser, 'notif_diet_change')) && (
+      {/* Campanita para quien reciba CUALQUIER notificación (mismo criterio que el aviso de "notificaciones
+          bloqueadas"). Antes eran solo 4 tipos: un rol que recibe solo avisos de cirugía (el Camillero, 16/11/2026)
+          no tenía dónde verlos y le crecía el cartel de "sin confirmar hace más de 20 minutos". */}
+      {receivesAnyNotif(state.currentUser) && (
         <Popover open={isNotificationsOpen} onOpenChange={(open) => { setIsNotificationsOpen(open); if (open) actions.handleOpenNotifications(); }}>
           <PopoverTrigger asChild>
             <Button type="button" variant="ghost" size="icon" className="relative text-muted-foreground" aria-label={noLeidas ? `Notificaciones (${noLeidas} sin leer)` : 'Notificaciones'}>

@@ -20,7 +20,7 @@ actuar, y suma el mapa de camas, las comandas de Nutrición y las cirugías.
   - *Traslados*: la grilla de traslados activos con un chip por estado (y Urgencias), búsqueda y las
     acciones de cada paso según el rol; "ver como" Admisión / Azafata para Admin y Admisión.
   - *Limpiezas*: limpiezas de cama pendientes y de rutina.
-  - *Cirugías*: el circuito de la cirugía paso a paso (buscar, entregar, operar, devolver).
+  - *Cirugías*: el circuito de la cirugía paso a paso (buscar, en traslado, operar, regreso, iniciar dieta).
 - **Historial**: traslados cerrados en modo lista (con rango de fechas) y la trayectoria de un paciente.
 - **Mapa de Camas**: la grilla de camas por sector sobre PROGAL, con el detalle del paciente
   (aislamientos, dieta, acompañante) y exportación a PDF.
@@ -51,6 +51,7 @@ actuar, y suma el mapa de camas, las comandas de Nutrición y las cirugías.
 | Azafata | Ejecuta los pasos físicos del traslado en sus pisos y marca camas limpias. |
 | Coordinación | Carga pre-tickets y urgencias. |
 | Enfermería / Catering | Consulta el mapa de camas (solo lectura). |
+| Camillero de cirugía | Entra solo a Operativa → Cirugías y marca "En traslado a cirugía" cuando se lleva al paciente. |
 | Nutrición | Carga y entrega comandas, planifica el menú. |
 | Admin | Todo, más la configuración de usuarios y roles. |
 

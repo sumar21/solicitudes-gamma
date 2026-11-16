@@ -121,7 +121,7 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
       {
         permission: "cirugia_entregar",
         title: "Cirugía: en traslado a cirugía",
-        description: "Registrá que el camillero se llevó al paciente. Pasa de 'Búsqueda para cirugía' a 'En traslado a cirugía' y la cama queda libre para limpiar.",
+        description: "Marcalo en el momento en que el camillero se lleva al paciente (lo registra el propio camillero). Pasa de 'Búsqueda para cirugía' a 'En traslado a cirugía' y la cama queda libre para limpiar.",
         scopeNote: "Si tu rol filtra por pisos, solo ves las cirugías de tus sectores.",
         uiLocation: "Operativa → Cirugías → solapa Activas → botón 'En traslado a cirugía'",
       },
@@ -258,7 +258,7 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
       {
         permission: "notif_cirugia_camillero",
         title: "Cirugía · Búsqueda para cirugía",
-        description: "Te avisa cuando el camillero sale a buscar al paciente.",
+        description: "Te avisa cuando quirófano manda a buscar a un paciente: a quién y en qué cama.",
       },
       {
         permission: "notif_cirugia_retirado",
@@ -435,7 +435,7 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
       {
         permission: "notif_cirugia_camillero",
         title: "Cirugía · Búsqueda para cirugía",
-        description: "Te avisa cuando el camillero sale a buscar al paciente.",
+        description: "Te avisa cuando quirófano manda a buscar a un paciente: a quién y en qué cama.",
       },
       {
         permission: "notif_cirugia_retirado",
@@ -801,7 +801,7 @@ export const HELP_CONTENT: Record<string, HelpModule> = {
       {
         permission: "abm_roles",
         title: "Asignar módulos de acceso a un rol",
-        description: "Tildá qué módulos ve el rol (Monitor, Operativa, Historial, Mapa de Camas, Comandas, Configuración). Si desactivás un módulo, se quitan sus permisos.",
+        description: "Tildá qué módulos ve el rol (Monitor, Operativa, Historial, Mapa de Camas, Operativa · Limpiezas, Operativa · Cirugías, Comandas, Configuración). 'Operativa · Cirugías' da solo la solapa Cirugías, sin Traslados (por ejemplo, para el camillero). Si desactivás un módulo, se quitan sus permisos, salvo los que también están en otro módulo que sigue tildado.",
         uiLocation: "Modal de rol → solapa General → 'Módulos de Acceso'",
       },
       {
