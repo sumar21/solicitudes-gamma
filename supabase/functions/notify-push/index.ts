@@ -14,14 +14,25 @@
  * Una fila puede emitir MÁS de una notificación (ej. un ingreso quirúrgico manda el NEW_TICKET normal
  * + un SURGICAL_ADMISSION a Enfermería) → la key incluye el `type` para que no colisionen.
  *
- * Secrets (supabase secrets set): SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, VAPID_PUBLIC_KEY,
- * VAPID_PRIVATE_KEY, VAPID_SUBJECT, WEBHOOK_SECRET.
+ * Secrets (supabase secrets set): VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT, WEBHOOK_SECRET.
+ * SUPABASE_URL y la secret key las inyecta Supabase solo (ver readSecretKey más abajo).
  */
 import webpush from 'npm:web-push@3.6.7';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
+// Secret key del proyecto (`sb_secret_…`). Supabase inyecta SUPABASE_SECRET_KEYS (JSON
+// `{ "default": "sb_secret_…" }`) y, solo por compatibilidad, el viejo SUPABASE_SERVICE_ROLE_KEY
+// (JWT legacy, que Supabase va a dar de baja). Se prefiere la nueva y la legacy queda de respaldo.
+function readSecretKey(): string {
+  try {
+    const keys = JSON.parse(Deno.env.get('SUPABASE_SECRET_KEYS') ?? '{}');
+    if (keys?.default) return String(keys.default);
+  } catch { /* JSON inválido → cae a la legacy */ }
+  return Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+}
+
 const SUPABASE_URL   = Deno.env.get('SUPABASE_URL') ?? '';
-const SERVICE_KEY    = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+const SERVICE_KEY    = readSecretKey();
 const VAPID_PUBLIC   = Deno.env.get('VAPID_PUBLIC_KEY') ?? '';
 const VAPID_PRIVATE  = Deno.env.get('VAPID_PRIVATE_KEY') ?? '';
 const VAPID_SUBJECT  = Deno.env.get('VAPID_SUBJECT') ?? 'mailto:admin@grupogamma.com';
