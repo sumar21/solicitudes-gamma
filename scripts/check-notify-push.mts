@@ -21,7 +21,8 @@ const wp = {
 export default wp;
 `);
 writeFileSync(join(tmp, 'supabase-stub.mjs'), `
-export function createClient() {
+export function createClient(_url, key) {
+  globalThis.__clientKey = key; // para verificar qué secret key resolvió la función
   const qb = (table) => {
     const api = {
       select() { return api; }, eq() { return api; }, in() { return api; }, delete() { return api; },
@@ -42,7 +43,9 @@ await build({
 });
 
 // ── "Deno" mínimo + base fake ────────────────────────────────────────────────
-const env: Record<string, string> = { VAPID_PUBLIC_KEY: 'pub', VAPID_PRIVATE_KEY: 'priv', SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'k' };
+// Supabase inyecta la secret key nueva como JSON en SUPABASE_SECRET_KEYS (clave `default`).
+const baseEnv: Record<string, string> = { VAPID_PUBLIC_KEY: 'pub', VAPID_PRIVATE_KEY: 'priv', SUPABASE_URL: 'http://x', SUPABASE_SECRET_KEYS: JSON.stringify({ default: 'k' }) };
+const env: Record<string, string> = { ...baseEnv };
 g.Deno = { env: { get: (k: string) => env[k] }, serve: (h: any) => { g.__handler = h; } };
 g.__sent = []; g.__inserts = [];
 g.__db = {
@@ -57,6 +60,23 @@ g.__db = {
     { endpoint: 'e-enf', keys: {}, user_id: '3', user_role: 'Enfermeria', assigned_areas: [], sede: 'HPR', last_seen_at: new Date().toISOString() },
   ],
 };
+// ── Secret key: prefiere SUPABASE_SECRET_KEYS (nueva); SUPABASE_SERVICE_ROLE_KEY (legacy) es respaldo ──
+// El módulo resuelve la key al cargarse, así que cada caso lo importa con un `?tag` distinto (instancia nueva).
+const { SUPABASE_SECRET_KEYS: _sinNueva, ...envSinNueva } = baseEnv;
+async function keyWith(e: Record<string, string>, tag: string) {
+  for (const k of Object.keys(env)) delete env[k];
+  Object.assign(env, e);
+  g.__clientKey = undefined;
+  await import(`${pathToFileURL(out).href}?${tag}`);
+  return g.__clientKey;
+}
+assert.equal(await keyWith(baseEnv, 'nueva'), 'k', 'toma la secret key nueva de SUPABASE_SECRET_KEYS.default');
+assert.equal(await keyWith({ ...envSinNueva, SUPABASE_SERVICE_ROLE_KEY: 'legacy' }, 'legacy'), 'legacy', 'sin la nueva, cae a la legacy');
+assert.equal(await keyWith({ ...baseEnv, SUPABASE_SERVICE_ROLE_KEY: 'legacy' }, 'ambas'), 'k', 'con las dos, gana la nueva');
+assert.equal(await keyWith({ ...envSinNueva, SUPABASE_SECRET_KEYS: '{no-es-json', SUPABASE_SERVICE_ROLE_KEY: 'legacy' }, 'roto'), 'legacy', 'JSON inválido → legacy, sin romper el arranque');
+for (const k of Object.keys(env)) delete env[k];
+Object.assign(env, baseEnv);
+
 await import(pathToFileURL(out).href);
 const handler = g.__handler as (req: Request) => Promise<Response>;
 assert(typeof handler === 'function', 'el módulo debe registrar el handler con Deno.serve');

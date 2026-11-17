@@ -22,7 +22,9 @@ commiteado → elimina las notificaciones duplicadas (no hay más doble-PATCH ni
    supabase secrets set \
      VAPID_PUBLIC_KEY=... VAPID_PRIVATE_KEY=... VAPID_SUBJECT=mailto:admin@grupogamma.com \
      WEBHOOK_SECRET=<string aleatorio largo>
-   # SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY los inyecta Supabase automáticamente en las Edge Functions.
+   # SUPABASE_URL y la secret key los inyecta Supabase automáticamente en las Edge Functions: la key
+   # nueva llega en SUPABASE_SECRET_KEYS (JSON, clave `default`); SUPABASE_SERVICE_ROLE_KEY es la legacy,
+   # que la función usa solo de respaldo mientras Supabase la mantenga.
    ```
    Los VAPID son los MISMOS que ya usa Vercel (`VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`).
 
